@@ -106,7 +106,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.ensureVisible(find.text('选择成员'));
     await tester.pumpAndSettle();
-    await tester.tap(find.text('选择成员'));
+    await tester.tap(find.byType(DropdownButton<String>).first);
     await tester.pumpAndSettle();
     await tester.tap(find.text('family').last);
     await tester.pumpAndSettle();

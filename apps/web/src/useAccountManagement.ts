@@ -53,6 +53,7 @@ export function useAccountManagement(deps: AccountManagementDependencies) {
   const computerGrantFolders = ref<string[]>([]);
   const computerGrantFolderInput = ref("");
   const computerGrantBusy = ref(false);
+  const computerGrantReady = ref(false);
   const computerGrantError = ref("");
   const computerGrantNotice = ref("");
   const computerGrantModeOptions = [
@@ -62,9 +63,11 @@ export function useAccountManagement(deps: AccountManagementDependencies) {
   ];
 
   let generation = 0;
+  let computerGrantEpoch = 0;
 
   function resetAccountState() {
     generation++;
+    computerGrantEpoch++;
     accounts.value = [];
     userError.value = "";
     currentPassword.value = "";
@@ -91,6 +94,7 @@ export function useAccountManagement(deps: AccountManagementDependencies) {
     computerGrantFolders.value = [];
     computerGrantFolderInput.value = "";
     computerGrantBusy.value = false;
+    computerGrantReady.value = false;
     computerGrantError.value = "";
     computerGrantNotice.value = "";
   }
@@ -107,7 +111,11 @@ export function useAccountManagement(deps: AccountManagementDependencies) {
 
   async function editComputerGrants(account: ManagedAccount) {
     if (!deps.isAdmin() || account.role === "admin") return;
+    const epoch = ++computerGrantEpoch;
     computerGrantUser.value = account;
+    computerGrantMode.value = "none";
+    computerGrantFolders.value = [];
+    computerGrantReady.value = false;
     computerGrantError.value = "";
     computerGrantNotice.value = "";
     computerGrantFolderInput.value = "";
@@ -117,15 +125,16 @@ export function useAccountManagement(deps: AccountManagementDependencies) {
       const grant = await deps.read<{ mode: "none" | "folders" | "all"; folders: { path: string }[] }>(
         `/api/v2/computer-files/grants/${account.id}`,
       );
-      if (request !== generation) return;
+      if (request !== generation || epoch !== computerGrantEpoch || computerGrantUser.value?.id !== account.id || !deps.isAdmin()) return;
       computerGrantMode.value = grant.mode;
       computerGrantFolders.value = (grant.folders ?? []).map((f) => f.path);
+      computerGrantReady.value = true;
     } catch (e) {
-      if (request === generation) {
+      if (request === generation && epoch === computerGrantEpoch && computerGrantUser.value?.id === account.id) {
         computerGrantError.value = "读取电脑文件授权失败：" + describeUserFacingError(e);
       }
     } finally {
-      if (request === generation) computerGrantBusy.value = false;
+      if (request === generation && epoch === computerGrantEpoch && computerGrantUser.value?.id === account.id) computerGrantBusy.value = false;
     }
   }
 
@@ -142,13 +151,17 @@ export function useAccountManagement(deps: AccountManagementDependencies) {
 
   async function saveComputerGrants() {
     const target = computerGrantUser.value;
-    if (!deps.isAdmin() || !target || computerGrantBusy.value) return;
+    if (!deps.isAdmin() || !target || computerGrantBusy.value || !computerGrantReady.value) return;
+    const request = generation;
+    const epoch = computerGrantEpoch;
+    const mode = computerGrantMode.value;
+    const folders = [...computerGrantFolders.value];
     if (computerGrantMode.value === "folders" && computerGrantFolders.value.length === 0) {
       computerGrantError.value = "请至少添加一个允许访问的文件夹路径，或前往「电脑文件」页面浏览选择。";
       return;
     }
     if (
-      computerGrantMode.value === "all" &&
+      mode === "all" &&
       deps.confirm &&
       !(await deps.confirm({
         title: "授权整台电脑",
@@ -157,24 +170,24 @@ export function useAccountManagement(deps: AccountManagementDependencies) {
     ) {
       return;
     }
+    if (request !== generation || epoch !== computerGrantEpoch || computerGrantUser.value?.id !== target.id || !deps.isAdmin() || !computerGrantReady.value) return;
     computerGrantError.value = "";
     computerGrantNotice.value = "";
     computerGrantBusy.value = true;
-    const request = generation;
     try {
       await deps.write(`/api/v2/computer-files/grants/${target.id}`, "PUT", {
-        mode: computerGrantMode.value,
-        paths: computerGrantFolders.value,
+        mode,
+        paths: folders,
       });
-      if (request === generation) {
+      if (request === generation && epoch === computerGrantEpoch && computerGrantUser.value?.id === target.id) {
         computerGrantNotice.value = `已保存成员「${target.username}」的电脑文件访问权限。`;
       }
     } catch (e) {
-      if (request === generation) {
+      if (request === generation && epoch === computerGrantEpoch && computerGrantUser.value?.id === target.id) {
         computerGrantError.value = "保存电脑文件授权失败：" + describeUserFacingError(e);
       }
     } finally {
-      if (request === generation) computerGrantBusy.value = false;
+      if (request === generation && epoch === computerGrantEpoch && computerGrantUser.value?.id === target.id) computerGrantBusy.value = false;
     }
   }
 
@@ -381,6 +394,7 @@ export function useAccountManagement(deps: AccountManagementDependencies) {
     computerGrantFolders,
     computerGrantFolderInput,
     computerGrantBusy,
+    computerGrantReady,
     computerGrantError,
     computerGrantNotice,
     computerGrantModeOptions,

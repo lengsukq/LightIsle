@@ -154,7 +154,7 @@ const {
   memberActionBusy, memberActionError, memberActionNotice,
   resetTargetUser, resetMemberNewPassword, resetMemberRepeatPassword, resetMemberBusy, resetMemberError,
   computerFilesStatus, computerGrantUser, computerGrantMode, computerGrantFolders,
-  computerGrantFolderInput, computerGrantBusy, computerGrantError, computerGrantNotice, computerGrantModeOptions,
+  computerGrantFolderInput, computerGrantBusy, computerGrantReady, computerGrantError, computerGrantNotice, computerGrantModeOptions,
   loadAccounts, loadComputerFilesStatus, createMemberAccount, toggleMemberEnabled,
   openResetMemberPassword, closeResetMemberPassword, submitResetMemberPassword,
   editComputerGrants, addComputerGrantFolder, removeComputerGrantFolder, saveComputerGrants,

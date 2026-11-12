@@ -600,15 +600,16 @@
                 </div>
                 <div v-if="computerGrantUser" class="grant-details-drawer">
                   <div class="account-heading"><h3>{{ computerGrantUser.username }} · 电脑文件只读权限</h3><div style="display:flex;align-items:center;gap:8px"><button type="button" class="account-action" @click="active='computer'">去「电脑文件」浏览选目录</button><button type="button" class="account-action" @click="computerGrantUser=null">关闭</button></div></div>
-                  <p>需先在 Mac App「设置 → 权限与初始化」开启「允许在网页查看这台电脑的文件」总开关；此处配置该成员的只读范围。</p>
+                  <p>需先在 Mac App「设置 → 安全」开启「允许访问电脑文件」；此处配置该成员的只读范围。</p>
                   <div class="account-form" style="margin-bottom:12px">
-                    <label>授权范围<AppleSelect v-model="computerGrantMode" :options="computerGrantModeOptions" :disabled="computerGrantBusy" block aria-label="电脑文件授权范围" /></label>
+                    <label>授权范围<AppleSelect v-model="computerGrantMode" :options="computerGrantModeOptions" :disabled="computerGrantBusy || !computerGrantReady" block aria-label="电脑文件授权范围" /></label>
                     <div v-if="computerGrantMode==='folders'" style="display:grid;gap:8px">
                       <div style="display:flex;gap:8px;flex-wrap:wrap"><input v-model.trim="computerGrantFolderInput" placeholder="输入 Mac 上的绝对路径，如 /Users/Shared" style="flex:1;min-width:200px" @keydown.enter.prevent="addComputerGrantFolder" /><button type="button" class="account-action" @click="addComputerGrantFolder">添加路径</button></div>
                       <div v-if="!computerGrantFolders.length" class="footnote">尚未添加任何文件夹路径。</div>
                       <div v-for="folder in computerGrantFolders" :key="folder" class="account-row"><code>{{ folder }}</code><button type="button" class="account-action" @click="removeComputerGrantFolder(folder)">移除</button></div>
                     </div>
-                    <button type="button" class="auth-submit" :disabled="computerGrantBusy" @click="saveComputerGrants">{{ computerGrantBusy ? "正在保存…" : "保存电脑文件权限" }}</button>
+                    <button type="button" class="auth-submit" :disabled="computerGrantBusy || !computerGrantReady" @click="saveComputerGrants">{{ computerGrantBusy ? "处理中…" : "保存电脑文件权限" }}</button>
+                    <button v-if="!computerGrantReady && !computerGrantBusy" type="button" class="account-action" @click="editComputerGrants(computerGrantUser)">重新读取权限</button>
                   </div>
                   <p v-if="computerGrantNotice" role="status" class="footnote">{{ computerGrantNotice }}</p>
                   <p v-if="computerGrantError" role="alert" class="form-error">{{ computerGrantError }}</p>

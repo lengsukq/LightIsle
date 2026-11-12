@@ -149,3 +149,62 @@ test("creates member account, toggles enabled state, and resets member password"
   assert.deepEqual(calls.writes[2]?.body, { password: "reset-password-456" });
   assert.equal(accounts.resetTargetUser.value, null);
 });
+
+test("computer grants reject stale member loads and require a successful read", async t => {
+  const pending = new Map();
+  const { app, accounts, calls } = mountAccounts({
+    read: path => new Promise((resolve, reject) => pending.set(path, { resolve, reject })),
+  });
+  t.after(() => app.unmount());
+  const alice = { id: 2, username: "alice", role: "member", enabled: true, createdAt: 1 };
+  const bob = { id: 3, username: "bob", role: "member", enabled: true, createdAt: 1 };
+  const aliceLoad = accounts.editComputerGrants(alice);
+  const bobLoad = accounts.editComputerGrants(bob);
+  pending.get("/api/v2/computer-files/grants/3").resolve({ mode: "none", folders: [] });
+  await bobLoad;
+  pending.get("/api/v2/computer-files/grants/2").resolve({ mode: "all", folders: [] });
+  await aliceLoad;
+  assert.equal(accounts.computerGrantUser.value.id, 3);
+  assert.equal(accounts.computerGrantMode.value, "none");
+  await accounts.saveComputerGrants();
+  assert.deepEqual(calls.writes[0], { path: "/api/v2/computer-files/grants/3", method: "PUT", body: { mode: "none", paths: [] } });
+
+  const failedLoad = accounts.editComputerGrants(alice);
+  pending.get("/api/v2/computer-files/grants/2").reject(new Error("offline"));
+  await failedLoad;
+  assert.equal(accounts.computerGrantReady.value, false);
+  await accounts.saveComputerGrants();
+  assert.equal(calls.writes.length, 1);
+});
+
+test("computer grant confirmation cannot be applied to a newly selected member", async t => {
+  let approve;
+  const { app, accounts, calls } = mountAccounts({
+    read: async () => ({ mode: "all", folders: [] }),
+    confirm: () => new Promise(resolve => { approve = resolve; }),
+  });
+  t.after(() => app.unmount());
+  const alice = { id: 2, username: "alice", role: "member", enabled: true, createdAt: 1 };
+  const bob = { id: 3, username: "bob", role: "member", enabled: true, createdAt: 1 };
+  await accounts.editComputerGrants(alice);
+  const save = accounts.saveComputerGrants();
+  await accounts.editComputerGrants(bob);
+  approve(true);
+  await save;
+  assert.equal(calls.writes.length, 0);
+});
+
+test("reselecting the same member cannot restore an older grant response", async t => {
+  const pending = [];
+  const { app, accounts } = mountAccounts({ read: () => new Promise(resolve => pending.push(resolve)) });
+  t.after(() => app.unmount());
+  const alice = { id: 2, username: "alice", role: "member", enabled: true, createdAt: 1 };
+  const first = accounts.editComputerGrants(alice);
+  const second = accounts.editComputerGrants(alice);
+  pending[1]({ mode: "none", folders: [] });
+  await second;
+  pending[0]({ mode: "all", folders: [] });
+  await first;
+  assert.equal(accounts.computerGrantMode.value, "none");
+  assert.equal(accounts.computerGrantReady.value, true);
+});

@@ -1,5 +1,6 @@
 import 'dart:convert';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
@@ -37,6 +38,7 @@ class _ComputerFilesPageState extends State<ComputerFilesPage> {
   List<String> _folders = [];
   final List<String> _history = [];
   int _generation = 0;
+  int _grantGeneration = 0;
 
   @override
   void initState() {
@@ -107,6 +109,7 @@ class _ComputerFilesPageState extends State<ComputerFilesPage> {
   }
 
   Future<void> _loadGrant(String? id) async {
+    final generation = ++_grantGeneration;
     setState(() {
       _member = id;
       _grantMode = 'none';
@@ -117,7 +120,7 @@ class _ComputerFilesPageState extends State<ComputerFilesPage> {
     if (id == null) return;
     try {
       final grant = await widget.api.get('$_computerBase/grants/$id');
-      if (mounted && _member == id) {
+      if (mounted && _member == id && generation == _grantGeneration) {
         setState(() {
           _grantMode = grant['mode']?.toString() ?? 'none';
           _folders = objectList(grant['folders'])
@@ -128,19 +131,27 @@ class _ComputerFilesPageState extends State<ComputerFilesPage> {
         });
       }
     } catch (e) {
-      if (mounted) setState(() => _error = userFacingError(e));
+      if (mounted && generation == _grantGeneration) {
+        setState(() => _error = userFacingError(e));
+      }
     } finally {
-      if (mounted && _member == id) setState(() => _grantLoading = false);
+      if (mounted && _member == id && generation == _grantGeneration) {
+        setState(() => _grantLoading = false);
+      }
     }
   }
 
   Future<void> _saveGrant() async {
     if (_member == null || _saving || _grantLoading || !_grantReady) return;
-    if (_grantMode == 'folders' && _folders.isEmpty) {
+    final member = _member;
+    final generation = _grantGeneration;
+    final mode = _grantMode;
+    final folders = List<String>.of(_folders);
+    if (mode == 'folders' && folders.isEmpty) {
       setState(() => _error = '请先浏览并添加至少一个文件夹。');
       return;
     }
-    if (_grantMode == 'all' &&
+    if (mode == 'all' &&
         !await confirmAction(
           context,
           '授权整台电脑',
@@ -148,7 +159,15 @@ class _ComputerFilesPageState extends State<ComputerFilesPage> {
         )) {
       return;
     }
-    if (!mounted) return;
+    if (!mounted ||
+        generation != _grantGeneration ||
+        _member != member ||
+        !_grantReady ||
+        _grantLoading ||
+        _grantMode != mode ||
+        !listEquals(_folders, folders)) {
+      return;
+    }
     setState(() {
       _saving = true;
       _error = null;
@@ -156,8 +175,8 @@ class _ComputerFilesPageState extends State<ComputerFilesPage> {
     try {
       await widget.api.send(
         'PUT',
-        '$_computerBase/grants/$_member',
-        body: {'mode': _grantMode, 'paths': _folders},
+        '$_computerBase/grants/$member',
+        body: {'mode': mode, 'paths': folders},
       );
       if (mounted) setState(() => _message = '成员权限已保存');
     } catch (e) {

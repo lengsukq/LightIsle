@@ -15,6 +15,7 @@ const busy=ref(false), error=ref(""), preview=ref<Entry|null>(null);
 const nextCursor=ref("");
 const history=ref<string[]>([]);
 let browseGeneration=0;
+let grantGeneration=0;
 const members=ref<Member[]>([]), selected=ref(""), grantMode=ref("none"), folders=ref<string[]>([]), saving=ref(false), grantLoading=ref(false), grantReady=ref(false);
 const memberOptions=computed(()=>members.value.map(u=>({value:String(u.id),label:u.username})));
 const modes=[{value:"none",label:"无权限"},{value:"folders",label:"指定文件夹"},{value:"all",label:"整台电脑"}];
@@ -63,16 +64,18 @@ async function downloadFolder(entry:Entry){
 }
 async function loadGrant(){
   if(!selected.value)return;
-  const member=selected.value; grantMode.value="none"; folders.value=[]; grantLoading.value=true; grantReady.value=false;
-  try { const grant=await request<Grant>(`/api/v2/computer-files/grants/${member}`); if(selected.value!==member)return; grantMode.value=grant.mode; folders.value=grant.folders.map(f=>f.path); grantReady.value=true; }
-  catch(e){error.value=describeUserFacingError(e);} finally {if(selected.value===member)grantLoading.value=false;}
+  const member=selected.value, generation=++grantGeneration; grantMode.value="none"; folders.value=[]; grantLoading.value=true; grantReady.value=false;
+  try { const grant=await request<Grant>(`/api/v2/computer-files/grants/${member}`); if(generation!==grantGeneration || selected.value!==member)return; grantMode.value=grant.mode; folders.value=grant.folders.map(f=>f.path); grantReady.value=true; }
+  catch(e){if(generation===grantGeneration)error.value=describeUserFacingError(e);} finally {if(generation===grantGeneration && selected.value===member)grantLoading.value=false;}
 }
 async function saveGrant(){
   if(!selected.value || saving.value || grantLoading.value || !grantReady.value)return;
-  if(grantMode.value==="folders" && folders.value.length===0){error.value="请先浏览并添加至少一个文件夹。";return;}
-  if(grantMode.value==="all" && !await requestConfirm({title:"授权整台电脑", message:"该成员可以查看和下载 Mac 允许轻屿读取的所有文件，包括其他成员的私人文件。确认授权？"})) return;
+  const member=selected.value, generation=grantGeneration, mode=grantMode.value, paths=[...folders.value];
+  if(mode==="folders" && paths.length===0){error.value="请先浏览并添加至少一个文件夹。";return;}
+  if(mode==="all" && !await requestConfirm({title:"授权整台电脑", message:"该成员可以查看和下载 Mac 允许轻屿读取的所有文件，包括其他成员的私人文件。确认授权？"})) return;
+  if(generation!==grantGeneration || selected.value!==member || !grantReady.value || grantLoading.value || grantMode.value!==mode || folders.value.join("\0")!==paths.join("\0"))return;
   saving.value=true; error.value="";
-  try { await request(`/api/v2/computer-files/grants/${selected.value}`,"PUT",{mode:grantMode.value,paths:folders.value}); }
+  try { await request(`/api/v2/computer-files/grants/${member}`,"PUT",{mode,paths}); }
   catch(e){error.value=`授权未保存：${describeUserFacingError(e)}`;} finally {saving.value=false;}
 }
 onMounted(loadStatus);
