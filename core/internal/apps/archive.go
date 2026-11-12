@@ -44,111 +44,84 @@ type PluginBackupManifest struct {
 	Files         []PluginBackupFileEntry `json:"files"`
 }
 
-// ExportAppData streams a consistent .tar.gz archive containing the plugin's
-// configuration (plugin.json, env.json), its isolated business data directory
-// (plugin-data/<id>/), and backup-manifest.json with SHA-256 checksums.
-// Any SQLite database is snapshotted via VACUUM INTO; if snapshotting fails,
-// export aborts immediately rather than falling back to an inconsistent raw copy.
-func (m *Manager) ExportAppData(ctx context.Context, appID string, w io.Writer) error {
-	if !ValidPluginID(appID) {
-		return ErrInvalid
-	}
-	m.mu.Lock()
-	rec, ok := m.apps[appID]
-	m.mu.Unlock()
-	if !ok {
-		return ErrNotFound
-	}
+type pluginArchiveBuilder struct {
+	tw              *tar.Writer
+	totalBytes      int64
+	totalFiles      int
+	dataFileCount   int
+	manifestEntries []PluginBackupFileEntry
+}
 
-	if err := os.MkdirAll(rec.dataDir, 0700); err != nil {
-		return err
-	}
-
-	gz := gzip.NewWriter(w)
-	defer gz.Close()
-	tw := tar.NewWriter(gz)
-	defer tw.Close()
-
-	var totalBytes int64
-	var totalFiles int
-	var dataFileCount int
-	manifestEntries := make([]PluginBackupFileEntry, 0, 16)
-
-	addFile := func(archivePath, diskPath string, mode int64, isData bool) error {
-		st, err := os.Lstat(diskPath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return nil
-			}
-			return err
-		}
-		if !st.Mode().IsRegular() {
+func (b *pluginArchiveBuilder) addFile(archivePath, diskPath string, mode int64, isData bool) error {
+	st, err := os.Lstat(diskPath)
+	if err != nil {
+		if os.IsNotExist(err) {
 			return nil
 		}
-		totalFiles++
-		if totalFiles > maxPluginArchiveFiles || totalBytes+st.Size() > maxPluginArchiveBytes {
-			return fmt.Errorf("%w: 插件业务数据超过 512 MiB 导出上限", ErrInvalid)
-		}
-		f, err := os.Open(diskPath)
-		if err != nil {
-			return err
-		}
-		defer f.Close()
-
-		hasher := sha256.New()
-		if _, err := io.Copy(hasher, io.LimitReader(f, st.Size()+1)); err != nil {
-			return err
-		}
-		if _, err := f.Seek(0, io.SeekStart); err != nil {
-			return err
-		}
-		digest := hex.EncodeToString(hasher.Sum(nil))
-
-		hdr := &tar.Header{
-			Name:    archivePath,
-			Size:    st.Size(),
-			Mode:    mode,
-			ModTime: st.ModTime(),
-		}
-		if err := tw.WriteHeader(hdr); err != nil {
-			return err
-		}
-		n, err := io.Copy(tw, io.LimitReader(f, st.Size()+1))
-		if err != nil {
-			return err
-		}
-		if n != st.Size() {
-			return fmt.Errorf("导出文件 %s 大小在读取过程中发生变化", archivePath)
-		}
-		totalBytes += n
-		if isData {
-			dataFileCount++
-		}
-		manifestEntries = append(manifestEntries, PluginBackupFileEntry{
-			Path:   archivePath,
-			Size:   n,
-			SHA256: digest,
-		})
+		return err
+	}
+	if !st.Mode().IsRegular() {
 		return nil
 	}
-
-	for _, cfgName := range []string{"plugin.json", "env.json"} {
-		if err := addFile(path.Join("config", cfgName), filepath.Join(rec.pluginDir, cfgName), 0600, false); err != nil {
-			return err
-		}
+	b.totalFiles++
+	if b.totalFiles > maxPluginArchiveFiles || b.totalBytes+st.Size() > maxPluginArchiveBytes {
+		return fmt.Errorf("%w: 插件业务数据超过 512 MiB 导出上限", ErrInvalid)
 	}
+	f, err := os.Open(diskPath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
 
-	walkErr := filepath.WalkDir(rec.dataDir, func(curPath string, d fs.DirEntry, err error) error {
+	hasher := sha256.New()
+	if _, err := io.Copy(hasher, io.LimitReader(f, st.Size()+1)); err != nil {
+		return err
+	}
+	if _, err := f.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	digest := hex.EncodeToString(hasher.Sum(nil))
+
+	hdr := &tar.Header{
+		Name:    archivePath,
+		Size:    st.Size(),
+		Mode:    mode,
+		ModTime: st.ModTime(),
+	}
+	if err := b.tw.WriteHeader(hdr); err != nil {
+		return err
+	}
+	n, err := io.Copy(b.tw, io.LimitReader(f, st.Size()+1))
+	if err != nil {
+		return err
+	}
+	if n != st.Size() {
+		return fmt.Errorf("导出文件 %s 大小在读取过程中发生变化", archivePath)
+	}
+	b.totalBytes += n
+	if isData {
+		b.dataFileCount++
+	}
+	b.manifestEntries = append(b.manifestEntries, PluginBackupFileEntry{
+		Path:   archivePath,
+		Size:   n,
+		SHA256: digest,
+	})
+	return nil
+}
+
+func (b *pluginArchiveBuilder) exportDataDirectory(ctx context.Context, dataDir string) error {
+	return filepath.WalkDir(dataDir, func(curPath string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if curPath == rec.dataDir {
+		if curPath == dataDir {
 			return nil
 		}
-		rel, err := filepath.Rel(rec.dataDir, curPath)
+		rel, err := filepath.Rel(dataDir, curPath)
 		if err != nil {
 			return err
 		}
@@ -171,30 +144,29 @@ func (m *Manager) ExportAppData(ctx context.Context, appID string, w io.Writer) 
 		if err != nil {
 			return err
 		}
-		if isSQLite {
-			tmpDir, tmpErr := os.MkdirTemp("", "lightisle-plugin-sqlite-*")
-			if tmpErr != nil {
-				return fmt.Errorf("创建 SQLite 快照临时目录失败 (%s): %w", slashRel, tmpErr)
-			}
-			defer os.RemoveAll(tmpDir)
-			snapPath := filepath.Join(tmpDir, "snapshot.db")
-			if vacuumErr := vacuumSQLiteFile(ctx, curPath, snapPath); vacuumErr != nil {
-				return fmt.Errorf("%w: SQLite 数据库 %s 一致性快照失败 (%v)，已中止导出", ErrInvalid, slashRel, vacuumErr)
-			}
-			return addFile(path.Join("data", slashRel), snapPath, 0600, true)
+		if !isSQLite {
+			return b.addFile(path.Join("data", slashRel), curPath, 0600, true)
 		}
-		return addFile(path.Join("data", slashRel), curPath, 0600, true)
+		tmpDir, tmpErr := os.MkdirTemp("", "lightisle-plugin-sqlite-*")
+		if tmpErr != nil {
+			return fmt.Errorf("创建 SQLite 快照临时目录失败 (%s): %w", slashRel, tmpErr)
+		}
+		defer os.RemoveAll(tmpDir)
+		snapPath := filepath.Join(tmpDir, "snapshot.db")
+		if vacuumErr := vacuumSQLiteFile(ctx, curPath, snapPath); vacuumErr != nil {
+			return fmt.Errorf("%w: SQLite 数据库 %s 一致性快照失败 (%v)，已中止导出", ErrInvalid, slashRel, vacuumErr)
+		}
+		return b.addFile(path.Join("data", slashRel), snapPath, 0600, true)
 	})
-	if walkErr != nil {
-		return walkErr
-	}
+}
 
+func (b *pluginArchiveBuilder) writeManifest(appID string) error {
 	manifest := PluginBackupManifest{
 		SchemaVersion: PluginBackupSchemaVersion,
 		AppID:         appID,
 		CreatedAt:     time.Now().UTC().Format(time.RFC3339),
-		DataFileCount: dataFileCount,
-		Files:         manifestEntries,
+		DataFileCount: b.dataFileCount,
+		Files:         b.manifestEntries,
 	}
 	manifestBytes, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
@@ -206,10 +178,50 @@ func (m *Manager) ExportAppData(ctx context.Context, appID string, w io.Writer) 
 		Mode:    0600,
 		ModTime: time.Now(),
 	}
-	if err := tw.WriteHeader(hdr); err != nil {
+	if err := b.tw.WriteHeader(hdr); err != nil {
 		return err
 	}
-	if _, err := tw.Write(manifestBytes); err != nil {
+	_, err = b.tw.Write(manifestBytes)
+	return err
+}
+
+// ExportAppData streams a consistent .tar.gz archive containing the plugin's
+// configuration (plugin.json, env.json), its isolated business data directory
+// (plugin-data/<id>/), and backup-manifest.json with SHA-256 checksums.
+// Any SQLite database is snapshotted via VACUUM INTO; if snapshotting fails,
+// export aborts immediately rather than falling back to an inconsistent raw copy.
+func (m *Manager) ExportAppData(ctx context.Context, appID string, w io.Writer) error {
+	if !ValidPluginID(appID) {
+		return ErrInvalid
+	}
+	m.mu.Lock()
+	rec, ok := m.apps[appID]
+	m.mu.Unlock()
+	if !ok {
+		return ErrNotFound
+	}
+	if err := os.MkdirAll(rec.dataDir, 0700); err != nil {
+		return err
+	}
+
+	gz := gzip.NewWriter(w)
+	defer gz.Close()
+	tw := tar.NewWriter(gz)
+	defer tw.Close()
+
+	builder := &pluginArchiveBuilder{
+		tw:              tw,
+		manifestEntries: make([]PluginBackupFileEntry, 0, 16),
+	}
+	for _, cfgName := range []string{"plugin.json", "env.json"} {
+		if err := builder.addFile(path.Join("config", cfgName), filepath.Join(rec.pluginDir, cfgName), 0600, false); err != nil {
+			return err
+		}
+	}
+	if err := builder.exportDataDirectory(ctx, rec.dataDir); err != nil {
+		return err
+	}
+	if err := builder.writeManifest(appID); err != nil {
 		return err
 	}
 	if err := tw.Close(); err != nil {
@@ -271,195 +283,49 @@ func (m *Manager) RestoreAppData(ctx context.Context, appID string, r io.Reader)
 		return ErrInvalid
 	}
 	m.mutation.Lock()
+	wasRunning, swapErr := m.stageAndSwapAppRestore(ctx, appID, r)
+	m.mutation.Unlock()
+
+	if swapErr != nil {
+		if wasRunning {
+			_, _ = m.WakeApp(ctx, appID)
+		}
+		return swapErr
+	}
+	if err := m.Reload(); err != nil {
+		return err
+	}
+	if wasRunning {
+		_, _ = m.WakeApp(ctx, appID)
+	}
+	return nil
+}
+
+// stageAndSwapAppRestore runs while holding m.mutation. It returns wasRunning=true
+// only if the live plugin instance was actually stopped prior to a failed swap so
+// the caller can wake it back up after releasing m.mutation.
+func (m *Manager) stageAndSwapAppRestore(ctx context.Context, appID string, r io.Reader) (bool, error) {
 	m.mu.Lock()
 	rec, ok := m.apps[appID]
 	m.mu.Unlock()
 	if !ok {
-		m.mutation.Unlock()
-		return ErrNotFound
+		return false, ErrNotFound
 	}
 
 	stageDir := fmt.Sprintf("%s.restore-%d", rec.dataDir, time.Now().UnixNano())
 	if err := os.MkdirAll(stageDir, 0700); err != nil {
-		m.mutation.Unlock()
-		return err
+		return false, err
 	}
-	cleanupStage := func() { _ = os.RemoveAll(stageDir) }
+	stageMoved := false
+	defer func() {
+		if !stageMoved {
+			_ = os.RemoveAll(stageDir)
+		}
+	}()
 
-	gz, err := gzip.NewReader(io.LimitReader(r, maxPluginArchiveBytes+(1<<20)))
+	restoredEnv, err := extractAndVerifyBackupArchive(ctx, appID, stageDir, r)
 	if err != nil {
-		cleanupStage()
-		m.mutation.Unlock()
-		return fmt.Errorf("%w: 无法解压备份归档 (%v)", ErrInvalid, err)
-	}
-	defer gz.Close()
-
-	tr := tar.NewReader(gz)
-	var totalBytes int64
-	var totalFiles int
-	var restoredEnv []byte
-	var restoredPluginJSON []byte
-	var backupManifest *PluginBackupManifest
-	extractedEntries := make(map[string]PluginBackupFileEntry)
-	var extractedDataCount int
-
-	for {
-		if err := ctx.Err(); err != nil {
-			cleanupStage()
-			m.mutation.Unlock()
-			return err
-		}
-		hdr, err := tr.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			cleanupStage()
-			m.mutation.Unlock()
-			return fmt.Errorf("%w: 读取归档条目失败 (%v)", ErrInvalid, err)
-		}
-		if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeRegA {
-			continue
-		}
-		cleanName := path.Clean(strings.TrimPrefix(hdr.Name, "/"))
-		if cleanName == "." || strings.HasPrefix(cleanName, "../") || strings.Contains(cleanName, "..") {
-			cleanupStage()
-			m.mutation.Unlock()
-			return fmt.Errorf("%w: 非法归档路径 %q", ErrInvalid, hdr.Name)
-		}
-		if _, dup := extractedEntries[cleanName]; dup || (cleanName == backupManifestArchivePath && backupManifest != nil) {
-			cleanupStage()
-			m.mutation.Unlock()
-			return fmt.Errorf("%w: 归档中存在重复条目 %q", ErrInvalid, cleanName)
-		}
-		totalFiles++
-		if totalFiles > maxPluginArchiveFiles || hdr.Size < 0 || totalBytes+hdr.Size > maxPluginArchiveBytes {
-			cleanupStage()
-			m.mutation.Unlock()
-			return fmt.Errorf("%w: 备份归档超出 512 MiB 安全大小限制", ErrInvalid)
-		}
-
-		if cleanName == backupManifestArchivePath {
-			if hdr.Size > (4 << 20) {
-				cleanupStage()
-				m.mutation.Unlock()
-				return fmt.Errorf("%w: backup-manifest.json 超出大小限制", ErrInvalid)
-			}
-			raw, readErr := io.ReadAll(io.LimitReader(tr, hdr.Size+1))
-			if readErr != nil || int64(len(raw)) != hdr.Size {
-				cleanupStage()
-				m.mutation.Unlock()
-				return fmt.Errorf("%w: 读取 backup-manifest.json 失败", ErrInvalid)
-			}
-			var parsed PluginBackupManifest
-			if err := json.Unmarshal(raw, &parsed); err != nil {
-				cleanupStage()
-				m.mutation.Unlock()
-				return fmt.Errorf("%w: backup-manifest.json 格式无效 (%v)", ErrInvalid, err)
-			}
-			backupManifest = &parsed
-			totalBytes += int64(len(raw))
-			continue
-		}
-
-		if cleanName == "config/plugin.json" {
-			if hdr.Size > maxManifestBytes {
-				cleanupStage()
-				m.mutation.Unlock()
-				return fmt.Errorf("%w: config/plugin.json 超出大小限制", ErrInvalid)
-			}
-			raw, readErr := io.ReadAll(io.LimitReader(tr, hdr.Size+1))
-			if readErr != nil || int64(len(raw)) != hdr.Size {
-				cleanupStage()
-				m.mutation.Unlock()
-				return fmt.Errorf("%w: 读取 config/plugin.json 失败", ErrInvalid)
-			}
-			sum := sha256.Sum256(raw)
-			extractedEntries[cleanName] = PluginBackupFileEntry{
-				Path:   cleanName,
-				Size:   int64(len(raw)),
-				SHA256: hex.EncodeToString(sum[:]),
-			}
-			restoredPluginJSON = raw
-			totalBytes += int64(len(raw))
-			continue
-		}
-
-		if cleanName == "config/env.json" {
-			if hdr.Size > maxEnvBytes {
-				cleanupStage()
-				m.mutation.Unlock()
-				return fmt.Errorf("%w: env.json 超出限制", ErrInvalid)
-			}
-			raw, readErr := io.ReadAll(io.LimitReader(tr, hdr.Size+1))
-			if readErr != nil || int64(len(raw)) != hdr.Size {
-				cleanupStage()
-				m.mutation.Unlock()
-				return fmt.Errorf("%w: 读取 env.json 失败", ErrInvalid)
-			}
-			if err := validateEnvBytes(raw); err != nil {
-				cleanupStage()
-				m.mutation.Unlock()
-				return fmt.Errorf("%w: %v", ErrInvalid, err)
-			}
-			sum := sha256.Sum256(raw)
-			extractedEntries[cleanName] = PluginBackupFileEntry{
-				Path:   cleanName,
-				Size:   int64(len(raw)),
-				SHA256: hex.EncodeToString(sum[:]),
-			}
-			restoredEnv = raw
-			totalBytes += int64(len(raw))
-			continue
-		}
-
-		if !strings.HasPrefix(cleanName, "data/") {
-			cleanupStage()
-			m.mutation.Unlock()
-			return fmt.Errorf("%w: 归档包含未知路径 %q", ErrInvalid, cleanName)
-		}
-		relData := strings.TrimPrefix(cleanName, "data/")
-		if relData == "" || !validRelDir(relData) {
-			cleanupStage()
-			m.mutation.Unlock()
-			return fmt.Errorf("%w: 非法数据文件路径 %q", ErrInvalid, relData)
-		}
-		dstPath := filepath.Join(stageDir, filepath.FromSlash(relData))
-		if err := os.MkdirAll(filepath.Dir(dstPath), 0700); err != nil {
-			cleanupStage()
-			m.mutation.Unlock()
-			return err
-		}
-		outFile, err := os.OpenFile(dstPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
-		if err != nil {
-			cleanupStage()
-			m.mutation.Unlock()
-			return err
-		}
-		hasher := sha256.New()
-		mw := io.MultiWriter(outFile, hasher)
-		n, copyErr := io.Copy(mw, io.LimitReader(tr, hdr.Size+1))
-		syncErr := outFile.Sync()
-		closeErr := outFile.Close()
-		if copyErr != nil || syncErr != nil || closeErr != nil || n != hdr.Size {
-			cleanupStage()
-			m.mutation.Unlock()
-			return fmt.Errorf("%w: 写入恢复文件失败 (%s)", ErrInvalid, cleanName)
-		}
-		extractedEntries[cleanName] = PluginBackupFileEntry{
-			Path:   cleanName,
-			Size:   n,
-			SHA256: hex.EncodeToString(hasher.Sum(nil)),
-		}
-		extractedDataCount++
-		totalBytes += n
-	}
-
-	// Verify backup-manifest.json, plugin identity, schema version, non-empty data, and per-file SHA-256
-	if err := verifyRestoredArchive(appID, backupManifest, restoredPluginJSON, extractedEntries, extractedDataCount); err != nil {
-		cleanupStage()
-		m.mutation.Unlock()
-		return err
+		return false, err
 	}
 
 	wasRunning := rec.instance != nil && rec.instance.Snapshot().Status == StatusRunning
@@ -467,6 +333,185 @@ func (m *Manager) RestoreAppData(ctx context.Context, appID string, r io.Reader)
 		_ = rec.instance.Stop(false)
 	}
 
+	if err := swapRestoredPluginDirectories(rec, stageDir, restoredEnv, &stageMoved); err != nil {
+		return wasRunning, err
+	}
+	return wasRunning, nil
+}
+
+type stagedArchiveState struct {
+	stageDir           string
+	totalBytes         int64
+	totalFiles         int
+	restoredEnv        []byte
+	restoredPluginJSON []byte
+	backupManifest     *PluginBackupManifest
+	extractedEntries   map[string]PluginBackupFileEntry
+	extractedDataCount int
+}
+
+func extractAndVerifyBackupArchive(
+	ctx context.Context,
+	appID string,
+	stageDir string,
+	r io.Reader,
+) ([]byte, error) {
+	gz, err := gzip.NewReader(io.LimitReader(r, maxPluginArchiveBytes+(1<<20)))
+	if err != nil {
+		return nil, fmt.Errorf("%w: 无法解压备份归档 (%v)", ErrInvalid, err)
+	}
+	defer gz.Close()
+
+	state := &stagedArchiveState{
+		stageDir:         stageDir,
+		extractedEntries: make(map[string]PluginBackupFileEntry),
+	}
+	tr := tar.NewReader(gz)
+	for {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		hdr, err := tr.Next()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("%w: 读取归档条目失败 (%v)", ErrInvalid, err)
+		}
+		if hdr.Typeflag != tar.TypeReg && hdr.Typeflag != tar.TypeRegA {
+			continue
+		}
+		if err := state.consumeTarEntry(tr, hdr); err != nil {
+			return nil, err
+		}
+	}
+
+	if err := verifyRestoredArchive(
+		appID,
+		state.backupManifest,
+		state.restoredPluginJSON,
+		state.extractedEntries,
+		state.extractedDataCount,
+	); err != nil {
+		return nil, err
+	}
+	return state.restoredEnv, nil
+}
+
+func (s *stagedArchiveState) consumeTarEntry(tr *tar.Reader, hdr *tar.Header) error {
+	cleanName := path.Clean(strings.TrimPrefix(hdr.Name, "/"))
+	if cleanName == "." || strings.HasPrefix(cleanName, "../") || strings.Contains(cleanName, "..") {
+		return fmt.Errorf("%w: 非法归档路径 %q", ErrInvalid, hdr.Name)
+	}
+	if _, dup := s.extractedEntries[cleanName]; dup || (cleanName == backupManifestArchivePath && s.backupManifest != nil) {
+		return fmt.Errorf("%w: 归档中存在重复条目 %q", ErrInvalid, cleanName)
+	}
+	s.totalFiles++
+	if s.totalFiles > maxPluginArchiveFiles || hdr.Size < 0 || s.totalBytes+hdr.Size > maxPluginArchiveBytes {
+		return fmt.Errorf("%w: 备份归档超出 512 MiB 安全大小限制", ErrInvalid)
+	}
+
+	switch cleanName {
+	case backupManifestArchivePath:
+		return s.consumeManifestEntry(tr, hdr.Size)
+	case "config/plugin.json":
+		raw, err := readExactTarBytes(tr, hdr.Size, maxManifestBytes, "config/plugin.json")
+		if err != nil {
+			return err
+		}
+		s.recordMemoryEntry(cleanName, raw)
+		s.restoredPluginJSON = raw
+		return nil
+	case "config/env.json":
+		raw, err := readExactTarBytes(tr, hdr.Size, maxEnvBytes, "env.json")
+		if err != nil {
+			return err
+		}
+		if err := validateEnvBytes(raw); err != nil {
+			return fmt.Errorf("%w: %v", ErrInvalid, err)
+		}
+		s.recordMemoryEntry(cleanName, raw)
+		s.restoredEnv = raw
+		return nil
+	default:
+		return s.consumeDataEntry(tr, cleanName, hdr.Size)
+	}
+}
+
+func readExactTarBytes(tr *tar.Reader, size int64, limit int64, label string) ([]byte, error) {
+	if size > limit {
+		return nil, fmt.Errorf("%w: %s 超出限制", ErrInvalid, label)
+	}
+	raw, err := io.ReadAll(io.LimitReader(tr, size+1))
+	if err != nil || int64(len(raw)) != size {
+		return nil, fmt.Errorf("%w: 读取 %s 失败", ErrInvalid, label)
+	}
+	return raw, nil
+}
+
+func (s *stagedArchiveState) recordMemoryEntry(cleanName string, raw []byte) {
+	sum := sha256.Sum256(raw)
+	s.extractedEntries[cleanName] = PluginBackupFileEntry{
+		Path:   cleanName,
+		Size:   int64(len(raw)),
+		SHA256: hex.EncodeToString(sum[:]),
+	}
+	s.totalBytes += int64(len(raw))
+}
+
+func (s *stagedArchiveState) consumeManifestEntry(tr *tar.Reader, size int64) error {
+	raw, err := readExactTarBytes(tr, size, 4<<20, "backup-manifest.json")
+	if err != nil {
+		return err
+	}
+	var parsed PluginBackupManifest
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return fmt.Errorf("%w: backup-manifest.json 格式无效 (%v)", ErrInvalid, err)
+	}
+	s.backupManifest = &parsed
+	s.totalBytes += int64(len(raw))
+	return nil
+}
+
+func (s *stagedArchiveState) consumeDataEntry(tr *tar.Reader, cleanName string, size int64) error {
+	if !strings.HasPrefix(cleanName, "data/") {
+		return fmt.Errorf("%w: 归档包含未知路径 %q", ErrInvalid, cleanName)
+	}
+	relData := strings.TrimPrefix(cleanName, "data/")
+	if relData == "" || !validRelDir(relData) {
+		return fmt.Errorf("%w: 非法数据文件路径 %q", ErrInvalid, relData)
+	}
+	dstPath := filepath.Join(s.stageDir, filepath.FromSlash(relData))
+	if err := os.MkdirAll(filepath.Dir(dstPath), 0700); err != nil {
+		return err
+	}
+	outFile, err := os.OpenFile(dstPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	hasher := sha256.New()
+	n, copyErr := io.Copy(io.MultiWriter(outFile, hasher), io.LimitReader(tr, size+1))
+	syncErr := outFile.Sync()
+	closeErr := outFile.Close()
+	if copyErr != nil || syncErr != nil || closeErr != nil || n != size {
+		return fmt.Errorf("%w: 写入恢复文件失败 (%s)", ErrInvalid, cleanName)
+	}
+	s.extractedEntries[cleanName] = PluginBackupFileEntry{
+		Path:   cleanName,
+		Size:   n,
+		SHA256: hex.EncodeToString(hasher.Sum(nil)),
+	}
+	s.extractedDataCount++
+	s.totalBytes += n
+	return nil
+}
+
+func swapRestoredPluginDirectories(
+	rec *appRecord,
+	stageDir string,
+	restoredEnv []byte,
+	stageMoved *bool,
+) error {
 	envPath := filepath.Join(rec.pluginDir, "env.json")
 	oldEnvBytes, hadOldEnvErr := os.ReadFile(envPath)
 	hadOldEnv := hadOldEnvErr == nil
@@ -475,11 +520,6 @@ func (m *Manager) RestoreAppData(ctx context.Context, appID string, r io.Reader)
 	hasOld := false
 	if _, err := os.Lstat(rec.dataDir); err == nil {
 		if err := os.Rename(rec.dataDir, backupOldDir); err != nil {
-			cleanupStage()
-			m.mutation.Unlock()
-			if wasRunning {
-				_, _ = m.WakeApp(ctx, appID)
-			}
 			return err
 		}
 		hasOld = true
@@ -488,13 +528,10 @@ func (m *Manager) RestoreAppData(ctx context.Context, appID string, r io.Reader)
 		if hasOld {
 			_ = os.Rename(backupOldDir, rec.dataDir)
 		}
-		cleanupStage()
-		m.mutation.Unlock()
-		if wasRunning {
-			_, _ = m.WakeApp(ctx, appID)
-		}
 		return err
 	}
+	*stageMoved = true
+
 	if len(restoredEnv) > 0 {
 		if err := os.WriteFile(envPath, restoredEnv, 0600); err != nil {
 			_ = os.RemoveAll(rec.dataDir)
@@ -504,23 +541,11 @@ func (m *Manager) RestoreAppData(ctx context.Context, appID string, r io.Reader)
 			if hadOldEnv {
 				_ = os.WriteFile(envPath, oldEnvBytes, 0600)
 			}
-			m.mutation.Unlock()
-			if wasRunning {
-				_, _ = m.WakeApp(ctx, appID)
-			}
 			return err
 		}
 	}
 	if hasOld {
 		_ = os.RemoveAll(backupOldDir)
-	}
-	m.mutation.Unlock()
-
-	if err := m.Reload(); err != nil {
-		return err
-	}
-	if wasRunning {
-		_, _ = m.WakeApp(ctx, appID)
 	}
 	return nil
 }

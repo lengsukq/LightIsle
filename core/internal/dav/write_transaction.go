@@ -96,8 +96,7 @@ func (t *writeTxn) Close() error {
 	return t.closeErr
 }
 
-func (t *writeTxn) abort() {
-	t.abortFiles()
+func (t *writeTxn) releaseParentAndLock() {
 	if t.parent != nil {
 		_ = t.parent.Close()
 		t.parent = nil
@@ -108,26 +107,40 @@ func (t *writeTxn) abort() {
 	}
 }
 
+func (t *writeTxn) abort() {
+	t.abortFiles()
+	t.releaseParentAndLock()
+}
+
 func (t *writeTxn) commit() error {
-	defer func() {
-		if t.parent != nil {
-			_ = t.parent.Close()
-			t.parent = nil
-		}
-		if t.unlock != nil {
-			t.unlock()
-			t.unlock = nil
-		}
-	}()
+	defer t.releaseParentAndLock()
 
 	if t.writeErr != nil {
 		t.abortFiles()
 		return t.writeErr
 	}
+	if err := t.verifyStreamCompletion(); err != nil {
+		t.abortFiles()
+		return err
+	}
+	if err := t.verifyCommitPreconditions(); err != nil {
+		t.abortFiles()
+		return err
+	}
+	stageInfo, err := t.syncAndCloseStage()
+	if err != nil {
+		return err
+	}
+	if t.existed && t.state.root.replace != nil {
+		return t.replacePublishedFile(stageInfo)
+	}
+	return t.publishAndFinalizeTarget(stageInfo)
+}
+
+func (t *writeTxn) verifyStreamCompletion() error {
 	switch t.state.method {
 	case http.MethodPut:
 		if !t.state.body.complete() {
-			t.abortFiles()
 			if err := t.state.body.failure(); err != nil {
 				return err
 			}
@@ -137,208 +150,223 @@ func (t *writeTxn) commit() error {
 		if !t.state.copyComplete(t.copyReadCount) {
 			if t.state.preconditions != nil {
 				t.state.conditionFailed = true
-			}
-			t.abortFiles()
-			if t.state.preconditions != nil {
 				return errPreconditionFailed
 			}
 			return errResourceChanged
 		}
 	case "LOCK":
-		if err := t.state.body.failure(); err != nil {
-			t.abortFiles()
-			return err
-		}
+		return t.state.body.failure()
 	default:
 		if t.state.body != nil && !t.state.body.complete() && t.state.body.failure() != nil {
-			t.abortFiles()
 			return t.state.body.failure()
 		}
 	}
-	if t.state.ctx != nil && t.state.ctx.Err() != nil || !t.state.root.current() || !t.service.canAccess(t.state, t.name, true, false) {
-		t.abortFiles()
+	return nil
+}
+
+func (t *writeTxn) verifyCommitPreconditions() error {
+	if (t.state.ctx != nil && t.state.ctx.Err() != nil) ||
+		!t.state.root.current() ||
+		!t.service.canAccess(t.state, t.name, true, false) {
 		return os.ErrPermission
 	}
 	if !sameDirectory(t.state.root.file, path.Dir(t.name), t.parentInfo) {
-		t.abortFiles()
 		return errResourceChanged
 	}
 	current, statErr := statAtNoFollow(t.parent, t.leaf)
 	currentExists := statErr == nil
 	if statErr != nil && !errors.Is(statErr, fs.ErrNotExist) {
-		t.abortFiles()
 		return statErr
 	}
 	if currentExists && (!current.Mode().IsRegular() || current.Mode()&os.ModeSymlink != 0) {
-		t.abortFiles()
 		return os.ErrPermission
 	}
 	if t.existed {
 		if !currentExists || !sameFileVersion(t.originalInfo, current) {
 			if t.state.preconditions != nil {
 				t.state.conditionFailed = true
-				t.abortFiles()
 				return errPreconditionFailed
 			}
-			t.abortFiles()
 			return errResourceChanged
 		}
 	} else if currentExists {
 		if t.state.preconditions != nil {
 			t.state.conditionFailed = true
-			t.abortFiles()
 			return errPreconditionFailed
 		}
-		t.abortFiles()
 		return fs.ErrExist
 	}
 	if t.state.method == http.MethodPut &&
 		(!t.state.preconditions.matches(current, currentExists) ||
 			!t.state.preconditions.sameInitial(current, currentExists)) {
 		t.state.conditionFailed = true
-		t.abortFiles()
 		return errPreconditionFailed
 	}
 	if t.state.method == "COPY" && !t.state.copyComplete(t.copyReadCount) {
 		if t.state.preconditions != nil {
 			t.state.conditionFailed = true
-		}
-		t.abortFiles()
-		if t.state.preconditions != nil {
 			return errPreconditionFailed
 		}
 		return errResourceChanged
 	}
+	return nil
+}
+
+func (t *writeTxn) syncAndCloseStage() (os.FileInfo, error) {
 	if err := syncRegular(t.stage); err != nil {
 		t.abortFiles()
-		return err
+		return nil, err
 	}
 	stageInfo, err := t.stage.Stat()
 	if err != nil {
 		t.abortFiles()
-		return err
+		return nil, err
 	}
 	if t.reservationID != "" && stageInfo.Size() != t.reservedSize {
 		t.state.writeStatus = http.StatusBadRequest
 		t.abortFiles()
-		return io.ErrUnexpectedEOF
+		return nil, io.ErrUnexpectedEOF
 	}
 	if t.reservationID != "" {
-		identity := files.MediaFileIdentity(stageInfo)
-		operation := "dav_put"
-		switch t.state.method {
-		case "COPY":
-			operation = "dav_copy"
-		case "LOCK":
-			operation = "dav_lock"
-		}
-		if t.existed {
-			operation = "dav_replace"
-		}
-		if !files.MediaFileHasSingleLink(stageInfo) || identity == "" {
+		if err := t.prepareStoragePublication(stageInfo); err != nil {
 			t.abortFiles()
-			return errResourceChanged
-		}
-		if err := t.service.store.PrepareStoragePublications(operation, []auth.StoragePublication{
-			{ReservationID: t.reservationID, Identity: identity},
-		}); err != nil {
-			t.abortFiles()
-			return err
+			return nil, err
 		}
 	}
 	if err := t.stage.Close(); err != nil {
 		t.stage = nil
-		_ = unlinkAt(t.parent, t.stageName, false)
-		if t.reservationID != "" {
-			_ = t.service.store.ReleaseStorageReservation(t.reservationID)
-			t.reservationID = ""
-		}
-		return err
+		t.cleanupUnpublishedStage()
+		return nil, err
 	}
 	t.stage = nil
-	if t.existed && t.state.root.replace != nil {
-		return t.replacePublishedFile(stageInfo)
+	return stageInfo, nil
+}
+
+func (t *writeTxn) prepareStoragePublication(stageInfo os.FileInfo) error {
+	identity := files.MediaFileIdentity(stageInfo)
+	operation := "dav_put"
+	switch t.state.method {
+	case "COPY":
+		operation = "dav_copy"
+	case "LOCK":
+		operation = "dav_lock"
 	}
+	if t.existed {
+		operation = "dav_replace"
+	}
+	if !files.MediaFileHasSingleLink(stageInfo) || identity == "" {
+		return errResourceChanged
+	}
+	return t.service.store.PrepareStoragePublications(operation, []auth.StoragePublication{
+		{ReservationID: t.reservationID, Identity: identity},
+	})
+}
+
+func (t *writeTxn) cleanupUnpublishedStage() {
+	_ = unlinkAt(t.parent, t.stageName, false)
+	if t.reservationID != "" {
+		_ = t.service.store.ReleaseStorageReservation(t.reservationID)
+		t.reservationID = ""
+	}
+}
+
+func (t *writeTxn) publishAndFinalizeTarget(stageInfo os.FileInfo) error {
+	var err error
 	if t.existed {
 		err = t.exchange(t.stageName, t.leaf)
 	} else {
 		err = renameAtNoReplace(t.parent, t.stageName, t.parent, t.leaf)
 	}
 	if err != nil {
-		_ = unlinkAt(t.parent, t.stageName, false)
-		if t.reservationID != "" {
-			_ = t.service.store.ReleaseStorageReservation(t.reservationID)
-			t.reservationID = ""
-		}
+		t.cleanupUnpublishedStage()
 		return err
 	}
-	rollback := func(cause error) error {
-		var rollbackErr error
-		if t.existed {
-			rollbackErr = t.exchange(t.stageName, t.leaf)
-		} else {
-			newInfo, statErr := statAtNoFollow(t.parent, t.leaf)
-			if statErr == nil && sameIdentity(newInfo, stageInfo) {
-				rollbackErr = unlinkAt(t.parent, t.leaf, false)
-			}
-		}
-		_ = t.syncParent()
-		// If the reverse exchange failed, stageName still holds the original
-		// target. Keep it recoverable; deleting it would destroy the only copy.
-		if rollbackErr == nil {
-			_ = unlinkAt(t.parent, t.stageName, false)
-		} else if t.existed {
-			slog.Error("dav overwrite rollback failed; previous file remains in staging for manual recovery",
-				"path", t.name, "staging", t.stageName, "error", rollbackErr)
-		}
-		return errors.Join(cause, rollbackErr)
+	if err := t.verifyPostSwapState(stageInfo); err != nil {
+		return t.rollbackCommittedSwap(stageInfo, err)
 	}
+	if err := t.syncParent(); err != nil {
+		return t.rollbackCommittedSwap(stageInfo, err)
+	}
+	if t.existed {
+		t.cleanupPriorOverwrittenStage()
+		return nil
+	}
+	return t.finalizeCreatedTarget()
+}
+
+func (t *writeTxn) verifyPostSwapState(stageInfo os.FileInfo) error {
 	newInfo, err := statAtNoFollow(t.parent, t.leaf)
 	if err != nil || !sameIdentity(stageInfo, newInfo) ||
-		!sameDirectory(t.state.root.file, path.Dir(t.name), t.parentInfo) || !t.state.root.current() {
-		return rollback(errResourceChanged)
+		!sameDirectory(t.state.root.file, path.Dir(t.name), t.parentInfo) ||
+		!t.state.root.current() {
+		return errResourceChanged
 	}
 	if t.existed {
 		oldInfo, oldErr := statAtNoFollow(t.parent, t.stageName)
 		if oldErr != nil || !sameFileContentVersion(t.originalInfo, oldInfo) {
-			return rollback(errResourceChanged)
+			return errResourceChanged
 		}
 	}
 	if t.state.method == "COPY" && !t.state.copyComplete(t.copyReadCount) {
 		if t.state.preconditions != nil {
 			t.state.conditionFailed = true
 		}
-		return rollback(errResourceChanged)
+		return errResourceChanged
+	}
+	return nil
+}
+
+func (t *writeTxn) rollbackCommittedSwap(stageInfo os.FileInfo, cause error) error {
+	var rollbackErr error
+	if t.existed {
+		rollbackErr = t.exchange(t.stageName, t.leaf)
+	} else {
+		newInfo, statErr := statAtNoFollow(t.parent, t.leaf)
+		if statErr == nil && sameIdentity(newInfo, stageInfo) {
+			rollbackErr = unlinkAt(t.parent, t.leaf, false)
+		}
+	}
+	_ = t.syncParent()
+	// If the reverse exchange failed, stageName still holds the original
+	// target. Keep it recoverable; deleting it would destroy the only copy.
+	if rollbackErr == nil {
+		_ = unlinkAt(t.parent, t.stageName, false)
+	} else if t.existed {
+		slog.Error(
+			"dav overwrite rollback failed; previous file remains in staging for manual recovery",
+			"path", t.name,
+			"staging", t.stageName,
+			"error", rollbackErr,
+		)
+	}
+	return errors.Join(cause, rollbackErr)
+}
+
+func (t *writeTxn) cleanupPriorOverwrittenStage() {
+	if err := unlinkAt(t.parent, t.stageName, false); err != nil {
+		slog.Warn("dav overwrite committed with recoverable prior file", "path", t.name, "staging", t.stageName, "error", err)
+		return
 	}
 	if err := t.syncParent(); err != nil {
-		return rollback(err)
+		slog.Warn("dav overwrite committed; prior-file cleanup durability is uncertain", "path", t.name, "staging", t.stageName, "error", err)
 	}
-	if t.existed {
-		if err := unlinkAt(t.parent, t.stageName, false); err != nil {
-			slog.Warn("dav overwrite committed with recoverable prior file", "path", t.name, "staging", t.stageName, "error", err)
-			return nil
+}
+
+func (t *writeTxn) finalizeCreatedTarget() error {
+	newInfo, statErr := statAtNoFollow(t.parent, t.leaf)
+	if t.reservationID != "" {
+		identity := files.MediaFileIdentity(newInfo)
+		if statErr != nil || !files.MediaFileHasSingleLink(newInfo) || identity == "" || !t.state.root.current() {
+			t.state.writeStatus = http.StatusInternalServerError
+			return errResourceChanged
 		}
-		if err := t.syncParent(); err != nil {
-			slog.Warn("dav overwrite committed; prior-file cleanup durability is uncertain", "path", t.name, "staging", t.stageName, "error", err)
-			return nil
+		if err := t.service.store.CommitStorageReservationWithIdentity(t.reservationID, identity); err != nil {
+			t.state.writeStatus = http.StatusInternalServerError
+			return err
 		}
+		t.reservationID = ""
 	}
-	if !t.existed {
-		newInfo, statErr := statAtNoFollow(t.parent, t.leaf)
-		if t.reservationID != "" {
-			identity := files.MediaFileIdentity(newInfo)
-			if statErr != nil || !files.MediaFileHasSingleLink(newInfo) || identity == "" || !t.state.root.current() {
-				t.state.writeStatus = http.StatusInternalServerError
-				return errResourceChanged
-			}
-			if err := t.service.store.CommitStorageReservationWithIdentity(t.reservationID, identity); err != nil {
-				t.state.writeStatus = http.StatusInternalServerError
-				return err
-			}
-			t.reservationID = ""
-		}
-		t.state.addCreated(t.name, t.parentInfo, newInfo, false)
-	}
+	t.state.addCreated(t.name, t.parentInfo, newInfo, false)
 	return nil
 }
 

@@ -3,9 +3,7 @@ package gallery
 import (
 	"database/sql"
 	"errors"
-	"time"
 
-	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/mediapending"
 	"github.com/lengsukq/lightisle/core/internal/mediascope"
 )
@@ -14,8 +12,8 @@ import (
 // administrator). The original path is retained separately from the hidden
 // index path so ordinary media queries cannot expose stale files.
 func (l *Library) MissingMedia(roots []string, after int64, limit int) ([]mediapending.Item, int64, error) {
-	if after < 0 || limit < 1 || limit > 100 {
-		return nil, 0, errors.New("invalid_page")
+	if err := mediapending.ValidateMissingPage(after, limit); err != nil {
+		return nil, 0, err
 	}
 	share, err := l.share()
 	if err != nil {
@@ -55,12 +53,8 @@ func (l *Library) MissingMedia(roots []string, after int64, limit int) ([]mediap
 	if err := rows.Err(); err != nil {
 		return nil, 0, err
 	}
-	var next int64
-	if len(items) > limit {
-		items = items[:limit]
-		next = items[len(items)-1].ID
-	}
-	return items, next, nil
+	page, next := mediapending.FinalizeMissingPage(items, limit)
+	return page, next, nil
 }
 
 // AttachMissing deliberately merges old user data into the current file at
@@ -84,6 +78,7 @@ func (l *Library) AttachMissingGuarded(id int64, roots []string, guard mediapend
 		return err
 	}
 	defer tx.Rollback()
+
 	var original string
 	args := append([]any{share, id}, scope...)
 	if err := tx.QueryRow(`SELECT a.missing_path FROM assets a WHERE a.share=? AND a.id=? AND a.missing_path<>''`+clause, args...).Scan(&original); err != nil {
@@ -92,6 +87,7 @@ func (l *Library) AttachMissingGuarded(id int64, roots []string, guard mediapend
 	if err := mediapending.CheckGuard(guard, original); err != nil {
 		return err
 	}
+
 	var target, size, modified int64
 	var identity string
 	err = tx.QueryRow(`SELECT id,file_identity,size,modified FROM assets WHERE share=? AND path=? AND missing_path=''`, share, original).Scan(&target, &identity, &size, &modified)
@@ -101,12 +97,9 @@ func (l *Library) AttachMissingGuarded(id int64, roots []string, guard mediapend
 	if err != nil {
 		return err
 	}
-	if identity == "" {
-		return mediapending.ErrTargetUnavailable
-	}
-	entry := files.Entry{Path: original, Identity: identity, Size: size, Modified: time.Unix(0, modified)}
-	if err := l.storage.VerifyScannedMedia(entry); err != nil {
-		return mediapending.ErrTargetUnavailable
+	entry, err := mediapending.VerifyAttachTarget(l.storage, original, identity, size, modified)
+	if err != nil {
+		return err
 	}
 	if _, err := tx.Exec(`UPDATE assets SET favorite=MAX(favorite,(SELECT favorite FROM assets WHERE id=?)) WHERE share=? AND id=?`, id, share, target); err != nil {
 		return err
@@ -143,36 +136,5 @@ func (l *Library) DiscardMissingGuarded(id int64, roots []string, guard mediapen
 	if err != nil {
 		return err
 	}
-	clause, scope, err := mediascope.Clause("a.missing_path", roots)
-	if err != nil {
-		return err
-	}
-	args := append([]any{share, id}, scope...)
-	tx, err := l.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	var original string
-	if err := tx.QueryRow(`SELECT a.missing_path FROM assets a WHERE a.share=? AND a.id=? AND a.missing_path<>''`+clause, args...).Scan(&original); err != nil {
-		return err
-	}
-	if err := mediapending.CheckGuard(guard, original); err != nil {
-		return err
-	}
-	result, err := tx.Exec(`DELETE FROM assets AS a WHERE a.share=? AND a.id=? AND a.missing_path<>''`+clause, args...)
-	if err != nil {
-		return err
-	}
-	n, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if n == 0 {
-		return sql.ErrNoRows
-	}
-	if err := mediapending.CheckGuard(guard, original); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return mediapending.DiscardMissingRow(l.db, "assets", "a", share, id, roots, guard)
 }

@@ -9,7 +9,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -41,51 +40,12 @@ func RollbackMetadata(dataDir, transactionID string) (OfflineRollbackResult, err
 		return result, err
 	}
 	defer root.Close()
-	activeTransaction, err := readActiveMetadata(root)
-	if err != nil {
-		return result, err
-	}
-	if activeTransaction != transactionID {
-		return result, errors.New("rollback_not_eligible_not_current_transaction")
-	}
+
 	rollbackDir := rollbackPrefix + transactionID
-	receipt, err := loadRollbackReceipt(root, rollbackDir, nil, false)
+	plan, receipt, err := prepareRollbackJournalPlan(root, transactionID, rollbackDir)
 	if err != nil {
 		return result, err
 	}
-	if receipt.State != rollbackStateActivated {
-		return result, errors.New("rollback_not_eligible")
-	}
-	if _, err := root.Lstat(path.Join(rollbackDir, rollbackAfterName)); err == nil {
-		return result, errors.New("rollback_after_already_exists")
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return result, err
-	}
-	journalFiles := make([]rollbackJournalFile, 0, len(receipt.Files)*3)
-	var capturedBytes int64
-	for _, name := range rollbackNames(receipt.Files) {
-		entry, err := captureRollbackFile(root, name)
-		if err != nil {
-			return result, fmt.Errorf("capture current metadata %s: %w", name, err)
-		}
-		if entry.Present {
-			if entry.Size > maxMetadataSnapshotBytes-capturedBytes {
-				return result, ErrTooLarge
-			}
-			capturedBytes += entry.Size
-		}
-		journalFiles = append(journalFiles, entry)
-	}
-	install := rollbackInstallPrefix + transactionID
-	if _, err := root.Lstat(install); err == nil {
-		return result, errors.New("rollback_install_already_exists")
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return result, err
-	}
-	plan := activationPlan{Operation: "rollback", TransactionID: transactionID, Stage: receipt.Stage,
-		PreviousTransactionID: receipt.PreviousTransactionID,
-		Install:               install, Rollback: rollbackDir, Files: append([]activationFile(nil), receipt.Files...),
-		RollbackFiles: journalFiles}
 	if err := saveActivationPlan(root, activationJournalName, plan); err != nil {
 		return result, err
 	}
@@ -106,137 +66,251 @@ func RollbackMetadata(dataDir, transactionID string) (OfflineRollbackResult, err
 	return result, nil
 }
 
-func undoMetadataRollback(root *os.Root, plan activationPlan) error {
-	if plan.Operation != "rollback" || !validTransactionID(plan.TransactionID) ||
-		plan.Rollback != rollbackPrefix+plan.TransactionID || plan.Install != rollbackInstallPrefix+plan.TransactionID {
-		return ErrInvalid
+func prepareRollbackJournalPlan(
+	root *os.Root,
+	transactionID string,
+	rollbackDir string,
+) (activationPlan, metadataRollbackReceipt, error) {
+	activeTransaction, err := readActiveMetadata(root)
+	if err != nil {
+		return activationPlan{}, metadataRollbackReceipt{}, err
 	}
-	receipt, err := loadRollbackReceipt(root, plan.Rollback, nil, true)
+	if activeTransaction != transactionID {
+		return activationPlan{}, metadataRollbackReceipt{}, errors.New("rollback_not_eligible_not_current_transaction")
+	}
+	receipt, err := loadRollbackReceipt(root, rollbackDir, nil, false)
+	if err != nil {
+		return activationPlan{}, metadataRollbackReceipt{}, err
+	}
+	if receipt.State != rollbackStateActivated {
+		return activationPlan{}, metadataRollbackReceipt{}, errors.New("rollback_not_eligible")
+	}
+	if _, err := root.Lstat(path.Join(rollbackDir, rollbackAfterName)); err == nil {
+		return activationPlan{}, metadataRollbackReceipt{}, errors.New("rollback_after_already_exists")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return activationPlan{}, metadataRollbackReceipt{}, err
+	}
+	journalFiles, err := captureRollbackLiveSnapshot(root, receipt.Files)
+	if err != nil {
+		return activationPlan{}, metadataRollbackReceipt{}, err
+	}
+	install := rollbackInstallPrefix + transactionID
+	if _, err := root.Lstat(install); err == nil {
+		return activationPlan{}, metadataRollbackReceipt{}, errors.New("rollback_install_already_exists")
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return activationPlan{}, metadataRollbackReceipt{}, err
+	}
+	plan := activationPlan{
+		Operation:             "rollback",
+		TransactionID:         transactionID,
+		Stage:                 receipt.Stage,
+		PreviousTransactionID: receipt.PreviousTransactionID,
+		Install:               install,
+		Rollback:              rollbackDir,
+		Files:                 append([]activationFile(nil), receipt.Files...),
+		RollbackFiles:         journalFiles,
+	}
+	return plan, receipt, nil
+}
+
+func captureRollbackLiveSnapshot(root *os.Root, files []activationFile) ([]rollbackJournalFile, error) {
+	names := rollbackNames(files)
+	journalFiles := make([]rollbackJournalFile, 0, len(names))
+	var capturedBytes int64
+	for _, name := range names {
+		entry, err := captureRollbackFile(root, name)
+		if err != nil {
+			return nil, fmt.Errorf("capture current metadata %s: %w", name, err)
+		}
+		if entry.Present {
+			if entry.Size > maxMetadataSnapshotBytes-capturedBytes {
+				return nil, ErrTooLarge
+			}
+			capturedBytes += entry.Size
+		}
+		journalFiles = append(journalFiles, entry)
+	}
+	return journalFiles, nil
+}
+
+func undoMetadataRollback(root *os.Root, plan activationPlan) error {
+	receipt, err := loadVerifiedRollbackReceiptForRecovery(root, plan)
 	if err != nil {
 		return err
 	}
-	if receipt.TransactionID != plan.TransactionID || !sameActivationFiles(receipt.Files, plan.Files) {
-		return errors.New("rollback_receipt_journal_mismatch")
-	}
-	if receipt.PreviousTransactionID != plan.PreviousTransactionID {
-		return errors.New("rollback_previous_transaction_mismatch")
-	}
-	afterPath := path.Join(plan.Rollback, rollbackAfterName)
-	if _, err := root.Lstat(afterPath); errors.Is(err, os.ErrNotExist) {
-		rollbackRoot, openErr := root.OpenRoot(plan.Rollback)
-		if openErr != nil {
-			return openErr
-		}
-		openErr = rollbackRoot.Mkdir(rollbackAfterName, 0700)
-		closeErr := rollbackRoot.Close()
-		if openErr != nil {
-			return openErr
-		}
-		if closeErr != nil {
-			return closeErr
-		}
-		if err := syncPrivateDir(root); err != nil {
-			return err
-		}
-	} else if err != nil {
-		return err
-	}
-	after, err := root.OpenRoot(afterPath)
+	after, afterPath, err := openOrCreateRollbackAfterRoot(root, plan.Rollback)
 	if err != nil {
 		return err
 	}
 	defer after.Close()
 
-	beforeByName := make(map[string]activationFile, len(plan.Files))
-	for _, before := range plan.Files {
-		beforeByName[before.Name] = before
-	}
-	for _, current := range plan.RollbackFiles {
-		archivedName := current.Name
-		archivedInfo, archivedErr := after.Lstat(archivedName)
-		liveInfo, liveErr := root.Lstat(current.Name)
-		if current.Present {
-			if archivedErr == nil {
-				if !archivedInfo.Mode().IsRegular() {
-					return errors.New("rollback_after_file_invalid")
-				}
-				if err := verifyRootFile(after, archivedName, current.SHA256, current.Size, nil); err != nil {
-					return err
-				}
-				if liveErr == nil {
-					if err := currentIsRestored(root, current.Name, liveInfo, beforeByName); err != nil {
-						return err
-					}
-				} else if !errors.Is(liveErr, os.ErrNotExist) {
-					return liveErr
-				}
-				continue
-			}
-			if !errors.Is(archivedErr, os.ErrNotExist) {
-				return archivedErr
-			}
-			if liveErr != nil {
-				if !errors.Is(liveErr, os.ErrNotExist) {
-					return liveErr
-				}
-				return errors.New("rollback_current_file_missing")
-			}
-			if !liveInfo.Mode().IsRegular() {
-				return ErrInvalid
-			}
-			if err := verifyRootFile(root, current.Name, current.SHA256, current.Size, nil); err != nil {
-				return err
-			}
-			if err := root.Rename(current.Name, path.Join(afterPath, current.Name)); err != nil {
-				return err
-			}
-			if err := syncPrivateDir(root); err != nil {
-				return err
-			}
-			if err := syncPrivateDir(after); err != nil {
-				return err
-			}
-		} else {
-			if archivedErr == nil {
-				return errors.New("rollback_unexpected_after_file")
-			}
-			if !errors.Is(archivedErr, os.ErrNotExist) {
-				return archivedErr
-			}
-			if liveErr == nil {
-				if err := currentIsRestored(root, current.Name, liveInfo, beforeByName); err != nil {
-					return err
-				}
-			} else if !errors.Is(liveErr, os.ErrNotExist) {
-				return liveErr
-			}
-		}
-	}
-	if err := syncPrivateDir(root); err != nil {
+	if err := archiveDisplacedRollbackFiles(root, after, afterPath, plan); err != nil {
 		return err
 	}
-
-	installInfo, installErr := root.Lstat(plan.Install)
-	if errors.Is(installErr, os.ErrNotExist) {
-		if err := root.Mkdir(plan.Install, 0700); err != nil {
-			return err
-		}
-		installInfo = nil
-	} else if installErr != nil {
-		return installErr
-	} else if !installInfo.IsDir() || installInfo.Mode()&os.ModeSymlink != 0 || installInfo.Mode().Perm()&0077 != 0 {
-		return errors.New("rollback_install_directory_invalid")
-	}
-	installRoot, err := root.OpenRoot(plan.Install)
+	installRoot, err := openOrCreateRollbackInstallRoot(root, plan.Install)
 	if err != nil {
 		return err
 	}
 	defer installRoot.Close()
+
 	rollbackRoot, err := root.OpenRoot(plan.Rollback)
 	if err != nil {
 		return err
 	}
 	defer rollbackRoot.Close()
+
+	if err := restorePreviousRollbackOriginals(root, installRoot, rollbackRoot, plan); err != nil {
+		return err
+	}
+	if err := verifyRolledBackLiveState(root, plan.Files); err != nil {
+		return err
+	}
+	return finalizeRollbackReceiptAndJournal(root, plan, receipt)
+}
+
+func loadVerifiedRollbackReceiptForRecovery(
+	root *os.Root,
+	plan activationPlan,
+) (metadataRollbackReceipt, error) {
+	if plan.Operation != "rollback" || !validTransactionID(plan.TransactionID) ||
+		plan.Rollback != rollbackPrefix+plan.TransactionID ||
+		plan.Install != rollbackInstallPrefix+plan.TransactionID {
+		return metadataRollbackReceipt{}, ErrInvalid
+	}
+	receipt, err := loadRollbackReceipt(root, plan.Rollback, nil, true)
+	if err != nil {
+		return metadataRollbackReceipt{}, err
+	}
+	if receipt.TransactionID != plan.TransactionID || !sameActivationFiles(receipt.Files, plan.Files) {
+		return metadataRollbackReceipt{}, errors.New("rollback_receipt_journal_mismatch")
+	}
+	if receipt.PreviousTransactionID != plan.PreviousTransactionID {
+		return metadataRollbackReceipt{}, errors.New("rollback_previous_transaction_mismatch")
+	}
+	return receipt, nil
+}
+
+func openOrCreateRollbackAfterRoot(root *os.Root, rollbackDir string) (*os.Root, string, error) {
+	afterPath := path.Join(rollbackDir, rollbackAfterName)
+	if _, err := root.Lstat(afterPath); errors.Is(err, os.ErrNotExist) {
+		rollbackRoot, openErr := root.OpenRoot(rollbackDir)
+		if openErr != nil {
+			return nil, "", openErr
+		}
+		mkdirErr := rollbackRoot.Mkdir(rollbackAfterName, 0700)
+		closeErr := rollbackRoot.Close()
+		if mkdirErr != nil {
+			return nil, "", mkdirErr
+		}
+		if closeErr != nil {
+			return nil, "", closeErr
+		}
+		if err := syncPrivateDir(root); err != nil {
+			return nil, "", err
+		}
+	} else if err != nil {
+		return nil, "", err
+	}
+	after, err := root.OpenRoot(afterPath)
+	if err != nil {
+		return nil, "", err
+	}
+	return after, afterPath, nil
+}
+
+func archiveDisplacedRollbackFiles(
+	root *os.Root,
+	after *os.Root,
+	afterPath string,
+	plan activationPlan,
+) error {
+	beforeByName := make(map[string]activationFile, len(plan.Files))
+	for _, before := range plan.Files {
+		beforeByName[before.Name] = before
+	}
+	for _, current := range plan.RollbackFiles {
+		if err := archiveSingleRollbackFile(root, after, afterPath, current, beforeByName); err != nil {
+			return err
+		}
+	}
+	return syncPrivateDir(root)
+}
+
+func archiveSingleRollbackFile(
+	root *os.Root,
+	after *os.Root,
+	afterPath string,
+	current rollbackJournalFile,
+	beforeByName map[string]activationFile,
+) error {
+	archivedInfo, archivedErr := after.Lstat(current.Name)
+	liveInfo, liveErr := root.Lstat(current.Name)
+	if !current.Present {
+		if archivedErr == nil {
+			return errors.New("rollback_unexpected_after_file")
+		}
+		if !errors.Is(archivedErr, os.ErrNotExist) {
+			return archivedErr
+		}
+		if liveErr == nil {
+			return currentIsRestored(root, current.Name, liveInfo, beforeByName)
+		}
+		if !errors.Is(liveErr, os.ErrNotExist) {
+			return liveErr
+		}
+		return nil
+	}
+	if archivedErr == nil {
+		if !archivedInfo.Mode().IsRegular() {
+			return errors.New("rollback_after_file_invalid")
+		}
+		if err := verifyRootFile(after, current.Name, current.SHA256, current.Size, nil); err != nil {
+			return err
+		}
+		if liveErr == nil {
+			return currentIsRestored(root, current.Name, liveInfo, beforeByName)
+		}
+		if !errors.Is(liveErr, os.ErrNotExist) {
+			return liveErr
+		}
+		return nil
+	}
+	if !errors.Is(archivedErr, os.ErrNotExist) {
+		return archivedErr
+	}
+	if liveErr != nil {
+		if !errors.Is(liveErr, os.ErrNotExist) {
+			return liveErr
+		}
+		return errors.New("rollback_current_file_missing")
+	}
+	if !liveInfo.Mode().IsRegular() {
+		return ErrInvalid
+	}
+	if err := verifyRootFile(root, current.Name, current.SHA256, current.Size, nil); err != nil {
+		return err
+	}
+	return renameAndSyncDirs(root, current.Name, path.Join(afterPath, current.Name), root, after)
+}
+
+func openOrCreateRollbackInstallRoot(root *os.Root, installDir string) (*os.Root, error) {
+	if _, installErr := root.Lstat(installDir); errors.Is(installErr, os.ErrNotExist) {
+		if err := root.Mkdir(installDir, 0700); err != nil {
+			return nil, err
+		}
+		return root.OpenRoot(installDir)
+	} else if installErr != nil {
+		return nil, installErr
+	}
+	return openOwnedPrivateSubroot(root, installDir, "rollback_install_directory_invalid", "")
+}
+
+func restorePreviousRollbackOriginals(
+	root *os.Root,
+	installRoot *os.Root,
+	rollbackRoot *os.Root,
+	plan activationPlan,
+) error {
 	for _, before := range plan.Files {
 		_, liveErr := root.Lstat(before.Name)
 		if !before.HadOriginal {
@@ -257,44 +331,60 @@ func undoMetadataRollback(root *os.Root, plan activationPlan) error {
 		if !errors.Is(liveErr, os.ErrNotExist) {
 			return liveErr
 		}
-		staged := false
-		if _, err := installRoot.Lstat(before.Name); err == nil {
-			if verifyRootFile(installRoot, before.Name, before.OriginalSHA256, before.OriginalSize, nil) == nil {
-				staged = true
-			} else if err := installRoot.Remove(before.Name); err != nil {
-				return err
-			}
-		} else if !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-		if !staged {
-			if err := copyRootFile(rollbackRoot, before.Name, installRoot, before.Name, before.OriginalSHA256, before.OriginalSize); err != nil {
-				return err
-			}
-		}
-		if err := root.Rename(path.Join(plan.Install, before.Name), before.Name); err != nil {
-			return err
-		}
-		if err := syncPrivateDir(root); err != nil {
+		if err := stageAndRestoreRollbackFile(root, installRoot, rollbackRoot, plan.Install, before); err != nil {
 			return err
 		}
 	}
-	for _, before := range plan.Files {
+	return nil
+}
+
+func stageAndRestoreRollbackFile(
+	root *os.Root,
+	installRoot *os.Root,
+	rollbackRoot *os.Root,
+	installDir string,
+	before activationFile,
+) error {
+	staged := false
+	if _, err := installRoot.Lstat(before.Name); err == nil {
+		if verifyRootFile(installRoot, before.Name, before.OriginalSHA256, before.OriginalSize, nil) == nil {
+			staged = true
+		} else if err := installRoot.Remove(before.Name); err != nil {
+			return err
+		}
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return err
+	}
+	if !staged {
+		if err := copyRootFile(rollbackRoot, before.Name, installRoot, before.Name, before.OriginalSHA256, before.OriginalSize); err != nil {
+			return err
+		}
+	}
+	if err := root.Rename(path.Join(installDir, before.Name), before.Name); err != nil {
+		return err
+	}
+	return syncPrivateDir(root)
+}
+
+func verifyRolledBackLiveState(root *os.Root, files []activationFile) error {
+	for _, before := range files {
 		if before.HadOriginal {
 			if err := verifyRootFile(root, before.Name, before.OriginalSHA256, before.OriginalSize, nil); err != nil {
 				return err
 			}
 		}
-		if strings.HasSuffix(before.Name, ".sqlite") {
-			for _, suffix := range []string{"-wal", "-shm"} {
-				if _, err := root.Lstat(before.Name + suffix); err == nil {
-					return errors.New("rollback_sqlite_sidecar_remains_live")
-				} else if !errors.Is(err, os.ErrNotExist) {
-					return err
-				}
-			}
+		if err := ensureNoLiveSQLiteSidecars(root, before.Name, "rollback_sqlite_sidecar_remains_live"); err != nil {
+			return err
 		}
 	}
+	return nil
+}
+
+func finalizeRollbackReceiptAndJournal(
+	root *os.Root,
+	plan activationPlan,
+	receipt metadataRollbackReceipt,
+) error {
 	if receipt.State == rollbackStateActivated {
 		receipt.State = rollbackStateRolledBack
 		receipt.RolledBackAt = time.Now().UTC().Unix()
@@ -306,22 +396,7 @@ func undoMetadataRollback(root *os.Root, plan activationPlan) error {
 	if err := writeRollbackReceipt(root, plan.Rollback, receipt); err != nil {
 		return err
 	}
-	if err := writeActiveMetadata(root, receipt.PreviousTransactionID); err != nil {
-		return err
-	}
-	if err := markRecoverySessionRevocation(root); err != nil {
-		return err
-	}
-	if err := root.RemoveAll(plan.Install); err != nil {
-		return err
-	}
-	if err := syncPrivateDir(root); err != nil {
-		return err
-	}
-	if err := root.Remove(activationJournalName); err != nil {
-		return err
-	}
-	return syncPrivateDir(root)
+	return finalizeMetadataJournalState(root, receipt.PreviousTransactionID, plan.Install, false)
 }
 
 func currentIsRestored(root *os.Root, name string, info os.FileInfo, before map[string]activationFile) error {

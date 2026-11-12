@@ -65,27 +65,19 @@ type appsIPCRequest struct {
 }
 
 func emitAppsReply(requestID, operation string, result any, err error) {
-	response := map[string]any{
-		"schemaVersion": 1,
-		"operation":     operation,
-		"requestID":     requestID,
-	}
-	if result != nil {
-		response["result"] = result
-	}
+	var errMsg string
 	if err != nil {
-		response["error"] = appsIPCErrorMessage(err)
+		errMsg = appsIPCErrorMessage(err)
 	}
-	data, encodeErr := json.Marshal(response)
-	if encodeErr != nil {
-		data, _ = json.Marshal(map[string]any{
-			"schemaVersion": 1,
-			"operation":     operation,
-			"requestID":     requestID,
-			"error":         "轻应用与 MCP 状态序列化失败",
-		})
-	}
-	writeStdoutLine("LIGHTISLE_APPS " + base64.RawURLEncoding.EncodeToString(data))
+	writeIPCEnvelope(ipcEnvelopeOptions{
+		Prefix:        "LIGHTISLE_APPS",
+		RequestID:     requestID,
+		Operation:     operation,
+		Result:        result,
+		IncludeResult: result != nil,
+		ErrorMessage:  errMsg,
+		FallbackError: "轻应用与 MCP 状态序列化失败",
+	})
 }
 
 func appsIPCErrorMessage(err error) string {

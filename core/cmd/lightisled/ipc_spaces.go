@@ -65,27 +65,19 @@ type spacesIPCRequest struct {
 }
 
 func emitSpacesReply(requestID, operation string, result any, err error) {
-	response := map[string]any{
-		"schemaVersion": 1,
-		"operation":     operation,
-		"requestID":     requestID,
-	}
-	if result != nil {
-		response["result"] = result
-	}
+	var errMsg string
 	if err != nil {
-		response["error"] = spacesErrorCode(err)
+		errMsg = spacesErrorCode(err)
 	}
-	data, encodeErr := json.Marshal(response)
-	if encodeErr != nil {
-		data, _ = json.Marshal(map[string]any{
-			"schemaVersion": 1,
-			"operation":     operation,
-			"requestID":     requestID,
-			"error":         "spaces_response_encode_failed",
-		})
-	}
-	writeStdoutLine("LIGHTISLE_SPACES " + base64.RawURLEncoding.EncodeToString(data))
+	writeIPCEnvelope(ipcEnvelopeOptions{
+		Prefix:        "LIGHTISLE_SPACES",
+		RequestID:     requestID,
+		Operation:     operation,
+		Result:        result,
+		IncludeResult: result != nil,
+		ErrorMessage:  errMsg,
+		FallbackError: "spaces_response_encode_failed",
+	})
 }
 
 func spacesErrorCode(err error) string {

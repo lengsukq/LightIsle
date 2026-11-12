@@ -90,34 +90,8 @@ func (a *API) extractZipArchive(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "root_unavailable"})
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 2048)
-	defer r.Body.Close()
-	var body struct {
-		Path string `json:"path"`
-	}
-	dec := json.NewDecoder(r.Body)
-	dec.DisallowUnknownFields()
-	if dec.Decode(&body) != nil {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
-		return
-	}
-	srcPath := path.Clean(strings.TrimSpace(body.Path))
-	ext := path.Ext(srcPath)
-	if srcPath == "" || srcPath == "." || !strings.EqualFold(ext, ".zip") {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_zip_archive"})
-		return
-	}
-	stem := strings.TrimSuffix(path.Base(srcPath), ext)
-	if stem == "" || stem == "." || stem == ".." || files.IsInternalName(stem) {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "path_not_allowed"})
-		return
-	}
-	parentDir := path.Dir(srcPath)
-	baseTarget := stem
-	if parentDir != "." {
-		baseTarget = path.Join(parentDir, stem)
-	}
-	if !a.allowFile(w, r, srcPath, false) || !a.allowFile(w, r, baseTarget, true) {
+	srcPath, baseTarget, ok := a.decodeAndAuthorizeZipTarget(w, r)
+	if !ok {
 		return
 	}
 	if !acquireArchiveSlot(w, false) {
@@ -125,44 +99,17 @@ func (a *API) extractZipArchive(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { <-archiveSlots }()
 
-	zipFile, zipInfo, err := a.files.Read(srcPath)
-	if err != nil {
-		fileError(w, err)
+	zipFile, zr, ok := a.openBoundedZipReader(w, srcPath)
+	if !ok {
 		return
 	}
 	defer zipFile.Close()
-	if !zipInfo.Mode().IsRegular() || zipInfo.Size() <= 0 {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_zip_archive"})
-		return
-	}
-	if zipInfo.Size() > archiveMaxBytes {
-		jsonReply(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "archive_limit_exceeded"})
-		return
-	}
-	zr, err := zip.NewReader(zipFile, zipInfo.Size())
-	if err != nil {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_zip_archive"})
-		return
-	}
-	if len(zr.File) > archiveMaxEntries {
-		jsonReply(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "archive_limit_exceeded"})
-		return
-	}
 
 	plan, dirs, err := buildZipExtractPlan(zr.File)
 	if err != nil {
-		if errors.Is(err, errArchiveLimit) {
-			jsonReply(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "archive_limit_exceeded"})
-			return
-		}
-		if errors.Is(err, files.ErrType) {
-			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "archive_unsafe_entry"})
-			return
-		}
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "path_not_allowed"})
+		replyZipPlanError(w, err)
 		return
 	}
-
 	targetDir, err := createExtractTargetFolder(a.files, baseTarget)
 	if err != nil {
 		fileError(w, err)
@@ -170,105 +117,13 @@ func (a *API) extractZipArchive(w http.ResponseWriter, r *http.Request) {
 	}
 
 	accounted := a.rootID != "" && managedStorageName(targetDir)
-	reservations := make([]string, len(plan))
-	if accounted {
-		for idx, item := range plan {
-			resID, tracked, resErr := a.reserveUploadQuota(r, path.Join(targetDir, item.relPath), item.size)
-			if resErr != nil || !tracked || resID == "" {
-				for prev := 0; prev < idx; prev++ {
-					_ = a.auth.ReleaseStorageReservation(reservations[prev])
-				}
-				_ = a.files.MoveToTrash(targetDir)
-				if resErr != nil {
-					storageQuotaError(w, resErr)
-					return
-				}
-				jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_destination_not_assigned"})
-				return
-			}
-			reservations[idx] = resID
-		}
+	reservations, ok := a.reserveZipExtractQuotas(w, r, targetDir, plan, accounted)
+	if !ok {
+		return
 	}
-
-	releaseRemaining := func(fromIdx int) {
-		if !accounted {
-			return
-		}
-		for i := fromIdx; i < len(reservations); i++ {
-			if reservations[i] != "" {
-				_ = a.auth.ReleaseStorageReservation(reservations[i])
-				reservations[i] = ""
-			}
-		}
-	}
-
-	for _, relDir := range dirs {
-		if err := r.Context().Err(); err != nil {
-			releaseRemaining(0)
-			return
-		}
-		fullDir := path.Join(targetDir, relDir)
-		if err := a.files.Mkdir(fullDir); err != nil && !errors.Is(err, files.ErrExists) && !errors.Is(err, fs.ErrExist) {
-			releaseRemaining(0)
-			fileError(w, err)
-			return
-		}
-	}
-
-	uploader, hasIdentityUploader := a.files.(interface {
-		UploadWithIdentity(string, io.Reader) (int64, string, error)
-	})
-
-	extractedFiles := 0
-	for idx, item := range plan {
-		if err := r.Context().Err(); err != nil {
-			releaseRemaining(idx)
-			return
-		}
-		rc, openErr := item.file.Open()
-		if openErr != nil {
-			releaseRemaining(idx)
-			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_zip_archive"})
-			return
-		}
-		reader := &exactZipEntryReader{r: rc, expected: item.size}
-		destPath := path.Join(targetDir, item.relPath)
-		var written int64
-		var identity string
-		var upErr error
-		if accounted && hasIdentityUploader {
-			written, identity, upErr = uploader.UploadWithIdentity(destPath, reader)
-		} else {
-			written, upErr = a.files.Upload(destPath, reader)
-		}
-		_ = rc.Close()
-		if upErr != nil {
-			if accounted && !errors.Is(upErr, files.ErrPublishedSync) {
-				_ = a.auth.ReleaseStorageReservation(reservations[idx])
-				reservations[idx] = ""
-			}
-			releaseRemaining(idx + 1)
-			if errors.Is(upErr, errZipSizeMismatch) {
-				jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_zip_archive"})
-				return
-			}
-			uploadStreamError(w, upErr)
-			return
-		}
-		if accounted {
-			if written != item.size || a.rootLease == nil || !a.rootLease.Valid(r.Context()) {
-				releaseRemaining(idx + 1)
-				jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
-				return
-			}
-			if err := a.auth.CommitStorageReservationWithIdentity(reservations[idx], identity); err != nil {
-				releaseRemaining(idx + 1)
-				jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
-				return
-			}
-			reservations[idx] = ""
-		}
-		extractedFiles++
+	extractedFiles, ok := a.writeZipExtractEntries(w, r, targetDir, dirs, plan, reservations, accounted)
+	if !ok {
+		return
 	}
 
 	if a.rootID != "" && (a.rootLease == nil || !a.rootLease.Valid(r.Context())) {
@@ -283,6 +138,222 @@ func (a *API) extractZipArchive(w http.ResponseWriter, r *http.Request) {
 		"targetPath": targetDir,
 		"files":      extractedFiles,
 	})
+}
+
+func (a *API) decodeAndAuthorizeZipTarget(w http.ResponseWriter, r *http.Request) (string, string, bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, 2048)
+	defer r.Body.Close()
+	var body struct {
+		Path string `json:"path"`
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if dec.Decode(&body) != nil {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
+		return "", "", false
+	}
+	srcPath := path.Clean(strings.TrimSpace(body.Path))
+	ext := path.Ext(srcPath)
+	if srcPath == "" || srcPath == "." || !strings.EqualFold(ext, ".zip") {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_zip_archive"})
+		return "", "", false
+	}
+	stem := strings.TrimSuffix(path.Base(srcPath), ext)
+	if stem == "" || stem == "." || stem == ".." || files.IsInternalName(stem) {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "path_not_allowed"})
+		return "", "", false
+	}
+	parentDir := path.Dir(srcPath)
+	baseTarget := stem
+	if parentDir != "." {
+		baseTarget = path.Join(parentDir, stem)
+	}
+	if !a.allowFile(w, r, srcPath, false) || !a.allowFile(w, r, baseTarget, true) {
+		return "", "", false
+	}
+	return srcPath, baseTarget, true
+}
+
+func (a *API) openBoundedZipReader(w http.ResponseWriter, srcPath string) (files.ReadSeekCloser, *zip.Reader, bool) {
+	zipFile, zipInfo, err := a.files.Read(srcPath)
+	if err != nil {
+		fileError(w, err)
+		return nil, nil, false
+	}
+	if !zipInfo.Mode().IsRegular() || zipInfo.Size() <= 0 {
+		_ = zipFile.Close()
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_zip_archive"})
+		return nil, nil, false
+	}
+	if zipInfo.Size() > archiveMaxBytes {
+		_ = zipFile.Close()
+		jsonReply(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "archive_limit_exceeded"})
+		return nil, nil, false
+	}
+	zr, err := zip.NewReader(zipFile, zipInfo.Size())
+	if err != nil {
+		_ = zipFile.Close()
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_zip_archive"})
+		return nil, nil, false
+	}
+	if len(zr.File) > archiveMaxEntries {
+		_ = zipFile.Close()
+		jsonReply(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "archive_limit_exceeded"})
+		return nil, nil, false
+	}
+	return zipFile, zr, true
+}
+
+func replyZipPlanError(w http.ResponseWriter, err error) {
+	if errors.Is(err, errArchiveLimit) {
+		jsonReply(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "archive_limit_exceeded"})
+		return
+	}
+	if errors.Is(err, files.ErrType) {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "archive_unsafe_entry"})
+		return
+	}
+	jsonReply(w, http.StatusBadRequest, map[string]string{"error": "path_not_allowed"})
+}
+
+func (a *API) reserveZipExtractQuotas(
+	w http.ResponseWriter,
+	r *http.Request,
+	targetDir string,
+	plan []zipExtractEntry,
+	accounted bool,
+) ([]string, bool) {
+	reservations := make([]string, len(plan))
+	if !accounted {
+		return reservations, true
+	}
+	for idx, item := range plan {
+		resID, tracked, resErr := a.reserveUploadQuota(r, path.Join(targetDir, item.relPath), item.size)
+		if resErr != nil || !tracked || resID == "" {
+			for prev := 0; prev < idx; prev++ {
+				_ = a.auth.ReleaseStorageReservation(reservations[prev])
+			}
+			_ = a.files.MoveToTrash(targetDir)
+			if resErr != nil {
+				storageQuotaError(w, resErr)
+				return nil, false
+			}
+			jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_destination_not_assigned"})
+			return nil, false
+		}
+		reservations[idx] = resID
+	}
+	return reservations, true
+}
+
+func (a *API) releaseRemainingZipReservations(reservations []string, fromIdx int, accounted bool) {
+	if !accounted {
+		return
+	}
+	for i := fromIdx; i < len(reservations); i++ {
+		if reservations[i] != "" {
+			_ = a.auth.ReleaseStorageReservation(reservations[i])
+			reservations[i] = ""
+		}
+	}
+}
+
+func (a *API) writeZipExtractEntries(
+	w http.ResponseWriter,
+	r *http.Request,
+	targetDir string,
+	dirs []string,
+	plan []zipExtractEntry,
+	reservations []string,
+	accounted bool,
+) (int, bool) {
+	for _, relDir := range dirs {
+		if r.Context().Err() != nil {
+			a.releaseRemainingZipReservations(reservations, 0, accounted)
+			return 0, false
+		}
+		fullDir := path.Join(targetDir, relDir)
+		if err := a.files.Mkdir(fullDir); err != nil && !errors.Is(err, files.ErrExists) && !errors.Is(err, fs.ErrExist) {
+			a.releaseRemainingZipReservations(reservations, 0, accounted)
+			fileError(w, err)
+			return 0, false
+		}
+	}
+
+	uploader, hasIdentityUploader := a.files.(interface {
+		UploadWithIdentity(string, io.Reader) (int64, string, error)
+	})
+	extractedFiles := 0
+	for idx, item := range plan {
+		if r.Context().Err() != nil {
+			a.releaseRemainingZipReservations(reservations, idx, accounted)
+			return 0, false
+		}
+		if !a.writeSingleZipExtractEntry(w, r, targetDir, idx, item, reservations, accounted, uploader, hasIdentityUploader) {
+			return 0, false
+		}
+		extractedFiles++
+	}
+	return extractedFiles, true
+}
+
+func (a *API) writeSingleZipExtractEntry(
+	w http.ResponseWriter,
+	r *http.Request,
+	targetDir string,
+	idx int,
+	item zipExtractEntry,
+	reservations []string,
+	accounted bool,
+	uploader interface {
+		UploadWithIdentity(string, io.Reader) (int64, string, error)
+	},
+	hasIdentityUploader bool,
+) bool {
+	rc, openErr := item.file.Open()
+	if openErr != nil {
+		a.releaseRemainingZipReservations(reservations, idx, accounted)
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_zip_archive"})
+		return false
+	}
+	reader := &exactZipEntryReader{r: rc, expected: item.size}
+	destPath := path.Join(targetDir, item.relPath)
+	var written int64
+	var identity string
+	var upErr error
+	if accounted && hasIdentityUploader {
+		written, identity, upErr = uploader.UploadWithIdentity(destPath, reader)
+	} else {
+		written, upErr = a.files.Upload(destPath, reader)
+	}
+	_ = rc.Close()
+	if upErr != nil {
+		if accounted && !errors.Is(upErr, files.ErrPublishedSync) {
+			_ = a.auth.ReleaseStorageReservation(reservations[idx])
+			reservations[idx] = ""
+		}
+		a.releaseRemainingZipReservations(reservations, idx+1, accounted)
+		if errors.Is(upErr, errZipSizeMismatch) {
+			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_zip_archive"})
+			return false
+		}
+		uploadStreamError(w, upErr)
+		return false
+	}
+	if accounted {
+		if written != item.size || a.rootLease == nil || !a.rootLease.Valid(r.Context()) {
+			a.releaseRemainingZipReservations(reservations, idx+1, accounted)
+			jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
+			return false
+		}
+		if err := a.auth.CommitStorageReservationWithIdentity(reservations[idx], identity); err != nil {
+			a.releaseRemainingZipReservations(reservations, idx+1, accounted)
+			jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_accounting_uncertain"})
+			return false
+		}
+		reservations[idx] = ""
+	}
+	return true
 }
 
 func buildZipExtractPlan(entries []*zip.File) ([]zipExtractEntry, []string, error) {

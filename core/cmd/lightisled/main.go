@@ -52,73 +52,43 @@ const (
 	exitListenFailed           = 76
 )
 
+const (
+	ipcControlBufferSize     = 8
+	maxIndexDirsEncodedBytes = 12000
+	maxIndexDirsPayloadBytes = 8192
+)
+
 func main() {
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		fmt.Fprintln(os.Stderr, "LightIsle only supports macOS arm64")
 		os.Exit(1)
 	}
 	if len(os.Args) > 1 && os.Args[1] == "mcp" {
-		mcpFlags := flag.NewFlagSet("mcp", flag.ContinueOnError)
-		mcpDataDir := mcpFlags.String("data-dir", "", "private directory for LightIsle data")
-		_ = mcpFlags.Parse(os.Args[2:])
-		dir := *mcpDataDir
-		if dir == "" {
-			dir = os.Getenv("LIGHTISLE_DATA_DIR")
-		}
-		if dir == "" {
-			root, err := os.UserConfigDir()
-			if err != nil {
-				fmt.Fprintln(os.Stderr, "cannot locate application support:", err)
-				os.Exit(exitCriticalData)
-			}
-			dir = filepath.Join(root, "LightIsle")
-		}
-		execPath, _ := os.Executable()
-		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer stop()
-		if err := apps.RunMCP(ctx, dir, execPath, os.Stdin, os.Stdout); err != nil {
-			fmt.Fprintln(os.Stderr, err)
-			os.Exit(1)
-		}
+		runMCPSubcommand(os.Args[2:])
 		return
 	}
+
 	webRoot := flag.String("web-root", "", "directory containing built frontend assets")
 	port := flag.Int("port", 16666, "local loopback port; 0 is reserved for tests")
 	standalone := flag.Bool("standalone", false, "developer-only: run without a Mac App parent")
-	dataDir := flag.String("data-dir", "", "private directory for SQLite account database")
+	dataDirFlag := flag.String("data-dir", "", "private directory for SQLite account database")
 	thumbnailCacheBytes := flag.Int64("thumbnail-cache-bytes", gallery.DefaultThumbnailCacheBytes, "bounded gallery thumbnail cache budget; set by the Mac App, never by HTTP")
 	mediaWorkerPath := flag.String("media-worker", "", "trusted local media worker executable; defaults to the bundled sibling binary")
 	flag.Parse()
 
-	if *dataDir == "" {
-		root, err := os.UserConfigDir()
-		if err != nil {
-			slog.Error("cannot locate application support", "error", err)
-			os.Exit(exitCriticalData)
-		}
-		*dataDir = filepath.Join(root, "LightIsle")
-	}
-	if err := os.MkdirAll(*dataDir, 0700); err != nil {
-		slog.Error("cannot create private data", "error", err)
-		os.Exit(exitCriticalData)
-	}
-	canonicalDataDir, err := filepath.EvalSymlinks(*dataDir)
+	dataDir, err := resolvePrivateDataDir(*dataDirFlag)
 	if err != nil {
-		slog.Error("cannot resolve private data directory", "error", err)
+		slog.Error("invalid private data directory", "error", err)
 		os.Exit(exitCriticalData)
 	}
-	*dataDir, err = filepath.Abs(canonicalDataDir)
-	if err != nil {
-		slog.Error("cannot resolve absolute private data directory", "error", err)
-		os.Exit(exitCriticalData)
-	}
-	processLock, err := backup.LockDataDir(*dataDir)
+	processLock, err := backup.LockDataDir(dataDir)
 	if err != nil {
 		slog.Error("data directory is already in use", "error", err)
 		os.Exit(exitDataDirectoryInUse)
 	}
 	defer processLock.Close()
-	localDiagnostics := diagnostics.Start(*dataDir)
+
+	localDiagnostics := diagnostics.Start(dataDir)
 	defer localDiagnostics.Close()
 	slog.SetDefault(slog.New(localDiagnostics.Handler()))
 	diagnostics.Emit(context.Background(), slog.LevelInfo, diagnostics.Event{
@@ -128,46 +98,33 @@ func main() {
 		localDiagnostics.Close()
 		os.Exit(code)
 	}
-	if backup.MetadataActivationPending(*dataDir) {
+
+	if backup.MetadataActivationPending(dataDir) {
 		slog.Error("offline metadata recovery was interrupted; refuse to start with partially migrated state")
 		exitWithDiagnostics(exitRecoveryPending)
 	}
-	if err := backup.FinalizeRecoverySessions(*dataDir); err != nil {
+	if err := backup.FinalizeRecoverySessions(dataDir); err != nil {
 		slog.Error("cannot revoke restored browser sessions; refuse to expose recovered accounts", "error", err)
 		exitWithDiagnostics(exitRecoverySessionsFailed)
 	}
-	accountStore, err := auth.Open(filepath.Join(*dataDir, "accounts.sqlite"))
+	accountStore, err := auth.Open(filepath.Join(dataDir, "accounts.sqlite"))
 	if err != nil {
 		slog.Error("cannot initialize accounts", "error", err)
 		exitWithDiagnostics(exitCriticalData)
 	}
 	defer accountStore.Close()
-	// RootRegistry is the ONLY live source of NAS directory identity.
-	// The retired single-share config is opened solely once on installations
-	// with no registry state, then closed before any listeners or tasks start.
-	rootRegistry, err := roots.Open(*dataDir)
+
+	rootRegistry, err := roots.Open(dataDir)
 	if err != nil {
 		slog.Error("cannot initialize physical shared root registry", "error", err)
 		exitWithDiagnostics(exitCriticalData)
 	}
-	// Import the original physical directory into RootRegistry in place.
-	// No media bytes or legacy grants are copied into the new identity.
-	if !rootRegistry.HasConfiguration() {
-		legacy, legacyErr := files.NewManager(*dataDir)
-		if legacyErr != nil {
-			slog.Warn("one-time shared-root migration needs manual recovery", "error", legacyErr)
-		} else {
-			if err := registerCurrentShareAsDefault(context.Background(), rootRegistry, legacy); err != nil {
-				slog.Warn("existing shared directory requires explicit root registration", "error", err)
-			}
-			_ = legacy.Close()
-		}
-	}
+	importInitialLegacyRootIfNeeded(rootRegistry, dataDir)
+
 	if *port < 0 || *port > 65535 {
 		slog.Error("invalid port")
 		exitWithDiagnostics(2)
 	}
-	// No LAN listener without authentication and explicit user approval.
 	listener, err := net.Listen("tcp4", fmt.Sprintf("127.0.0.1:%d", *port))
 	if err != nil {
 		slog.Error("cannot bind local API", "error", err)
@@ -177,35 +134,238 @@ func main() {
 		exitWithDiagnostics(exitListenFailed)
 	}
 	defer listener.Close()
-	taskJournal, err := tasks.Open(*dataDir)
+
+	taskJournal, err := tasks.Open(dataDir)
 	if err != nil {
 		slog.Warn("task history unavailable; continuing with NAS services", "error", err)
 	} else {
 		defer taskJournal.Close()
 	}
-	// Outbound notification channels stay inert until the Mac App sends the
-	// owner-configured secrets over the private IPC pipe; the core never
-	// persists them.
+
 	notifyHub, notifyErr := notify.New(notify.Config{})
 	if notifyErr != nil {
 		slog.Error("cannot initialize notification hub", "error", notifyErr)
 		exitWithDiagnostics(1)
 	}
 	defer notifyHub.Close()
-	automationManager := automation.Open(*dataDir, func(task automation.Task, state string, finished time.Time, exitCode int, html string, report func(string, string)) {
+
+	automationManager := openAutomationWithNotifications(dataDir, notifyHub)
+	if err := automationManager.Reload(); err != nil {
+		slog.Warn("automation unavailable; continuing with NAS services", "error", err)
+	}
+	defer automationManager.Close()
+
+	execPath, _ := os.Executable()
+	appsManager := apps.NewManager(dataDir, execPath, automationManager)
+	appsManager.SetConfiguredChannels(notifyHub.ConfiguredChannels)
+	if err := appsManager.Reload(); err != nil {
+		slog.Warn("apps manager unavailable; continuing with NAS services", "error", err)
+	}
+	defer appsManager.Close()
+
+	dispatchAlert := alertDispatcher(notifyHub)
+	alertThresholds := tasks.OpenThresholdStore(filepath.Join(dataDir, "storage-alerts.json"))
+	trashRetention := tasks.OpenRetentionStore(filepath.Join(dataDir, "trash-retention.json"))
+	if cacheErr := maptiles.Default.ConfigureDiskCache(filepath.Join(dataDir, "cache", "map-tiles"), maptiles.DefaultMapTileCacheBytes); cacheErr != nil {
+		slog.Warn("map tile disk cache unavailable", "error", cacheErr)
+	}
+
+	mediaWorker := mediaworker.New(*mediaWorkerPath)
+	backupService := backup.New(nil, dataDir)
+	backupService.ProtectDestinations(rootRegistry)
+	defer backupService.Close()
+	backupService.SetJournal(taskJournal)
+	backupSchedule, err := backup.NewScheduler(backupService, dataDir)
+	if err != nil {
+		slog.Warn("backup schedule unavailable; manual backup remains available", "error", err)
+	} else {
+		defer backupSchedule.Close()
+	}
+
+	var externalTransferRunning atomic.Bool
+	configureSMBRootProvider(rootRegistry)
+	installDiskProtectionGuard(rootRegistry, backupService, backupSchedule, &externalTransferRunning)
+
+	downloadPublisher := downloads.NewRegistryPublisher(rootRegistry, accountStore)
+	downloadCenter := openOptionalDownloadCenter(
+		dataDir, rootRegistry, accountStore, taskJournal, notifyHub, dispatchAlert, downloadPublisher,
+	)
+	if downloadCenter != nil {
+		defer downloadCenter.Close()
+	}
+
+	rootServer := server.NewWithRoots(*webRoot, accountStore, nil, nil, nil, taskJournal, rootRegistry,
+		makeRootServices(dataDir, mediaWorker, *thumbnailCacheBytes), server.RootServerOptions{
+			EnableDiscovery: true, LegacyBackup: backupService, TrashRetention: trashRetention, DownloadCenter: downloadCenter,
+		})
+	downloadPublisher.SetOnPublished(rootServer.QueueMediaRefresh)
+	defer rootServer.Close()
+
+	var handler http.Handler = rootServer
+	handler = server.WithAutomation(handler, accountStore, automationManager, notifyHub)
+	handler = server.WithApps(handler, dataDir, accountStore, appsManager)
+	handler = diagnostics.HTTP(handler)
+	httpServer := &http.Server{
+		Handler:           handler,
+		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       30 * time.Second,
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	var monitors sync.WaitGroup
+	defer func() {
+		cancel()
+		monitors.Wait()
+	}()
+	monitors.Go(func() { monitorAlerts(ctx, rootRegistry, taskJournal, alertThresholds, accountStore, dispatchAlert) })
+	if taskJournal != nil {
+		monitors.Go(func() { monitorMetricHistory(ctx, taskJournal) })
+	}
+	monitors.Go(func() { newRootMediaMaintenance(rootRegistry, rootServer, taskJournal).Run(ctx) })
+	startUploadSweeper(ctx, rootRegistry, rootServer, accountStore)
+
+	var remote atomic.Pointer[server.Remote]
+	appsManager.SetEndpointProvider(func() (string, string) {
+		localBase := "http://" + listener.Addr().String()
+		if r := remote.Load(); r != nil {
+			return localBase, r.URL
+		}
+		return localBase, ""
+	})
+
+	rootCommands := newDaemonRootControl(rootRegistry, accountStore, rootServer, taskJournal, backupService, backupSchedule)
+	defer rootCommands.Close()
+
+	control := make(chan string, ipcControlBufferSize)
+	if !*standalone {
+		startParentStdinMonitor(ctx, cancel, control)
+	}
+	dispatcher := &ipcCommandDispatcher{
+		dataDir:                 dataDir,
+		port:                    *port,
+		localDiagnostics:        localDiagnostics,
+		accountStore:            accountStore,
+		rootRegistry:            rootRegistry,
+		rootServer:              rootServer,
+		appsManager:             appsManager,
+		taskJournal:             taskJournal,
+		alertThresholds:         alertThresholds,
+		trashRetention:          trashRetention,
+		notifyHub:               notifyHub,
+		backupService:           backupService,
+		backupSchedule:          backupSchedule,
+		rootCommands:            rootCommands,
+		tunnelCtl:               newDaemonTunnelControl(ctx, *port, taskJournal, dispatchAlert),
+		frpCtl:                  newFRPControl(ctx),
+		httpHandler:             handler,
+		remote:                  &remote,
+		externalTransferRunning: &externalTransferRunning,
+		control:                 control,
+		monitor:                 &system.Collector{},
+		exportDone:              make(chan exportResult, 1),
+		inventoryDone:           make(chan inventoryResult, 1),
+		notifyTestDone:          make(chan error, 1),
+	}
+	go dispatcher.runLoop(ctx)
+	go shutdownHTTPOnCancel(ctx, httpServer)
+
+	syncInitialRootGenerations(ctx, rootRegistry, accountStore)
+	emitInitialReadyState(listener.Addr().String(), accountStore, rootRegistry)
+	diagnostics.Emit(ctx, slog.LevelInfo, diagnostics.Event{
+		Component: "core", Operation: "startup", Code: "core_ready",
+	})
+	if taskJournal == nil {
+		writeStdoutLine("LIGHTISLE_SERVICE_WARNING task_history")
+	}
+	if backupSchedule == nil {
+		writeStdoutLine("LIGHTISLE_SERVICE_WARNING backup_schedule")
+	}
+	if err := httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
+		slog.Error("HTTP server failure", "error", err)
+		exitWithDiagnostics(1)
+	}
+}
+
+func runMCPSubcommand(args []string) {
+	mcpFlags := flag.NewFlagSet("mcp", flag.ContinueOnError)
+	mcpDataDir := mcpFlags.String("data-dir", "", "private directory for LightIsle data")
+	_ = mcpFlags.Parse(args)
+	dir := *mcpDataDir
+	if dir == "" {
+		dir = os.Getenv("LIGHTISLE_DATA_DIR")
+	}
+	if dir == "" {
+		root, err := os.UserConfigDir()
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "cannot locate application support:", err)
+			os.Exit(exitCriticalData)
+		}
+		dir = filepath.Join(root, "LightIsle")
+	}
+	execPath, _ := os.Executable()
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if err := apps.RunMCP(ctx, dir, execPath, os.Stdin, os.Stdout); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+func resolvePrivateDataDir(configured string) (string, error) {
+	dir := configured
+	if dir == "" {
+		root, err := os.UserConfigDir()
+		if err != nil {
+			return "", fmt.Errorf("cannot locate application support: %w", err)
+		}
+		dir = filepath.Join(root, "LightIsle")
+	}
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return "", fmt.Errorf("cannot create private data: %w", err)
+	}
+	canonicalDataDir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		return "", fmt.Errorf("cannot resolve private data directory: %w", err)
+	}
+	return filepath.Abs(canonicalDataDir)
+}
+
+func importInitialLegacyRootIfNeeded(rootRegistry *roots.Registry, dataDir string) {
+	if rootRegistry.HasConfiguration() {
+		return
+	}
+	legacy, legacyErr := files.NewManager(dataDir)
+	if legacyErr != nil {
+		slog.Warn("one-time shared-root migration needs manual recovery", "error", legacyErr)
+		return
+	}
+	defer func() { _ = legacy.Close() }()
+	if err := registerCurrentShareAsDefault(context.Background(), rootRegistry, legacy); err != nil {
+		slog.Warn("existing shared directory requires explicit root registration", "error", err)
+	}
+}
+
+func openAutomationWithNotifications(dataDir string, notifyHub *notify.Hub) *automation.Manager {
+	stateLabels := map[string]string{"success": "成功", "failure": "失败", "timeout": "超时"}
+	stateSeverities := map[string]string{"success": "info", "failure": "warning", "timeout": "warning"}
+
+	return automation.Open(dataDir, func(task automation.Task, state string, _ time.Time, _ int, html string, report func(string, string)) {
 		if len(task.Notification.Channels) == 0 {
 			return
 		}
 		emailMode := "builtin"
 		emailSubject := ""
 		if task.Notification.Email != nil {
-			emailMode = task.Notification.Email.Mode
-			if emailMode == "" {
-				emailMode = "builtin"
+			if task.Notification.Email.Mode != "" {
+				emailMode = task.Notification.Email.Mode
 			}
 			emailSubject = task.Notification.Email.Subject
 		}
-		body := "脚本 " + task.ID + " 执行" + map[string]string{"success": "成功", "failure": "失败", "timeout": "超时"}[state] + "，请在自动化页面查看日志。"
+		body := "脚本 " + task.ID + " 执行" + stateLabels[state] + "，请在自动化页面查看日志。"
 		if task.LastError != "" {
 			body += " " + task.LastError
 		}
@@ -213,45 +373,20 @@ func main() {
 			Code:         "automation_" + state,
 			Title:        "自动化任务：" + task.Name,
 			Body:         body,
-			Severity:     map[string]string{"success": "info", "failure": "warning", "timeout": "warning"}[state],
+			Severity:     stateSeverities[state],
 			EmailMode:    emailMode,
 			EmailHTML:    html,
 			EmailSubject: emailSubject,
 		}, task.Notification.Channels, report)
 	})
-	if err := automationManager.Reload(); err != nil {
-		slog.Warn("automation unavailable; continuing with NAS services", "error", err)
-	}
-	defer automationManager.Close()
-	execPath, _ := os.Executable()
-	appsManager := apps.NewManager(*dataDir, execPath, automationManager)
-	if notifyHub != nil {
-		appsManager.SetConfiguredChannels(notifyHub.ConfiguredChannels)
-	}
-	if err := appsManager.Reload(); err != nil {
-		slog.Warn("apps manager unavailable; continuing with NAS services", "error", err)
-	}
-	defer appsManager.Close()
-	dispatchAlert := alertDispatcher(notifyHub)
-	alertThresholds := tasks.OpenThresholdStore(filepath.Join(*dataDir, "storage-alerts.json"))
-	trashRetention := tasks.OpenRetentionStore(filepath.Join(*dataDir, "trash-retention.json"))
-	_ = maptiles.Default.ConfigureDiskCache(filepath.Join(*dataDir, "cache", "map-tiles"), maptiles.DefaultMapTileCacheBytes)
-	mediaWorker := mediaworker.New(*mediaWorkerPath)
-	backupService := backup.New(nil, *dataDir)
-	backupService.ProtectDestinations(rootRegistry)
-	defer backupService.Close()
-	backupService.SetJournal(taskJournal)
-	backupSchedule, err := backup.NewScheduler(backupService, *dataDir)
-	if err != nil {
-		slog.Warn("backup schedule unavailable; manual backup remains available", "error", err)
-	} else {
-		defer backupSchedule.Close()
-	}
-	// One shared drive backend serves the native parent IPC and authenticated
-	// Web administrators. Guard even stale/offline root bindings and configured
-	// backup destinations; never let a disk operation silently detach NAS data.
-	var externalTransferRunning atomic.Bool
-	configureSMBRootProvider(rootRegistry)
+}
+
+func installDiskProtectionGuard(
+	rootRegistry *roots.Registry,
+	backupService *backup.Service,
+	backupSchedule *backup.Scheduler,
+	externalTransferRunning *atomic.Bool,
+) {
 	diskmgmt.Shared().SetGuard(func(d diskmgmt.Disk, action string) error {
 		if externalTransferRunning.Load() || backupService.Status().Running {
 			return diskmgmt.ErrBusy
@@ -259,7 +394,7 @@ func main() {
 		if action == "mount" {
 			return nil
 		}
-		paths := []string{}
+		paths := make([]string, 0, len(rootRegistry.List())+1)
 		for _, root := range rootRegistry.List() {
 			paths = append(paths, root.Path)
 			if diskmgmt.MatchesVolumeUUID(d, root.Binding.VolumeUUID) {
@@ -267,7 +402,6 @@ func main() {
 			}
 		}
 		if backupSchedule == nil {
-			// An unreadable schedule cannot prove which disk it protects.
 			return diskmgmt.ErrProtected
 		}
 		schedule := backupSchedule.Status()
@@ -275,33 +409,34 @@ func main() {
 		if diskmgmt.MatchesVolumeUUID(d, schedule.DestinationVolumeUUID) {
 			return diskmgmt.ErrProtected
 		}
+		mount := d.Mount
+		if mount == "" {
+			mount = "/Volumes/" + d.Name
+		}
 		for _, path := range paths {
-			if path == "" {
-				continue
-			}
-			mount := d.Mount
-			if mount == "" {
-				mount = "/Volumes/" + d.Name
-			}
-			if path == mount || strings.HasPrefix(path, mount+"/") {
+			if path != "" && (path == mount || strings.HasPrefix(path, mount+"/")) {
 				return diskmgmt.ErrProtected
 			}
 		}
 		return nil
 	})
+}
 
-	// Download center: the aria2 binary comes from the same Homebrew
-	// whitelist as ffmpeg/cloudflared; without it every endpoint reports the
-	// honest download_unavailable reason. The journal stays usable so
-	// historical tasks remain listed across upgrades.
+func openOptionalDownloadCenter(
+	dataDir string,
+	rootRegistry *roots.Registry,
+	accountStore *auth.Store,
+	taskJournal *tasks.Journal,
+	notifyHub *notify.Hub,
+	dispatchAlert func(string),
+	publisher *downloads.RegistryPublisher,
+) *downloads.Manager {
 	aria2Path, aria2Version, aria2Err := aria2bin.Locate()
-	downloadPublisher := downloads.NewRegistryPublisher(rootRegistry, accountStore)
-	var downloadCenter *downloads.Manager
-	if center, centerErr := downloads.New(downloads.Options{
-		DataDir:      *dataDir,
+	center, centerErr := downloads.New(downloads.Options{
+		DataDir:      dataDir,
 		Binary:       aria2Path,
 		LocateBinary: aria2bin.Locate,
-		Publisher:    downloadPublisher,
+		Publisher:    publisher,
 		CanImport: func(owner int64, destination string) bool {
 			selected, ok := rootRegistry.Default()
 			return ok && accountStore.CanAccessRootForUser(owner, selected.ID, destination, true, false)
@@ -321,72 +456,53 @@ func main() {
 			}
 		},
 		OnTaskDone: func(filename string) {
-			notifyHub.Notify(notify.Event{Code: "download_completed", Title: "下载完成", Body: "文件已发布：" + filename, Severity: "info"})
+			notifyHub.Notify(notify.Event{
+				Code: "download_completed", Title: "下载完成", Body: "文件已发布：" + filename, Severity: "info",
+			})
 		},
-	}); centerErr == nil {
-		downloadCenter = center
-		defer downloadCenter.Close()
-		if aria2Err == nil {
-			slog.Info("download center ready; aria2 starts on demand", "aria2", aria2Version)
-		} else {
-			slog.Info("download center unavailable", "reason", aria2Err.Error())
-		}
-	} else {
-		slog.Warn("download center journal unavailable", "error", centerErr)
-	}
-	rootServer := server.NewWithRoots(*webRoot, accountStore, nil, nil, nil, taskJournal, rootRegistry,
-		makeRootServices(*dataDir, mediaWorker, *thumbnailCacheBytes), server.RootServerOptions{
-			EnableDiscovery: true, LegacyBackup: backupService, TrashRetention: trashRetention, DownloadCenter: downloadCenter,
-		})
-	downloadPublisher.SetOnPublished(rootServer.QueueMediaRefresh)
-	defer rootServer.Close()
-	var handler http.Handler = rootServer
-	handler = server.WithAutomation(handler, accountStore, automationManager, notifyHub)
-	handler = server.WithApps(handler, *dataDir, accountStore, appsManager)
-	handler = diagnostics.HTTP(handler)
-	httpServer := &http.Server{
-		Handler:           handler,
-		ReadHeaderTimeout: 5 * time.Second,
-		IdleTimeout:       30 * time.Second,
-	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	ctx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	// Optional in-app alert center: passive checks of disk and recorded task
-	// status only. It does not mount drives, change system settings or trigger
-	// user operations in the background.
-	var monitors sync.WaitGroup
-	defer func() {
-		cancel()
-		monitors.Wait()
-	}()
-	monitors.Go(func() { monitorAlerts(ctx, rootRegistry, taskJournal, alertThresholds, accountStore, dispatchAlert) })
-	if taskJournal != nil {
-		monitors.Go(func() { monitorMetricHistory(ctx, taskJournal) })
-	}
-	monitors.Go(func() { newRootMediaMaintenance(rootRegistry, rootServer, taskJournal).Run(ctx) })
-	// Preserve any legacy LightIsle trash during the transition to the macOS
-	// Trash, including when an older installation enabled automatic purging.
-	// The existing restore/inspection endpoints remain available.
-	startUploadSweeper(ctx, rootRegistry, rootServer, accountStore)
-
-	var remote atomic.Pointer[server.Remote]
-	appsManager.SetEndpointProvider(func() (string, string) {
-		localBase := "http://" + listener.Addr().String()
-		lanBase := ""
-		if r := remote.Load(); r != nil {
-			lanBase = r.URL
-		}
-		return localBase, lanBase
 	})
-	// Only the trusted Mac App stdin pipe can request remote activation.
-	// Remote access is never enabled by default or via a public HTTP endpoint.
-	control := make(chan string, 8)
-	rootCommands := &rootControl{output: ipcStdout}
-	defer rootCommands.Close()
-	tunnelCtl := newTunnelControl(ctx, *port, func(code string, active bool) {
+	if centerErr != nil {
+		slog.Warn("download center journal unavailable", "error", centerErr)
+		return nil
+	}
+	if aria2Err == nil {
+		slog.Info("download center ready; aria2 starts on demand", "aria2", aria2Version)
+	} else {
+		slog.Info("download center unavailable", "reason", aria2Err.Error())
+	}
+	return center
+}
+
+func newDaemonRootControl(
+	rootRegistry *roots.Registry,
+	accountStore *auth.Store,
+	rootServer *server.RootServer,
+	taskJournal *tasks.Journal,
+	backupService *backup.Service,
+	backupSchedule *backup.Scheduler,
+) *rootControl {
+	return &rootControl{
+		output:              ipcStdout,
+		registry:            rootRegistry,
+		accounts:            accountStore,
+		server:              rootServer,
+		journal:             taskJournal,
+		legacyBackupRunning: func() bool { return backupService.Status().Running },
+		backupDestinations: func() []string {
+			var targets []string
+			if backupSchedule != nil {
+				targets = append(targets, backupSchedule.Status().Destination)
+			}
+			if latest := backupService.Status().LastSnapshot; latest != "" {
+				targets = append(targets, filepath.Dir(latest))
+			}
+			return targets
+		},
+	}
+}
+
+func newDaemonTunnelControl(ctx context.Context, port int, taskJournal *tasks.Journal, dispatchAlert func(string)) *tunnelControl {
+	return newTunnelControl(ctx, port, func(code string, active bool) {
 		if taskJournal == nil {
 			return
 		}
@@ -396,203 +512,186 @@ func main() {
 			dispatchAlert(code)
 		}
 	})
-	frpCtl := newFRPControl(ctx)
-	{
-		rootCommands.registry = rootRegistry
-		rootCommands.accounts = accountStore
-		rootCommands.server = rootServer
-		rootCommands.journal = taskJournal
-		rootCommands.legacyBackupRunning = func() bool { return backupService.Status().Running }
-		rootCommands.backupDestinations = func() []string {
-			var targets []string
-			if backupSchedule != nil {
-				targets = append(targets, backupSchedule.Status().Destination)
-			}
-			if latest := backupService.Status().LastSnapshot; latest != "" {
-				targets = append(targets, filepath.Dir(latest))
-			}
-			return targets
-		}
-	}
-	if !*standalone {
-		go watchCoreParent(ctx, os.Getppid(), cancel)
-		// The Swift App owns the write end of stdin; EOF means App exited or crashed.
-		go func() {
-			readIPCCommandLines(os.Stdin, os.Stderr, func(command string) bool {
-				if !isAcceptedIPCCommand(command) {
-					return true
-				}
-				select {
-				case control <- command:
-					return true
-				case <-ctx.Done():
-					return false
-				}
-			})
-			cancel()
-		}()
-	}
-	monitor := &system.Collector{}
-	exportDone := make(chan exportResult, 1)
-	inventoryDone := make(chan inventoryResult, 1)
-	var exportCancel context.CancelFunc
-	inventoryActive := false
-	notifyTestDone := make(chan error, 1)
-	notifyTestActive := false
-	go func() {
-		for {
-			select {
-			case <-ctx.Done():
-				if exportCancel != nil {
-					exportCancel()
-				}
-				if r := remote.Swap(nil); r != nil {
-					r.Stop()
-				}
-				return
-			case err := <-notifyTestDone:
-				notifyTestActive = false
-				if err != nil {
-					writeStdoutLine("LIGHTISLE_NOTIFY_TEST_ERROR " + sanitizeIPCText(err.Error()))
-				} else {
-					writeStdoutLine("LIGHTISLE_NOTIFY_TESTED")
-				}
-			case result := <-exportDone:
-				exportCancel = nil
-				emitExportOutcome(result, &externalTransferRunning)
-			case result := <-inventoryDone:
-				inventoryActive = false
-				emitBackupInventoryOutcome(result)
-			case command := <-control:
-				if command == "computer-files status" || command == "computer-files on" || command == "computer-files off" {
-					if command != "computer-files status" {
-						if err := accountStore.SetComputerFilesEnabled(command == "computer-files on"); err != nil {
-							writeStdoutLine("LIGHTISLE_COMPUTER_FILES_ERROR")
-							continue
-						}
-					}
-					if accountStore.ComputerFilesEnabled() {
-						writeStdoutLine("LIGHTISLE_COMPUTER_FILES 1")
-					} else {
-						writeStdoutLine("LIGHTISLE_COMPUTER_FILES 0")
-					}
-					continue
-				}
-				if command == "diagnostics debug" {
-					localDiagnostics.DebugForHalfHour()
-					diagnostics.Emit(ctx, slog.LevelInfo, diagnostics.Event{
-						Component: "core", Operation: "diagnostics", Code: "debug_enabled",
-					})
-					continue
-				}
-				if handleMapSettings(command) {
-					continue
-				}
-				if rootCommands.handle(ctx, command) {
-					continue
-				}
-				if handleSpacesIPC(ctx, command, accountStore, rootRegistry, rootServer) {
-					continue
-				}
-				if handleAppsIPC(ctx, command, appsManager, accountStore) {
-					continue
-				}
-				if tunnelCtl.handle(ctx, command) {
-					continue
-				}
-				if frpCtl.handle(command) {
-					continue
-				}
-				if handleDiskIPC(ctx, command) {
-					continue
-				}
-				if strings.HasPrefix(command, "index root ") {
-					if event, ok := parseNativeRootMediaEvent(strings.TrimPrefix(command, "index root ")); ok {
-						rootServer.QueueNativeRootRefreshDirs(event.RootID, event.Generation, event.Dirs)
-					}
-					continue
-				}
-				if strings.HasPrefix(command, "index dirs ") {
-					encoded := strings.TrimPrefix(command, "index dirs ")
-					if len(encoded) > 12000 {
-						continue
-					}
-					payload, err := base64.RawURLEncoding.DecodeString(encoded)
-					if err != nil || len(payload) > 8192 {
-						continue
-					}
-					var dirs []string
-					if err := json.Unmarshal(payload, &dirs); err != nil {
-						continue
-					}
-					if len(dirs) != 0 {
-						queueDefaultMediaRefresh(rootRegistry, rootServer, dirs)
-					}
-					continue
-				}
-				if handleAlertSettings(command, taskJournal, alertThresholds) {
-					continue
-				}
-				// The TMDB Read Access Token arrives only from the trusted Mac
-				// App (Keychain storage) and stays in Core memory; it is never
-				// persisted, logged or echoed back.
-				// Trash auto-cleanup is opt-in and only settable by the Mac
-				// App; Web/Flutter get a read-only HTTP view.
-				if handleTrashRetentionSettings(command, trashRetention) {
-					continue
-				}
-				if handleRootCinemaTokenSettings(command, rootServer) {
-					continue
-				}
-				if handleNotificationIPC(command, notifyHub, &notifyTestActive, notifyTestDone) {
-					continue
-				}
-				if handleExportIPC(ctx, command, rootRegistry, rootServer, &exportCancel, &externalTransferRunning, exportDone) {
-					continue
-				}
-				if command == "index scan" {
-					queueDefaultMediaRefresh(rootRegistry, rootServer, []string{"."})
-					continue
-				}
-				if handleBackupIPC(ctx, command, backupService, backupSchedule, &inventoryActive, inventoryDone) {
-					continue
-				}
-				if handleSMBCommand(ctx, command) {
-					continue
-				}
-				if handleAdminShareRemoteIPC(ctx, command, accountStore, rootRegistry, rootServer, monitor, &remote, handler, *dataDir, *port) {
-					continue
-				}
-			}
-		}
-	}()
-	go func() {
-		<-ctx.Done()
-		shutdownCtx, release := context.WithTimeout(context.Background(), 4*time.Second)
-		defer release()
-		if err := httpServer.Shutdown(shutdownCtx); err != nil {
-			slog.Warn("HTTP shutdown failed", "error", err)
-		}
-	}()
+}
 
+func startParentStdinMonitor(ctx context.Context, cancel context.CancelFunc, control chan<- string) {
+	go watchCoreParent(ctx, os.Getppid(), cancel)
+	go func() {
+		readIPCCommandLines(os.Stdin, os.Stderr, func(command string) bool {
+			if !isAcceptedIPCCommand(command) {
+				return true
+			}
+			select {
+			case control <- command:
+				return true
+			case <-ctx.Done():
+				return false
+			}
+		})
+		cancel()
+	}()
+}
+
+func shutdownHTTPOnCancel(ctx context.Context, httpServer *http.Server) {
+	<-ctx.Done()
+	shutdownCtx, release := context.WithTimeout(context.Background(), 4*time.Second)
+	defer release()
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		slog.Warn("HTTP shutdown failed", "error", err)
+	}
+}
+
+func syncInitialRootGenerations(ctx context.Context, rootRegistry *roots.Registry, accountStore *auth.Store) {
 	for _, r := range rootRegistry.List() {
 		if lease, err := rootRegistry.Acquire(ctx, r.ID); err == nil {
 			_ = accountStore.SyncVerifiedRootGeneration(r.ID, r.Generation)
 			_ = lease.Close()
 		}
 	}
-	emitInitialReadyState(listener.Addr().String(), accountStore, rootRegistry)
+}
+
+type ipcCommandDispatcher struct {
+	dataDir                 string
+	port                    int
+	localDiagnostics        *diagnostics.Recorder
+	accountStore            *auth.Store
+	rootRegistry            *roots.Registry
+	rootServer              *server.RootServer
+	appsManager             *apps.Manager
+	taskJournal             *tasks.Journal
+	alertThresholds         *tasks.ThresholdStore
+	trashRetention          *tasks.RetentionStore
+	notifyHub               *notify.Hub
+	backupService           *backup.Service
+	backupSchedule          *backup.Scheduler
+	rootCommands            *rootControl
+	tunnelCtl               *tunnelControl
+	frpCtl                  *frpControl
+	httpHandler             http.Handler
+	remote                  *atomic.Pointer[server.Remote]
+	externalTransferRunning *atomic.Bool
+
+	control          <-chan string
+	monitor          *system.Collector
+	exportDone       chan exportResult
+	inventoryDone    chan inventoryResult
+	exportCancel     context.CancelFunc
+	inventoryActive  bool
+	notifyTestDone   chan error
+	notifyTestActive bool
+}
+
+func (d *ipcCommandDispatcher) runLoop(ctx context.Context) {
+	for {
+		select {
+		case <-ctx.Done():
+			if d.exportCancel != nil {
+				d.exportCancel()
+			}
+			if r := d.remote.Swap(nil); r != nil {
+				r.Stop()
+			}
+			return
+		case err := <-d.notifyTestDone:
+			d.notifyTestActive = false
+			if err != nil {
+				writeStdoutLine("LIGHTISLE_NOTIFY_TEST_ERROR " + sanitizeIPCText(err.Error()))
+			} else {
+				writeStdoutLine("LIGHTISLE_NOTIFY_TESTED")
+			}
+		case result := <-d.exportDone:
+			d.exportCancel = nil
+			emitExportOutcome(result, d.externalTransferRunning)
+		case result := <-d.inventoryDone:
+			d.inventoryActive = false
+			emitBackupInventoryOutcome(result)
+		case command := <-d.control:
+			d.dispatch(ctx, command)
+		}
+	}
+}
+
+func (d *ipcCommandDispatcher) dispatch(ctx context.Context, command string) {
+	switch {
+	case d.handleComputerFiles(command):
+	case d.handleDiagnosticsDebug(ctx, command):
+	case handleMapSettings(command):
+	case d.rootCommands.handle(ctx, command):
+	case handleSpacesIPC(ctx, command, d.accountStore, d.rootRegistry, d.rootServer):
+	case handleAppsIPC(ctx, command, d.appsManager, d.accountStore):
+	case d.tunnelCtl.handle(ctx, command):
+	case d.frpCtl.handle(command):
+	case handleDiskIPC(ctx, command):
+	case d.handleMediaRefresh(command):
+	case handleAlertSettings(command, d.taskJournal, d.alertThresholds):
+	case handleTrashRetentionSettings(command, d.trashRetention):
+	case handleRootCinemaTokenSettings(command, d.rootServer):
+	case handleNotificationIPC(command, d.notifyHub, &d.notifyTestActive, d.notifyTestDone):
+	case handleExportIPC(ctx, command, d.rootRegistry, d.rootServer, &d.exportCancel, d.externalTransferRunning, d.exportDone):
+	case handleBackupIPC(ctx, command, d.backupService, d.backupSchedule, &d.inventoryActive, d.inventoryDone):
+	case handleSMBCommand(ctx, command):
+	default:
+		_ = handleAdminShareRemoteIPC(
+			ctx, command, d.accountStore, d.rootRegistry, d.rootServer,
+			d.monitor, d.remote, d.httpHandler, d.dataDir, d.port,
+		)
+	}
+}
+
+func (d *ipcCommandDispatcher) handleComputerFiles(command string) bool {
+	if command != "computer-files status" && command != "computer-files on" && command != "computer-files off" {
+		return false
+	}
+	if command != "computer-files status" {
+		if err := d.accountStore.SetComputerFilesEnabled(command == "computer-files on"); err != nil {
+			writeStdoutLine("LIGHTISLE_COMPUTER_FILES_ERROR")
+			return true
+		}
+	}
+	if d.accountStore.ComputerFilesEnabled() {
+		writeStdoutLine("LIGHTISLE_COMPUTER_FILES 1")
+	} else {
+		writeStdoutLine("LIGHTISLE_COMPUTER_FILES 0")
+	}
+	return true
+}
+
+func (d *ipcCommandDispatcher) handleDiagnosticsDebug(ctx context.Context, command string) bool {
+	if command != "diagnostics debug" {
+		return false
+	}
+	d.localDiagnostics.DebugForHalfHour()
 	diagnostics.Emit(ctx, slog.LevelInfo, diagnostics.Event{
-		Component: "core", Operation: "startup", Code: "core_ready",
+		Component: "core", Operation: "diagnostics", Code: "debug_enabled",
 	})
-	if taskJournal == nil {
-		writeStdoutLine("LIGHTISLE_SERVICE_WARNING task_history")
+	return true
+}
+
+func (d *ipcCommandDispatcher) handleMediaRefresh(command string) bool {
+	if command == "index scan" {
+		queueDefaultMediaRefresh(d.rootRegistry, d.rootServer, []string{"."})
+		return true
 	}
-	if backupSchedule == nil {
-		writeStdoutLine("LIGHTISLE_SERVICE_WARNING backup_schedule")
+	if strings.HasPrefix(command, "index root ") {
+		if event, ok := parseNativeRootMediaEvent(strings.TrimPrefix(command, "index root ")); ok {
+			d.rootServer.QueueNativeRootRefreshDirs(event.RootID, event.Generation, event.Dirs)
+		}
+		return true
 	}
-	if err := httpServer.Serve(listener); err != nil && err != http.ErrServerClosed {
-		slog.Error("HTTP server failure", "error", err)
-		exitWithDiagnostics(1)
+	if !strings.HasPrefix(command, "index dirs ") {
+		return false
 	}
+	encoded := strings.TrimPrefix(command, "index dirs ")
+	if len(encoded) > maxIndexDirsEncodedBytes {
+		return true
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(encoded)
+	if err != nil || len(payload) > maxIndexDirsPayloadBytes {
+		return true
+	}
+	var dirs []string
+	if err := json.Unmarshal(payload, &dirs); err == nil && len(dirs) != 0 {
+		queueDefaultMediaRefresh(d.rootRegistry, d.rootServer, dirs)
+	}
+	return true
 }

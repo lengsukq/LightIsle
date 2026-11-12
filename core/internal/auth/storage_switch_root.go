@@ -55,6 +55,62 @@ func (s *Store) NativeSwitchUserStorageCategories(req SwitchUserStorageCategorie
 }
 
 func (s *Store) switchUserStorageCategories(actorSession string, actorID int64, checkSession bool, req SwitchUserStorageCategoriesRequest) ([]StorageLocation, error) {
+	uniqueCategories, err := validateSwitchCategoriesInput(req)
+	if err != nil {
+		return nil, err
+	}
+
+	// The source can enter trash immediately after this commit. Use a
+	// durable WAL commit for this handoff without changing ordinary writes.
+	ctx := context.Background()
+	conn, err := s.db.Conn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "PRAGMA synchronous=FULL"); err != nil {
+		return nil, err
+	}
+	defer conn.ExecContext(ctx, "PRAGMA synchronous=NORMAL")
+	tx, err := conn.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+
+	role, err := authorizeAndLoadSwitchTargetRoleTx(tx, actorSession, actorID, checkSession, req.TargetUserID)
+	if err != nil {
+		return nil, err
+	}
+	prefixes, err := verifySwitchSourceBindingsTx(tx, req, uniqueCategories)
+	if err != nil {
+		return nil, err
+	}
+	reservedBytes, err := consumeSwitchReservationTx(tx, req)
+	if err != nil {
+		return nil, err
+	}
+
+	now := time.Now().Unix()
+	if role != RoleAdmin {
+		if err := recordMemberSwitchLedgerTx(tx, req, reservedBytes, now); err != nil {
+			return nil, err
+		}
+	}
+	locations, err := rebindSwitchedCategoriesTx(tx, req, uniqueCategories, prefixes, role, now)
+	if err != nil {
+		return nil, err
+	}
+	if err := markStorageSwitchTaskCommittedTx(tx, req.TaskID, req.TargetUserID); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return locations, nil
+}
+
+func validateSwitchCategoriesInput(req SwitchUserStorageCategoriesRequest) ([]string, error) {
 	if req.TargetUserID <= 0 ||
 		!validRootID(req.SourceRootID) || req.SourceRootID != strings.ToLower(req.SourceRootID) ||
 		!validRootID(req.TargetRootID) || req.TargetRootID != strings.ToLower(req.TargetRootID) ||
@@ -88,43 +144,40 @@ func (s *Store) switchUserStorageCategories(actorSession string, actorID int64, 
 			return nil, ErrInput
 		}
 	}
+	return uniqueCategories, nil
+}
 
-	// The source can enter trash immediately after this commit. Use a
-	// durable WAL commit for this handoff without changing ordinary writes.
-	ctx := context.Background()
-	conn, err := s.db.Conn(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Close()
-	if _, err := conn.ExecContext(ctx, "PRAGMA synchronous=FULL"); err != nil {
-		return nil, err
-	}
-	defer conn.ExecContext(ctx, "PRAGMA synchronous=NORMAL")
-	tx, err := conn.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-
+func authorizeAndLoadSwitchTargetRoleTx(
+	tx *sql.Tx,
+	actorSession string,
+	actorID int64,
+	checkSession bool,
+	targetUserID int64,
+) (string, error) {
 	if checkSession {
 		valid, err := adminSessionValidTx(tx, actorSession, actorID)
 		if err != nil {
-			return nil, err
+			return "", err
 		}
 		if !valid {
-			return nil, ErrForbidden
+			return "", ErrForbidden
 		}
 	}
-
 	var role string
-	if err := tx.QueryRow("SELECT role FROM users WHERE id=? AND enabled=1", req.TargetUserID).Scan(&role); err != nil {
+	if err := tx.QueryRow("SELECT role FROM users WHERE id=? AND enabled=1", targetUserID).Scan(&role); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			return nil, ErrNotFound
+			return "", ErrNotFound
 		}
-		return nil, err
+		return "", err
 	}
+	return role, nil
+}
 
+func verifySwitchSourceBindingsTx(
+	tx *sql.Tx,
+	req SwitchUserStorageCategoriesRequest,
+	uniqueCategories []string,
+) ([]string, error) {
 	prefixes := make([]string, 0, len(uniqueCategories))
 	for _, category := range uniqueCategories {
 		expectedPrefix := fmt.Sprintf("Users/u%s/%s", strconv.FormatInt(req.TargetUserID, 10), category)
@@ -141,17 +194,15 @@ func (s *Store) switchUserStorageCategories(actorSession string, actorID int64, 
 		if actualRoot != req.SourceRootID || actualGen != int64(req.SourceGeneration) || actualPrefix != expectedPrefix {
 			return nil, ErrStorageReassignmentRequiresMigration
 		}
-		{
-			var hasReservation int
-			err = tx.QueryRow(`SELECT 1 FROM user_storage_reservations WHERE user_id=? AND root_id=? AND root_generation=?
-				AND substr(relative_path,1,length(?)+1)=?||'/' LIMIT 1`,
-				req.TargetUserID, req.SourceRootID, int64(req.SourceGeneration), expectedPrefix, expectedPrefix).Scan(&hasReservation)
-			if err == nil {
-				return nil, ErrStorageLedgerConflict
-			}
-			if !errors.Is(err, sql.ErrNoRows) {
-				return nil, err
-			}
+		var hasReservation int
+		err = tx.QueryRow(`SELECT 1 FROM user_storage_reservations WHERE user_id=? AND root_id=? AND root_generation=?
+			AND substr(relative_path,1,length(?)+1)=?||'/' LIMIT 1`,
+			req.TargetUserID, req.SourceRootID, int64(req.SourceGeneration), expectedPrefix, expectedPrefix).Scan(&hasReservation)
+		if err == nil {
+			return nil, ErrStorageLedgerConflict
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return nil, err
 		}
 		prefixes = append(prefixes, expectedPrefix)
 	}
@@ -164,85 +215,119 @@ func (s *Store) switchUserStorageCategories(actorSession string, actorID int64, 
 			return nil, ErrStorageLedgerConflict
 		}
 	}
+	return prefixes, nil
+}
 
+func consumeSwitchReservationTx(tx *sql.Tx, req SwitchUserStorageCategoriesRequest) (int64, error) {
 	var reservedBytes int64
 	if err := tx.QueryRow(`SELECT size_bytes FROM user_storage_reservations WHERE id=? AND user_id=?
 		AND root_id=? AND root_generation=? AND relative_path=? AND upload_id IS NULL`,
 		req.TaskID, req.TargetUserID, req.TargetRootID, req.TargetGeneration, ".lightisle-switch-"+req.TaskID).Scan(&reservedBytes); err != nil {
-		return nil, err
+		return 0, err
 	}
 	if reservedBytes != req.ReservedBytes {
-		return nil, ErrStorageLedgerConflict
+		return 0, ErrStorageLedgerConflict
 	}
 	if _, err := tx.Exec("DELETE FROM user_storage_reservations WHERE id=?", req.TaskID); err != nil {
-		return nil, err
+		return 0, err
 	}
-	now := time.Now().Unix()
-	if role != RoleAdmin {
-		var quota int64
-		if req.TargetQuotaBytes != nil {
-			quota = *req.TargetQuotaBytes
-		} else {
-			quota, err = rootQuotaTx(tx, req.TargetUserID, req.TargetRootID, req.TargetGeneration)
-			if err != nil {
-				return nil, err
-			}
-		}
-		used, reserved, err := rootQuotaUsageTx(tx, req.TargetUserID, req.TargetRootID, req.TargetGeneration)
-		if err != nil {
-			return nil, err
-		}
-		var deltaBytes int64
-		for _, f := range req.CopiedFiles {
-			var existingSize int64
-			err := tx.QueryRow(`SELECT size_bytes FROM user_storage_files WHERE root_id=? AND root_generation=? AND relative_path=? AND user_id=?`,
-				req.TargetRootID, int64(req.TargetGeneration), f.RelativePath, req.TargetUserID).Scan(&existingSize)
-			if errors.Is(err, sql.ErrNoRows) {
-				deltaBytes += f.SizeBytes
-			} else if err != nil {
-				return nil, err
-			} else if f.SizeBytes > existingSize {
-				deltaBytes += f.SizeBytes - existingSize
-			}
-		}
-		if deltaBytes > reservedBytes || (deltaBytes != 0 && (used > quota || reserved > quota-used || deltaBytes > quota-used-reserved)) {
-			return nil, ErrStorageQuotaExceeded
-		}
-		if req.TargetQuotaBytes != nil {
-			if _, err := tx.Exec(`INSERT INTO user_storage_root_quotas
-				(user_id,root_id,root_generation,quota_bytes,updated_at) VALUES(?,?,?,?,?)
-				ON CONFLICT(user_id,root_id,root_generation) DO UPDATE SET
-				quota_bytes=excluded.quota_bytes,updated_at=excluded.updated_at`,
-				req.TargetUserID, req.TargetRootID, int64(req.TargetGeneration), *req.TargetQuotaBytes, now); err != nil {
-				return nil, err
-			}
-		} else {
-			if _, err := tx.Exec(`INSERT INTO user_storage_root_quotas
-				(user_id,root_id,root_generation,quota_bytes,updated_at) VALUES(?,?,?,?,?)
-				ON CONFLICT(user_id,root_id,root_generation) DO NOTHING`,
-				req.TargetUserID, req.TargetRootID, int64(req.TargetGeneration), DefaultMemberQuotaBytes, now); err != nil {
-				return nil, err
-			}
-		}
-		for _, f := range req.CopiedFiles {
-			if _, err := tx.Exec(`INSERT INTO user_storage_files(root_id,root_generation,relative_path,user_id,size_bytes)
-				VALUES(?,?,?,?,?)
-				`,
-				req.TargetRootID, int64(req.TargetGeneration), f.RelativePath, req.TargetUserID, f.SizeBytes); err != nil {
-				return nil, err
-			}
-			if f.Identity != "" {
-				if _, err := tx.Exec(`INSERT INTO user_storage_file_identities(root_id,root_generation,relative_path,identity)
-					VALUES(?,?,?,?)
-					ON CONFLICT(root_id,root_generation,relative_path) DO UPDATE SET
-					identity=excluded.identity`,
-					req.TargetRootID, int64(req.TargetGeneration), f.RelativePath, f.Identity); err != nil {
-					return nil, err
-				}
-			}
-		}
-	}
+	return reservedBytes, nil
+}
 
+func recordMemberSwitchLedgerTx(
+	tx *sql.Tx,
+	req SwitchUserStorageCategoriesRequest,
+	reservedBytes int64,
+	now int64,
+) error {
+	var quota int64
+	var err error
+	if req.TargetQuotaBytes != nil {
+		quota = *req.TargetQuotaBytes
+	} else {
+		quota, err = rootQuotaTx(tx, req.TargetUserID, req.TargetRootID, req.TargetGeneration)
+		if err != nil {
+			return err
+		}
+	}
+	used, reserved, err := rootQuotaUsageTx(tx, req.TargetUserID, req.TargetRootID, req.TargetGeneration)
+	if err != nil {
+		return err
+	}
+	deltaBytes, err := computeCopiedFilesDeltaBytesTx(tx, req)
+	if err != nil {
+		return err
+	}
+	if deltaBytes > reservedBytes || (deltaBytes != 0 && (used > quota || reserved > quota-used || deltaBytes > quota-used-reserved)) {
+		return ErrStorageQuotaExceeded
+	}
+	if err := upsertTargetRootQuotaTx(tx, req, now); err != nil {
+		return err
+	}
+	return insertSwitchedTargetFilesTx(tx, req)
+}
+
+func computeCopiedFilesDeltaBytesTx(tx *sql.Tx, req SwitchUserStorageCategoriesRequest) (int64, error) {
+	var deltaBytes int64
+	for _, f := range req.CopiedFiles {
+		var existingSize int64
+		err := tx.QueryRow(`SELECT size_bytes FROM user_storage_files WHERE root_id=? AND root_generation=? AND relative_path=? AND user_id=?`,
+			req.TargetRootID, int64(req.TargetGeneration), f.RelativePath, req.TargetUserID).Scan(&existingSize)
+		if errors.Is(err, sql.ErrNoRows) {
+			deltaBytes += f.SizeBytes
+		} else if err != nil {
+			return 0, err
+		} else if f.SizeBytes > existingSize {
+			deltaBytes += f.SizeBytes - existingSize
+		}
+	}
+	return deltaBytes, nil
+}
+
+func upsertTargetRootQuotaTx(tx *sql.Tx, req SwitchUserStorageCategoriesRequest, now int64) error {
+	if req.TargetQuotaBytes != nil {
+		_, err := tx.Exec(`INSERT INTO user_storage_root_quotas
+			(user_id,root_id,root_generation,quota_bytes,updated_at) VALUES(?,?,?,?,?)
+			ON CONFLICT(user_id,root_id,root_generation) DO UPDATE SET
+			quota_bytes=excluded.quota_bytes,updated_at=excluded.updated_at`,
+			req.TargetUserID, req.TargetRootID, int64(req.TargetGeneration), *req.TargetQuotaBytes, now)
+		return err
+	}
+	_, err := tx.Exec(`INSERT INTO user_storage_root_quotas
+		(user_id,root_id,root_generation,quota_bytes,updated_at) VALUES(?,?,?,?,?)
+		ON CONFLICT(user_id,root_id,root_generation) DO NOTHING`,
+		req.TargetUserID, req.TargetRootID, int64(req.TargetGeneration), DefaultMemberQuotaBytes, now)
+	return err
+}
+
+func insertSwitchedTargetFilesTx(tx *sql.Tx, req SwitchUserStorageCategoriesRequest) error {
+	for _, f := range req.CopiedFiles {
+		if _, err := tx.Exec(`INSERT INTO user_storage_files(root_id,root_generation,relative_path,user_id,size_bytes)
+			VALUES(?,?,?,?,?)`,
+			req.TargetRootID, int64(req.TargetGeneration), f.RelativePath, req.TargetUserID, f.SizeBytes); err != nil {
+			return err
+		}
+		if f.Identity != "" {
+			if _, err := tx.Exec(`INSERT INTO user_storage_file_identities(root_id,root_generation,relative_path,identity)
+				VALUES(?,?,?,?)
+				ON CONFLICT(root_id,root_generation,relative_path) DO UPDATE SET
+				identity=excluded.identity`,
+				req.TargetRootID, int64(req.TargetGeneration), f.RelativePath, f.Identity); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func rebindSwitchedCategoriesTx(
+	tx *sql.Tx,
+	req SwitchUserStorageCategoriesRequest,
+	uniqueCategories []string,
+	prefixes []string,
+	role string,
+	now int64,
+) ([]StorageLocation, error) {
 	locations := make([]StorageLocation, 0, len(uniqueCategories))
 	for i, category := range uniqueCategories {
 		prefix := prefixes[i]
@@ -292,20 +377,19 @@ func (s *Store) switchUserStorageCategories(actorSession string, actorID int64, 
 			RelativePath:   prefix,
 		})
 	}
+	return locations, nil
+}
 
+func markStorageSwitchTaskCommittedTx(tx *sql.Tx, taskID string, targetUserID int64) error {
 	result, err := tx.Exec("UPDATE storage_switch_tasks SET committed=1 WHERE id=? AND user_id=? AND committed=0",
-		req.TaskID, req.TargetUserID)
+		taskID, targetUserID)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	if n, err := result.RowsAffected(); err != nil || n != 1 {
-		return nil, ErrStorageLedgerConflict
+		return ErrStorageLedgerConflict
 	}
-
-	if err := tx.Commit(); err != nil {
-		return nil, err
-	}
-	return locations, nil
+	return nil
 }
 
 // HasPendingCategoryReservations reports whether a category subtree has any
