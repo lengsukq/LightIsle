@@ -1,6 +1,6 @@
 # LightIsle 路线图
 
-> 最后核对：2026-11-11。这里只写**未完成工作和验收条件**。代码事实见 [STATUS](STATUS.md)，产品范围见 [PRODUCT](PRODUCT.md)，真机证据见 [验收清单](DEVICE_ACCEPTANCE.md)。
+> 最后核对：2026-11-12。这里只写**未完成工作和验收条件**。代码事实见 [STATUS](STATUS.md)，产品范围见 [PRODUCT](PRODUCT.md)，真机证据见 [验收清单](DEVICE_ACCEPTANCE.md)。
 
 > 图库与影视用户体验的完整理念、页面层级、操作约束和验收矩阵另见 [媒体体验设计规范](MEDIA_EXPERIENCE.md) 与 [真实设备验收清单](DEVICE_ACCEPTANCE.md)；该 UX 改造不改变本页存储安全与正式发布阻断条件。
 
@@ -35,7 +35,8 @@
 | **P1** | 图库本地 AI 视觉与全盘重复清理实机验收 | 代码已完成 macOS Vision 本地 AI 相册（人物聚类、自然语言语义搜图、离线 OCR 实况文本、连拍/相似废片清理）与 APFS 克隆感知重复大文件清理的四端闭环；仍需在真实万张家庭图库、外置 APFS/ExFAT 硬盘及手机端验证聚类质量、Apple Silicon 持续负载温控与回收站配额释放体验 |
 | **P1** | 桌面端本机文件夹增量备份实机验收 | 代码已完成 `startAccess` 书签续签契约对齐与 `< 800` 行职责拆分；仍需在真实 macOS（App Sandbox 重启恢复、外置盘拔插与同名换盘拦截）及 Windows/Linux（如发布对应桌面端）验证大目录增量备份与二阶段替换 |
 | **P1** | 家庭日常服务稳定性 | 真实下载/磁力与恢复、Docker 运行时已安装/未安装、通知外发、默认 LAN HTTP / 可选 HTTPS、Cloudflare/FRP 实际连通均有明确失败提示 |
-| **P1** | SQLite 孤儿清理与治理收敛 | 管理员注销存储根时级联清理/归档对应 `gallery-root-*` / `cinema-root-*` / `tasks-root-*` SQLite（避免孤儿库累积触发 `NativeUpgradePreflight.swift` 顶层 64 库上限拦截）；`NativeUpgradePreflight` 扩展检查子目录 `automation/automation.sqlite`；历史 0 记录单根遗留库（`gallery.sqlite`、`cinema.sqlite`）安全退役 |
+| **P1** | SQLite 孤儿归档与预检实机演练 | 代码已完成注销存储根/启动自动归档孤儿 `*-root-*.sqlite*` 至 `retired-roots/` 及 `NativeUpgradePreflight` 覆盖 `automation/automation.sqlite`；仍需在真实多盘频繁增删与版本覆盖升级流程中实机复核 |
+| **P2（实机验收）** | 个人与家庭高频体验真机联调（代码已完成四端闭环，不作为 Beta 阻断项） | 在真机验证 Live Photo 实况配对播放与成对导出、智能回忆与宝宝/家人人物只读共享、`.strm` 直链与 Android TV 遥控/Infuse 大屏接入、Tailscale 双栈直连、设备级会话远程下线、USB UPS `pmset` 断电联动保护及 4 款内置静态轻应用模板；公有云网盘加密备份与 Docker Compose 模板留作远期评估 |
 | **P2（持续）** | 上层重文件逐个拆分职责，不改变个人 NAS 功能边界 | Flutter、Web、macOS 的页面/状态和业务协调逐步解耦；Go IPC 与下载任务代码按职责收敛；关键操作有自动回归，不增加重复后台服务 |
 | **发布阻断** | 发版质量门禁 | **Mac mini 连续 7 天正常运行已由用户实机验证**；正式 QA 记录附件、外接盘故障与恢复演练、真实 Mac/Android/iOS 其他场景、Developer ID 签名、公证与 Gatekeeper 证据仍需齐备 |
 
@@ -48,7 +49,7 @@
 
 ## 远期可选（不作为 Beta 验收任务）
 
-可根据实际家庭使用需求再评估：可撤销的通用第三方 API Key、云端异地配置快照、公有云/异地原始文件增量同步、零配置组网引导（如 Tailscale 向导）和 UPS 断电状态联动（受控 ZIP 在线解压、同卷 APFS `clonefileat` 写时复制、iOS 前台 RAW/Live Photo 导出及 Apple Vision 本地 OCR/场景/人脸/相似图均已在代码中完成全端闭环，按上表推进真机验收）。仅作为候选，**没有完成或发布承诺**，不得替代上表的存储安全与真机验收。
+可根据实际家庭使用需求再评估：可撤销的通用第三方 API Key、云端异地配置快照与公有云/异地原始文件加密增量同步（受控 ZIP 在线解压、同卷 APFS `clonefileat` 写时复制、Apple Live Photo 全端配对播放、智能回忆与人物自动只读共享、`.strm` 流媒体直链、Tailscale 零配置双栈组网、设备级会话管理、`pmset` UPS 断电联动守护、4 款内置静态轻应用模板及 Apple Vision 本地 AI 相册均已在代码中完成全端闭环，按上表推进真机验收）。仅作为候选，**没有完成或发布承诺**，不得替代上表的存储安全与真机验收。
 
 ## 不在个人版范围
 

@@ -79,9 +79,9 @@ flowchart TD
 - **原始照片、影片及文件始终保存在用户授权卷目录**，外置存储卷（NAS 磁盘）**保持零 SQLite 污染**（仅存放 `.lightisle-appdata` 缩略图缓存与临时分块）；全部 SQLite 数据库统一严格收敛于 Mac 系统盘 `~/Library/Application Support/LightIsle/`。
 - **SQLite 拓扑与生命周期边界**：
   - **全局核心元数据**：`accounts.sqlite`（用户、密码盐、会话、多根授权、配额账本、分享链接、WebDAV 凭证、全量审计日志，主进程常驻）；`tasks.sqlite`（系统全局告警、CPU/内存/磁盘度量采样历史）；`downloads.sqlite`（aria2 任务流水、进度、绑定的 rootID 与 generation、发布追踪）；`automation/automation.sqlite`（定时脚本运行历史与通知投递流水）。
-  - **按物理根隔离媒体索引**：`gallery-root-<rootID>.sqlite`（对应根的照片/视频 EXIF、GPS、相册、个人收藏，以及本地 Vision AI 派生的 OCR、搜索词元、场景标签、人脸向量、用户级私有人物聚类与 Float16 图像特征表）、`cinema-root-<rootID>.sqlite`（对应根的影视刮削元数据、剧集、播放进度）、`tasks-root-<rootID>.sqlite`（对应根的媒体扫描、哈希探测等局部任务流水）。这三者随对应存储根的 `RootServices` 动态加载，空闲 10 分钟且无媒体扫描/备份任务时由 `releaseIdleRuntimes` 主动调用 `Close()` 释放句柄，避免外置盘离线时文件描述符悬挂。当前移除存储根暂未自动删除对应派生 SQLite，且 `NativeUpgradePreflight.swift` 仅浅层检查顶层不超过 64 个 `.sqlite` 文件（尚未递归检查 `automation/automation.sqlite`）。
+  - **按物理根隔离媒体索引**：`gallery-root-<rootID>.sqlite`（对应根的照片/视频 EXIF、GPS、相册、个人收藏，以及本地 Vision AI 派生的 OCR、CJK 二元词与词元索引、场景标签、人脸向量、用户级私有人物聚类与 Float16 图像特征表）、`cinema-root-<rootID>.sqlite`（对应根的影视刮削元数据、剧集、播放进度）、`tasks-root-<rootID>.sqlite`（对应根的媒体扫描、哈希探测等局部任务流水）。这三者随对应存储根的 `RootServices` 动态加载，空闲 10 分钟且无媒体扫描/备份任务时由 `releaseIdleRuntimes` 主动调用 `Close()` 释放句柄；当管理员移除存储根或守护进程启动自检时，自动驱逐缓存运行时并将无引用的 `*-root-*.sqlite*` 归档移入 `retired-roots/`，同时 `NativeUpgradePreflight.swift` 与 `beta-upgrade-preflight.py` 同步检查顶层 `.sqlite` 与子目录 `automation/automation.sqlite` 的只读完整性。
   - **历史遗留兼容**：单根时代遗留的 `gallery.sqlite` 与 `cinema.sqlite` 在当前运行中不再主动打开与写入，仅保留供旧版元数据快照离线恢复兼容。
-  - **连接与并发控制契约**：全模块统一连接参数 `_busy_timeout=5000&_journal_mode=WAL&_foreign_keys=1&_cache_size=-512`（媒体库 `-1024`），并显式配置 `db.SetMaxOpenConns(1)`。在 Go 进程内部通过内存连接池将读写调用严格串行化，彻底消除 SQLite 高并发写引发的 `database is locked` / `SQLITE_BUSY` 崩溃，以个人家庭轻量 NAS 稳定性为最高优先级。
+  - **连接与读写双池并发契约**：写连接池统一使用 `_busy_timeout=5000&_journal_mode=WAL&_foreign_keys=1&_cache_size=-512`（媒体库 `-1024`）并保持 `db.SetMaxOpenConns(1)` 单写串行化，彻底杜绝并发写引发的 `SQLITE_BUSY`；同时 `auth`、`gallery`、`cinema` 独立挂载 `mode=ro&_query_only=1` 只读连接池（`rdb.SetMaxOpenConns(4)`），充分利用 SQLite WAL 读写并发特性，确保后台媒体扫描/AI 索引写入期间前端时间线、海报墙与会话鉴权零阻塞。
   - **备份快照边界契约**：`backup` 模块的一致性快照仅包含 `accounts.sqlite`、`tasks.sqlite` 及登记根的 `*-root-*.sqlite`；`downloads.sqlite` 与 `automation.sqlite` 属于易失性运行时数据，不纳入轻量配置灾难恢复。
 - 默认根（非限定根）v2 API 与按物理根限定的 `/api/v2/roots/{rootID}/...` 并存；隔离的 v2 多根按 `rootID + generation + 物理 Binding` 租用文件管理器、索引/任务与文件分享。**另一硬盘或同路径新 inode 绝不能重用旧根的成员授权**；无身份确认时根是离线，不根据路径“猜测重连”。
 - 外置卷 FSEvents 事件可能丢失或合并，需通过有界周期对账补扫；索引可重建不代表文件已备份。
@@ -100,11 +100,12 @@ flowchart TD
 - Swift Media Worker 优先调用 ImageIO/QuickLookThumbnailing，统一按尺寸和版本生成缩略图。
 - 缩略图落磁盘缓存，可设置容量、LRU/年龄清理，不把原图完整载入常驻服务。
 - Web 时间线 cursor 分页 + 虚拟滚动；分区/相册与通用文件列表复用 file_id。
-- **本地离线 Vision AI 管道**：由短生命周期 `LightIsleMediaWorker ai-batch` 子进程通过只读文件描述符（单批最多 16 项，`QOS_CLASS_UTILITY` 低优调度与 `thermalState == .critical` 过热限流）调用 Apple 原生 Vision / NaturalLanguage 完成简繁英 OCR、双语场景分类、人脸特征（ANFRv4 128D / FeaturePrint 768D + 睁眼度 EAR）与图像特征/清晰度/美学分析，退出即释放全部模型内存，零外部模型下载与公网请求；Go `gallery` 在常规扫描空闲时以单并发槽位（`aiSlots=1`）增量写入派生表并支持暂停，服务端 `/api/v2/roots/{rootID}/photos/{persons,faces,cleanup/similar,{id}/ai}` 路由、人脸头像 ETag/304 协商、MCP 工具及 Web/Flutter 客户端界面均已全链路闭环（详见 [STATUS](STATUS.md)）。
+- **Apple Live Photo 实况配对、智能回忆与人物只读共享**：扫描器自动识别同目录同名照片与短视频伴侣（`live_video_asset_id` / `live_companion_of`），时间线默认聚合展示并在 `/live-video` 提供 Range 流与成对打包导出；基于拍摄时空/GPS/收藏聚类生成虚拟回忆卡片（`/api/v2/photos/memories`）；支持将所有者本人可写目录内的 Vision 人物聚类零拷贝只读共享给指定家庭成员（`/api/v2/photos/person-shares*`）。
+- **本地离线 Vision AI 管道**：由短生命周期 `LightIsleMediaWorker ai-batch` 子进程通过只读文件描述符（单批最多 16 项，`QOS_CLASS_UTILITY` 低优调度与 `thermalState == .critical` 过热限流）调用 Apple 原生 Vision / NaturalLanguage 完成简繁英 OCR、双语场景分类、人脸特征（ANFRv4 128D / FeaturePrint 768D + 睁眼度 EAR）与图像特征/清晰度/美学分析，退出即释放全部模型内存，零外部模型下载与公网请求；Go `gallery` 在常规扫描空闲时以单并发槽位（`aiSlots=1`）增量写入派生表并支持暂停（含宿主机 `pmset` 断电供电联动自动暂停），服务端 `/api/v2/roots/{rootID}/photos/{persons,person-shares,memories,faces,cleanup/similar,{id}/ai}` 路由、人脸头像 ETag/304 协商、MCP 工具及 Web/Flutter 客户端界面均已全链路闭环（详见 [STATUS](STATUS.md)）。
 
 ## 6. 影视与播放策略
 
-播放协商三层策略：**Direct Play → Direct Stream/Remux（如确有必要）→ Transcode**。
+播放协商三层策略：**Direct Play（含 `.strm` 安全校验后的客户端 `307` 直连）→ Direct Stream/Remux（如确有必要）→ Transcode**。
 
 - Web/Android 上报解码及容器支持能力，不仅根据文件扩展名猜测。
 - HTTP Range 流式返回文件；支持鉴权和读取边界，不缓存整个媒体。

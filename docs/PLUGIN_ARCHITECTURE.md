@@ -160,10 +160,9 @@ Go Core 启动 `run-web.sh` 时会自动注入干净的白名单环境变量：
 > **轻量代理防伪约定**：
 > Go Core 反代转发请求至 `127.0.0.1:$PORT` 时，会注入请求头 `X-LightIsle-Proxy-Secret` 以及当前登录用户的 `X-LightIsle-User-ID`、`X-LightIsle-Username`、`X-LightIsle-Role`。插件只需校验 `req.headers['x-lightisle-proxy-secret'] === process.env.LIGHTISLE_PROXY_SECRET`，即可安全实现免二次登录，防止本机其他进程直连 `127.0.0.1:$PORT` 伪造身份头。
 
-### 4.2 纯静态 HTML 轻应用指南（`mode: "static"`，0 MB 进程开销）
-- `run-cron.sh` 定时运行采集脚本，将最新结果写入 `ui/data.json`；
-- `ui/index.html` 通过相对路径 `fetch('./data.json')` 渲染图表；
-- 常驻与浏览期间子进程内存均为 **0 MB**。
+### 4.2 纯静态 HTML 轻应用指南与内置官方精选模板（`mode: "static"`，0 MB 进程开销）
+- `run-cron.sh` 定时运行采集脚本，将最新结果写入 `ui/data.json`；`ui/index.html` 通过相对路径 `fetch('./data.json')` 或 `localStorage` 渲染看板，常驻与浏览期间子进程内存均为 **0 MB**。
+- `core/internal/apps/builtin_templates.go` 随包内置 4 款零外部依赖的官方精选静态家庭轻应用模板（`network-pulse` 家庭网络脉搏哨兵、`family-subscriptions` 家庭订阅与续费管家、`warranty-vault` 家电数码保修卡库、`family-board` 家庭共享备忘白板），支持管理员通过 `GET /api/v2/apps/templates` 与 `POST /api/v2/apps/templates/{id}/install` 一键安装并按成员授权开放。
 
 ### 4.3 Python / Java / Node.js / Go / Rust 轻量化模版
 - **Python (FastAPI)**：优先使用 `.venv/bin/python`，传入 `--host 127.0.0.1 --port "$PORT" --root-path "${BASE_PATH:-}" --workers 1`。
