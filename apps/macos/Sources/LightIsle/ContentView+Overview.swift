@@ -248,6 +248,7 @@ extension ContentView {
         let m = model.metrics
         let memTotal = m?.memoryTotal ?? 0
         let memUsed = min(m?.memoryUsed ?? 0, memTotal)
+        let pwr = TailscaleAndUPSDetector.currentPowerSnapshot()
         return VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Text("Mac 运行状态").font(.system(size: 15, weight: .semibold))
@@ -264,6 +265,10 @@ extension ContentView {
                                   subtext: "本机所有网络接口合计", progress: nil, tint: IsleFluidPalette.brandCyan, icon: "arrow.down")
                 LiquidHealthGauge(title: "网络上传", valueText: m?.networkUpBps.map { formatRate($0) + "/s" } ?? "等待采样",
                                   subtext: "本机所有网络接口合计", progress: nil, tint: IsleFluidPalette.brandIndigo, icon: "arrow.up")
+                if pwr.available {
+                    LiquidHealthGauge(title: "供电与 UPS", valueText: pwr.statusLabel,
+                                      subtext: pwr.detailLabel, progress: pwr.percent >= 0 ? Double(pwr.percent) / 100.0 : nil, tint: pwr.onBattery ? .orange : .green, icon: pwr.onBattery ? "bolt.batteryblock.fill" : "powerplug")
+                }
             }
         }
     }

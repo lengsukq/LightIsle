@@ -76,7 +76,9 @@ extension ContentView {
             if smbOn { return (count > 0 ? "已开启 · \(count) 个共享" : "已开启", .success) }
             return ("未开启", .neutral)
         case .remote:
-            return ("Tailscale / EasyTier", .neutral)
+            let ts = TailscaleAndUPSDetector.detectTailscale()
+            if ts.connected { return ("Tailscale 已组网 · \(ts.ipv4)", .success) }
+            return (ts.installed ? "Tailscale 已安装" : "Tailscale / EasyTier", .neutral)
         case .cloudflare:
             if model.tunnelState?.status == "online" { return ("运行中", .success) }
             if model.tunnelState?.status == "starting" { return ("启动中…", .warning) }
@@ -401,8 +403,35 @@ extension ContentView {
         SmbSharingSectionView(model: model, showNotice: showNotice)
     }
     var connectionRemoteContent: some View {
-        VStack(alignment: .leading, spacing: 20) {
-            AppleSettingsGroup(title: "在外面访问（可选）", footer: "不在家时，可让自己的设备先加入同一个私人网络，再连接 LightIsle。不会自动开放公网端口或修改路由器。") {
+        let ts = TailscaleAndUPSDetector.detectTailscale()
+        let tsDirect = ts.directURL(remoteAddress: model.remoteAddress, fallbackPort: model.preferredLocalPort)
+        return VStack(alignment: .leading, spacing: 20) {
+            AppleSettingsGroup(title: "零配置异地组网（Tailscale / EasyTier）", footer: "不在家时，让手机与本机登录同一 Tailscale 账号即可通过 100.64.0.0/10 虚拟组网接口加密直连，轻屿开启局域网连接后会自动双接口绑定（无需暴露公网端口）。") {
+                AppleSettingsRow(
+                    title: "Tailscale 本机实时探测",
+                    subtitle: ts.connected ? "已识别虚拟组网接口 \(ts.interfaceName) · \(ts.ipv4)" : (ts.installed ? "已检测到 Tailscale 客户端，登录组网后即可自动直连。" : "尚未检测到 Tailscale，安装登录同一账号即可免公网 IP 异地直连。"),
+                    icon: "point.3.connected.trianglepath.dotted",
+                    iconTint: ts.connected ? .green : .indigo
+                ) {
+                    HStack(spacing: 8) {
+                        if let direct = tsDirect {
+                            Text(direct)
+                                .font(.system(size: 11.5, design: .monospaced))
+                                .foregroundStyle(IsleTheme.accent)
+                                .textSelection(.enabled)
+                            ConnectionQRCodePopoverButton(urlString: direct, label: "异地组网扫码直连")
+                            Button("复制地址") {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(direct, forType: .string)
+                                showNotice("已复制 Tailscale 直连地址")
+                            }
+                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        } else {
+                            IsleStatusPill(text: ts.connected ? "请先开启局域网连接" : (ts.installed ? "待连接" : "未安装"), tone: ts.connected ? .warning : .neutral)
+                        }
+                    }
+                }
+                IsleGroupSpacing(height: 4).padding(.leading, 14)
                 AppleSettingsRow(
                     title: "在家庭网络之外访问",
                     subtitle: "先开启加密连接，再让手机和 Mac 加入同一个私人网络。首次连接时请核对验证信息。",

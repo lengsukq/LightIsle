@@ -30,22 +30,36 @@ enum NativeUpgradePreflight {
               !isSymlink(directory) else {
             return .init(databases: [], issues: ["未找到安全的 LightIsle 私有数据库目录"], warnings: warnings)
         }
-        let urls: [URL]
+        var candidates: [(label: String, url: URL)]
         do {
-            urls = try fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.isSymbolicLinkKey, .isRegularFileKey], options: [])
+            candidates = try fm.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.isSymbolicLinkKey, .isRegularFileKey], options: [])
                 .filter { $0.pathExtension == "sqlite" }
                 .sorted { $0.lastPathComponent < $1.lastPathComponent }
+                .map { ($0.lastPathComponent, $0) }
         } catch {
             return .init(databases: [], issues: ["无法读取数据库目录"], warnings: warnings)
         }
-        guard !urls.isEmpty, urls.count <= 64 else {
+        let automationDir = directory.appendingPathComponent("automation", isDirectory: true)
+        var autoIsDir: ObjCBool = false
+        if fm.fileExists(atPath: automationDir.path, isDirectory: &autoIsDir) || isSymlink(automationDir) {
+            if isSymlink(automationDir) || !autoIsDir.boolValue {
+                issues.append("automation：不是安全的子目录")
+            } else {
+                let autoDB = automationDir.appendingPathComponent("automation.sqlite")
+                if fm.fileExists(atPath: autoDB.path) || isSymlink(autoDB) {
+                    candidates.append(("automation/automation.sqlite", autoDB))
+                }
+            }
+        }
+        guard !candidates.isEmpty, candidates.count <= 64 else {
             return .init(databases: [], issues: ["数据库缺失或数量异常"], warnings: warnings)
         }
-        if !urls.contains(where: { $0.lastPathComponent == "accounts.sqlite" }) {
+        if !candidates.contains(where: { $0.label == "accounts.sqlite" }) {
             issues.append("缺少账号数据库 accounts.sqlite")
         }
-        for url in urls {
-            let name = url.lastPathComponent
+        for item in candidates {
+            let name = item.label
+            let url = item.url
             guard !isSymlink(url), (try? url.resourceValues(forKeys: [.isRegularFileKey]).isRegularFile) == true else {
                 issues.append("\(name)：不是安全的普通文件")
                 results.append(.init(name: name, status: "路径异常"))

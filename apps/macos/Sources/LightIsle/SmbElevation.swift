@@ -73,7 +73,7 @@ enum SmbElevation {
         }
         return """
         # LightIsle macOS File Sharing (SMB) management
-        \(username) ALL=(root) NOPASSWD: /usr/sbin/sharing *, /bin/launchctl load -w \(smbdPlistPath), /bin/launchctl unload -w \(smbdPlistPath)
+        \(username) ALL=(root) NOPASSWD: /usr/sbin/sharing -l, /usr/sbin/sharing -a /*, /usr/sbin/sharing -e *, /usr/sbin/sharing -r *, !/usr/sbin/sharing *..*, /bin/launchctl load -w \(smbdPlistPath), /bin/launchctl unload -w \(smbdPlistPath)
         """
     }
 

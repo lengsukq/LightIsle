@@ -30,6 +30,20 @@ struct NativeUpgradePreflightCheck {
         precondition(!unsafe.canProceedWithManualUpgrade, "database symlink must block upgrade")
         try FileManager.default.removeItem(at: symlink)
 
+        let autoDir = root.appendingPathComponent("automation", isDirectory: true)
+        try FileManager.default.createDirectory(at: autoDir, withIntermediateDirectories: true)
+        let autoDBFile = autoDir.appendingPathComponent("automation.sqlite")
+        try Data("broken automation sqlite".utf8).write(to: autoDBFile, options: .atomic)
+        let badAuto = NativeUpgradePreflight.inspect(root)
+        precondition(!badAuto.canProceedWithManualUpgrade, "corrupt automation/automation.sqlite must block upgrade")
+        try FileManager.default.removeItem(at: autoDBFile)
+        var autoDB: OpaquePointer?
+        precondition(sqlite3_open(autoDBFile.path, &autoDB) == SQLITE_OK)
+        precondition(sqlite3_exec(autoDB, "CREATE TABLE tasks(id TEXT PRIMARY KEY)", nil, nil, nil) == SQLITE_OK)
+        sqlite3_close(autoDB)
+        let goodWithAuto = NativeUpgradePreflight.inspect(root)
+        precondition(goodWithAuto.canProceedWithManualUpgrade, "healthy automation/automation.sqlite must pass preflight")
+
         try Data("not a SQLite DB".utf8).write(to: file, options: .atomic)
         let corrupted = NativeUpgradePreflight.inspect(root)
         precondition(!corrupted.canProceedWithManualUpgrade, "corrupt database must block upgrade")

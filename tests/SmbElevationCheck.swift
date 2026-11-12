@@ -10,7 +10,7 @@ struct SmbElevationCheck {
         assert(!SmbElevation.isValidUsername("root;rm -rf /"))
 
         let rule = try SmbElevation.sudoersRule(for: "leo")
-        assert(rule.contains("leo ALL=(root) NOPASSWD: /usr/sbin/sharing *"))
+        assert(rule.contains("leo ALL=(root) NOPASSWD: /usr/sbin/sharing -l, /usr/sbin/sharing -a /*, /usr/sbin/sharing -e *, /usr/sbin/sharing -r *, !/usr/sbin/sharing *..*"))
         assert(rule.contains("/bin/launchctl load -w /System/Library/LaunchDaemons/com.apple.smbd.plist"))
         assert(rule.contains("/bin/launchctl unload -w /System/Library/LaunchDaemons/com.apple.smbd.plist"))
 
