@@ -145,7 +145,7 @@ extension AppModel {
     /// reports READY. This is deliberately distinct from line decoding.
     func handleCoreReady(_ url: URL) {
             guard state == .starting, let generation = coreGeneration, !stopping else { return }
-            try? coreCommands?.write(contentsOf: Data("computer-files status\n".utf8))
+            sendCoreCommandLine("computer-files status\n", context: "coreReady.computerFiles.status")
             endpoint = url
             cancelStartupDeadline()
             state = .online

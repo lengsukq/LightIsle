@@ -6,7 +6,7 @@ extension AppModel {
     func refreshSMBState() {
         guard state == .online else { return }
         smbError = nil
-        try? coreCommands?.write(contentsOf: Data("smb state\n".utf8))
+        sendCoreCommandLine("smb state\n", context: "smb.state")
     }
 
     func setSMBServiceEnabled(_ enabled: Bool) {

@@ -126,7 +126,7 @@ extension AppModel {
     func retrySharedFolder() {
         guard state == .online, !storageSelectionPending, !offlineCleanupPending else { return }
         sharedFolderError = nil
-        try? coreCommands?.write(contentsOf: Data("share retry\n".utf8))
+        sendCoreCommandLine("share retry\n", context: "share.retry")
     }
 
     /// A cross-volume transfer is only requested from the native owner UI.
@@ -171,13 +171,13 @@ extension AppModel {
 
     func cancelExport() {
         guard exportRunning, state == .online else { return }
-        try? coreCommands?.write(contentsOf: Data("export cancel\n".utf8))
+        sendCoreCommandLine("export cancel\n", context: "export.cancel")
         exportMessage = "正在请求取消跨磁盘复制，清理尚未发布的临时副本…"
     }
 
     func requestTransferHistory() {
         guard state == .online else { return }
-        try? coreCommands?.write(contentsOf: Data("export history\n".utf8))
+        sendCoreCommandLine("export history\n", context: "export.history")
     }
 
     func decodeExportResult(_ raw: String) -> String? {

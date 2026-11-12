@@ -229,6 +229,84 @@ enum DockerLocalRuntime {
         try run(binary: executable, args: args, deadline: deadline)
     }
 
+    private static func sanitizedEnvironment() -> [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        // The native feature must never inherit a remote Docker endpoint.
+        for key in ["DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_TLS_VERIFY", "DOCKER_CERT_PATH", "DOCKER_API_VERSION"] {
+            env.removeValue(forKey: key)
+        }
+        // An inherited COMPOSE_PROFILES can silently start extra services,
+        // even when the explicitly selected compose file is unchanged.
+        for key in env.keys.filter({ $0.hasPrefix("COMPOSE_") }) {
+            env.removeValue(forKey: key)
+        }
+        return env
+    }
+
+    private static func evaluateOutcome(
+        captured: Data,
+        stopReason: CommandStopReason?,
+        terminationStatus: Int32
+    ) throws -> String {
+        let preview = String(decoding: captured, as: UTF8.self)
+        switch stopReason {
+        case .timedOut:
+            throw DockerConfigurationError.command("Docker 命令超时，已停止进程。")
+        case .outputLimit:
+            throw DockerConfigurationError.command("Docker 命令输出超过安全上限（1 MiB），已停止进程。")
+        case .pipeRead(let details):
+            throw DockerConfigurationError.command("读取 Docker 命令输出失败：\(details)")
+        case .inheritedPipe:
+            throw DockerConfigurationError.command("Docker 命令退出后仍有子进程占用输出管道，已关闭输出并清理。")
+        case nil:
+            break
+        }
+        guard terminationStatus == 0 else {
+            let details = String(preview.prefix(350)).trimmingCharacters(in: .whitespacesAndNewlines)
+            let suffix = details.isEmpty ? "" : "：\(details)"
+            throw DockerConfigurationError.command("Docker 命令失败（退出码 \(terminationStatus)）\(suffix)")
+        }
+        return preview.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func drainReadyStream(
+        fd: Int32,
+        captured: inout Data,
+        capturingAllowed: Bool,
+        onLimitReached: () -> Void,
+        onEOF: () -> Void,
+        onReadError: (String) -> Void
+    ) {
+        var drainedThisPass = 0
+        while drainedThisPass < commandOutputReadBudgetPerStream {
+            var chunk = [UInt8](repeating: 0, count: commandOutputChunkSize)
+            let bytesRead = chunk.withUnsafeMutableBytes { rawBuffer in
+                Darwin.read(fd, rawBuffer.baseAddress, rawBuffer.count)
+            }
+            if bytesRead > 0 {
+                drainedThisPass += bytesRead
+                if capturingAllowed {
+                    let available = commandOutputLimit - captured.count
+                    if bytesRead > available {
+                        if available > 0 { captured.append(contentsOf: chunk.prefix(available)) }
+                        onLimitReached()
+                    } else {
+                        captured.append(contentsOf: chunk.prefix(bytesRead))
+                    }
+                }
+                continue
+            }
+            if bytesRead == 0 {
+                onEOF()
+                break
+            }
+            if errno == EINTR { continue }
+            if errno == EAGAIN || errno == EWOULDBLOCK { break }
+            onReadError("read: \(String(cString: strerror(errno)))")
+            break
+        }
+    }
+
     private static func run(binary: URL, args: [String], deadline: TimeInterval) throws -> String {
         let process = Process()
         process.executableURL = binary
@@ -251,19 +329,7 @@ enum DockerLocalRuntime {
         }
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
-        var env = ProcessInfo.processInfo.environment
-        // The native feature must never inherit a remote Docker endpoint.
-        env.removeValue(forKey: "DOCKER_HOST")
-        env.removeValue(forKey: "DOCKER_CONTEXT")
-        env.removeValue(forKey: "DOCKER_TLS_VERIFY")
-        env.removeValue(forKey: "DOCKER_CERT_PATH")
-        env.removeValue(forKey: "DOCKER_API_VERSION")
-        // An inherited COMPOSE_PROFILES can silently start extra services,
-        // even when the explicitly selected compose file is unchanged.
-        for key in env.keys.filter({ $0.hasPrefix("COMPOSE_") }) {
-            env.removeValue(forKey: key)
-        }
-        process.environment = env
+        process.environment = sanitizedEnvironment()
         try process.run()
 
         // The parent must close its copies of the pipe write ends or EOF will
@@ -292,12 +358,9 @@ enum DockerLocalRuntime {
         var childExitSeenAt: UInt64?
 
         let startedAt = DispatchTime.now().uptimeNanoseconds
-        let durationNanos: UInt64
-        if deadline.isFinite && deadline > 0 {
-            durationNanos = UInt64(min(deadline * 1_000_000_000, Double(UInt64.max / 2)))
-        } else {
-            durationNanos = 0
-        }
+        let durationNanos = (deadline.isFinite && deadline > 0)
+            ? UInt64(min(deadline * 1_000_000_000, Double(UInt64.max / 2)))
+            : 0
         let deadlineAt = startedAt &+ durationNanos
 
         func requestStop(_ reason: CommandStopReason) {
@@ -320,16 +383,12 @@ enum DockerLocalRuntime {
             if !childHasExited && stopReason == nil && now >= deadlineAt {
                 requestStop(.timedOut)
             }
-            if let sentAt = stopSentAt, !forceKillSent,
-               now >= sentAt && now - sentAt >= commandStopGrace {
-                if process.isRunning {
-                    _ = Darwin.kill(process.processIdentifier, SIGKILL)
-                }
+            if let sentAt = stopSentAt, !forceKillSent, now >= sentAt && now - sentAt >= commandStopGrace {
+                if process.isRunning { _ = Darwin.kill(process.processIdentifier, SIGKILL) }
                 forceKillSent = true
             }
             if childHasExited, let exitedAt = childExitSeenAt,
-               streamOpen.contains(true), now >= exitedAt,
-               now - exitedAt >= inheritedPipeGrace {
+               streamOpen.contains(true), now >= exitedAt, now - exitedAt >= inheritedPipeGrace {
                 if stopReason == nil { stopReason = .inheritedPipe }
                 for index in readers.indices { closeStream(index) }
             }
@@ -343,65 +402,30 @@ enum DockerLocalRuntime {
                 for index in readers.indices { closeStream(index) }
             } else if pollResult > 0 {
                 for index in readers.indices where streamOpen[index] {
-                    let ready = descriptors[index].revents
-                    guard ready & Int16(POLLIN | POLLHUP | POLLERR | POLLNVAL) != 0 else { continue }
-                    var drainedThisPass = 0
-                    while streamOpen[index] && drainedThisPass < commandOutputReadBudgetPerStream {
-                        var chunk = [UInt8](repeating: 0, count: commandOutputChunkSize)
-                        let bytesRead = chunk.withUnsafeMutableBytes { rawBuffer in
-                            Darwin.read(descriptors[index].fd, rawBuffer.baseAddress, rawBuffer.count)
-                        }
-                        if bytesRead > 0 {
-                            drainedThisPass += bytesRead
-                            if stopReason == nil {
-                                let available = commandOutputLimit - captured.count
-                                if bytesRead > available {
-                                    if available > 0 { captured.append(contentsOf: chunk.prefix(available)) }
-                                    requestStop(.outputLimit)
-                                } else {
-                                    captured.append(contentsOf: chunk.prefix(bytesRead))
-                                }
-                            }
-                            continue
-                        }
-                        if bytesRead == 0 {
+                    guard descriptors[index].revents & Int16(POLLIN | POLLHUP | POLLERR | POLLNVAL) != 0 else { continue }
+                    drainReadyStream(
+                        fd: descriptors[index].fd,
+                        captured: &captured,
+                        capturingAllowed: stopReason == nil,
+                        onLimitReached: { requestStop(.outputLimit) },
+                        onEOF: { closeStream(index) },
+                        onReadError: { err in
+                            requestStop(.pipeRead(err))
                             closeStream(index)
-                            break
                         }
-                        if errno == EINTR { continue }
-                        if errno == EAGAIN || errno == EWOULDBLOCK { break }
-                        requestStop(.pipeRead("read: \(String(cString: strerror(errno)))"))
-                        closeStream(index)
-                    }
+                    )
                 }
             }
-
             if !childHasExited, processExited.wait(timeout: .now()) == .success {
                 childHasExited = true
                 childExitSeenAt = DispatchTime.now().uptimeNanoseconds
             }
         }
-
-        let preview = String(decoding: captured, as: UTF8.self)
-        switch stopReason {
-        case .timedOut:
-            throw DockerConfigurationError.command("Docker 命令超时，已停止进程。")
-        case .outputLimit:
-            throw DockerConfigurationError.command("Docker 命令输出超过安全上限（1 MiB），已停止进程。")
-        case .pipeRead(let details):
-            throw DockerConfigurationError.command("读取 Docker 命令输出失败：\(details)")
-        case .inheritedPipe:
-            throw DockerConfigurationError.command("Docker 命令退出后仍有子进程占用输出管道，已关闭输出并清理。")
-        case nil:
-            break
-        }
-
-        guard process.terminationStatus == 0 else {
-            let details = String(preview.prefix(350)).trimmingCharacters(in: .whitespacesAndNewlines)
-            let suffix = details.isEmpty ? "" : "：\(details)"
-            throw DockerConfigurationError.command("Docker 命令失败（退出码 \(process.terminationStatus)）\(suffix)")
-        }
-        return preview.trimmingCharacters(in: .whitespacesAndNewlines)
+        return try evaluateOutcome(
+            captured: captured,
+            stopReason: stopReason,
+            terminationStatus: process.terminationStatus
+        )
     }
 
     private static func setNonBlocking(_ fileDescriptor: Int32) -> Bool {

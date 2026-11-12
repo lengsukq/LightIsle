@@ -19,6 +19,16 @@ if [[ "$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)" == "1" ]]; the
   exit 2
 fi
 
+mkdir -p "$ROOT/.build"
+
+run_swift_check() {
+  local out_name="$1"
+  shift
+  local bin="$ROOT/.build/$out_name"
+  swiftc "$@" -o "$bin"
+  "$bin"
+}
+
 echo "Documentation integrity:"
 python3 -B scripts/check-docs.py
 
@@ -32,39 +42,56 @@ go vet ./...
 
 echo "Swift compile:"
 swift build -c debug
-swiftc apps/macos/Sources/LightIsle/CoreLineFramer.swift tests/CoreLineFramerCheck.swift -o "$ROOT/.build/lightisle-core-framer-check"
-"$ROOT/.build/lightisle-core-framer-check"
-swiftc -parse-as-library apps/macos/Sources/LightIsle/SpaceInputValidation.swift tests/SpaceInputValidationCheck.swift -o "$ROOT/.build/lightisle-space-input-validation-check"
-"$ROOT/.build/lightisle-space-input-validation-check"
-swiftc apps/macos/Sources/LightIsle/MediaScanScope.swift tests/MediaScanScopeCheck.swift -o "$ROOT/.build/lightisle-media-scope-check"
-"$ROOT/.build/lightisle-media-scope-check"
-swiftc apps/macos/Sources/LightIsle/StorageVolumeSelection.swift tests/StorageVolumeSelectionCheck.swift -o "$ROOT/.build/lightisle-storage-volume-check"
-"$ROOT/.build/lightisle-storage-volume-check"
-swiftc apps/macos/Sources/LightIsle/NativeUpgradePreflight.swift tests/NativeUpgradePreflightCheck.swift -lsqlite3 -o "$ROOT/.build/lightisle-upgrade-check"
-"$ROOT/.build/lightisle-upgrade-check"
-swiftc apps/macos/Sources/LightIsle/BonjourPublisher.swift apps/macos/Sources/LightIsle/NativeServicePresenceCoordinator.swift tests/NativeServicePresenceCheck.swift -o "$ROOT/.build/lightisle-service-presence-check"
-"$ROOT/.build/lightisle-service-presence-check"
-swiftc apps/macos/Sources/LightIsle/LightweightModePolicy.swift tests/LightweightModePolicyCheck.swift -o "$ROOT/.build/lightisle-lightweight-policy-check"
-"$ROOT/.build/lightisle-lightweight-policy-check"
-swiftc apps/macos/Sources/LightIsle/LANAccessPolicy.swift tests/LANAccessPolicyCheck.swift -o "$ROOT/.build/lightisle-lan-policy-check"
-"$ROOT/.build/lightisle-lan-policy-check"
-swiftc apps/macos/Sources/LightIsle/ServicePersistencePolicy.swift tests/ServicePersistencePolicyCheck.swift -o "$ROOT/.build/lightisle-service-persistence-check"
-"$ROOT/.build/lightisle-service-persistence-check"
-swiftc apps/macos/Sources/LightIsle/FRPConfigDocument.swift tests/FRPConfigDocumentCheck.swift -o "$ROOT/.build/lightisle-frp-config-check"
-"$ROOT/.build/lightisle-frp-config-check"
-swiftc -parse-as-library apps/macos/Sources/LightIsle/Base64URLCodec.swift apps/macos/Sources/LightIsle/SmbElevation.swift tests/SmbElevationCheck.swift -o "$ROOT/.build/lightisle-smb-elevation-check"
-"$ROOT/.build/lightisle-smb-elevation-check"
-swiftc -swift-version 5 -parse-as-library apps/macos/Sources/LightIsle/ManagementWindowVisibility.swift tests/ManagementWindowVisibilityCheck.swift -o "$ROOT/.build/lightisle-window-visibility-check"
+run_swift_check lightisle-core-framer-check \
+  apps/macos/Sources/LightIsle/CoreLineFramer.swift tests/CoreLineFramerCheck.swift
+run_swift_check lightisle-core-ipc-domain-check \
+  apps/macos/Sources/LightIsle/CoreIPCDomainEvent.swift tests/CoreIPCDomainEventCheck.swift
+run_swift_check lightisle-space-input-validation-check -parse-as-library \
+  apps/macos/Sources/LightIsle/SpaceInputValidation.swift tests/SpaceInputValidationCheck.swift
+run_swift_check lightisle-media-scope-check \
+  apps/macos/Sources/LightIsle/MediaScanScope.swift tests/MediaScanScopeCheck.swift
+run_swift_check lightisle-storage-volume-check \
+  apps/macos/Sources/LightIsle/StorageVolumeSelection.swift tests/StorageVolumeSelectionCheck.swift
+run_swift_check lightisle-upgrade-check -lsqlite3 \
+  apps/macos/Sources/LightIsle/NativeUpgradePreflight.swift tests/NativeUpgradePreflightCheck.swift
+run_swift_check lightisle-service-presence-check \
+  apps/macos/Sources/LightIsle/BonjourPublisher.swift \
+  apps/macos/Sources/LightIsle/NativeServicePresenceCoordinator.swift \
+  tests/NativeServicePresenceCheck.swift
+run_swift_check lightisle-lightweight-policy-check \
+  apps/macos/Sources/LightIsle/LightweightModePolicy.swift tests/LightweightModePolicyCheck.swift
+run_swift_check lightisle-lan-policy-check \
+  apps/macos/Sources/LightIsle/LANAccessPolicy.swift tests/LANAccessPolicyCheck.swift
+run_swift_check lightisle-service-persistence-check \
+  apps/macos/Sources/LightIsle/ServicePersistencePolicy.swift tests/ServicePersistencePolicyCheck.swift
+run_swift_check lightisle-frp-config-check \
+  apps/macos/Sources/LightIsle/FRPConfigDocument.swift tests/FRPConfigDocumentCheck.swift
+run_swift_check lightisle-smb-elevation-check -parse-as-library \
+  apps/macos/Sources/LightIsle/Base64URLCodec.swift \
+  apps/macos/Sources/LightIsle/SmbElevation.swift \
+  tests/SmbElevationCheck.swift
+run_swift_check lightisle-window-visibility-check -swift-version 5 -parse-as-library \
+  apps/macos/Sources/LightIsle/ManagementWindowVisibility.swift tests/ManagementWindowVisibilityCheck.swift
 python3 -B scripts/sync-fluid-tokens.py --check
-swiftc -swift-version 5 -parse-as-library apps/macos/Sources/LightIsle/ManagementNavigation.swift apps/macos/Sources/LightIsle/SidebarPage.swift apps/macos/Sources/LightIsle/IsleFluidPalette.swift apps/macos/Sources/LightIsle/LiquidComponents.swift apps/macos/Sources/LightIsle/ManagementShell.swift apps/macos/Sources/LightIsle/DetailPreview.swift tests/NativePresentationCheck.swift -o "$ROOT/.build/lightisle-presentation-check"
-"$ROOT/.build/lightisle-presentation-check"
-"$ROOT/.build/lightisle-window-visibility-check"
-swiftc apps/macos/Sources/LightIsle/Base64URLCodec.swift apps/macos/Sources/LightIsle/TunnelWireCodec.swift tests/TunnelWireCodecCheck.swift -o "$ROOT/.build/lightisle-tunnel-wire-check"
-"$ROOT/.build/lightisle-tunnel-wire-check"
-swiftc apps/macos/Sources/LightIsle/TunnelCredentialCoordinator.swift tests/TunnelCredentialCoordinatorCheck.swift -o "$ROOT/.build/lightisle-tunnel-credentials-check"
-"$ROOT/.build/lightisle-tunnel-credentials-check"
-swiftc apps/macos/Sources/LightIsle/TunnelSupport.swift apps/macos/Sources/LightIsle/TunnelPayloadParser.swift tests/TunnelPayloadParserCheck.swift -o "$ROOT/.build/lightisle-tunnel-payload-check"
-"$ROOT/.build/lightisle-tunnel-payload-check"
+run_swift_check lightisle-presentation-check -swift-version 5 -parse-as-library \
+  apps/macos/Sources/LightIsle/ManagementNavigation.swift \
+  apps/macos/Sources/LightIsle/SidebarPage.swift \
+  apps/macos/Sources/LightIsle/IsleFluidPalette.swift \
+  apps/macos/Sources/LightIsle/LiquidComponents.swift \
+  apps/macos/Sources/LightIsle/ManagementShell.swift \
+  apps/macos/Sources/LightIsle/DetailPreview.swift \
+  tests/NativePresentationCheck.swift
+run_swift_check lightisle-tunnel-wire-check \
+  apps/macos/Sources/LightIsle/Base64URLCodec.swift \
+  apps/macos/Sources/LightIsle/TunnelWireCodec.swift \
+  tests/TunnelWireCodecCheck.swift
+run_swift_check lightisle-tunnel-credentials-check \
+  apps/macos/Sources/LightIsle/TunnelCredentialCoordinator.swift tests/TunnelCredentialCoordinatorCheck.swift
+run_swift_check lightisle-tunnel-payload-check \
+  apps/macos/Sources/LightIsle/TunnelSupport.swift \
+  apps/macos/Sources/LightIsle/TunnelPayloadParser.swift \
+  tests/TunnelPayloadParserCheck.swift
+
 python3 -B tests/test_offline_recovery_runner.py
 python3 -B tests/test_media_worker.py "$(swift build -c debug --show-bin-path)/lightisle-media-worker"
 go build -o "$ROOT/.build/lightisled-ipc-check" ./core/cmd/lightisled

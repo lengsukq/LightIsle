@@ -19,24 +19,24 @@ extension AppModel {
         if !samplesManagementUI {
             if Date().timeIntervalSince(lastAlertPollAt) >= 60 {
                 lastAlertPollAt = Date()
-                try? coreCommands?.write(contentsOf: Data("stats summary\nalerts status\n".utf8))
+                sendCoreCommandLine("stats summary\nalerts status\n", context: "metrics.background.alerts")
             }
             if Date().timeIntervalSince(lastShareStatusPollAt) >= 60 {
                 lastShareStatusPollAt = Date()
-                try? coreCommands?.write(contentsOf: Data("share status\n".utf8))
+                sendCoreCommandLine("share status\n", context: "metrics.background.share")
                 rootManagement.refresh()
             }
             return
         }
-        try? coreCommands?.write(contentsOf: Data((diagnosticsVisible ? "stats\n" : "stats summary\n").utf8))
-        try? coreCommands?.write(contentsOf: Data("backup status\nbackup schedule status\n".utf8))
+        sendCoreCommandLine(diagnosticsVisible ? "stats\n" : "stats summary\n", context: "metrics.stats")
+        sendCoreCommandLine("backup status\nbackup schedule status\n", context: "metrics.backup")
         if Date().timeIntervalSince(lastAlertPollAt) >= 60 {
             lastAlertPollAt = Date()
-            try? coreCommands?.write(contentsOf: Data("alerts status\n".utf8))
+            sendCoreCommandLine("alerts status\n", context: "metrics.alerts")
         }
         if Date().timeIntervalSince(lastShareStatusPollAt) >= 30 {
             lastShareStatusPollAt = Date()
-            try? coreCommands?.write(contentsOf: Data("share status\nsmb status\n".utf8))
+            sendCoreCommandLine("share status\nsmb status\n", context: "metrics.shareAndSMB")
             rootManagement.refresh()
         }
     }
@@ -83,7 +83,7 @@ extension AppModel {
 
     func disableBackupSchedule() {
         guard state == .online else { return }
-        try? coreCommands?.write(contentsOf: Data("backup schedule off\n".utf8))
+        sendCoreCommandLine("backup schedule off\n", context: "backup.schedule.off")
     }
 
     func configureMetadataWeeklyBackup() {
@@ -128,7 +128,7 @@ extension AppModel {
 
     func cancelBackup() {
         guard state == .online, backupStatus?.running == true else { return }
-        try? coreCommands?.write(contentsOf: Data("backup cancel\n".utf8))
+        sendCoreCommandLine("backup cancel\n", context: "backup.cancel")
     }
 
     func restoreBackup() {
@@ -147,7 +147,7 @@ extension AppModel {
     private func sendBackupCommand(_ operation: String, path: String) {
         let encoded = Data(path.utf8).base64URLEncodedString
         backupError = nil
-        try? coreCommands?.write(contentsOf: Data((operation + " " + encoded + "\n").utf8))
+        sendCoreCommandLine(operation + " " + encoded + "\n", context: "backup.command")
     }
 }
 

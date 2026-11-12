@@ -17,7 +17,7 @@ extension AppModel {
 
     func refreshStorageAfterVolumeEvent() {
         guard state == .online else { return }
-        try? coreCommands?.write(contentsOf: Data("stats summary\ndisk list\nalerts status\n".utf8))
+        sendCoreCommandLine("stats summary\ndisk list\nalerts status\n", context: "volume.refresh")
         rootManagement.refresh()
         personalSpaces.refresh()
     }
@@ -147,7 +147,7 @@ extension AppModel {
 
     func refreshStorageThreshold() {
         guard state == .online else { return }
-        try? coreCommands?.write(contentsOf: Data("alerts threshold\n".utf8))
+        sendCoreCommandLine("alerts threshold\n", context: "alerts.threshold.read")
     }
 
     func applyStorageThreshold(_ threshold: StorageThreshold) {

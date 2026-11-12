@@ -163,6 +163,20 @@ struct AppsPluginCenterView: View {
     }
 
     private func appCard(_ app: NativePublicApp) -> some View {
+        AppleSettingsGroup(
+            title: "\(app.name) · \(app.id)",
+            footer: app.description ?? "轻应用插件"
+        ) {
+            appStatusRow(app)
+            if app.pendingActivation {
+                appPendingActivationRow(app)
+            }
+            appDiagnosticOrErrorSection(app)
+            appControlsRow(app)
+        }
+    }
+
+    private func appStatusRow(_ app: NativePublicApp) -> some View {
         let subtitleParts = [
             "ID: \(app.id)",
             "v\(app.version)",
@@ -171,160 +185,162 @@ struct AppsPluginCenterView: View {
             app.cron != nil ? "Cron: \(app.cron?.cron ?? "")" : nil
         ].compactMap { $0 }
 
-        return AppleSettingsGroup(
-            title: "\(app.name) · \(app.id)",
-            footer: app.description ?? "轻应用插件"
+        return AppleSettingsRow(
+            title: "运行状态与访问策略",
+            subtitle: subtitleParts.joined(separator: " · "),
+            icon: app.isRunning ? "bolt.horizontal.circle.fill" : "app.badge.checkmark",
+            iconTint: app.valid ? (app.isRunning ? .green : .blue) : .orange
         ) {
-            AppleSettingsRow(
-                title: "运行状态与访问策略",
-                subtitle: subtitleParts.joined(separator: " · "),
-                icon: app.isRunning ? "bolt.horizontal.circle.fill" : "app.badge.checkmark",
-                iconTint: app.valid ? (app.isRunning ? .green : .blue) : .orange
-            ) {
-                HStack(spacing: 8) {
-                    StatusBadge(
-                        isOnline: app.valid && !app.pendingActivation && (app.isRunning || app.web.status == "static"),
-                        text: app.statusLabel
-                    )
-                    Text(accessPolicyText(app.access))
-                        .font(.caption)
+            HStack(spacing: 8) {
+                StatusBadge(
+                    isOnline: app.valid && !app.pendingActivation && (app.isRunning || app.web.status == "static"),
+                    text: app.statusLabel
+                )
+                Text(accessPolicyText(app.access))
+                    .font(.caption)
+                    .foregroundStyle(IsleTheme.secondaryText)
+                if let rss = app.web.rssBytes, rss > 0 {
+                    Text(ByteCountFormatter.string(fromByteCount: rss, countStyle: .memory))
+                        .font(.system(size: 11, design: .monospaced))
                         .foregroundStyle(IsleTheme.secondaryText)
-                    if let rss = app.web.rssBytes, rss > 0 {
-                        Text(ByteCountFormatter.string(fromByteCount: rss, countStyle: .memory))
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(IsleTheme.secondaryText)
-                    }
-                    if let port = app.web.port, port > 0 {
-                        Text(":\(port)")
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(IsleTheme.secondaryText)
-                    }
+                }
+                if let port = app.web.port, port > 0 {
+                    Text(":\(port)")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(IsleTheme.secondaryText)
                 }
             }
+        }
+    }
 
-            if app.pendingActivation {
-                IsleGroupSpacing(height: 4).padding(.leading, 14)
-                AppleSettingsRow(
-                    title: "等待管理员首次激活确认",
-                    subtitle: "该插件由外部或 MCP 新建/修改过可执行入口，确认安全后即可激活运行",
-                    icon: "shield.lefthalf.filled.badge.checkmark",
-                    iconTint: .orange
-                ) {
-                    Button("确认激活") {
-                        appsCenter.performAppAction(appID: app.id, action: "activate")
+    @ViewBuilder
+    private func appPendingActivationRow(_ app: NativePublicApp) -> some View {
+        IsleGroupSpacing(height: 4).padding(.leading, 14)
+        AppleSettingsRow(
+            title: "等待管理员首次激活确认",
+            subtitle: "该插件由外部或 MCP 新建/修改过可执行入口，确认安全后即可激活运行",
+            icon: "shield.lefthalf.filled.badge.checkmark",
+            iconTint: .orange
+        ) {
+            Button("确认激活") {
+                appsCenter.performAppAction(appID: app.id, action: "activate")
+            }
+            .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+            .disabled(appsCenter.busy)
+        }
+    }
+
+    @ViewBuilder
+    private func appDiagnosticOrErrorSection(_ app: NativePublicApp) -> some View {
+        if let diag = app.diagnostic {
+            IsleGroupSpacing(height: 4).padding(.leading, 14)
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 6) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.orange)
+                    Text(diag.summary)
+                        .font(.system(size: 12.5, weight: .semibold))
+                        .foregroundStyle(IsleTheme.warningText)
+                    Spacer()
+                    Button("打开代码目录") {
+                        appsCenter.openPluginDirectory(appID: app.id)
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                }
+                Text("原因：" + diag.reason)
+                    .font(.caption)
+                    .foregroundStyle(.primary.opacity(0.88))
+                    .textSelection(.enabled)
+                if let excerpt = diag.logExcerpt, !excerpt.isEmpty {
+                    Text(excerpt)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(.primary.opacity(0.85))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(8)
+                        .background(
+                            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                                .fill(Color.primary.opacity(0.05))
+                        )
+                }
+                if let check = diag.checks.first {
+                    Text("排查：" + check)
+                        .font(.caption)
+                        .foregroundStyle(IsleTheme.secondaryText)
+                        .textSelection(.enabled)
+                }
+                if let fix = diag.solutions.first {
+                    Text("解决：" + fix)
+                        .font(.caption)
+                        .foregroundStyle(IsleTheme.secondaryText)
+                        .textSelection(.enabled)
+                }
+                Text(diag.dataSafe)
+                    .font(.caption2)
+                    .foregroundStyle(IsleTheme.successText)
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 10)
+        } else if let err = app.error ?? app.lastError ?? app.web.lastError, !err.isEmpty {
+            IsleGroupSpacing(height: 4).padding(.leading, 14)
+            AppleSettingsRow(title: "最近错误提示", icon: "exclamationmark.triangle", iconTint: .orange) {
+                Text(err)
+                    .font(.caption)
+                    .foregroundStyle(IsleTheme.warningText)
+                    .textSelection(.enabled)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func appControlsRow(_ app: NativePublicApp) -> some View {
+        IsleGroupSpacing(height: 4).padding(.leading, 14)
+        AppleSettingsRow(
+            title: "应用控制与管理",
+            subtitle: "一键打开、启停，或进入二级页配置权限、查看日志与备份数据",
+            icon: "slider.horizontal.3",
+            iconTint: .teal
+        ) {
+            HStack(spacing: 8) {
+                if app.web.enabled && app.valid {
+                    Button("在浏览器打开") {
+                        appsCenter.openAppInBrowser(appID: app.id)
                     }
                     .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
                     .disabled(appsCenter.busy)
                 }
-            }
-
-            if let diag = app.diagnostic {
-                IsleGroupSpacing(height: 4).padding(.leading, 14)
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "exclamationmark.triangle.fill")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(.orange)
-                        Text(diag.summary)
-                            .font(.system(size: 12.5, weight: .semibold))
-                            .foregroundStyle(IsleTheme.warningText)
-                        Spacer()
-                        Button("打开代码目录") {
-                            appsCenter.openPluginDirectory(appID: app.id)
+                if app.web.enabled && app.web.mode != "static" && app.web.mode != "none" {
+                    if app.isRunning {
+                        Button("重启") {
+                            appsCenter.performAppAction(appID: app.id, action: "restart")
                         }
                         .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                    }
-                    Text("原因：" + diag.reason)
-                        .font(.caption)
-                        .foregroundStyle(.primary.opacity(0.88))
-                        .textSelection(.enabled)
-                    if let excerpt = diag.logExcerpt, !excerpt.isEmpty {
-                        Text(excerpt)
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(.primary.opacity(0.85))
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(8)
-                            .background(
-                                RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                    .fill(Color.primary.opacity(0.05))
-                            )
-                    }
-                    if let check = diag.checks.first {
-                        Text("排查：" + check)
-                            .font(.caption)
-                            .foregroundStyle(IsleTheme.secondaryText)
-                            .textSelection(.enabled)
-                    }
-                    if let fix = diag.solutions.first {
-                        Text("解决：" + fix)
-                            .font(.caption)
-                            .foregroundStyle(IsleTheme.secondaryText)
-                            .textSelection(.enabled)
-                    }
-                    Text(diag.dataSafe)
-                        .font(.caption2)
-                        .foregroundStyle(IsleTheme.successText)
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 10)
-            } else if let err = app.error ?? app.lastError ?? app.web.lastError, !err.isEmpty {
-                IsleGroupSpacing(height: 4).padding(.leading, 14)
-                AppleSettingsRow(title: "最近错误提示", icon: "exclamationmark.triangle", iconTint: .orange) {
-                    Text(err)
-                        .font(.caption)
-                        .foregroundStyle(IsleTheme.warningText)
-                        .textSelection(.enabled)
-                }
-            }
-
-            IsleGroupSpacing(height: 4).padding(.leading, 14)
-            AppleSettingsRow(
-                title: "应用控制与管理",
-                subtitle: "一键打开、启停，或进入二级页配置权限、查看日志与备份数据",
-                icon: "slider.horizontal.3",
-                iconTint: .teal
-            ) {
-                HStack(spacing: 8) {
-                    if app.web.enabled && app.valid {
-                        Button("在浏览器打开") {
-                            appsCenter.openAppInBrowser(appID: app.id)
+                        .disabled(appsCenter.busy)
+                        Button("停止") {
+                            appsCenter.performAppAction(appID: app.id, action: "stop")
                         }
-                        .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        .disabled(appsCenter.busy)
+                    } else {
+                        Button("唤醒启动") {
+                            appsCenter.performAppAction(appID: app.id, action: "wake")
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         .disabled(appsCenter.busy)
                     }
-                    if app.web.enabled && app.web.mode != "static" && app.web.mode != "none" {
-                        if app.isRunning {
-                            Button("重启") {
-                                appsCenter.performAppAction(appID: app.id, action: "restart")
-                            }
-                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                            .disabled(appsCenter.busy)
-                            Button("停止") {
-                                appsCenter.performAppAction(appID: app.id, action: "stop")
-                            }
-                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                            .disabled(appsCenter.busy)
-                        } else {
-                            Button("唤醒启动") {
-                                appsCenter.performAppAction(appID: app.id, action: "wake")
-                            }
-                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                            .disabled(appsCenter.busy)
-                        }
-                    }
-                    Button {
-                        appsCenter.loadLogs(appID: app.id)
-                        selectedAppID = app.id
-                    } label: {
-                        HStack(spacing: 4) {
-                            Text("管理与日志")
-                            Image(systemName: "chevron.right")
-                                .font(.system(size: 10, weight: .semibold))
-                        }
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                 }
+                Button {
+                    appsCenter.loadLogs(appID: app.id)
+                    selectedAppID = app.id
+                } label: {
+                    HStack(spacing: 4) {
+                        Text("管理与日志")
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 10, weight: .semibold))
+                    }
+                }
+                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
             }
         }
     }

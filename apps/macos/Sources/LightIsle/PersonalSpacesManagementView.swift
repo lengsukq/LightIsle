@@ -568,18 +568,22 @@ struct PersonalSpacesManagementView: View {
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.primary.opacity(0.03)))
     }
 
+    private func selectedAllocationCategories() -> [String] {
+        var categories: [String] = []
+        if allocFiles { categories.append("files") }
+        if allocPhotos { categories.append("photos") }
+        if allocVideos { categories.append("videos") }
+        return categories
+    }
+
     private func allocateOrAddCard(for entry: NativeSpaceUserEntry) -> some View {
         let selectedRoot = spaces.onlineRoots.first(where: { $0.rootID == allocRootID }) ?? spaces.onlineRoots.first
         let allocValidation = QuotaInputValidator.validateGiB(allocQuotaGiB)
-        var checkedCats: [String] = []
-        if allocFiles { checkedCats.append("files") }
-        if allocPhotos { checkedCats.append("photos") }
-        if allocVideos { checkedCats.append("videos") }
+        let checkedCats = selectedAllocationCategories()
         let boundOnOtherDisk = entry.policy.locations.filter { loc in
             checkedCats.contains(loc.category) &&
                 (loc.rootID != selectedRoot?.rootID || loc.rootGeneration != selectedRoot?.generation)
         }
-        let isSwitchingDisk = selectedRoot != nil && !boundOnOtherDisk.isEmpty
 
         return AppleSettingsGroup(
             title: "为「\(entry.user.username)」分配初始存储目录或新建子文件夹",
@@ -587,158 +591,209 @@ struct PersonalSpacesManagementView: View {
         ) {
             VStack(alignment: .leading, spacing: 12) {
                 if !unregisteredExternalVolumes.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
-                        ForEach(unregisteredExternalVolumes) { vol in
-                            HStack(spacing: 10) {
-                                Image(systemName: "externaldrive.fill.badge.plus")
-                                    .foregroundStyle(IsleFluidPalette.brandCyan)
-                                Text("检测到外置硬盘「\(vol.name)」（可用 \(formatBytes(Int64(vol.free)))）")
-                                    .font(.system(size: 12.5, weight: .semibold))
-                                Spacer()
-                                Button("添加为目标盘（推荐）") {
-                                    appModel.addPresetSharedFolder(
-                                        path: "\(vol.mount)/LightIsle",
-                                        name: "\(vol.name)-LightIsle"
-                                    )
-                                }
-                                .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
-                                .disabled(!appModel.canAddOrSwitchStorageRoot)
-                                Button("设为主存储…") {
-                                    appModel.selectPresetSharedFolder(
-                                        path: "\(vol.mount)/LightIsle",
-                                        name: "\(vol.name)-LightIsle",
-                                        confirmSwitch: true
-                                    )
-                                }
-                                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                                .disabled(!appModel.canAddOrSwitchStorageRoot)
-                                Button("选择文件夹…") {
-                                    appModel.selectSharedFolder(onVolume: vol)
-                                }
-                                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                                .disabled(!appModel.canAddOrSwitchStorageRoot)
-                            }
-                        }
-                    }
-                    .padding(10)
-                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(IsleFluidPalette.brandCyan.opacity(0.1)))
+                    unregisteredVolumesBanner
                 }
-
                 if spaces.onlineRoots.isEmpty {
-                    HStack(spacing: 10) {
-                        Text("当前没有在线的 NAS 存储硬盘，请接入外置硬盘或前往「存储位置」设置。")
-                            .font(.caption).foregroundStyle(IsleTheme.warningText)
-                        Spacer()
-                        Button("选择外置盘设为主存储…") { appModel.rootManagement.selectFolderAndSwitch(preferVolumes: true) }
-                            .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
-                            .disabled(!appModel.canAddOrSwitchStorageRoot)
-                        Button("前往存储位置…") { appModel.navigateToStorageDetail(.locations) }
-                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                    }
+                    emptyOnlineRootsNotice
                 } else {
-                    HStack(spacing: 10) {
-                        Picker("目标存储硬盘", selection: $allocRootID) {
-                            ForEach(spaces.onlineRoots) { r in
-                                Text("\(r.name)\(r.isDefault ? " · 默认主存储" : "")（\(r.path)）").tag(r.rootID)
-                            }
-                        }
-                        .frame(maxWidth: 400)
-
-                        Button("选择外置盘设为主存储…") { appModel.rootManagement.selectFolderAndSwitch(preferVolumes: true) }
-                            .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
-                            .disabled(!appModel.canAddOrSwitchStorageRoot)
-
-                        Button("+ 添加外置盘…") { appModel.rootManagement.addFolder(preferVolumes: true) }
-                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                            .disabled(!appModel.canAddOrSwitchStorageRoot)
-
-                        if entry.policy.isUnlimited {
-                            IsleStatusPill(text: "配额：管理员默认无限", tone: .success)
-                        } else {
-                            HStack(spacing: 6) {
-                                Text("该盘配额 (GiB)：").font(.caption)
-                                TextField("100", text: $allocQuotaGiB).textFieldStyle(.roundedBorder).frame(width: 72)
-                            }
-                        }
-                        Spacer()
-                    }
-                    if let rootMsg = appModel.rootManagement.message, !rootMsg.isEmpty {
-                        Text(rootMsg).font(.caption2).foregroundStyle(IsleTheme.secondaryText)
-                    }
-                    if !entry.policy.isUnlimited, let err = allocValidation.errorMessage {
-                        Text(err).font(.caption2).foregroundStyle(IsleTheme.warningText)
-                    }
-
-                    HStack(spacing: 16) {
-                        Text("目标分类目录：").font(.caption).foregroundStyle(IsleTheme.secondaryText)
-                        Toggle(SpaceCategoryPresentation.detailLabel(for: "files"), isOn: $allocFiles).toggleStyle(.checkbox)
-                        Toggle(SpaceCategoryPresentation.detailLabel(for: "photos"), isOn: $allocPhotos).toggleStyle(.checkbox)
-                        Toggle(SpaceCategoryPresentation.detailLabel(for: "videos"), isOn: $allocVideos).toggleStyle(.checkbox)
-                    }
-
-                    HStack(spacing: 10) {
-                        Text("新建子目录（可选，逗号分隔）：").font(.caption).foregroundStyle(IsleTheme.secondaryText)
-                        TextField("例如：files/工作文档, photos/2026家庭相册, videos/电影", text: $allocSubdirs)
-                            .textFieldStyle(.roundedBorder)
-                    }
-
-                    if entry.policy.locations.isEmpty, spaces.roots.count > 1 {
-                        Text("提示：首次分配将在目标盘新建空白的 Users/u\(entry.user.id) 专属目录，不会自动搬移原存储目录根层或「图库 / PhonePhotos」中的既有照片与文件（原数据保留在原盘）。")
-                            .font(.caption2)
-                            .foregroundStyle(IsleTheme.secondaryText)
-                    }
-                    HStack(spacing: 10) {
-                        if isSwitchingDisk, let root = selectedRoot, let sourceLoc = boundOnOtherDisk.first {
-                            Button("所选分类已绑定其他盘 · 打开跨盘迁移向导…") {
-                                let catsToSwitch = Set(
-                                    boundOnOtherDisk
-                                        .filter { $0.rootID == sourceLoc.rootID && $0.rootGeneration == sourceLoc.rootGeneration }
-                                        .map(\.category)
-                                )
-                                openSwitchSheet(
-                                    for: entry, sourceRootID: sourceLoc.rootID, sourceGeneration: sourceLoc.rootGeneration,
-                                    categories: catsToSwitch, targetRootID: root.rootID, mode: "migrate",
-                                    quotaGiB: entry.policy.isUnlimited ? "" : allocQuotaGiB
-                                )
-                            }
-                            .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .regular))
-                            .disabled(spaces.busy || checkedCats.isEmpty)
-                        } else {
-                            Button("保存并创建目录") {
-                                guard !permissionChecking, let root = selectedRoot else { return }
-                                if !entry.policy.isUnlimited, !allocValidation.isValid { return }
-                                let subdirs = allocSubdirs
-                                    .split(separator: ",")
-                                    .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                                    .filter { !$0.isEmpty }
-                                let quotaBytes: Int64? = entry.policy.isUnlimited ? nil : allocValidation.quotaBytes
-                                permissionChecking = true
-                                Task { @MainActor in
-                                    defer { permissionChecking = false }
-                                    let access = await StoragePermissionHelper.ensureDirectoryWritable(
-                                        URL(fileURLWithPath: root.path, isDirectory: true),
-                                        reason: "在「\(root.name)」上为「\(entry.user.username)」创建个人分类目录需要该硬盘读写权限。"
-                                    )
-                                    guard access.ok else {
-                                        spaces.errorMessage = access.errorMessage
-                                        return
-                                    }
-                                    guard spaces.connected, !spaces.busy else { return }
-                                    spaces.allocateSpace(
-                                        userID: entry.user.id, rootID: root.rootID, generation: root.generation,
-                                        quotaBytes: quotaBytes, categories: checkedCats, subdirectories: subdirs
-                                    )
-                                    allocSubdirs = ""
-                                }
-                            }
-                            .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .regular))
-                            .disabled(spaces.busy || permissionChecking || selectedRoot == nil || (!entry.policy.isUnlimited && !allocValidation.isValid))
-                        }
-                        Spacer()
-                    }
+                    allocationFormContent(
+                        for: entry,
+                        selectedRoot: selectedRoot,
+                        allocValidation: allocValidation,
+                        checkedCats: checkedCats,
+                        boundOnOtherDisk: boundOnOtherDisk
+                    )
                 }
             }
             .padding(14)
+        }
+    }
+
+    private var unregisteredVolumesBanner: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(unregisteredExternalVolumes) { vol in
+                HStack(spacing: 10) {
+                    Image(systemName: "externaldrive.fill.badge.plus")
+                        .foregroundStyle(IsleFluidPalette.brandCyan)
+                    Text("检测到外置硬盘「\(vol.name)」（可用 \(formatBytes(Int64(vol.free)))）")
+                        .font(.system(size: 12.5, weight: .semibold))
+                    Spacer()
+                    Button("添加为目标盘（推荐）") {
+                        appModel.addPresetSharedFolder(
+                            path: "\(vol.mount)/LightIsle",
+                            name: "\(vol.name)-LightIsle"
+                        )
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                    .disabled(!appModel.canAddOrSwitchStorageRoot)
+                    Button("设为主存储…") {
+                        appModel.selectPresetSharedFolder(
+                            path: "\(vol.mount)/LightIsle",
+                            name: "\(vol.name)-LightIsle",
+                            confirmSwitch: true
+                        )
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                    .disabled(!appModel.canAddOrSwitchStorageRoot)
+                    Button("选择文件夹…") {
+                        appModel.selectSharedFolder(onVolume: vol)
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                    .disabled(!appModel.canAddOrSwitchStorageRoot)
+                }
+            }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(IsleFluidPalette.brandCyan.opacity(0.1)))
+    }
+
+    private var emptyOnlineRootsNotice: some View {
+        HStack(spacing: 10) {
+            Text("当前没有在线的 NAS 存储硬盘，请接入外置硬盘或前往「存储位置」设置。")
+                .font(.caption).foregroundStyle(IsleTheme.warningText)
+            Spacer()
+            Button("选择外置盘设为主存储…") { appModel.rootManagement.selectFolderAndSwitch(preferVolumes: true) }
+                .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                .disabled(!appModel.canAddOrSwitchStorageRoot)
+            Button("前往存储位置…") { appModel.navigateToStorageDetail(.locations) }
+                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+        }
+    }
+
+    @ViewBuilder
+    private func allocationFormContent(
+        for entry: NativeSpaceUserEntry,
+        selectedRoot: NativeStorageRootInfo?,
+        allocValidation: QuotaValidationResult,
+        checkedCats: [String],
+        boundOnOtherDisk: [NativeSpaceLocation]
+    ) -> some View {
+        allocationRootPickerRow(for: entry)
+        if let rootMsg = appModel.rootManagement.message, !rootMsg.isEmpty {
+            Text(rootMsg).font(.caption2).foregroundStyle(IsleTheme.secondaryText)
+        }
+        if !entry.policy.isUnlimited, let err = allocValidation.errorMessage {
+            Text(err).font(.caption2).foregroundStyle(IsleTheme.warningText)
+        }
+        HStack(spacing: 16) {
+            Text("目标分类目录：").font(.caption).foregroundStyle(IsleTheme.secondaryText)
+            Toggle(SpaceCategoryPresentation.detailLabel(for: "files"), isOn: $allocFiles).toggleStyle(.checkbox)
+            Toggle(SpaceCategoryPresentation.detailLabel(for: "photos"), isOn: $allocPhotos).toggleStyle(.checkbox)
+            Toggle(SpaceCategoryPresentation.detailLabel(for: "videos"), isOn: $allocVideos).toggleStyle(.checkbox)
+        }
+        HStack(spacing: 10) {
+            Text("新建子目录（可选，逗号分隔）：").font(.caption).foregroundStyle(IsleTheme.secondaryText)
+            TextField("例如：files/工作文档, photos/2026家庭相册, videos/电影", text: $allocSubdirs)
+                .textFieldStyle(.roundedBorder)
+        }
+        if entry.policy.locations.isEmpty, spaces.roots.count > 1 {
+            Text("提示：首次分配将在目标盘新建空白的 Users/u\(entry.user.id) 专属目录，不会自动搬移原存储目录根层或「图库 / PhonePhotos」中的既有照片与文件（原数据保留在原盘）。")
+                .font(.caption2)
+                .foregroundStyle(IsleTheme.secondaryText)
+        }
+        allocationSubmitRow(
+            for: entry,
+            selectedRoot: selectedRoot,
+            allocValidation: allocValidation,
+            checkedCats: checkedCats,
+            boundOnOtherDisk: boundOnOtherDisk
+        )
+    }
+
+    private func allocationRootPickerRow(for entry: NativeSpaceUserEntry) -> some View {
+        HStack(spacing: 10) {
+            Picker("目标存储硬盘", selection: $allocRootID) {
+                ForEach(spaces.onlineRoots) { r in
+                    Text("\(r.name)\(r.isDefault ? " · 默认主存储" : "")（\(r.path)）").tag(r.rootID)
+                }
+            }
+            .frame(maxWidth: 400)
+
+            Button("选择外置盘设为主存储…") { appModel.rootManagement.selectFolderAndSwitch(preferVolumes: true) }
+                .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                .disabled(!appModel.canAddOrSwitchStorageRoot)
+
+            Button("+ 添加外置盘…") { appModel.rootManagement.addFolder(preferVolumes: true) }
+                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                .disabled(!appModel.canAddOrSwitchStorageRoot)
+
+            if entry.policy.isUnlimited {
+                IsleStatusPill(text: "配额：管理员默认无限", tone: .success)
+            } else {
+                HStack(spacing: 6) {
+                    Text("该盘配额 (GiB)：").font(.caption)
+                    TextField("100", text: $allocQuotaGiB).textFieldStyle(.roundedBorder).frame(width: 72)
+                }
+            }
+            Spacer()
+        }
+    }
+
+    private func allocationSubmitRow(
+        for entry: NativeSpaceUserEntry,
+        selectedRoot: NativeStorageRootInfo?,
+        allocValidation: QuotaValidationResult,
+        checkedCats: [String],
+        boundOnOtherDisk: [NativeSpaceLocation]
+    ) -> some View {
+        let isSwitchingDisk = selectedRoot != nil && !boundOnOtherDisk.isEmpty
+        return HStack(spacing: 10) {
+            if isSwitchingDisk, let root = selectedRoot, let sourceLoc = boundOnOtherDisk.first {
+                Button("所选分类已绑定其他盘 · 打开跨盘迁移向导…") {
+                    let catsToSwitch = Set(
+                        boundOnOtherDisk
+                            .filter { $0.rootID == sourceLoc.rootID && $0.rootGeneration == sourceLoc.rootGeneration }
+                            .map(\.category)
+                    )
+                    openSwitchSheet(
+                        for: entry, sourceRootID: sourceLoc.rootID, sourceGeneration: sourceLoc.rootGeneration,
+                        categories: catsToSwitch, targetRootID: root.rootID, mode: "migrate",
+                        quotaGiB: entry.policy.isUnlimited ? "" : allocQuotaGiB
+                    )
+                }
+                .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .regular))
+                .disabled(spaces.busy || checkedCats.isEmpty)
+            } else {
+                Button("保存并创建目录") {
+                    submitSpaceAllocation(for: entry, selectedRoot: selectedRoot, allocValidation: allocValidation, checkedCats: checkedCats)
+                }
+                .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .regular))
+                .disabled(spaces.busy || permissionChecking || selectedRoot == nil || (!entry.policy.isUnlimited && !allocValidation.isValid))
+            }
+            Spacer()
+        }
+    }
+
+    private func submitSpaceAllocation(
+        for entry: NativeSpaceUserEntry,
+        selectedRoot: NativeStorageRootInfo?,
+        allocValidation: QuotaValidationResult,
+        checkedCats: [String]
+    ) {
+        guard !permissionChecking, let root = selectedRoot else { return }
+        if !entry.policy.isUnlimited, !allocValidation.isValid { return }
+        let subdirs = allocSubdirs
+            .split(separator: ",")
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let quotaBytes: Int64? = entry.policy.isUnlimited ? nil : allocValidation.quotaBytes
+        permissionChecking = true
+        Task { @MainActor in
+            defer { permissionChecking = false }
+            let access = await StoragePermissionHelper.ensureDirectoryWritable(
+                URL(fileURLWithPath: root.path, isDirectory: true),
+                reason: "在「\(root.name)」上为「\(entry.user.username)」创建个人分类目录需要该硬盘读写权限。"
+            )
+            guard access.ok else {
+                spaces.errorMessage = access.errorMessage
+                return
+            }
+            guard spaces.connected, !spaces.busy else { return }
+            spaces.allocateSpace(
+                userID: entry.user.id, rootID: root.rootID, generation: root.generation,
+                quotaBytes: quotaBytes, categories: checkedCats, subdirectories: subdirs
+            )
+            allocSubdirs = ""
         }
     }
 

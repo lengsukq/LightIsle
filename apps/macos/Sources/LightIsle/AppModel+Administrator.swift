@@ -23,7 +23,7 @@ extension AppModel {
         pendingAdminCredentials = credentials
         verifyingAdmin = true
         vaultMessage = nil
-        try? coreCommands?.write(contentsOf: Data(("admin verify " + payload + "\n").utf8))
+        sendCoreCommandLine("admin verify " + payload + "\n", context: "admin.verify")
     }
 
     func unlockAdministratorWithTouchID() {
@@ -102,7 +102,7 @@ extension AppModel {
         let command = data.base64URLEncodedString
         initializationError = nil
         initializing = true
-        try? coreCommands?.write(contentsOf: Data(("admin init " + command + "\n").utf8))
+        sendCoreCommandLine("admin init " + command + "\n", context: "admin.init")
     }
 
     func openUserWeb(page: String? = nil) {
