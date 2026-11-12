@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { ref } from "vue";
 import {
   Play,
   Pause,
@@ -15,6 +15,11 @@ import {
   Loader2,
   Check,
 } from "lucide-vue-next";
+import {
+  playbackRateOptions,
+  formatVideoClock,
+  useHtmlVideoTransport,
+} from "./composables/useHtmlVideoTransport";
 
 const props = withDefaults(
   defineProps<{
@@ -42,288 +47,49 @@ const emit = defineEmits<{
 const videoRef = ref<HTMLVideoElement | null>(null);
 const containerRef = ref<HTMLElement | null>(null);
 
-const isPlaying = ref(false);
-const isLoading = ref(true);
-const hasError = ref(false);
-const currentTime = ref(0);
-const duration = ref(0);
-const bufferedEnd = ref(0);
-const volume = ref(1);
-const isMuted = ref(false);
-const isFullscreen = ref(false);
-const controlsVisible = ref(true);
-const playbackRate = ref(1);
-const showRateMenu = ref(false);
-
-const hoverTime = ref<number | null>(null);
-const hoverPercent = ref(0);
-
-let hideTimer: number | undefined;
-
-function formatClock(seconds: number): string {
-  if (!Number.isFinite(seconds) || seconds < 0) return "0:00";
-  const sec = Math.floor(seconds % 60);
-  const min = Math.floor((seconds / 60) % 60);
-  const hr = Math.floor(seconds / 3600);
-  const pad = (n: number) => String(n).padStart(2, "0");
-  if (hr > 0) {
-    return `${hr}:${pad(min)}:${pad(sec)}`;
-  }
-  return `${pad(min)}:${pad(sec)}`;
-}
-
-const progressPercent = computed(() => {
-  if (duration.value <= 0) return 0;
-  return Math.min(100, Math.max(0, (currentTime.value / duration.value) * 100));
-});
-
-const bufferedPercent = computed(() => {
-  if (duration.value <= 0) return 0;
-  return Math.min(100, Math.max(0, (bufferedEnd.value / duration.value) * 100));
-});
-
-function wakeControls() {
-  controlsVisible.value = true;
-  if (hideTimer) {
-    clearTimeout(hideTimer);
-  }
-  if (isPlaying.value) {
-    hideTimer = window.setTimeout(() => {
-      controlsVisible.value = false;
-      showRateMenu.value = false;
-    }, 2800);
-  }
-}
-
-function togglePlay() {
-  const el = videoRef.value;
-  if (!el) return;
-  if (el.paused) {
-    void el.play();
-  } else {
-    el.pause();
-  }
-}
-
-function jump(seconds: number) {
-  const el = videoRef.value;
-  if (!el) return;
-  el.currentTime = Math.max(0, Math.min(duration.value, el.currentTime + seconds));
-  wakeControls();
-}
-
-function seekTo(event: MouseEvent) {
-  const el = videoRef.value;
-  if (!el || duration.value <= 0) return;
-  const target = event.currentTarget as HTMLElement;
-  const rect = target.getBoundingClientRect();
-  const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
-  el.currentTime = ratio * duration.value;
-  wakeControls();
-}
-
-function handleTrackHover(event: MouseEvent) {
-  if (duration.value <= 0) return;
-  const target = event.currentTarget as HTMLElement;
-  const rect = target.getBoundingClientRect();
-  const ratio = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
-  hoverPercent.value = ratio * 100;
-  hoverTime.value = ratio * duration.value;
-}
-
-function handleTrackLeave() {
-  hoverTime.value = null;
-}
-
-function toggleMute() {
-  const el = videoRef.value;
-  if (!el) return;
-  el.muted = !el.muted;
-  isMuted.value = el.muted;
-  wakeControls();
-}
-
-function handleVolumeChange(event: Event) {
-  const el = videoRef.value;
-  if (!el) return;
-  const val = Number((event.target as HTMLInputElement).value);
-  volume.value = val;
-  el.volume = val;
-  if (val > 0 && el.muted) {
-    el.muted = false;
-    isMuted.value = false;
-  }
-  wakeControls();
-}
-
-const playbackRateOptions = [0.5, 0.75, 1, 1.25, 1.5, 2];
-
-function setRate(rate: number) {
-  const el = videoRef.value;
-  if (!el) return;
-  playbackRate.value = rate;
-  el.playbackRate = rate;
-  showRateMenu.value = false;
-  wakeControls();
-}
-
-async function togglePip() {
-  const el = videoRef.value;
-  if (!el) return;
-  try {
-    if (document.pictureInPictureElement) {
-      await document.exitPictureInPicture();
-    } else if (document.pictureInPictureEnabled) {
-      await el.requestPictureInPicture();
-    }
-  } catch {
-    // Ignore PiP error
-  }
-}
-
-async function toggleFullscreen() {
-  const container = containerRef.value;
-  if (!container) return;
-  try {
-    if (!document.fullscreenElement) {
-      await container.requestFullscreen();
-      isFullscreen.value = true;
-    } else {
-      await document.exitFullscreen();
-      isFullscreen.value = false;
-    }
-  } catch {
-    // Fallback: Webkit fullscreen on iOS
-    const el = videoRef.value as any;
-    if (el?.webkitEnterFullscreen) {
-      el.webkitEnterFullscreen();
-    }
-  }
-}
-
-// Media Event Handlers
-function onLoadedMetadata() {
-  const el = videoRef.value;
-  if (!el) return;
-  duration.value = el.duration;
-  isLoading.value = false;
-  if (props.autoplay) {
-    void el.play().catch(() => {
-      // Autoplay with sound might be blocked, retry muted
-      el.muted = true;
-      isMuted.value = true;
-      void el.play().catch(() => {});
-    });
-  }
-}
-
-function onTimeUpdate() {
-  const el = videoRef.value;
-  if (!el) return;
-  currentTime.value = el.currentTime;
-  updateBuffered();
-  emit("timeupdate", el.currentTime, el.duration);
-}
-
-function updateBuffered() {
-  const el = videoRef.value;
-  if (!el || el.buffered.length === 0) return;
-  try {
-    bufferedEnd.value = el.buffered.end(el.buffered.length - 1);
-  } catch {
-    // Ignore buffer range query exception
-  }
-}
-
-function onPlay() {
-  isPlaying.value = true;
-  isLoading.value = false;
-  wakeControls();
-}
-
-function onPause() {
-  isPlaying.value = false;
-  wakeControls();
-}
-
-function onWaiting() {
-  isLoading.value = true;
-}
-
-function onCanPlay() {
-  isLoading.value = false;
-}
-
-function onEnded() {
-  isPlaying.value = false;
-  wakeControls();
-  emit("ended");
-}
-
-function onError() {
-  isLoading.value = false;
-  hasError.value = true;
-}
-
-function handleKeydown(event: KeyboardEvent) {
-  // Only handle shortcuts when viewer is in focus or container is fullscreen
-  const active = document.activeElement;
-  if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA")) return;
-
-  if (event.key === " " || event.code === "Space") {
-    event.preventDefault();
-    togglePlay();
-  } else if (event.key === "ArrowLeft") {
-    event.preventDefault();
-    jump(event.shiftKey ? -10 : -5);
-  } else if (event.key === "ArrowRight") {
-    event.preventDefault();
-    jump(event.shiftKey ? 10 : 5);
-  } else if (event.key === "ArrowUp") {
-    event.preventDefault();
-    const el = videoRef.value;
-    if (el) {
-      const v = Math.min(1, el.volume + 0.1);
-      volume.value = v;
-      el.volume = v;
-    }
-  } else if (event.key === "ArrowDown") {
-    event.preventDefault();
-    const el = videoRef.value;
-    if (el) {
-      const v = Math.max(0, el.volume - 0.1);
-      volume.value = v;
-      el.volume = v;
-    }
-  } else if (event.key === "f" || event.key === "F") {
-    event.preventDefault();
-    void toggleFullscreen();
-  } else if (event.key === "m" || event.key === "M") {
-    event.preventDefault();
-    toggleMute();
-  }
-}
-
-watch(
-  () => props.src,
-  () => {
-    currentTime.value = 0;
-    bufferedEnd.value = 0;
-    isLoading.value = true;
-    hasError.value = false;
-  }
-);
-
-onMounted(() => {
-  window.addEventListener("keydown", handleKeydown);
-  document.addEventListener("fullscreenchange", () => {
-    isFullscreen.value = Boolean(document.fullscreenElement);
-  });
-});
-
-onUnmounted(() => {
-  window.removeEventListener("keydown", handleKeydown);
-  if (hideTimer) clearTimeout(hideTimer);
+const {
+  isPlaying,
+  isLoading,
+  hasError,
+  currentTime,
+  duration,
+  volume,
+  isMuted,
+  isFullscreen,
+  controlsVisible,
+  playbackRate,
+  showRateMenu,
+  hoverTime,
+  hoverPercent,
+  progressPercent,
+  bufferedPercent,
+  wakeControls,
+  togglePlay,
+  jump,
+  seekTo,
+  handleTrackHover,
+  handleTrackLeave,
+  toggleMute,
+  handleVolumeChange,
+  setRate,
+  togglePip,
+  toggleFullscreen,
+  updateBuffered,
+  onLoadedMetadata,
+  onTimeUpdate,
+  onPlay,
+  onPause,
+  onWaiting,
+  onCanPlay,
+  onEnded,
+  onError,
+} = useHtmlVideoTransport({
+  videoRef,
+  containerRef,
+  src: () => props.src,
+  autoplay: () => props.autoplay,
+  onEnded: () => emit("ended"),
+  onTimeUpdate: (time, total) => emit("timeupdate", time, total),
 });
 </script>
 
@@ -340,7 +106,6 @@ onUnmounted(() => {
     @pointerdown="wakeControls"
     @click.self="togglePlay"
   >
-    <!-- Video Element -->
     <video
       ref="videoRef"
       :src="src"
@@ -358,7 +123,6 @@ onUnmounted(() => {
       @click="togglePlay"
     />
 
-    <!-- Big Center Indicator (when loading or paused) -->
     <div
       v-if="isLoading"
       class="player-center-status"
@@ -375,19 +139,16 @@ onUnmounted(() => {
       <Play :size="40" fill="currentColor" />
     </div>
 
-    <!-- Error Overlay -->
     <div v-if="hasError" class="player-error-overlay">
       <p>视频格式暂不可在浏览器直接播放，建议下载后使用本地播放器打开。</p>
     </div>
 
-    <!-- Transport Controls Bar -->
     <div
       class="player-transport-bar"
       role="toolbar"
       aria-label="视频播放控制栏"
       @click.stop
     >
-      <!-- Timeline Slider -->
       <div
         class="player-timeline"
         role="slider"
@@ -406,20 +167,17 @@ onUnmounted(() => {
           </div>
         </div>
 
-        <!-- Hover Preview Tooltip -->
         <div
           v-if="hoverTime !== null"
           class="timeline-hover-time"
           :style="{ left: `${hoverPercent}%` }"
         >
-          {{ formatClock(hoverTime) }}
+          {{ formatVideoClock(hoverTime) }}
         </div>
       </div>
 
-      <!-- Controls Row -->
       <div class="player-controls-row">
         <div class="controls-left">
-          <!-- Previous Video (if playlist) -->
           <button
             v-if="hasPrev"
             type="button"
@@ -430,7 +188,6 @@ onUnmounted(() => {
             <ChevronLeft :size="20" />
           </button>
 
-          <!-- Play / Pause -->
           <button
             type="button"
             class="control-btn play-btn"
@@ -441,7 +198,6 @@ onUnmounted(() => {
             <Play v-else :size="20" fill="currentColor" />
           </button>
 
-          <!-- Next Video (if playlist) -->
           <button
             v-if="hasNext"
             type="button"
@@ -452,7 +208,6 @@ onUnmounted(() => {
             <ChevronRight :size="20" />
           </button>
 
-          <!-- Jump -10s -->
           <button
             type="button"
             class="control-btn jump-btn"
@@ -463,7 +218,6 @@ onUnmounted(() => {
             <span class="jump-text">10</span>
           </button>
 
-          <!-- Jump +10s -->
           <button
             type="button"
             class="control-btn jump-btn"
@@ -474,7 +228,6 @@ onUnmounted(() => {
             <span class="jump-text">10</span>
           </button>
 
-          <!-- Volume -->
           <div class="volume-group">
             <button
               type="button"
@@ -497,16 +250,14 @@ onUnmounted(() => {
             />
           </div>
 
-          <!-- Time Display -->
           <span class="time-readout">
-            <span class="current-time">{{ formatClock(currentTime) }}</span>
+            <span class="current-time">{{ formatVideoClock(currentTime) }}</span>
             <span class="time-sep">/</span>
-            <span class="total-time">{{ formatClock(duration) }}</span>
+            <span class="total-time">{{ formatVideoClock(duration) }}</span>
           </span>
         </div>
 
         <div class="controls-right">
-          <!-- Playback Speed -->
           <div class="rate-menu-anchor">
             <button
               type="button"
@@ -531,7 +282,6 @@ onUnmounted(() => {
             </div>
           </div>
 
-          <!-- Picture in Picture -->
           <button
             type="button"
             class="control-btn"
@@ -541,7 +291,6 @@ onUnmounted(() => {
             <PictureInPicture2 :size="18" />
           </button>
 
-          <!-- Fullscreen -->
           <button
             type="button"
             class="control-btn"
@@ -592,7 +341,6 @@ onUnmounted(() => {
   max-height: 100vh;
 }
 
-/* Center status / big play */
 .player-center-status {
   position: absolute;
   top: 50%;
@@ -657,7 +405,6 @@ onUnmounted(() => {
   z-index: 6;
 }
 
-/* Transport Bar */
 .player-transport-bar {
   position: absolute;
   bottom: 0;
@@ -678,7 +425,6 @@ onUnmounted(() => {
   pointer-events: none;
 }
 
-/* Timeline */
 .player-timeline {
   position: relative;
   width: 100%;
@@ -753,7 +499,6 @@ onUnmounted(() => {
   white-space: nowrap;
 }
 
-/* Controls row */
 .player-controls-row {
   display: flex;
   align-items: center;
@@ -803,7 +548,6 @@ onUnmounted(() => {
   margin-top: 1px;
 }
 
-/* Volume Slider */
 .volume-group {
   display: flex;
   align-items: center;
@@ -823,7 +567,6 @@ onUnmounted(() => {
   opacity: 1;
 }
 
-/* Time Readout */
 .time-readout {
   display: inline-flex;
   align-items: center;
@@ -838,7 +581,6 @@ onUnmounted(() => {
   opacity: 0.45;
 }
 
-/* Playback Speed Menu */
 .rate-menu-anchor {
   position: relative;
 }

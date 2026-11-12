@@ -28,11 +28,13 @@
 </template>
 
 <script setup lang="ts">
+import type { Component, VNode } from "vue";
+
 withDefaults(
   defineProps<{
     title?: string;
     description?: string;
-    icon?: any;
+    icon?: Component | null;
     iconSize?: number;
     compact?: boolean;
     card?: boolean;
@@ -48,10 +50,10 @@ withDefaults(
 );
 
 defineSlots<{
-  default?: (props: Record<string, never>) => any;
-  icon?: (props: Record<string, never>) => any;
-  title?: (props: Record<string, never>) => any;
-  action?: (props: Record<string, never>) => any;
+  default?: (props: Record<string, never>) => VNode[];
+  icon?: (props: Record<string, never>) => VNode[];
+  title?: (props: Record<string, never>) => VNode[];
+  action?: (props: Record<string, never>) => VNode[];
 }>();
 </script>
 

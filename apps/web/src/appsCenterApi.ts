@@ -1,4 +1,23 @@
 import { readApiFailure } from "./apiFailure.ts";
+import type {
+  AccessPolicyType,
+  AppCronDraft,
+  AppCronRunEntry,
+  AppLaunchResponse,
+  AppLogsNormalizedResponse,
+  AppMutationResult,
+  AppProbePayload,
+  AppProbeResponse,
+  AppWebDraft,
+  AppsOverviewResponse,
+  McpCallLogEntry,
+  McpConfigResponse,
+  McpDebugExecPayload,
+  McpDebugExecResponse,
+  McpTokenRotateResponse,
+} from "./types/appsCenter.ts";
+
+export type { AccessPolicyType, AppCronDraft, AppWebDraft };
 
 export const DEFAULT_MCP_COMMAND =
   "/Applications/LightIsle.app/Contents/Resources/core/lightisled";
@@ -9,23 +28,6 @@ export const DEFAULT_MCP_PROMPT = `请帮我将当前 Mac 上的「LightIsle（�
 - 可执行命令：${DEFAULT_MCP_COMMAND}
 - 命令参数：["mcp", "--data-dir", "~/Library/Application Support/LightIsle"]
 配置完成后，请先读取 lightisle://specs/mcp-security 资源，并调用 lightisle_get_health、lightisle_get_system 与 lightisle_list_roots 验证连接（所有操作均记入 SQLite 审计，文件删除仅移入回收站，禁止格式化磁盘与注销存储根）。`;
-
-export type AccessPolicyType = "admin_only" | "selected_members" | "all_members";
-
-export type AppWebDraft = {
-  enabled: boolean;
-  mode: "static" | "on-demand" | "persistent";
-  idleTimeoutSeconds: number;
-  autoRestart: boolean;
-};
-
-export type AppCronDraft = {
-  enabled: boolean;
-  cron: string;
-  timezone: string;
-  events: string[];
-  channels: string[];
-};
 
 export function normalizeAccessPolicy(policy?: string): AccessPolicyType {
   if (policy === "selected_members" || policy === "allowlist") {
@@ -111,11 +113,8 @@ export function buildConfigPutPayload(
   return payload;
 }
 
-export function normalizeLogsResponse(res: unknown): {
-  webOutput: string;
-  cronRuns: Array<Record<string, any>>;
-} {
-  const obj = res && typeof res === "object" ? (res as Record<string, unknown>) : {};
+export function normalizeLogsResponse(res: unknown): AppLogsNormalizedResponse {
+  const obj = res && typeof stalenessGuard(res) === "object" ? (res as Record<string, unknown>) : {};
   const webOutput =
     typeof obj.webOutput === "string"
       ? obj.webOutput
@@ -123,11 +122,15 @@ export function normalizeLogsResponse(res: unknown): {
         ? obj.logs
         : "";
   const cronRuns = Array.isArray(obj.cronRuns)
-    ? (obj.cronRuns as Array<Record<string, any>>)
+    ? (obj.cronRuns as AppCronRunEntry[])
     : Array.isArray(obj.runs)
-      ? (obj.runs as Array<Record<string, any>>)
+      ? (obj.runs as AppCronRunEntry[])
       : [];
   return { webOutput, cronRuns };
+}
+
+function stalenessGuard(value: unknown): unknown {
+  return value;
 }
 
 export function getAppDataBackupUrl(id: string): string {
@@ -135,7 +138,10 @@ export function getAppDataBackupUrl(id: string): string {
 }
 
 export function createAppsCenterClient(fetchImpl: typeof fetch = globalThis.fetch) {
-  async function request(url: string, options: RequestInit = {}): Promise<any> {
+  async function request<T = Record<string, unknown>>(
+    url: string,
+    options: RequestInit = {},
+  ): Promise<T> {
     const headers: Record<string, string> = {
       "X-LightIsle-Request": "1",
       ...((options.headers as Record<string, string> | undefined) || {}),
@@ -149,25 +155,27 @@ export function createAppsCenterClient(fetchImpl: typeof fetch = globalThis.fetc
     if (!response.ok) {
       throw await readApiFailure(response);
     }
-    return response.json();
+    return (await response.json()) as T;
   }
 
   return {
     request,
-    fetchApps(refresh = false): Promise<any> {
-      return request(
+    fetchApps(refresh = false): Promise<AppsOverviewResponse> {
+      return request<AppsOverviewResponse>(
         refresh ? "/api/v2/apps/refresh" : "/api/v2/apps",
         refresh ? { method: "POST" } : {},
       );
     },
-    setMcpEnabled(enabled: boolean): Promise<any> {
-      return request("/api/v2/apps/mcp", {
+    setMcpEnabled(enabled: boolean): Promise<McpConfigResponse> {
+      return request<McpConfigResponse>("/api/v2/apps/mcp", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled: Boolean(enabled) }),
       });
     },
-    setMcpConfig(options: { mcpEnabled?: boolean; mcpLanEnabled?: boolean } = {}): Promise<any> {
+    setMcpConfig(
+      options: { mcpEnabled?: boolean; mcpLanEnabled?: boolean } = {},
+    ): Promise<McpConfigResponse> {
       const payload: Record<string, unknown> = {};
       if (typeof options.mcpEnabled === "boolean") {
         payload.mcpEnabled = options.mcpEnabled;
@@ -175,69 +183,58 @@ export function createAppsCenterClient(fetchImpl: typeof fetch = globalThis.fetc
       if (typeof options.mcpLanEnabled === "boolean") {
         payload.mcpLanEnabled = options.mcpLanEnabled;
       }
-      return request("/api/v2/apps/mcp", {
+      return request<McpConfigResponse>("/api/v2/apps/mcp", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
     },
-    rotateMcpToken(): Promise<any> {
-      return request("/api/v2/apps/mcp/token/rotate", {
+    rotateMcpToken(): Promise<McpTokenRotateResponse> {
+      return request<McpTokenRotateResponse>("/api/v2/apps/mcp/token/rotate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
       });
     },
-    debugMcp(
-      payload: {
-        method?: string;
-        tool?: string;
-        uri?: string;
-        args?: unknown;
-        rawRpc?: string;
-      } = {},
-    ): Promise<any> {
-      return request("/api/v2/apps/mcp/debug", {
+    debugMcp(payload: McpDebugExecPayload = {}): Promise<McpDebugExecResponse> {
+      return request<McpDebugExecResponse>("/api/v2/apps/mcp/debug", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
     },
-    fetchMcpLogs(): Promise<{ logs: Array<Record<string, any>> }> {
-      return request("/api/v2/apps/mcp/logs");
+    fetchMcpLogs(): Promise<{ logs: McpCallLogEntry[] }> {
+      return request<{ logs: McpCallLogEntry[] }>("/api/v2/apps/mcp/logs");
     },
-    clearMcpLogs(): Promise<any> {
-      return request("/api/v2/apps/mcp/logs", {
+    clearMcpLogs(): Promise<{ ok?: boolean }> {
+      return request<{ ok?: boolean }>("/api/v2/apps/mcp/logs", {
         method: "DELETE",
       });
     },
-    probeApp(
-      id: string,
-      payload: { method?: string; path?: string; body?: string; role?: string } = {},
-    ): Promise<any> {
-      return request(`/api/v2/apps/${encodeURIComponent(id)}/probe`, {
+    probeApp(id: string, payload: AppProbePayload = {}): Promise<AppProbeResponse> {
+      return request<AppProbeResponse>(`/api/v2/apps/${encodeURIComponent(id)}/probe`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
     },
-    scaffoldApp(payload: Record<string, unknown> = {}): Promise<any> {
-      return request("/api/v2/apps/scaffold", {
+    scaffoldApp(payload: Record<string, unknown> = {}): Promise<AppMutationResult> {
+      return request<AppMutationResult>("/api/v2/apps/scaffold", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
     },
-    launchApp(id: string): Promise<any> {
-      return request(`/api/v2/apps/${encodeURIComponent(id)}/launch`, {
+    launchApp(id: string): Promise<AppLaunchResponse> {
+      return request<AppLaunchResponse>(`/api/v2/apps/${encodeURIComponent(id)}/launch`, {
         method: "POST",
       });
     },
     runAction(
       id: string,
       action: "start" | "stop" | "restart" | "run_cron",
-    ): Promise<any> {
-      return request(`/api/v2/apps/${encodeURIComponent(id)}/action`, {
+    ): Promise<AppMutationResult> {
+      return request<AppMutationResult>(`/api/v2/apps/${encodeURIComponent(id)}/action`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action }),
@@ -247,8 +244,8 @@ export function createAppsCenterClient(fetchImpl: typeof fetch = globalThis.fetc
       app: { id: string; revision?: string },
       policy: string,
       allowedUserIDs: number[],
-    ): Promise<any> {
-      return request(`/api/v2/apps/${encodeURIComponent(app.id)}`, {
+    ): Promise<AppMutationResult> {
+      return request<AppMutationResult>(`/api/v2/apps/${encodeURIComponent(app.id)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(buildAccessPutPayload(app, policy, allowedUserIDs)),
@@ -258,24 +255,24 @@ export function createAppsCenterClient(fetchImpl: typeof fetch = globalThis.fetc
       app: { id: string; revision?: string; web?: unknown; mode?: string; cron?: unknown },
       webDraft: AppWebDraft,
       cronDraft: AppCronDraft,
-    ): Promise<any> {
-      return request(`/api/v2/apps/${encodeURIComponent(app.id)}`, {
+    ): Promise<AppMutationResult> {
+      return request<AppMutationResult>(`/api/v2/apps/${encodeURIComponent(app.id)}`, {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(buildConfigPutPayload(app, webDraft, cronDraft)),
       });
     },
-    async fetchLogs(id: string): Promise<{ webOutput: string; cronRuns: Array<Record<string, any>> }> {
-      const res = await request(`/api/v2/apps/${encodeURIComponent(id)}/logs`);
+    async fetchLogs(id: string): Promise<AppLogsNormalizedResponse> {
+      const res = await request<unknown>(`/api/v2/apps/${encodeURIComponent(id)}/logs`);
       return normalizeLogsResponse(res);
     },
-    deleteApp(id: string): Promise<any> {
-      return request(`/api/v2/apps/${encodeURIComponent(id)}`, {
+    deleteApp(id: string): Promise<AppMutationResult> {
+      return request<AppMutationResult>(`/api/v2/apps/${encodeURIComponent(id)}`, {
         method: "DELETE",
       });
     },
-    restoreAppData(id: string, archiveBody: BodyInit): Promise<any> {
-      return request(`/api/v2/apps/${encodeURIComponent(id)}/data-restore`, {
+    restoreAppData(id: string, archiveBody: BodyInit): Promise<AppMutationResult> {
+      return request<AppMutationResult>(`/api/v2/apps/${encodeURIComponent(id)}/data-restore`, {
         method: "POST",
         headers: { "Content-Type": "application/gzip" },
         body: archiveBody,

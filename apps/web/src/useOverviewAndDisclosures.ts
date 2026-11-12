@@ -1,6 +1,7 @@
 import { computed, ref, watch, type ComputedRef, type Ref } from "vue";
 import { readApiFailure } from "./apiFailure.ts";
 import { describeUserFacingError } from "./userFacingError.ts";
+import type { ServerStats } from "./useHostTelemetry.ts";
 import type { PersonalSpaceSummary } from "./overviewPageModels.ts";
 import type { BackendTask } from "./useTaskCenter.ts";
 
@@ -11,7 +12,7 @@ export function useOverviewAndDisclosures(options: {
   filesLoading: Ref<boolean>;
   searchingFiles: Ref<boolean>;
   telemetry: {
-    stats: Ref<any>;
+    stats: Ref<ServerStats | null>;
     error: Ref<string | null>;
     polling: Ref<boolean>;
     cpu: ComputedRef<number | null>;

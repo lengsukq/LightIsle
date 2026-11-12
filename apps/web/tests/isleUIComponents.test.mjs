@@ -122,20 +122,28 @@ test('IsleImageViewer provides anchored zoom, gesture panning, HUD toolbar, and 
 });
 
 test('IsleVideoPlayer provides unified transport bar, scrubbing, volume, rate, PiP, and keyboard shortcuts', () => {
-  const source = readFileSync(new URL('../src/IsleVideoPlayer.vue', import.meta.url), 'utf8');
+  const viewSource = readFileSync(new URL('../src/IsleVideoPlayer.vue', import.meta.url), 'utf8');
+  const transportSource = readFileSync(
+    new URL('../src/composables/useHtmlVideoTransport.ts', import.meta.url),
+    'utf8'
+  );
+  const combined = `${viewSource}\n${transportSource}`;
 
   // Verify controls
-  assert.match(source, /player-transport-bar/, 'IsleVideoPlayer must render unified transport bar');
-  assert.match(source, /player-timeline/, 'IsleVideoPlayer must render interactive scrub timeline');
-  assert.match(source, /timeline-buffered/, 'IsleVideoPlayer must indicate buffered ranges');
-  assert.match(source, /timeline-hover-time/, 'IsleVideoPlayer must show hover timestamp preview');
+  assert.match(viewSource, /player-transport-bar/, 'IsleVideoPlayer must render unified transport bar');
+  assert.match(viewSource, /player-timeline/, 'IsleVideoPlayer must render interactive scrub timeline');
+  assert.match(viewSource, /timeline-buffered/, 'IsleVideoPlayer must indicate buffered ranges');
+  assert.match(viewSource, /timeline-hover-time/, 'IsleVideoPlayer must show hover timestamp preview');
 
-  // Verify audio, rate, PiP, and fullscreen
-  assert.match(source, /volume-slider/, 'IsleVideoPlayer must provide volume control');
-  assert.match(source, /playbackRateOptions/, 'IsleVideoPlayer must support multiple playback rates');
-  assert.match(source, /requestPictureInPicture/, 'IsleVideoPlayer must support Picture-in-Picture');
-  assert.match(source, /requestFullscreen/, 'IsleVideoPlayer must support Fullscreen mode');
-  assert.match(source, /handleKeydown/, 'IsleVideoPlayer must support keyboard shortcuts');
+  // Verify audio, rate, PiP, fullscreen, and symmetric listener teardown
+  assert.match(viewSource, /volume-slider/, 'IsleVideoPlayer must provide volume control');
+  assert.match(combined, /playbackRateOptions/, 'IsleVideoPlayer must support multiple playback rates');
+  assert.match(transportSource, /requestPictureInPicture/, 'IsleVideoPlayer must support Picture-in-Picture');
+  assert.match(transportSource, /requestFullscreen/, 'IsleVideoPlayer must support Fullscreen mode');
+  assert.match(transportSource, /handleKeydown/, 'IsleVideoPlayer must support keyboard shortcuts');
+  assert.match(
+    transportSource,
+    /removeEventListener\("fullscreenchange",\s*handleFullscreenChange\)/,
+    'useHtmlVideoTransport must clean up fullscreenchange listener on unmount'
+  );
 });
-
-

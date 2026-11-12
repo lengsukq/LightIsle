@@ -113,7 +113,7 @@ function attachTileLayer(){
   basemapFailed.value=false;
   const attach=(layer:L.TileLayer)=>{
     layer.on("tileerror",()=>{tileErrors++;if(tileErrors>=4&&tileSuccesses===0)degradeBasemap()});
-    layer.on("tileload",(ev:any)=>{
+    layer.on("tileload",(ev: L.TileEvent & { url?: string })=>{
       tileSuccesses++;
       const tileSrc=ev?.tile?.src||ev?.url||`tile:${mapSource.value}:${tileSuccesses}`;
       recordAssetHit("map_tiles",String(tileSrc));

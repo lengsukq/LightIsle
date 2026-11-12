@@ -2,17 +2,15 @@
 import { createVisibleMediaPolling } from "./visibleMediaPolling.ts";
 import { usePhotoPersonalFavorite } from "./usePhotoPersonalFavorite.ts";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
-import { describeRootOperationFailure } from "./rootDiscovery.ts";
 import { describeUserFacingError } from "./userFacingError.ts";
 import { createScopedRootApi } from "./apiClient.ts";
 import {
-  Heart, Star, RefreshCw, Images, Film, Plus, X, FolderPlus, ChevronDown,
-  ChevronLeft, ChevronRight, Info, Pencil, Trash2, Sparkles, ArrowUp,
-  Search, LayoutList, Map as MapIcon, SlidersHorizontal, Grid2x2, Grid3x3, Check, Users,
+  Heart, Star, RefreshCw, Images, Film, X, FolderPlus, ChevronDown,
+  ChevronLeft, ChevronRight, Info, Pencil, Trash2, Sparkles,
+  Search, LayoutList, Map as MapIcon, Grid2x2, Grid3x3, Check, Users,
 } from "lucide-vue-next";
 import { createLatestRequestGate } from "./latestRequestGate.ts";
-import { createMediaStatusPoller } from "./mediaStatusPoller.ts";
-import { mediaQueryKey, transitionMediaQuery } from "./mediaQueryContext.ts";
+import { mediaQueryKey } from "./mediaQueryContext.ts";
 import { rootApiPath, rootMediaPath } from "./rootApi.ts";
 import PhotoMapView from "./PhotoMapView.vue";
 import PhotoPeopleView from "./PhotoPeopleView.vue";
@@ -20,8 +18,8 @@ import PhotoSimilarCleanupView from "./PhotoSimilarCleanupView.vue";
 import PhotoViewerInfoSidebar from "./PhotoViewerInfoSidebar.vue";
 import PhotoAlbumOverviewSection from "./PhotoAlbumOverviewSection.vue";
 import PhotosBatchBar from "./PhotosBatchBar.vue";
+import PhotosTimelineToolbar from "./PhotosTimelineToolbar.vue";
 import AppleSelect from "./AppleSelect.vue";
-import IsleChip from "./IsleChip.vue";
 import IsleButton from "./IsleButton.vue";
 import IsleEmpty from "./IsleEmpty.vue";
 import IsleVideoPlayer from "./IsleVideoPlayer.vue";
@@ -32,14 +30,10 @@ import { usePhotoBatchActions, type BatchAsset } from "./usePhotoBatchActions.ts
 import { usePhotoAlbums } from "./usePhotoAlbums.ts";
 import { usePhotoTimelineScrubber } from "./usePhotoTimelineScrubber.ts";
 import { usePhotoGridAndModal } from "./usePhotoGridAndModal.ts";
-import { getMetadata, putMetadata } from "./useIsleCache.ts";
-import {
-  PHOTO_SEARCH_MODES, appendAISearchParams, usePhotoAISearchAndPeople,
-  type AIIndexingStatus, type PhotoViewMode,
-} from "./usePhotoAISearchAndPeople.ts";
+import { usePhotoAISearchAndPeople, type PhotoViewMode } from "./usePhotoAISearchAndPeople.ts";
+import { usePhotosCatalogLoader } from "./composables/usePhotosCatalogLoader.ts";
 
 type Asset = BatchAsset;
-type Status = { running: boolean; scanned: number; found: number; lastError?: string; lastDone?: number; aiIndexing?: AIIndexingStatus };
 
 const props = defineProps<{ active?: boolean; admin: boolean; rootId?: string; rootGeneration?: number; rootName?: string; hasOtherRoots?: boolean }>();
 const assets = ref<Asset[]>([]);
@@ -54,13 +48,7 @@ let searchTimer: number | undefined;
 const loading = ref(false);
 const galleryLoaded = ref(false);
 const loadError = ref("");
-const loadErrorReset = ref(true);
-const scanActionError = ref("");
-const scanStatusLoading = ref(false);
-const scanStatusLoaded = ref(false);
-const scanStatusError = ref("");
 const message = ref("");
-const scan = ref<Status>({ running: false, scanned: 0, found: 0 });
 const selected = ref<Asset | null>(null);
 const selectedIndex = ref(-1);
 const thumbnailFailed = ref<Record<number, boolean>>({});
@@ -76,7 +64,6 @@ watch(viewMode, (mode) => {
   });
 });
 
-let lastCompletedScan = 0;
 let rootEpoch = 0;
 let disposed = false;
 let rootScopeAbort = new AbortController();
@@ -183,7 +170,6 @@ function photoQueryKey() {
     camera: cameraFilter.value, loc: locationFilter.value, year: yearFilter.value,
   });
 }
-let pageQueryKey = photoQueryKey();
 
 function isFullTimelineView() {
   return !activeAlbum.value && !activePrivateAlbum.value && !activeFolderAlbum.value && !favoritesOnly.value &&
@@ -202,6 +188,27 @@ const {
   beginListRequest: () => listRequests.begin(), getRootEpoch: () => rootEpoch,
   isDisposed: () => disposed, api, apiPath, load: (reset) => load(reset),
   updateViewport, measureViewport,
+});
+
+const {
+  scanActionError, scanStatusLoading, scanStatusLoaded, scanStatusError, scan,
+  status, load, retryLoad, startScan, toggleFavorite, changeView, showOnThisDay,
+  resetCatalogForRootChange, disposeCatalogLoader,
+} = usePhotosCatalogLoader({
+  props, assets, nextCursor, loading, galleryLoaded, loadError, focusedIndex, timelineCursorStart,
+  activeAlbum, activePrivateAlbum, activeFolderAlbum, favoritesOnly, personalOnly, onThisDayOnly,
+  typeFilter, searchInput, searchApplied, searchMode, activePerson, selected, selectedIndex,
+  pendingFavorites, message, photosPage, loadMarker, photoQueryKey,
+  beginListRequest: () => listRequests.begin(),
+  getRootEpoch: () => rootEpoch,
+  getSelectionGeneration: () => selectionGeneration,
+  bumpViewGeneration: () => { viewGeneration += 1; },
+  bumpSelectionGeneration: () => { selectionGeneration += 1; },
+  isDisposed: () => disposed,
+  api, apiPath, appendExifFilterParams, updateViewport,
+  onScanCompleted: () => {
+    void refreshAlbums(); void refreshPrivateAlbums(); void refreshTimelineIndex(); void refreshFacets();
+  },
 });
 
 const {
@@ -224,10 +231,7 @@ function setTypeFilter(kind: "" | "photo" | "video") {
   typeFilter.value = kind;
   void load(true);
 }
-function closeAlbumMenu(event: Event) {
-  const menu = (event.target as HTMLElement)?.closest("details.photo-albums-menu");
-  if (menu instanceof HTMLDetailsElement) menu.open = false;
-}
+
 watch(searchInput, (value) => {
   if (searchTimer) clearTimeout(searchTimer);
   searchTimer = window.setTimeout(() => {
@@ -245,132 +249,6 @@ const togglePersonalFavorite = usePhotoPersonalFavorite({
   reload: () => load(true), closeModal, focusTile,
 });
 
-const scanStatusPoller = createMediaStatusPoller(
-  (signal) => api<{ status: Status; count: number }>(apiPath("/api/v2/photos/status"), "GET", undefined, signal),
-  {
-    onValue: (result) => {
-      const previous = scan.value.lastDone;
-      scan.value = result.status; scanStatusLoaded.value = true; scanStatusError.value = ""; scanStatusLoading.value = false;
-      if (!scan.value.running && scan.value.lastDone && scan.value.lastDone !== previous && scan.value.lastDone > lastCompletedScan) {
-        lastCompletedScan = scan.value.lastDone;
-        void load(true); void refreshAlbums(); void refreshPrivateAlbums(); void refreshTimelineIndex(); void refreshFacets();
-      }
-    },
-    onError: (error) => { scanStatusError.value = describeRootOperationFailure(error); scanStatusLoading.value = false; },
-  },
-);
-function status() { scanStatusLoading.value = true; return scanStatusPoller.refresh(); }
-
-async function load(reset = false) {
-  if (loading.value && !reset) return;
-  const transition = transitionMediaQuery(pageQueryKey, photoQueryKey());
-  if (transition.clearContent) {
-    pageQueryKey = transition.queryKey; assets.value = []; nextCursor.value = 0; galleryLoaded.value = false;
-    focusedIndex.value = 0; timelineCursorStart.value = 0;
-  }
-  const request = listRequests.begin();
-  loading.value = true; loadError.value = "";
-  if (reset) { focusedIndex.value = 0; timelineCursorStart.value = 0; }
-  if (reset && !assets.value.length) {
-    const cached = getMetadata<{ assets: Asset[]; nextCursor: number }>("photos:list:" + photoQueryKey());
-    if (cached && Array.isArray(cached.assets) && cached.assets.length) {
-      assets.value = cached.assets;
-      nextCursor.value = cached.nextCursor || 0;
-      galleryLoaded.value = true;
-      void nextTick(() => updateViewport());
-    }
-  }
-  try {
-    const query = new URLSearchParams({ limit: "48", cursor: String(reset ? 0 : nextCursor.value) });
-    if (activeAlbum.value) query.set("album", String(activeAlbum.value));
-    if (activePrivateAlbum.value) query.set("privateAlbum", String(activePrivateAlbum.value));
-    if (activeFolderAlbum.value) query.set("directory", activeFolderAlbum.value.path);
-    if (favoritesOnly.value) query.set("favorites", "1");
-    if (personalOnly.value) query.set("personal", "1");
-    if (onThisDayOnly.value) query.set("onThisDay", "1");
-    if (typeFilter.value) query.set("type", typeFilter.value);
-    if (searchApplied.value) query.set("q", searchApplied.value);
-    appendAISearchParams(query, searchApplied.value, searchMode.value, activePerson.value?.id ?? 0);
-    appendExifFilterParams(query);
-    const result = await api<{ assets: Asset[]; nextCursor: number }>(
-      apiPath("/api/v2/photos") + "?" + query.toString(), "GET", undefined, request.signal,
-    );
-    if (!request.isCurrent()) return;
-    assets.value = reset ? result.assets : [...assets.value, ...result.assets];
-    nextCursor.value = result.nextCursor;
-    if (reset) {
-      galleryLoaded.value = true;
-      putMetadata("photos:list:" + photoQueryKey(), { assets: result.assets, nextCursor: result.nextCursor });
-    }
-    await nextTick();
-    if (request.isCurrent()) updateViewport();
-  } catch (e) {
-    if (request.isCurrent() && !(e instanceof Error && e.name === "AbortError")) {
-      loadError.value = "加载照片失败：" + describeRootOperationFailure(e);
-      loadErrorReset.value = reset;
-    }
-  } finally {
-    if (request.isCurrent()) {
-      loading.value = false;
-      if (nextCursor.value && !loadError.value) {
-        requestAnimationFrame(() => {
-          const marker = loadMarker.value;
-          if (!disposed && !loading.value && marker && marker.getBoundingClientRect().top < window.innerHeight + 650) {
-            void load(false);
-          }
-        });
-      }
-    }
-  }
-}
-function retryLoad() { void load(loadErrorReset.value); }
-async function startScan() {
-  const context = rootEpoch; scanActionError.value = "";
-  try {
-    await api(apiPath("/api/v2/photos/scan"), "POST");
-    if (context !== rootEpoch) return;
-    message.value = "正在后台扫描授权的共享目录";
-    scanStatusPoller.invalidate(); await status();
-  } catch (e) { if (context === rootEpoch) scanActionError.value = "无法启动扫描：" + describeUserFacingError(e); }
-}
-async function toggleFavorite(asset: Asset) {
-  if (!props.admin && asset.canWrite !== true) return;
-  if (pendingFavorites.value[asset.id]) return;
-  pendingFavorites.value[asset.id] = true;
-  const next = !asset.favorite, selection = selectionGeneration;
-  try {
-    await api(apiPath("/api/v2/photos/" + asset.id + "/favorite"), "POST", { favorite: next });
-    const current = assets.value.find((item) => item.id === asset.id);
-    if (current) current.favorite = next;
-    if (selected.value?.id === asset.id) selected.value.favorite = next;
-  } catch (e) {
-    if (selection === selectionGeneration && selected.value?.id === asset.id) {
-      message.value = "收藏失败：" + describeUserFacingError(e);
-    }
-  } finally { delete pendingFavorites.value[asset.id]; }
-}
-function changeView(album: number, favorites: boolean, mine = false, privateID = 0) {
-  if (activeAlbum.value === album && favoritesOnly.value === favorites && personalOnly.value === mine &&
-      activePrivateAlbum.value === privateID && !onThisDayOnly.value && !activeFolderAlbum.value) return;
-  viewGeneration += 1;
-  activeAlbum.value = album; favoritesOnly.value = favorites; personalOnly.value = mine;
-  activePrivateAlbum.value = privateID; activeFolderAlbum.value = null; onThisDayOnly.value = false; activePerson.value = null;
-  searchInput.value = ""; searchApplied.value = ""; selected.value = null; selectedIndex.value = -1; focusedIndex.value = 0;
-  selectionGeneration += 1; void load(true);
-  requestAnimationFrame(() => {
-    const root = photosPage.value;
-    if (root) window.scrollTo({ top: Math.max(0, root.getBoundingClientRect().top + window.scrollY - 100), behavior: "auto" });
-  });
-}
-function showOnThisDay() {
-  if (onThisDayOnly.value) return;
-  viewGeneration += 1;
-  activeAlbum.value = 0; favoritesOnly.value = false; personalOnly.value = false; activePrivateAlbum.value = 0;
-  activeFolderAlbum.value = null; onThisDayOnly.value = true; searchInput.value = ""; searchApplied.value = "";
-  selected.value = null; selectedIndex.value = -1; focusedIndex.value = 0; selectionGeneration += 1;
-  void load(true); window.scrollTo({ top: 0, behavior: "auto" });
-}
-
 const setScanPolling = createVisibleMediaPolling(status, 4500);
 onMounted(() => {
   disposed = false;
@@ -384,15 +262,12 @@ watch([() => props.rootId, () => props.rootGeneration], () => {
   resetBatchForRootChange();
   rootScopeAbort.abort(); rootScopeAbort = new AbortController();
   rootEpoch += 1; viewGeneration += 1; selectionGeneration += 1;
-  listRequests.cancel(); resetAlbumsForRootChange(); resetScrubberForRootChange(); scanStatusPoller.invalidate();
+  listRequests.cancel(); resetAlbumsForRootChange(); resetScrubberForRootChange();
   assets.value = []; favoritesOnly.value = false; personalOnly.value = false; nextCursor.value = 0;
   loading.value = false; galleryLoaded.value = false; viewMode.value = "timeline"; onThisDayOnly.value = false;
   typeFilter.value = ""; searchInput.value = ""; searchApplied.value = ""; resetExifFilters(); resetAIStateForRootChange(); sharingAlbum.value = null;
   if (searchTimer) clearTimeout(searchTimer);
-  pageQueryKey = photoQueryKey();
-  loadError.value = ""; loadErrorReset.value = true; scanActionError.value = "";
-  scanStatusLoaded.value = false; scanStatusLoading.value = false; scanStatusError.value = "";
-  scan.value = { running: false, scanned: 0, found: 0 }; lastCompletedScan = 0;
+  resetCatalogForRootChange();
   selected.value = null; selectedIndex.value = -1; message.value = ""; focusedIndex.value = 0;
   void load(true); void refreshAlbums(); void refreshPrivateAlbums(); void refreshFolderAlbums();
   void refreshTimelineIndex(); void refreshFacets(); void status();
@@ -420,7 +295,7 @@ onUnmounted(() => {
   listRequests.cancel();
   cancelAlbumRequests();
   disposeAISearch();
-  scanStatusPoller.dispose();
+  disposeCatalogLoader();
 });
 </script>
 
@@ -488,75 +363,63 @@ onUnmounted(() => {
       @open-legacy="openAlbumFromOverview" @cover-error="failedAlbumCovers[$event] = true"
     />
     <div v-show="viewMode==='timeline'">
-      <div class="photos-nav-bar">
-        <div class="photos-nav-top">
-          <div class="album-tabs album-primary-tabs">
-            <IsleChip :selected="activeAlbum===0&&!activePrivateAlbum&&!activeFolderAlbum&&!favoritesOnly&&!personalOnly&&!onThisDayOnly" @select="changeView(0,false)">
-              <template #icon><Images :size="15"/></template>全部照片
-            </IsleChip>
-            <IsleChip :selected="onThisDayOnly" @select="showOnThisDay()">
-              <template #icon><Sparkles :size="15"/></template>那年今天
-            </IsleChip>
-            <IsleChip :selected="personalOnly" @select="changeView(0,false,true)">
-              <template #icon><Star :size="15"/></template>我的收藏
-            </IsleChip>
-            <IsleChip :selected="favoritesOnly" @select="changeView(0,true)">
-              <template #icon><Heart :size="15"/></template>共享收藏
-            </IsleChip>
-          </div>
-          <details class="photo-albums-menu">
-            <summary :aria-label="'浏览相册，共 '+(albums.length+privateAlbums.length+folderAlbums.length)+' 个'"><FolderPlus :size="15"/> {{activeFolderAlbum?.name||currentPrivateAlbum?.name||currentAlbum?.name||'相册'}} <small>({{albums.length+privateAlbums.length+folderAlbums.length}})</small></summary>
-            <div class="photo-albums-menu-panel">
-              <div class="album-tabs">
-                <button v-for="album in folderAlbums" :key="album.path" type="button" :class="{chosen:activeFolderAlbum?.path===album.path}" @click="closeAlbumMenu($event);openFolderAlbum(album)"><FolderPlus :size="14"/> {{album.name}}</button>
-                <button v-for="album in albums" :key="album.id" type="button" :class="{chosen:activeAlbum===album.id}" @click="closeAlbumMenu($event);changeView(album.id,false)">{{album.name}} <small>{{album.count}}</small></button>
-                <button v-for="album in privateAlbums" :key="'private-'+album.id" :data-private-album-filter="album.id" type="button" :class="{chosen:activePrivateAlbum===album.id}" @click="closeAlbumMenu($event);changeView(0,false,false,album.id)"><FolderPlus :size="14"/> {{album.name}} <small>{{album.count}}</small></button>
-              </div>
-              <div class="photo-albums-menu-create">
-                <button type="button" class="album-create" @click="closeAlbumMenu($event);viewMode='albums';refreshFolderAlbums()"><Plus :size="17"/> 新建文件夹相册</button>
-              </div>
-            </div>
-          </details>
-        </div>
-        <div class="photos-nav-bottom">
-          <div class="photos-nav-filters">
-            <div class="type-tabs" role="group" aria-label="媒体类型">
-              <IsleChip small :selected="!typeFilter" @select="setTypeFilter('')">全部</IsleChip>
-              <IsleChip small :selected="typeFilter==='photo'" @select="setTypeFilter('photo')">
-                <template #icon><Images :size="13"/></template>照片
-              </IsleChip>
-              <IsleChip small :selected="typeFilter==='video'" @select="setTypeFilter('video')">
-                <template #icon><Film :size="13"/></template>视频
-              </IsleChip>
-            </div>
-            <button type="button" class="photo-tool-btn" :class="{chosen:exifFilterOpen||hasActiveExifFilter()}" @click="exifFilterOpen=!exifFilterOpen"><SlidersHorizontal :size="14"/> 筛选</button>
-          </div>
-          <div v-if="assets.length&&timelineYears.length&&!onThisDayOnly" class="timeline-jump">
-            <AppleSelect v-model="jumpYear" :options="yearOptions" placeholder="年份" size="sm" aria-label="选择年份" @change="onJumpYearChange" />
-            <AppleSelect v-model="jumpMonth" :options="monthOptions" placeholder="月份" :disabled="!jumpMonths.length" size="sm" aria-label="选择月份" @change="jumpToTimeline" />
-            <button type="button" class="timeline-jump-top" title="回到最新照片" @click="scrollToTop"><ArrowUp :size="14"/> 最新</button>
-          </div>
-        </div>
-      </div>
-
-      <div v-if="searchInput || searchApplied || activePerson" class="photos-filter-drawer" role="group" aria-label="智能搜索范围">
-        <IsleChip v-for="m in PHOTO_SEARCH_MODES" :key="m.value" small :selected="searchMode === m.value" @select="setSearchMode(m.value, Boolean(searchApplied))">{{ m.label }}</IsleChip>
-        <button v-if="activePerson" type="button" class="refresh" @click="clearPersonFilter">人物：{{ activePerson.name }} ×</button>
-      </div>
-      <div v-if="exifFilterOpen||hasActiveExifFilter()" class="photos-filter-drawer">
-        <AppleSelect v-if="cameraOptions.length>1" v-model="cameraFilter" :options="cameraOptions" size="sm" aria-label="按相机型号筛选" @change="onExifFilterChange" />
-        <AppleSelect v-model="locationFilter" :options="locationOptions" size="sm" aria-label="按定位信息筛选" @change="onExifFilterChange" />
-        <AppleSelect v-if="filterYearOptions.length>1" v-model="yearFilter" :options="filterYearOptions" size="sm" aria-label="按拍摄年份筛选" @change="onExifFilterChange" />
-        <button v-if="hasActiveExifFilter()" type="button" class="refresh" @click="resetExifFilters();onExifFilterChange()">清除筛选</button>
-      </div>
-
-      <div v-if="isFullTimelineView()&&assets.length>0" class="photos-memories-strip" aria-label="回忆与精选">
-        <button type="button" class="memory-card" @click="showOnThisDay()"><span class="memory-card-icon pink"><Sparkles :size="18"/></span><div><strong>那年今天</strong><small>历史上的今天</small></div></button>
-        <button type="button" class="memory-card" @click="changeView(0,false,true)"><span class="memory-card-icon amber"><Star :size="18"/></span><div><strong>我的收藏</strong><small>仅自己可见</small></div></button>
-        <button type="button" class="memory-card" @click="changeView(0,true)"><span class="memory-card-icon rose"><Heart :size="18"/></span><div><strong>共享精选</strong><small>家庭喜爱瞬间</small></div></button>
-        <button type="button" class="memory-card" @click="setTypeFilter('video')"><span class="memory-card-icon blue"><Film :size="18"/></span><div><strong>动态视频</strong><small>家庭影像合集</small></div></button>
-        <button type="button" class="memory-card" @click="viewMode='map'"><span class="memory-card-icon green"><MapIcon :size="18"/></span><div><strong>足迹地图</strong><small>按拍摄地回溯</small></div></button>
-      </div>
+      <PhotosTimelineToolbar
+        :active-album="activeAlbum"
+        :active-private-album="activePrivateAlbum"
+        :active-folder-album="activeFolderAlbum"
+        :current-private-album="currentPrivateAlbum"
+        :current-album="currentAlbum"
+        :favorites-only="favoritesOnly"
+        :personal-only="personalOnly"
+        :is-on-this-day="onThisDayOnly"
+        :albums="albums"
+        :private-albums="privateAlbums"
+        :folder-albums="folderAlbums"
+        :type-filter="typeFilter"
+        :exif-filter-open="exifFilterOpen"
+        :has-active-exif="hasActiveExifFilter()"
+        :has-assets="assets.length > 0"
+        :has-timeline-years="timelineYears.length > 0"
+        :jump-year="jumpYear"
+        :jump-month="jumpMonth"
+        :has-jump-months="jumpMonths.length > 0"
+        :year-options="yearOptions"
+        :month-options="monthOptions"
+        :search-input="searchInput"
+        :search-applied="searchApplied"
+        :search-mode="searchMode"
+        :active-person-name="activePerson?.name ?? ''"
+        :camera-filter="cameraFilter"
+        :camera-options="cameraOptions"
+        :location-filter="locationFilter"
+        :location-options="locationOptions"
+        :year-filter="yearFilter"
+        :filter-year-options="filterYearOptions"
+        :show-memories-strip="isFullTimelineView() && assets.length > 0"
+        @select-all="changeView(0, false)"
+        @select-on-this-day="showOnThisDay()"
+        @select-personal="changeView(0, false, true)"
+        @select-favorites="changeView(0, true)"
+        @open-folder-album="openFolderAlbum"
+        @open-shared-album="(id) => changeView(id, false)"
+        @open-private-album="(id) => changeView(0, false, false, id)"
+        @go-create-folder-album="viewMode = 'albums'; refreshFolderAlbums()"
+        @set-type-filter="setTypeFilter"
+        @toggle-exif-filter="exifFilterOpen = !exifFilterOpen"
+        @update:jump-year="jumpYear = $event"
+        @jump-year-change="onJumpYearChange"
+        @update:jump-month="jumpMonth = $event"
+        @jump-timeline="jumpToTimeline"
+        @scroll-top="scrollToTop"
+        @select-search-mode="(m) => setSearchMode(m, Boolean(searchApplied))"
+        @clear-person="clearPersonFilter"
+        @update:camera-filter="cameraFilter = $event"
+        @update:location-filter="locationFilter = $event"
+        @update:year-filter="yearFilter = $event"
+        @exif-filter-change="onExifFilterChange"
+        @reset-exif-filters="resetExifFilters(); onExifFilterChange()"
+        @open-map-view="viewMode = 'map'"
+      />
 
     <div v-if="sharedAlbumsError&&!selected" class="gallery-message" role="alert">共享相册读取失败：{{sharedAlbumsError}} <button type="button" class="refresh" :disabled="sharedAlbumsLoading" @click="refreshAlbums">{{sharedAlbumsLoading?"正在重试…":"重试共享相册"}}</button></div>
     <div v-if="privateAlbumsError&&!selected" class="gallery-message" role="alert">私人相册读取失败：{{privateAlbumsError}} <button type="button" class="refresh" :disabled="privateAlbumsLoading" @click="refreshPrivateAlbums()">{{privateAlbumsLoading?"正在重试…":"重试私人相册"}}</button></div>

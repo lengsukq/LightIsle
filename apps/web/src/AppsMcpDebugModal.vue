@@ -2,6 +2,11 @@
 import { computed, ref, watch } from "vue";
 import { RefreshCcw, Copy, KeyRound, Play, Trash2, Terminal, Globe } from "lucide-vue-next";
 import { createAppsCenterClient } from "./appsCenterApi.ts";
+import type {
+  AppProbeExecution,
+  McpCallLogEntry,
+  McpDebugExecResponse,
+} from "./types/appsCenter.ts";
 import { describeUserFacingError } from "./userFacingError.ts";
 import AppleSelect from "./AppleSelect.vue";
 import IsleModal from "./IsleModal.vue";
@@ -16,12 +21,12 @@ const props = defineProps<{
   mcpConfigJson: string;
   lanHttpUrl: string;
   lanSseUrl: string;
-  mcpLogs: Array<Record<string, any>>;
+  mcpLogs: McpCallLogEntry[];
 }>();
 
 const emit = defineEmits<{
   (e: "close"): void;
-  (e: "updated", payload: Record<string, any>): void;
+  (e: "updated", payload: Record<string, unknown>): void;
   (e: "copy", text: string, msg: string): void;
 }>();
 
@@ -36,14 +41,14 @@ const selectedTool = ref("lightisle_get_environment");
 const selectedUri = ref("lightisle://specs/plugin-v2");
 const toolArgsText = ref("{}");
 const rawRpcText = ref('{\n  "jsonrpc": "2.0",\n  "id": 1,\n  "method": "tools/list",\n  "params": {}\n}');
-const debugResult = ref<{ requestJson: string; responseJson: string; durationMs: number; isError: boolean } | null>(null);
+const debugResult = ref<McpDebugExecResponse | null>(null);
 
 const probeAppId = ref(props.apps[0]?.id || "");
 const probeMethod = ref("GET");
 const probePath = ref("/");
 const probeRole = ref("admin");
-const probeResult = ref<Record<string, any> | null>(null);
-const localLogs = ref<Array<Record<string, any>>>([...(props.mcpLogs || [])]);
+const probeResult = ref<AppProbeExecution | null>(null);
+const localLogs = ref<McpCallLogEntry[]>([...(props.mcpLogs || [])]);
 
 watch(() => props.mcpLogs, list => {
   if (Array.isArray(list)) localLogs.value = [...list];

@@ -1,0 +1,37 @@
+.apps-center { display: grid; gap: 18px; }
+.mcp-bar { border: 1px solid var(--fluid-card-border); border-radius: 20px; padding: 18px 20px; background: var(--fluid-card-fill); box-shadow: var(--fluid-card-shadow); display: flex; justify-content: space-between; align-items: center; gap: 16px; flex-wrap: wrap; }
+.mcp-bar-info { display: grid; gap: 5px; min-width: 0; flex: 1 1 280px; }
+.mcp-title-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.mcp-title-row strong { font-size: 14.5px; font-weight: 680; }
+.mcp-bar-info small { color: var(--text-secondary); font-size: 12.5px; line-height: 1.45; }
+.waking-banner { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 14px; background: color-mix(in srgb, var(--accent-primary) 14%, transparent); color: var(--text-primary); font-weight: 600; font-size: 13px; }
+.apps-empty { border: 1px dashed var(--fluid-card-border); border-radius: 20px; padding: 36px 24px; background: var(--fluid-card-fill); text-align: center; display: grid; justify-items: center; gap: 8px; color: var(--text-secondary); }
+.apps-empty strong { color: var(--text-primary); font-size: 15px; }
+.apps-empty p { margin: 0; font-size: 13px; max-width: 460px; line-height: 1.5; }
+.apps-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 310px), 1fr)); gap: 16px; }
+.app-card { border: 1px solid var(--fluid-card-border); border-radius: 20px; padding: 20px; background: var(--fluid-card-fill); box-shadow: var(--fluid-card-shadow); display: grid; gap: 14px; align-content: space-between; }
+.app-card-top { display: flex; gap: 14px; align-items: flex-start; }
+.app-icon-wrap { width: 48px; height: 48px; border-radius: 14px; background: color-mix(in srgb, var(--accent-primary) 12%, transparent); color: var(--accent-primary); display: flex; align-items: center; justify-content: center; flex-shrink: 0; overflow: hidden; }
+.app-icon-img { width: 32px; height: 32px; object-fit: contain; }
+.app-title-meta { display: grid; gap: 4px; min-width: 0; flex: 1; }
+.app-title-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.app-title-line strong { font-size: 16px; font-weight: 680; }
+.app-id-line, .app-Subnote { font-size: 12px; color: var(--text-secondary); }
+.app-desc { font-size: 13px; color: var(--text-secondary); margin: 2px 0 0; line-height: 1.45; }
+.app-badges { display: flex; flex-wrap: wrap; gap: 6px; }
+.app-card-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.app-workbench { display: grid; grid-template-rows: auto 1fr; border: 1px solid var(--fluid-card-border); border-radius: 20px; overflow: hidden; background: var(--fluid-card-fill); min-height: 76vh; }
+.app-workbench.fullscreen { position: fixed; inset: 12px; z-index: 1200; min-height: calc(100vh - 24px); box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45); }
+.workbench-topbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 16px; border-bottom: 1px solid var(--fluid-card-border); flex-wrap: wrap; }
+.workbench-left, .workbench-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.app-workbench-iframe { width: 100%; height: 100%; min-height: 70vh; border: 0; background: #fff; }
+.apps-log-detail { border-top: 1px solid var(--fluid-card-border); padding-top: 8px; display: grid; gap: 6px; }
+.apps-log-detail summary { cursor: pointer; font-size: 12.5px; font-weight: 600; }
+.app-diag-box { border: 1px solid color-mix(in srgb, #f59e0b 38%, var(--fluid-card-border)); border-radius: 12px; padding: 10px 12px; background: color-mix(in srgb, #f59e0b 8%, transparent); display: grid; gap: 5px; }
+.app-diag-title { font-size: 12.5px; font-weight: 680; color: #d97706; }
+.app-diag-line { margin: 0; font-size: 12px; line-height: 1.48; color: var(--text-secondary); }
+.app-diag-line strong { color: var(--text-primary); }
+.app-diag-pre { margin: 2px 0; padding: 7px 9px; border-radius: 8px; background: rgba(15, 23, 42, 0.06); font-size: 11px; line-height: 1.45; overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
+.app-diag-safe { font-size: 11.5px; color: #059669; }
+.spinning { animation: apps-spin 1s linear infinite; }
+@keyframes apps-spin { to { transform: rotate(360deg); } }

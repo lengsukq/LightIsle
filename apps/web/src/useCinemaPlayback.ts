@@ -9,10 +9,11 @@ import {
   resolveKnownFilmDuration,
 } from "./cinemaTimeline.ts";
 import {
-  abortableDelay,
   buildCinemaPlaybackOptions,
   playbackMode,
   playbackRateOptions,
+  pollHlsPlaylistReady,
+  stopRemoteHlsSession,
   transcodeErrorMessage,
   useCinemaMediaControls,
   useCinemaProgressPersistence,
@@ -203,18 +204,6 @@ export function useCinemaPlayback({
     playbackDuration.value = known;
   }
 
-  function stopServerHlsSession(filmId: number, sessionId: string) {
-    if (!filmId || !sessionId || typeof fetch !== "function") return;
-    const headers = new Headers({ "X-LightIsle-Request": "1" });
-    if (props.rootId) headers.set("X-LightIsle-Root-Generation", String(props.rootGeneration ?? 0));
-    const url = apiPath(`/api/v2/cinema/${filmId}/hls/session?session=${encodeURIComponent(sessionId)}`);
-    try {
-      void Promise.resolve(
-        fetch(url, { method: "DELETE", credentials: "same-origin", cache: "no-store", keepalive: true, headers }),
-      ).catch(() => {});
-    } catch {}
-  }
-
   function performSeek(targetPosition: number, debounceHlsMs = 0) {
     const film = selected.value;
     if (!film || !Number.isFinite(targetPosition)) return;
@@ -296,7 +285,9 @@ export function useCinemaPlayback({
     if (p.paused || p.ended) {
       try {
         await p.play();
-      } catch {}
+      } catch {
+        /* Browser autoplay/gesture rejection leaves playback paused cleanly. */
+      }
     } else {
       p.pause?.();
       void save();
@@ -343,28 +334,8 @@ export function useCinemaPlayback({
     hlsStarting.value = false;
     controls.isPlaying.value = false;
     if (priorSession && priorFilmId && priorScope === filmScopeKey(priorFilmId)) {
-      stopServerHlsSession(priorFilmId, priorSession.sessionId);
+      stopRemoteHlsSession(props, apiPath, priorFilmId, priorSession.sessionId);
     }
-  }
-
-  async function waitForPlaylist(
-    v: Movie,
-    session: TranscodeSession,
-    isCurrent: () => boolean,
-    signal?: AbortSignal,
-  ) {
-    const url = mediaPath(`/api/v2/cinema/${v.id}/hls/${session.sessionId}/index.m3u8`);
-    if (session.ready) return url;
-    for (let attempt = 0; attempt < 115; attempt++) {
-      if (!isCurrent() || signal?.aborted) throw new Error("aborted");
-      const response = await fetch(url, { method: "GET", credentials: "same-origin", cache: "no-store", signal });
-      if (!isCurrent() || signal?.aborted) throw new Error("aborted");
-      if (response.ok) return url;
-      if (response.status === 502) throw new Error("transcode_failed");
-      const delay = attempt === 0 ? 80 : attempt < 5 ? 110 : attempt < 15 ? 170 : 250;
-      await abortableDelay(delay, signal);
-    }
-    throw new Error("transcode_start_timeout");
   }
 
   async function startTranscode(v: Movie, startSeconds = 0, audio = 0, quality = "source") {
@@ -419,7 +390,7 @@ export function useCinemaPlayback({
       const session = await api<TranscodeSession>(apiPath(query), undefined, undefined, abortController.signal);
       if (!isCurrent()) {
         if (session?.sessionId && session.sessionId !== hlsSession.value?.sessionId) {
-          stopServerHlsSession(v.id, session.sessionId);
+          stopRemoteHlsSession(props, apiPath, v.id, session.sessionId);
         }
         return;
       }
@@ -432,7 +403,7 @@ export function useCinemaPlayback({
       if (!isCurrent()) return;
       const video = hlsPlayer.value;
       if (!video) throw new Error("transcode_failed");
-      const url = await waitForPlaylist(v, session, isCurrent, abortController.signal);
+      const url = await pollHlsPlaylistReady(mediaPath, v, session, isCurrent, abortController.signal);
       if (!isCurrent()) return;
 
       if (video.canPlayType("application/vnd.apple.mpegurl")) {
@@ -579,11 +550,15 @@ export function useCinemaPlayback({
     if (targetOffset > 0.25 && (!Number.isFinite(p.duration) || p.duration > targetOffset + 0.25)) {
       try {
         p.currentTime = targetOffset;
-      } catch {}
+      } catch {
+        /* Ignore InvalidStateError if media element has not exposed seekable ranges yet. */
+      }
     } else if (p.currentTime > 1 && targetOffset <= 0.25) {
       try {
         p.currentTime = 0;
-      } catch {}
+      } catch {
+        /* Ignore InvalidStateError before initial segment metadata settles. */
+      }
     }
     refreshPlaybackClock();
     void p.play().catch(() => {});

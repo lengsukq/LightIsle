@@ -119,7 +119,9 @@ export function useCinemaMediaControls({
     applyPlaybackRate();
     try {
       window.localStorage.setItem("lightisle-cinema-playback-rate", String(rate));
-    } catch {}
+    } catch {
+      /* Private browsing or storage quota limits must not interrupt playback rate changes. */
+    }
   }
 
   function setAutoplayNext(checked: boolean) {
@@ -178,7 +180,9 @@ export function useCinemaMediaControls({
         try {
           video.webkitEnterFullscreen();
           return;
-        } catch {}
+        } catch {
+          /* Fall through to surface user-facing fullscreen fallback guidance below. */
+        }
       }
       playError.value = "当前浏览器不支持此播放模式，请尝试系统全屏快捷键。";
     }
@@ -461,4 +465,46 @@ export function buildCinemaPlaybackOptions({
     changeCaption,
     captionSrclang,
   };
+}
+
+export function stopRemoteHlsSession(
+  props: CinemaRootProps,
+  apiPath: (path: string) => string,
+  filmId: number,
+  sessionId: string,
+) {
+  if (!filmId || !sessionId || typeof fetch !== "function") return;
+  const headers = new Headers({ "X-LightIsle-Request": "1" });
+  if (props.rootId) headers.set("X-LightIsle-Root-Generation", String(props.rootGeneration ?? 0));
+  const url = apiPath(`/api/v2/cinema/${filmId}/hls/session?session=${encodeURIComponent(sessionId)}`);
+  try {
+    void Promise.resolve(
+      fetch(url, { method: "DELETE", credentials: "same-origin", cache: "no-store", keepalive: true, headers }),
+    ).catch(() => {
+      /* Best-effort teardown when page or root closes; server reaps idle sessions. */
+    });
+  } catch {
+    /* Ignore synchronous teardown URL/Abort errors during unmount. */
+  }
+}
+
+export async function pollHlsPlaylistReady(
+  mediaPath: (path: string) => string,
+  v: Movie,
+  session: TranscodeSession,
+  isCurrent: () => boolean,
+  signal?: AbortSignal,
+): Promise<string> {
+  const url = mediaPath(`/api/v2/cinema/${v.id}/hls/${session.sessionId}/index.m3u8`);
+  if (session.ready) return url;
+  for (let attempt = 0; attempt < 115; attempt++) {
+    if (!isCurrent() || signal?.aborted) throw new Error("aborted");
+    const response = await fetch(url, { method: "GET", credentials: "same-origin", cache: "no-store", signal });
+    if (!isCurrent() || signal?.aborted) throw new Error("aborted");
+    if (response.ok) return url;
+    if (response.status === 502) throw new Error("transcode_failed");
+    const delay = attempt === 0 ? 80 : attempt < 5 ? 110 : attempt < 15 ? 170 : 250;
+    await abortableDelay(delay, signal);
+  }
+  throw new Error("transcode_start_timeout");
 }
