@@ -121,6 +121,8 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
   bool _directLocalActive = false;
   double? _seekDraft;
   bool _chromeVisible = true;
+  bool _dockManuallyCollapsed = false;
+  Offset _dockDragOffset = Offset.zero;
   bool _fillScreen = false;
   bool _windowFullscreen = false;
   double _lastNonZeroVolume = 1.0;
@@ -476,14 +478,15 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
         controller.value.isInitialized &&
         !controller.value.hasError;
     final showChrome =
-        _chromeVisible ||
-        _loading ||
-        !videoReady ||
-        !controller.value.isPlaying ||
-        _showPlayerDetails ||
-        _showPlaylistSheet ||
-        _progressSaveMessage != null ||
-        _offlineProgress != null;
+        !_dockManuallyCollapsed &&
+        (_chromeVisible ||
+            _loading ||
+            !videoReady ||
+            !controller.value.isPlaying ||
+            _showPlayerDetails ||
+            _showPlaylistSheet ||
+            _progressSaveMessage != null ||
+            _offlineProgress != null);
 
     return Focus(
       autofocus: true,
@@ -738,6 +741,29 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                         duration: const Duration(milliseconds: 220),
                         curve: Curves.easeOutCubic,
                         child: _buildBottomTransportDeck(context),
+                      ),
+                    ),
+                  ),
+                if (videoReady && _dockManuallyCollapsed)
+                  Positioned(
+                    right: 18,
+                    bottom: 16,
+                    child: SafeArea(
+                      top: false,
+                      child: FilledButton.tonalIcon(
+                        key: const ValueKey('cinemaRestoreDockButton'),
+                        style: FilledButton.styleFrom(
+                          backgroundColor: const Color(0xA60E121A),
+                          foregroundColor: Colors.white,
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                        ),
+                        onPressed: () {
+                          _updateState(() => _dockManuallyCollapsed = false);
+                          _revealChrome();
+                        },
+                        icon: const Icon(Icons.keyboard_arrow_up_rounded, size: 18),
+                        label: const Text('控制栏', style: TextStyle(fontSize: 12)),
                       ),
                     ),
                   ),

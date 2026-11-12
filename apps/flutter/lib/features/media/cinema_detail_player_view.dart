@@ -605,11 +605,13 @@ extension _CinemaDetailPlayerView on _CinemaDetailDialogState {
         ? controller.value.aspectRatio
         : 16 / 9;
     final showChrome =
-        _chromeVisible ||
-        !controller.value.isPlaying ||
-        _showPlayerDetails ||
-        _progressSaveMessage != null ||
-        _offlineProgress != null;
+        !_dockManuallyCollapsed &&
+        (_chromeVisible ||
+            !controller.value.isPlaying ||
+            _showPlayerDetails ||
+            _progressSaveMessage != null ||
+            _offlineProgress != null);
+    final dockNearBottom = _dockDragOffset.dy > -56;
 
     return ColoredBox(
       color: Colors.black,
@@ -640,7 +642,14 @@ extension _CinemaDetailPlayerView on _CinemaDetailDialogState {
             children: [
               GestureDetector(
                 behavior: HitTestBehavior.opaque,
-                onTap: _toggleChrome,
+                onTap: () {
+                  if (_dockManuallyCollapsed) {
+                    _updateState(() => _dockManuallyCollapsed = false);
+                    _revealChrome();
+                    return;
+                  }
+                  _toggleChrome();
+                },
                 onDoubleTapDown: (details) {
                   final x = details.localPosition.dx;
                   if (x < stageWidth * .35) {
@@ -660,7 +669,9 @@ extension _CinemaDetailPlayerView on _CinemaDetailDialogState {
                 },
                 child: videoWidget,
               ),
-              if (!controller.value.isPlaying && !_transcodeStarting)
+              if (!controller.value.isPlaying &&
+                  !_transcodeStarting &&
+                  !_dockManuallyCollapsed)
                 Center(
                   child: GestureDetector(
                     onTap: () {
@@ -707,7 +718,7 @@ extension _CinemaDetailPlayerView on _CinemaDetailDialogState {
                 Positioned(
                   left: 24,
                   right: 24,
-                  bottom: showChrome ? 98 : 32,
+                  bottom: (showChrome && dockNearBottom) ? 98 : 32,
                   child: IgnorePointer(
                     child: Center(
                       child: Container(

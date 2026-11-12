@@ -154,5 +154,25 @@ void main() {
       ),
       equals('单次公开分享仅支持不超过 32 GiB 的文件。'),
     );
+    expect(
+      userFacingError(
+        const LightIsleApiException(
+          code: 'dav_remount_required',
+          statusCode: 409,
+          message: 'dav_remount_required',
+        ),
+      ),
+      contains('重新连接'),
+    );
+    expect(
+      userFacingError(
+        const LightIsleApiException(
+          code: 'dav_cross_owner_move',
+          statusCode: 403,
+          message: 'dav_cross_owner_move',
+        ),
+      ),
+      contains('不支持跨账号或跨公共与私人目录直接移动'),
+    );
   });
 }

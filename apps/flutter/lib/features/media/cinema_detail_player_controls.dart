@@ -636,91 +636,130 @@ extension _CinemaDetailPlayerControls on _CinemaDetailDialogState {
             size: 21,
           ),
         ),
+        IconButton(
+          key: const ValueKey('cinemaCollapseDockButton'),
+          tooltip: '收起控制栏（避免遮挡字幕）',
+          style: compactIconButtonStyle,
+          onPressed: () {
+            _chromeTimer?.cancel();
+            _updateState(() {
+              _dockManuallyCollapsed = true;
+              _chromeVisible = false;
+            });
+          },
+          icon: const Icon(Icons.visibility_off_outlined, size: 18),
+        ),
       ],
     );
 
-    return DecoratedBox(
-      decoration: const BoxDecoration(
-        gradient: LinearGradient(
-          begin: Alignment.bottomCenter,
-          end: Alignment.topCenter,
-          colors: [Color(0xD9000000), Color(0x66000000), Colors.transparent],
-          stops: [0.0, 0.6, 1.0],
+    final screenSize = MediaQuery.sizeOf(context);
+    final dockMoved = _dockDragOffset.dx.abs() > 2 || _dockDragOffset.dy.abs() > 2;
+
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          compactControls ? 12 : 24, 8, compactControls ? 12 : 24, compactControls ? 10 : 16,
         ),
-      ),
-      child: SafeArea(
-        top: false,
-        child: Padding(
-          padding: EdgeInsets.fromLTRB(
-            compactControls ? 12 : 24,
-            8,
-            compactControls ? 12 : 24,
-            compactControls ? 10 : 16,
-          ),
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 920),
-              child: DecoratedBox(
-                decoration: const BoxDecoration(
-                  borderRadius: BorderRadius.all(Radius.circular(16)),
-                  boxShadow: [
-                    BoxShadow(
-                      color: Color(0x66000000),
-                      blurRadius: 24,
-                      offset: Offset(0, 8),
-                    ),
-                  ],
-                ),
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: IsleGlassBackdrop(
-                    blur: 24,
-                    child: Container(
-                      padding: EdgeInsets.fromLTRB(
-                        compactControls ? 10 : 14,
-                        6,
-                        compactControls ? 10 : 14,
-                        8,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xB80E121A),
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(
-                          color: const Color(0x26FFFFFF),
-                          width: 0.8,
+        child: Center(
+          child: Transform.translate(
+            offset: _dockDragOffset,
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onPanUpdate: (details) {
+                _revealChrome();
+                final maxDx = ((screenSize.width - 320) / 2).clamp(0.0, screenSize.width);
+                final minDy = -(screenSize.height - 160).clamp(0.0, screenSize.height);
+                _updateState(() {
+                  _dockDragOffset = Offset(
+                    (_dockDragOffset.dx + details.delta.dx).clamp(-maxDx, maxDx),
+                    (_dockDragOffset.dy + details.delta.dy).clamp(minDy, 12.0),
+                  );
+                });
+              },
+              onDoubleTap: () {
+                _revealChrome();
+                _updateState(() => _dockDragOffset = Offset.zero);
+              },
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 920),
+                child: DecoratedBox(
+                  decoration: const BoxDecoration(
+                    borderRadius: BorderRadius.all(Radius.circular(16)),
+                    boxShadow: [
+                      BoxShadow(color: Color(0x66000000), blurRadius: 24, offset: Offset(0, 8)),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: IsleGlassBackdrop(
+                      blur: 24,
+                      child: Container(
+                        padding: EdgeInsets.fromLTRB(
+                          compactControls ? 10 : 14, 4, compactControls ? 10 : 14, 8,
                         ),
-                      ),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Padding(
-                            padding: const EdgeInsets.symmetric(horizontal: 4),
-                            child: seekBar,
-                          ),
-                          const SizedBox(height: 2),
-                          if (compactControls)
-                            Wrap(
-                              spacing: 8,
-                              runSpacing: 6,
-                              alignment: WrapAlignment.spaceBetween,
-                              crossAxisAlignment: WrapCrossAlignment.center,
-                              children: [leftCluster, rightCluster],
-                            )
-                          else
+                        decoration: BoxDecoration(
+                          color: const Color(0xB80E121A),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: const Color(0x26FFFFFF), width: 0.8),
+                        ),
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
                             Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
                               children: [
-                                leftCluster,
-                                const SizedBox(width: 12),
-                                Expanded(
-                                  child: Align(
-                                    alignment: Alignment.centerRight,
-                                    child: rightCluster,
+                                Tooltip(
+                                  message: '按住拖动控制栏位置，双击复位',
+                                  child: Container(
+                                    width: 36, height: 4,
+                                    margin: const EdgeInsets.symmetric(vertical: 2),
+                                    decoration: BoxDecoration(
+                                      color: const Color(0x4DFFFFFF),
+                                      borderRadius: BorderRadius.circular(999),
+                                    ),
                                   ),
                                 ),
+                                if (dockMoved) ...[
+                                  const SizedBox(width: 8),
+                                  InkWell(
+                                    onTap: () => _updateState(() => _dockDragOffset = Offset.zero),
+                                    child: const Text(
+                                      '复位',
+                                      style: TextStyle(color: Colors.white70, fontSize: 10.5, fontWeight: FontWeight.w600),
+                                    ),
+                                  ),
+                                ],
                               ],
                             ),
-                        ],
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 4),
+                              child: seekBar,
+                            ),
+                            const SizedBox(height: 2),
+                            if (compactControls)
+                              Wrap(
+                                spacing: 8, runSpacing: 6,
+                                alignment: WrapAlignment.spaceBetween,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                children: [leftCluster, rightCluster],
+                              )
+                            else
+                              Row(
+                                children: [
+                                  leftCluster,
+                                  const SizedBox(width: 12),
+                                  Expanded(
+                                    child: Align(
+                                      alignment: Alignment.centerRight,
+                                      child: rightCluster,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
