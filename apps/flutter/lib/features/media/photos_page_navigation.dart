@@ -2,33 +2,20 @@ part of 'photos_page.dart';
 
 extension _PhotosPageNavigation on _PhotosPageState {
   void _handleSystemBack(bool didPop, Object? result) {
-    if (didPop || _batchBusy) return;
-    if (_selecting) {
+    if (didPop || _selection.batchBusy) return;
+    if (_selection.selecting) {
+      _updateState(_selection.clear);
+    } else if (_scope.showSearch) {
+      _scope.searchTimer?.cancel();
+      _scope.searchController.clear();
       _updateState(() {
-        _selecting = false;
-        _selectedAssets.clear();
-      });
-    } else if (_showSearch) {
-      _searchTimer?.cancel();
-      _searchController.clear();
-      _updateState(() {
-        _query = '';
-        _searchMode = PhotoSearchMode.all;
-        _showSearch = false;
+        _scope.query = '';
+        _scope.searchMode = PhotoSearchMode.all;
+        _scope.showSearch = false;
       });
       _loadAssets(reset: true);
     } else if (!_fullTimelineSelected) {
-      _updateState(() {
-        _mediaType = '';
-        _cameraFilter = '';
-        _locationFilter = '';
-        _yearFilter = 0;
-        _takenFromFilter = 0;
-        _takenToFilter = 0;
-        _query = '';
-        _searchMode = PhotoSearchMode.all;
-        _searchController.clear();
-      });
+      _updateState(_scope.clearSearchAndFacets);
       _selectView();
     }
   }
@@ -55,27 +42,21 @@ extension _PhotosPageNavigation on _PhotosPageState {
     );
     if (!mounted || count == 0) return;
     String? indexingError;
-    if (widget.isAdmin && !_scanning) {
+    if (widget.isAdmin && !_scan.scanning) {
       await _startScan();
-      if (_actionIsError) indexingError = _actionMessage;
+      if (_feed.actionIsError) indexingError = _feed.actionMessage;
     }
     if (!mounted) return;
     _updateState(() {
-      _actionMessage =
-          '已上传 $count 项。${indexingError == null ? '索引更新后会显示在全部照片中，可下拉刷新。' : '媒体整理暂未开始：$indexingError'}';
-      _actionIsError = indexingError != null;
-      _activeAlbum = 0;
-      _activePrivateAlbum = 0;
-      _activeFolderPath = '';
-      _activeFolderName = '';
-      _favoritesOnly = false;
-      _personalFavoritesOnly = false;
-      _onThisDay = false;
-      _searchTimer?.cancel();
-      _query = '';
-      _mediaType = '';
-      _searchController.clear();
-      _showSearch = false;
+      _feed.setActionFeedback(
+        '已上传 $count 项。${indexingError == null ? '索引更新后会显示在全部照片中，可下拉刷新。' : '媒体整理暂未开始：$indexingError'}',
+        isError: indexingError != null,
+      );
+      _scope.setCollectionScope(
+        personId: _scope.activePersonId,
+        personName: _scope.activePersonName,
+      );
+      _scope.clearSearchAndFacets(closeSearchBar: true);
     });
     await _loadAssets(reset: true);
   }
@@ -84,8 +65,8 @@ extension _PhotosPageNavigation on _PhotosPageState {
     switch (value) {
       case 'select':
         _updateState(() {
-          _selecting = !_selecting;
-          _selectedAssets.clear();
+          _selection.selecting = !_selection.selecting;
+          _selection.selectedAssets.clear();
         });
       case 'map':
         _openPhotoMap();
@@ -96,7 +77,9 @@ extension _PhotosPageNavigation on _PhotosPageState {
       case 'offline':
         if (widget.offlineAccountId.isEmpty) {
           _updateState(
-            () => _actionMessage = '当前服务器未提供稳定账号 ID，升级 NAS 后才能安全使用离线照片库。',
+            () => _feed.setActionFeedback(
+              '当前服务器未提供稳定账号 ID，升级 NAS 后才能安全使用离线照片库。',
+            ),
           );
         } else {
           Navigator.of(context).push(
@@ -131,7 +114,7 @@ extension _PhotosPageNavigation on _PhotosPageState {
       case 'all':
       case 'photo':
       case 'video':
-        _updateState(() => _mediaType = value == 'all' ? '' : value);
+        _updateState(() => _scope.mediaType = value == 'all' ? '' : value);
         _loadAssets(reset: true);
       case 'renamePrivate':
         _createOrRenamePrivateAlbum(album: _currentPrivateAlbum!);
@@ -190,147 +173,12 @@ extension _PhotosPageNavigation on _PhotosPageState {
   }
 
   Widget _photoNavigation() {
-    final selectedAlbum = _currentPrivateAlbum ?? _currentAlbum;
     return Padding(
       padding: EdgeInsets.fromLTRB(_pageInset, 0, _pageInset, 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: Row(
-              children: [
-                _filterChip(
-                  label: '全部照片',
-                  selected:
-                      _activeAlbum == 0 &&
-                      _activePrivateAlbum == 0 &&
-                      _activeFolderPath.isEmpty &&
-                      _activePersonId == 0 &&
-                      !_favoritesOnly &&
-                      !_personalFavoritesOnly &&
-                      !_onThisDay,
-                  onSelected: () => _selectView(),
-                ),
-                if (_fullTimelineSelected) ...[
-                  const SizedBox(width: 8),
-                  ActionChip(
-                    tooltip: '快速跳转到指定拍摄年月',
-                    avatar: const Icon(Icons.calendar_month_outlined, size: 18),
-                    label: const Text('年月'),
-                    onPressed: _chooseTimelineMonth,
-                  ),
-                ],
-                const SizedBox(width: 8),
-                _filterChip(
-                  label: _activeFolderName.isNotEmpty
-                      ? _activeFolderName
-                      : selectedAlbum == null
-                      ? '相册'
-                      : selectedAlbum.name,
-                  selected:
-                      selectedAlbum != null || _activeFolderPath.isNotEmpty,
-                  icon: Icons.photo_album_outlined,
-                  onSelected: _browseAlbums,
-                  onDeleted:
-                      selectedAlbum != null || _activeFolderPath.isNotEmpty
-                      ? () => _selectView()
-                      : null,
-                ),
-                const SizedBox(width: 8),
-                _filterChip(
-                  label: '我的收藏',
-                  icon: Icons.star_outline,
-                  selected: _personalFavoritesOnly,
-                  onSelected: () =>
-                      _selectView(personalFavorites: !_personalFavoritesOnly),
-                ),
-                const SizedBox(width: 8),
-                ActionChip(
-                  tooltip: '按相机型号、定位、年份筛选',
-                  avatar: const Icon(Icons.tune_rounded, size: 18),
-                  label: const Text('筛选'),
-                  onPressed: _openExifFilterSheet,
-                ),
-                const SizedBox(width: 8),
-                _filterChip(
-                  label: _activePersonId > 0 ? _activePersonName : '人物',
-                  icon: Icons.face_retouching_natural_outlined,
-                  selected: _activePersonId > 0,
-                  onSelected: _openPeoplePage,
-                  onDeleted: _activePersonId > 0 ? () => _selectView() : null,
-                ),
-                const SizedBox(width: 8),
-                ActionChip(
-                  tooltip: '对比并清理手机连拍和画面相似废片',
-                  avatar: const Icon(Icons.auto_fix_high_outlined, size: 18),
-                  label: const Text('相似清理'),
-                  onPressed: _openSimilarCleanupPage,
-                ),
-                if (_cameraFilter.isNotEmpty) ...[
-                  const SizedBox(width: 8),
-                  InputChip(
-                    label: Text(_cameraFilter),
-                    onDeleted: () {
-                      _updateState(() => _cameraFilter = '');
-                      _loadAssets(reset: true);
-                    },
-                  ),
-                ],
-                if (_locationFilter.isNotEmpty) ...[
-                  const SizedBox(width: 8),
-                  InputChip(
-                    label: Text(_locationFilter == '1' ? '含定位' : '无定位'),
-                    onDeleted: () {
-                      _updateState(() => _locationFilter = '');
-                      _loadAssets(reset: true);
-                    },
-                  ),
-                ],
-                if (_yearFilter > 0) ...[
-                  const SizedBox(width: 8),
-                  InputChip(
-                    label: Text('$_yearFilter 年'),
-                    onDeleted: () {
-                      _updateState(() => _yearFilter = 0);
-                      _loadAssets(reset: true);
-                    },
-                  ),
-                ],
-                if (_takenFromFilter > 0 || _takenToFilter > 0) ...[
-                  const SizedBox(width: 8),
-                  InputChip(
-                    label: Text(_formatCustomDateRangeLabel()),
-                    onDeleted: () {
-                      _updateState(() {
-                        _takenFromFilter = 0;
-                        _takenToFilter = 0;
-                      });
-                      _loadAssets(reset: true);
-                    },
-                  ),
-                ],
-                if (_favoritesOnly || _onThisDay || _mediaType.isNotEmpty) ...[
-                  const SizedBox(width: 8),
-                  InputChip(
-                    label: Text(
-                      _favoritesOnly
-                          ? '共享收藏'
-                          : _onThisDay
-                          ? '那年今天'
-                          : _mediaType == 'photo'
-                          ? '仅照片'
-                          : '仅视频',
-                    ),
-                    onDeleted: () {
-                      _updateState(() => _mediaType = '');
-                      _selectView();
-                    },
-                  ),
-                ],
-              ],
-            ),
-          ),
+          _buildNavigationChipStrip(),
           if (_currentPrivateAlbum != null)
             Padding(
               padding: const EdgeInsets.only(top: 8),
@@ -339,71 +187,215 @@ extension _PhotosPageNavigation on _PhotosPageState {
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ),
-          IsleAnimatedExpand(
-            expanded: _showSearch,
-            child: Padding(
-              padding: const EdgeInsets.only(top: 10),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+          _buildExpandableSearchBar(),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNavigationChipStrip() {
+    final selectedAlbum = _currentPrivateAlbum ?? _currentAlbum;
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: Row(
+        children: [
+          _filterChip(
+            label: '全部照片',
+            selected: _scope.isUnscopedCollection,
+            onSelected: () => _selectView(),
+          ),
+          if (_fullTimelineSelected) ...[
+            const SizedBox(width: 8),
+            ActionChip(
+              tooltip: '快速跳转到指定拍摄年月',
+              avatar: const Icon(Icons.calendar_month_outlined, size: 18),
+              label: const Text('年月'),
+              onPressed: _chooseTimelineMonth,
+            ),
+          ],
+          const SizedBox(width: 8),
+          _filterChip(
+            label: _scope.activeFolderName.isNotEmpty
+                ? _scope.activeFolderName
+                : selectedAlbum == null
+                ? '相册'
+                : selectedAlbum.name,
+            selected:
+                selectedAlbum != null || _scope.activeFolderPath.isNotEmpty,
+            icon: Icons.photo_album_outlined,
+            onSelected: _browseAlbums,
+            onDeleted:
+                selectedAlbum != null || _scope.activeFolderPath.isNotEmpty
+                ? () => _selectView()
+                : null,
+          ),
+          const SizedBox(width: 8),
+          _filterChip(
+            label: '我的收藏',
+            icon: Icons.star_outline,
+            selected: _scope.personalFavoritesOnly,
+            onSelected: () =>
+                _selectView(personalFavorites: !_scope.personalFavoritesOnly),
+          ),
+          const SizedBox(width: 8),
+          ActionChip(
+            tooltip: '按相机型号、定位、年份筛选',
+            avatar: const Icon(Icons.tune_rounded, size: 18),
+            label: const Text('筛选'),
+            onPressed: _openExifFilterSheet,
+          ),
+          const SizedBox(width: 8),
+          _filterChip(
+            label: _scope.activePersonId > 0 ? _scope.activePersonName : '人物',
+            icon: Icons.face_retouching_natural_outlined,
+            selected: _scope.activePersonId > 0,
+            onSelected: _openPeoplePage,
+            onDeleted: _scope.activePersonId > 0 ? () => _selectView() : null,
+          ),
+          const SizedBox(width: 8),
+          ActionChip(
+            tooltip: '对比并清理手机连拍和画面相似废片',
+            avatar: const Icon(Icons.auto_fix_high_outlined, size: 18),
+            label: const Text('相似清理'),
+            onPressed: _openSimilarCleanupPage,
+          ),
+          ..._buildActiveFacetChips(),
+        ],
+      ),
+    );
+  }
+
+  List<Widget> _buildActiveFacetChips() {
+    return [
+      if (_scope.cameraFilter.isNotEmpty) ...[
+        const SizedBox(width: 8),
+        InputChip(
+          label: Text(_scope.cameraFilter),
+          onDeleted: () {
+            _updateState(() => _scope.cameraFilter = '');
+            _loadAssets(reset: true);
+          },
+        ),
+      ],
+      if (_scope.locationFilter.isNotEmpty) ...[
+        const SizedBox(width: 8),
+        InputChip(
+          label: Text(_scope.locationFilter == '1' ? '含定位' : '无定位'),
+          onDeleted: () {
+            _updateState(() => _scope.locationFilter = '');
+            _loadAssets(reset: true);
+          },
+        ),
+      ],
+      if (_scope.yearFilter > 0) ...[
+        const SizedBox(width: 8),
+        InputChip(
+          label: Text('${_scope.yearFilter} 年'),
+          onDeleted: () {
+            _updateState(() => _scope.yearFilter = 0);
+            _loadAssets(reset: true);
+          },
+        ),
+      ],
+      if (_scope.takenFromFilter > 0 || _scope.takenToFilter > 0) ...[
+        const SizedBox(width: 8),
+        InputChip(
+          label: Text(_formatCustomDateRangeLabel()),
+          onDeleted: () {
+            _updateState(() {
+              _scope.takenFromFilter = 0;
+              _scope.takenToFilter = 0;
+            });
+            _loadAssets(reset: true);
+          },
+        ),
+      ],
+      if (_scope.favoritesOnly ||
+          _scope.onThisDay ||
+          _scope.mediaType.isNotEmpty) ...[
+        const SizedBox(width: 8),
+        InputChip(
+          label: Text(
+            _scope.favoritesOnly
+                ? '共享收藏'
+                : _scope.onThisDay
+                ? '那年今天'
+                : _scope.mediaType == 'photo'
+                ? '仅照片'
+                : '仅视频',
+          ),
+          onDeleted: () {
+            _updateState(() => _scope.mediaType = '');
+            _selectView();
+          },
+        ),
+      ],
+    ];
+  }
+
+  Widget _buildExpandableSearchBar() {
+    return IsleAnimatedExpand(
+      expanded: _scope.showSearch,
+      child: Padding(
+        padding: const EdgeInsets.only(top: 10),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            IsleSearchBar(
+              controller: _scope.searchController,
+              autofocus: true,
+              maxLength: 64,
+              hintText: _scope.searchMode.hintText,
+              showClear: true,
+              clearTooltip: '关闭搜索',
+              onChanged: (value) {
+                _scope.searchTimer?.cancel();
+                _scope.searchTimer = Timer(
+                  const Duration(milliseconds: 350),
+                  () {
+                    if (!mounted) return;
+                    _updateState(() => _scope.query = value.trim());
+                    _loadAssets(reset: true);
+                  },
+                );
+              },
+              onClear: () {
+                _scope.searchTimer?.cancel();
+                _scope.searchController.clear();
+                _updateState(() {
+                  _scope.query = '';
+                  _scope.searchMode = PhotoSearchMode.all;
+                  _scope.showSearch = false;
+                });
+                _loadAssets(reset: true);
+              },
+            ),
+            const SizedBox(height: 8),
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
                 children: [
-                  IsleSearchBar(
-                    controller: _searchController,
-                    autofocus: true,
-                    maxLength: 64,
-                    hintText: _searchMode.hintText,
-                    showClear: true,
-                    clearTooltip: '关闭搜索',
-                    onChanged: (value) {
-                      _searchTimer?.cancel();
-                      _searchTimer = Timer(
-                        const Duration(milliseconds: 350),
-                        () {
-                          if (!mounted) return;
-                          _updateState(() => _query = value.trim());
-                          _loadAssets(reset: true);
+                  for (final mode in PhotoSearchMode.values)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 6),
+                      child: ChoiceChip(
+                        visualDensity: VisualDensity.compact,
+                        label: Text(mode.label),
+                        selected: _scope.searchMode == mode,
+                        onSelected: (_) {
+                          if (_scope.searchMode == mode) return;
+                          _updateState(() => _scope.searchMode = mode);
+                          if (_scope.query.isNotEmpty) {
+                            _loadAssets(reset: true);
+                          }
                         },
-                      );
-                    },
-                    onClear: () {
-                      _searchTimer?.cancel();
-                      _searchController.clear();
-                      _updateState(() {
-                        _query = '';
-                        _searchMode = PhotoSearchMode.all;
-                        _showSearch = false;
-                      });
-                      _loadAssets(reset: true);
-                    },
-                  ),
-                  const SizedBox(height: 8),
-                  SingleChildScrollView(
-                    scrollDirection: Axis.horizontal,
-                    child: Row(
-                      children: [
-                        for (final mode in PhotoSearchMode.values)
-                          Padding(
-                            padding: const EdgeInsets.only(right: 6),
-                            child: ChoiceChip(
-                              visualDensity: VisualDensity.compact,
-                              label: Text(mode.label),
-                              selected: _searchMode == mode,
-                              onSelected: (_) {
-                                if (_searchMode == mode) return;
-                                _updateState(() => _searchMode = mode);
-                                if (_query.isNotEmpty) {
-                                  _loadAssets(reset: true);
-                                }
-                              },
-                            ),
-                          ),
-                      ],
+                      ),
                     ),
-                  ),
                 ],
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -414,11 +406,11 @@ extension _PhotosPageNavigation on _PhotosPageState {
       return '${d.year}.${d.month.toString().padLeft(2, '0')}.${d.day.toString().padLeft(2, '0')}';
     }
 
-    if (_takenFromFilter > 0 && _takenToFilter > 0) {
-      return '${fmt(_takenFromFilter)}–${fmt(_takenToFilter)}';
+    if (_scope.takenFromFilter > 0 && _scope.takenToFilter > 0) {
+      return '${fmt(_scope.takenFromFilter)}–${fmt(_scope.takenToFilter)}';
     }
-    if (_takenFromFilter > 0) return '${fmt(_takenFromFilter)} 起';
-    return '至 ${fmt(_takenToFilter)}';
+    if (_scope.takenFromFilter > 0) return '${fmt(_scope.takenFromFilter)} 起';
+    return '至 ${fmt(_scope.takenToFilter)}';
   }
 
   Widget _buildMemoriesCarousel() {
@@ -464,7 +456,7 @@ extension _PhotosPageNavigation on _PhotosPageState {
             icon: Icons.play_circle_fill_rounded,
             gradient: const [Color(0xFF0284C7), Color(0xFF2563EB)],
             onTap: () {
-              _updateState(() => _mediaType = 'video');
+              _updateState(() => _scope.mediaType = 'video');
               _loadAssets(reset: true);
             },
           ),
@@ -580,15 +572,15 @@ extension _PhotosPageNavigation on _PhotosPageState {
   }
 
   Future<void> _openExifFilterSheet() async {
-    if (_facetCameras.isEmpty && _facetYears.isEmpty) {
+    if (_scope.facetCameras.isEmpty && _scope.facetYears.isEmpty) {
       await _refreshFacets();
     }
     if (!mounted) return;
-    var cam = _cameraFilter;
-    var loc = _locationFilter;
-    var yr = _yearFilter;
-    var fromSec = _takenFromFilter;
-    var toSec = _takenToFilter;
+    var cam = _scope.cameraFilter;
+    var loc = _scope.locationFilter;
+    var yr = _scope.yearFilter;
+    var fromSec = _scope.takenFromFilter;
+    var toSec = _scope.takenToFilter;
     final applied = await showModalBottomSheet<bool>(
       context: context,
       isScrollControlled: true,
@@ -607,13 +599,13 @@ extension _PhotosPageNavigation on _PhotosPageState {
                 children: [
                   Text('多维筛选', style: Theme.of(context).textTheme.titleMedium),
                   const SizedBox(height: 12),
-                  if (_facetCameras.isNotEmpty)
+                  if (_scope.facetCameras.isNotEmpty)
                     DropdownButtonFormField<String>(
                       initialValue: cam,
                       decoration: const InputDecoration(labelText: '相机型号'),
                       items: [
                         const DropdownMenuItem(value: '', child: Text('全部相机')),
-                        for (final model in _facetCameras)
+                        for (final model in _scope.facetCameras)
                           DropdownMenuItem(value: model, child: Text(model)),
                       ],
                       onChanged: (v) => setSheetState(() => cam = v ?? ''),
@@ -629,14 +621,14 @@ extension _PhotosPageNavigation on _PhotosPageState {
                     ],
                     onChanged: (v) => setSheetState(() => loc = v ?? ''),
                   ),
-                  if (_facetYears.isNotEmpty) ...[
+                  if (_scope.facetYears.isNotEmpty) ...[
                     const SizedBox(height: 12),
                     DropdownButtonFormField<int>(
                       initialValue: yr,
                       decoration: const InputDecoration(labelText: '拍摄年份'),
                       items: [
                         const DropdownMenuItem(value: 0, child: Text('全部年份')),
-                        for (final y in _facetYears)
+                        for (final y in _scope.facetYears)
                           DropdownMenuItem(value: y, child: Text('$y 年')),
                       ],
                       onChanged: (v) => setSheetState(() {
@@ -728,11 +720,11 @@ extension _PhotosPageNavigation on _PhotosPageState {
     );
     if (applied == true && mounted) {
       _updateState(() {
-        _cameraFilter = cam;
-        _locationFilter = loc;
-        _yearFilter = yr;
-        _takenFromFilter = fromSec;
-        _takenToFilter = toSec;
+        _scope.cameraFilter = cam;
+        _scope.locationFilter = loc;
+        _scope.yearFilter = yr;
+        _scope.takenFromFilter = fromSec;
+        _scope.takenToFilter = toSec;
       });
       await _loadAssets(reset: true);
     }

@@ -2,8 +2,10 @@ part of 'cinema_detail_dialog.dart';
 
 extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
   String get _currentQualityKey {
-    if (_hlsSession != null) return _hlsSession!.quality;
-    if (_directLocalActive && !_film.canAttemptPlayback) return 'local';
+    if (_playback.hlsSession != null) return _playback.hlsSession!.quality;
+    if (_playback.directLocalActive && !_film.canAttemptPlayback) {
+      return 'local';
+    }
     return 'source';
   }
 
@@ -25,8 +27,8 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
         forceDirect || CinemaDecodePreference.preferLocalDecode.value;
     if (!_film.canAttemptPlayback && !preferLocal) {
       _updateState(() {
-        _loading = false;
-        _playbackMessage = _unsupportedMessage;
+        _playback.loading = false;
+        _playback.playbackMessage = _unsupportedMessage;
       });
       await _startTranscode(
         start: seekTo ?? (_film.canResume ? _film.position : 0),
@@ -45,14 +47,14 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
         source,
         httpHeaders: widget.api.nativeMediaHeaders,
       );
-      final previous = _controller;
-      _controller = controller;
+      final previous = _playback.controller;
+      _playback.controller = controller;
       if (previous != null && previous != controller) {
         previous.removeListener(_onVideoChanged);
         await previous.dispose();
       }
       await controller.initialize();
-      if (!mounted || _controller != controller) return;
+      if (!mounted || _playback.controller != controller) return;
       final savedPosition = seekTo != null && seekTo > 1
           ? Duration(milliseconds: (seekTo * 1000).round())
           : Duration(milliseconds: (_film.position * 1000).round());
@@ -61,10 +63,10 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
               controller.value.duration - const Duration(seconds: 5)) {
         await controller.seekTo(savedPosition);
       }
-      if (_playbackSpeed != 1.0) {
-        await controller.setPlaybackSpeed(_playbackSpeed);
+      if (_playback.playbackSpeed != 1.0) {
+        await controller.setPlaybackSpeed(_playback.playbackSpeed);
       }
-      if (!mounted || _controller != controller) return;
+      if (!mounted || _playback.controller != controller) return;
       controller.addListener(_onVideoChanged);
       final isTestBinding = WidgetsBinding.instance.runtimeType
           .toString()
@@ -73,15 +75,16 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
         unawaited(controller.play());
       }
       _updateState(() {
-        _hlsSession = null;
-        _directLocalActive = useDirectParam;
-        _loading = false;
+        _playback.hlsSession = null;
+        _playback.directLocalActive = useDirectParam;
+        _playback.loading = false;
         if (fallbackFromNoFfmpeg) {
-          _playbackMessage = '服务器未安装 FFmpeg，已自动启用原片直传（本地解码）。';
+          _playback.playbackMessage = '服务器未安装 FFmpeg，已自动启用原片直传（本地解码）。';
         } else if (!_film.canAttemptPlayback) {
-          _playbackMessage = '原片直传（本地解码）播放中。若声音或画面异常，可切换清晰度使用转码。';
+          _playback.playbackMessage = '原片直传（本地解码）播放中。若声音或画面异常，可切换清晰度使用转码。';
         } else {
-          _playbackMessage = _film.browserPlayback == 'unverified-direct'
+          _playback.playbackMessage =
+              _film.browserPlayback == 'unverified-direct'
               ? '此格式尚未验证；如果当前设备无法解码，播放会失败。原片未做转换。'
               : null;
         }
@@ -97,8 +100,8 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
         return;
       }
       _updateState(() {
-        _loading = false;
-        _playbackMessage = fallbackFromNoFfmpeg
+        _playback.loading = false;
+        _playback.playbackMessage = fallbackFromNoFfmpeg
             ? '未安装 FFmpeg，且当前设备无法本地解码此格式；可使用外部播放器（IINA / VLC / Infuse）打开或安装 FFmpeg。'
             : '无法在当前设备播放此视频：${mediaErrorLabel(error)}';
       });
@@ -144,11 +147,11 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
     String quality = 'source',
     bool allowDirectFallback = true,
   }) async {
-    if (!mounted || _transcodeStarting) return;
+    if (!mounted || _playback.transcodeStarting) return;
     final filmId = _film.id;
     _updateState(() {
-      _transcodeStarting = true;
-      _playbackMessage = '正在启动转码…';
+      _playback.transcodeStarting = true;
+      _playback.playbackMessage = '正在启动转码…';
     });
     try {
       final source = await prepareCinemaHlsSource(
@@ -158,7 +161,7 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
         start: start ?? 0,
         audio: audio,
         quality: quality,
-        replaceSessionId: _hlsSession?.sessionId ?? '',
+        replaceSessionId: _playback.hlsSession?.sessionId ?? '',
       );
       if (source == null || !mounted || _film.id != filmId) return;
       final session = source.session;
@@ -166,15 +169,15 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
         source.playlist,
         httpHeaders: widget.api.nativeMediaHeaders,
       );
-      final previous = _controller;
-      _controller = controller;
+      final previous = _playback.controller;
+      _playback.controller = controller;
       if (previous != null && previous != controller) {
         previous.removeListener(_onVideoChanged);
         await previous.dispose();
       }
-      if (!mounted || _controller != controller) return;
+      if (!mounted || _playback.controller != controller) return;
       await controller.initialize();
-      if (!mounted || _controller != controller) return;
+      if (!mounted || _playback.controller != controller) return;
       final target =
           (start ?? (_film.canResume ? _film.position : 0)) - session.start;
       final savedPosition = Duration(
@@ -185,13 +188,13 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
               controller.value.duration - const Duration(seconds: 5)) {
         await controller.seekTo(savedPosition);
       }
-      if (_playbackSpeed != 1.0) {
-        await controller.setPlaybackSpeed(_playbackSpeed);
+      if (_playback.playbackSpeed != 1.0) {
+        await controller.setPlaybackSpeed(_playback.playbackSpeed);
       }
-      if (!mounted || _controller != controller) return;
+      if (!mounted || _playback.controller != controller) return;
       controller.addListener(_onVideoChanged);
       try {
-        _tracks = CinemaTrackInfo.fromJson(
+        _playback.tracks = CinemaTrackInfo.fromJson(
           await widget.api.get('/api/v2/cinema/$filmId/tracks'),
         );
       } catch (_) {
@@ -205,10 +208,10 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
         unawaited(controller.play());
       }
       _updateState(() {
-        _hlsSession = session;
-        _directLocalActive = false;
-        _transcodeStarting = false;
-        _playbackMessage = session.profile == 'remux'
+        _playback.hlsSession = session;
+        _playback.directLocalActive = false;
+        _playback.transcodeStarting = false;
+        _playback.playbackMessage = session.profile == 'remux'
             ? '转封装播放（无画质损失），原片未修改。'
             : '转码播放中（服务器实时转码），原片未修改。';
       });
@@ -219,8 +222,8 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
           error is LightIsleApiException &&
           error.code == 'transcode_unavailable') {
         _updateState(() {
-          _transcodeStarting = false;
-          _playbackMessage = '服务器未安装 FFmpeg，正在尝试原片直传（本地解码）…';
+          _playback.transcodeStarting = false;
+          _playback.playbackMessage = '服务器未安装 FFmpeg，正在尝试原片直传（本地解码）…';
         });
         await _loadDetailAndPlayer(
           seekTo: start,
@@ -230,15 +233,15 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
         return;
       }
       _updateState(() {
-        _transcodeStarting = false;
-        _playbackMessage = _transcodeErrorLabel(error);
+        _playback.transcodeStarting = false;
+        _playback.playbackMessage = _transcodeErrorLabel(error);
       });
     }
   }
 
   Future<void> _switchAudio(int audioIndex) async {
-    final controller = _controller;
-    final session = _hlsSession;
+    final controller = _playback.controller;
+    final session = _playback.hlsSession;
     if (controller == null ||
         session == null ||
         session.audioTrack == audioIndex) {
@@ -259,7 +262,7 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
     final options = <(String, String)>[('source', '原画'), ('local', '本地硬解')];
     final sourceHeight = _film.height > 0
         ? _film.height
-        : (_tracks?.height ?? 0);
+        : (_playback.tracks?.height ?? 0);
     for (final (value, label, height)
         in _CinemaDetailDialogState._qualityTiers) {
       if (sourceHeight > 0 && sourceHeight <= height) break;
@@ -269,26 +272,26 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
   }
 
   Future<void> _switchQuality(String quality) async {
-    if (_transcodeStarting) return;
-    final controller = _controller;
-    final session = _hlsSession;
+    if (_playback.transcodeStarting) return;
+    final controller = _playback.controller;
+    final session = _playback.hlsSession;
     final realPosition = controller != null
         ? controller.value.position.inMilliseconds / 1000.0 +
               (session?.start ?? 0.0)
         : (_film.canResume ? _film.position : 0.0);
     if (quality == 'local') {
-      if (session == null && _directLocalActive) return;
+      if (session == null && _playback.directLocalActive) return;
       await controller?.pause();
       if (controller != null) {
         controller.removeListener(_onVideoChanged);
         await controller.dispose();
       }
-      _hlsSession = null;
-      _controller = null;
+      _playback.hlsSession = null;
+      _playback.controller = null;
       if (!mounted) return;
       _updateState(() {
-        _loading = true;
-        _playbackMessage = null;
+        _playback.loading = true;
+        _playback.playbackMessage = null;
       });
       await _loadDetailAndPlayer(seekTo: realPosition, forceDirect: true);
       return;
@@ -296,7 +299,7 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
     if (session == null) {
       if (quality == 'source' &&
           _film.canAttemptPlayback &&
-          !_directLocalActive) {
+          !_playback.directLocalActive) {
         return;
       }
       await controller?.pause();
@@ -313,12 +316,12 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
       // Back to the plain stream: dispose the session controller first.
       controller.removeListener(_onVideoChanged);
       await controller.dispose();
-      _hlsSession = null;
-      _controller = null;
+      _playback.hlsSession = null;
+      _playback.controller = null;
       if (!mounted) return;
       _updateState(() {
-        _loading = true;
-        _playbackMessage = null;
+        _playback.loading = true;
+        _playback.playbackMessage = null;
       });
       await _loadDetailAndPlayer(seekTo: realPosition);
       return;
@@ -333,8 +336,8 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
 
   Future<void> _setPlaybackSpeed(double speed) async {
     if (!const [0.75, 1.0, 1.25, 1.5, 2.0].contains(speed)) return;
-    _playbackSpeed = speed;
-    await _controller?.setPlaybackSpeed(speed);
+    _playback.playbackSpeed = speed;
+    await _playback.controller?.setPlaybackSpeed(speed);
     if (mounted) {
       _updateState(() {});
     }
@@ -347,30 +350,30 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
   }
 
   double get _originalPlaybackSeconds {
-    final controller = _controller;
+    final controller = _playback.controller;
     if (controller == null || !controller.value.isInitialized) return 0;
     return controller.value.position.inMilliseconds / 1000.0 +
-        (_hlsSession?.start ?? 0);
+        (_playback.hlsSession?.start ?? 0);
   }
 
   double get _knownFilmDuration {
     var best = _film.durationSeconds > 0 ? _film.durationSeconds : 0.0;
     if (_film.duration > best) best = _film.duration;
-    final sessionDur = _hlsSession?.durationSeconds ?? 0;
+    final sessionDur = _playback.hlsSession?.durationSeconds ?? 0;
     if (sessionDur > best) best = sessionDur;
-    final trackDur = _tracks?.durationSeconds ?? 0;
+    final trackDur = _playback.tracks?.durationSeconds ?? 0;
     if (trackDur > best) best = trackDur;
     return best;
   }
 
   double get _originalPlaybackDuration {
-    final controller = _controller;
-    final sessionStart = _hlsSession?.start ?? 0;
+    final controller = _playback.controller;
+    final sessionStart = _playback.hlsSession?.start ?? 0;
     final observed = controller == null || !controller.value.isInitialized
         ? 0.0
         : controller.value.duration.inMilliseconds / 1000.0 + sessionStart;
     final known = _knownFilmDuration;
-    if (_hlsSession != null && known > 0) {
+    if (_playback.hlsSession != null && known > 0) {
       final pos = _originalPlaybackSeconds;
       return known > pos ? known : pos;
     }
@@ -378,17 +381,17 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
   }
 
   Future<void> _seekAbsolute(double absoluteSeconds) async {
-    final controller = _controller;
+    final controller = _playback.controller;
     if (controller == null ||
         !controller.value.isInitialized ||
-        _transcodeStarting) {
+        _playback.transcodeStarting) {
       return;
     }
     final max = _originalPlaybackDuration;
     final target = absoluteSeconds
         .clamp(0.0, max > 0 ? max - .25 : 0.0)
         .toDouble();
-    final session = _hlsSession;
+    final session = _playback.hlsSession;
     if (session != null) {
       final localTarget = target - session.start;
       final muxedLen = controller.value.duration.inMilliseconds / 1000.0;
@@ -409,7 +412,7 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
       await controller.seekTo(Duration(milliseconds: (target * 1000).round()));
       unawaited(_queueProgressSave(force: true));
     }
-    if (mounted) _updateState(() => _seekDraft = null);
+    if (mounted) _updateState(() => _playback.seekDraft = null);
   }
 
   Future<void> _seekRelative(double deltaSeconds) async {
@@ -420,47 +423,47 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
 
   void _revealChrome() {
     if (!mounted) return;
-    if (!_chromeVisible) {
-      _updateState(() => _chromeVisible = true);
+    if (!_chrome.visible) {
+      _updateState(() => _chrome.visible = true);
     }
     _scheduleChromeHide();
   }
 
   void _scheduleChromeHide() {
-    _chromeTimer?.cancel();
+    _chrome.cancelTimer();
     final isTestBinding = WidgetsBinding.instance.runtimeType
         .toString()
         .contains('Test');
     if (isTestBinding) return;
-    _chromeTimer = Timer(const Duration(milliseconds: 3400), () {
+    _chrome.hideTimer = Timer(const Duration(milliseconds: 3400), () {
       if (!mounted) return;
-      final controller = _controller;
+      final controller = _playback.controller;
       if (controller != null &&
           controller.value.isInitialized &&
           controller.value.isPlaying &&
-          !_showPlayerDetails &&
-          !_showPlaylistSheet &&
-          _seekDraft == null &&
-          _progressSaveMessage == null &&
-          _offlineProgress == null) {
-        _updateState(() => _chromeVisible = false);
+          !_chrome.showPlayerDetails &&
+          !_chrome.showPlaylistSheet &&
+          _playback.seekDraft == null &&
+          _playback.progressSaveMessage == null &&
+          _externalActions.offlineProgress == null) {
+        _updateState(() => _chrome.visible = false);
       }
     });
   }
 
   void _toggleChrome() {
     if (!mounted) return;
-    if (_chromeVisible) {
-      _chromeTimer?.cancel();
-      _updateState(() => _chromeVisible = false);
+    if (_chrome.visible) {
+      _chrome.cancelTimer();
+      _updateState(() => _chrome.visible = false);
     } else {
       _revealChrome();
     }
   }
 
   Future<void> _toggleFullscreen() async {
-    final next = !_windowFullscreen;
-    _updateState(() => _windowFullscreen = next);
+    final next = !_chrome.windowFullscreen;
+    _updateState(() => _chrome.windowFullscreen = next);
     if (defaultTargetPlatform == TargetPlatform.macOS) {
       try {
         await _nativeVideoChannel.invokeMethod<void>('toggleFullScreen');
@@ -475,29 +478,35 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
         await SystemChrome.setEnabledSystemUIMode(
           next ? SystemUiMode.immersiveSticky : SystemUiMode.edgeToEdge,
         );
-      } catch (_) {}
+      } catch (_) {
+        // System UI mode toggling is best-effort on restricted test bindings.
+      }
     }
   }
 
   Future<void> _exitNativeFullscreen() async {
-    if (!_windowFullscreen) return;
-    _windowFullscreen = false;
+    if (!_chrome.windowFullscreen) return;
+    _chrome.windowFullscreen = false;
     if (defaultTargetPlatform == TargetPlatform.macOS) {
       try {
         await _nativeVideoChannel.invokeMethod<void>('exitFullScreen');
-      } catch (_) {}
+      } catch (_) {
+        // Window channel may already be detached on teardown.
+      }
       return;
     }
     if (defaultTargetPlatform == TargetPlatform.iOS ||
         defaultTargetPlatform == TargetPlatform.android) {
       try {
         await SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
-      } catch (_) {}
+      } catch (_) {
+        // System UI restoration is best-effort on teardown.
+      }
     }
   }
 
   Future<void> _showFullscreenPlayer() async {
-    if (_controller?.value.isInitialized != true) return;
+    if (_playback.controller?.value.isInitialized != true) return;
     double? draggedPosition;
     await showDialog<void>(
       context: context,
@@ -537,16 +546,19 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
                 Expanded(
                   child: Center(
                     child:
-                        _controller == null || !_controller!.value.isInitialized
+                        _playback.controller == null ||
+                            !_playback.controller!.value.isInitialized
                         ? const CircularProgressIndicator()
                         : AspectRatio(
-                            aspectRatio: _controller!.value.aspectRatio > 0
-                                ? _controller!.value.aspectRatio
+                            aspectRatio:
+                                _playback.controller!.value.aspectRatio > 0
+                                ? _playback.controller!.value.aspectRatio
                                 : 16 / 9,
                             child: GestureDetector(
                               onDoubleTapDown: (details) async {
-                                final width = MediaQuery.sizeOf(dialogContext)
-                                    .width;
+                                final width = MediaQuery.sizeOf(
+                                  dialogContext,
+                                ).width;
                                 final direction =
                                     details.localPosition.dx < width * .4
                                     ? -10.0
@@ -558,20 +570,23 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
                                   if (dialogContext.mounted) {
                                     updateOverlay(() {});
                                   }
-                                } else if (_controller?.value.isPlaying ==
+                                } else if (_playback
+                                        .controller
+                                        ?.value
+                                        .isPlaying ==
                                     true) {
-                                  await _controller?.pause();
+                                  await _playback.controller?.pause();
                                 } else {
-                                  await _controller?.play();
+                                  await _playback.controller?.play();
                                 }
                               },
-                              child: VideoPlayer(_controller!),
+                              child: VideoPlayer(_playback.controller!),
                             ),
                           ),
                   ),
                 ),
                 AnimatedBuilder(
-                  animation: _controller!,
+                  animation: _playback.controller!,
                   builder: (context, _) {
                     final total = _originalPlaybackDuration;
                     final current = _originalPlaybackSeconds;
@@ -581,7 +596,7 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
                         Slider(
                           value: (draggedPosition ?? current).clamp(0.0, total),
                           max: total,
-                          onChanged: _transcodeStarting
+                          onChanged: _playback.transcodeStarting
                               ? null
                               : (value) => updateOverlay(
                                   () => draggedPosition = value,
@@ -614,12 +629,12 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
                       icon: const Icon(Icons.replay_10),
                     ),
                     IconButton(
-                      tooltip: _controller?.value.isPlaying == true
+                      tooltip: _playback.controller?.value.isPlaying == true
                           ? '暂停'
                           : '播放',
                       color: Colors.white,
                       onPressed: () {
-                        final controller = _controller;
+                        final controller = _playback.controller;
                         if (controller == null) return;
                         if (controller.value.isPlaying) {
                           unawaited(controller.pause());
@@ -629,7 +644,7 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
                         updateOverlay(() {});
                       },
                       icon: Icon(
-                        _controller?.value.isPlaying == true
+                        _playback.controller?.value.isPlaying == true
                             ? Icons.pause
                             : Icons.play_arrow,
                       ),
@@ -654,13 +669,13 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
   }
 
   void _onVideoChanged() {
-    final controller = _controller;
+    final controller = _playback.controller;
     if (controller == null || !controller.value.isInitialized) return;
     if (controller.value.hasError) {
       final message =
           '视频播放中断：${controller.value.errorDescription ?? '当前设备无法解码此格式。'}';
-      if (mounted && _playbackMessage != message) {
-        _updateState(() => _playbackMessage = message);
+      if (mounted && _playback.playbackMessage != message) {
+        _updateState(() => _playback.playbackMessage = message);
       }
       return;
     }
@@ -669,10 +684,10 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
     }
     final now = DateTime.now();
     final ended = controller.value.isCompleted;
-    if (ended && !_completionSaved) {
-      _completionSaved = true;
+    if (ended && !_playback.completionSaved) {
+      _playback.completionSaved = true;
       final value = controller.value;
-      final sessionStart = _hlsSession?.start ?? 0;
+      final sessionStart = _playback.hlsSession?.start ?? 0;
       final clock = cinemaPlaybackClock(
         value.position.inMilliseconds / 1000.0,
         value.duration.inMilliseconds / 1000.0,
@@ -691,16 +706,17 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
   Future<void> _onPlaybackCompleted({required bool nearRealEnd}) async {
     final completedID = _film.id;
     final saved = await _queueProgressSave(force: true, completed: nearRealEnd);
-    if (!nearRealEnd && mounted && !_closing) {
+    if (!nearRealEnd && mounted && !_playback.closing) {
       _updateState(
-        () => _playbackMessage = '当前转码片段已播放至末尾，但整部影片尚未结束。可等待转码继续，或调整播放进度。',
+        () => _playback.playbackMessage =
+            '当前转码片段已播放至末尾，但整部影片尚未结束。可等待转码继续，或调整播放进度。',
       );
     }
     if (nearRealEnd &&
         saved &&
         mounted &&
-        !_closing &&
-        _autoPlayNext &&
+        !_playback.closing &&
+        _playlistState.autoPlayNext &&
         _film.id == completedID) {
       await _goToNextEpisode(alreadySaved: true);
     }
@@ -710,12 +726,12 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
     bool force = false,
     bool completed = false,
   }) {
-    final controller = _controller;
+    final controller = _playback.controller;
     if (controller == null || !controller.value.isInitialized) {
       return Future<bool>.value(true);
     }
     final value = controller.value;
-    final offset = _hlsSession?.start ?? 0;
+    final offset = _playback.hlsSession?.start ?? 0;
     final localSeconds = value.position.inMilliseconds / 1000.0;
     final playlistSeconds = value.duration.inMilliseconds / 1000.0;
     if (offset + playlistSeconds <= 0 ||
@@ -728,7 +744,7 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
       playlistSeconds,
       sessionStart: offset,
       originalDuration: _knownFilmDuration,
-      ongoingHls: _hlsSession != null,
+      ongoingHls: _playback.hlsSession != null,
     );
     final isCompleted = completed || clock.nearEnd;
     final filmId = _film.id;
@@ -751,14 +767,14 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
           );
           _updateState(() {
             _film = updated;
-            _progressSaveMessage = null;
+            _playback.progressSaveMessage = null;
           });
           widget.onProgressUpdated(updated);
         }
       } catch (_) {
         if (mounted && _film.id == filmId) {
           _updateState(() {
-            _progressSaveMessage = '播放进度暂时未能保存，请检查连接后重试。';
+            _playback.progressSaveMessage = '播放进度暂时未能保存，请检查连接后重试。';
           });
         }
         rethrow;

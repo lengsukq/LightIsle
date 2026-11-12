@@ -375,8 +375,11 @@ class _AutomationPageState extends State<AutomationPage> {
     );
   }
 
-  Widget _buildTaskCard(BuildContext context, Map<String, dynamic> task) {
-    final colors = Theme.of(context).colorScheme;
+  Widget _buildTaskHeader(
+    BuildContext context,
+    Map<String, dynamic> task,
+    ColorScheme colors,
+  ) {
     final id = task['id']?.toString() ?? '';
     final name = task['name']?.toString() ?? id;
     final entry = task['entry']?.toString() ?? '';
@@ -391,6 +394,320 @@ class _AutomationPageState extends State<AutomationPage> {
     final lastRun = task['lastRun'];
     final nextRun = task['nextRun'];
 
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        IsleSquircleBadge(
+          icon: Icons.terminal_rounded,
+          color: colors.primary,
+          size: 40,
+          iconSize: 20,
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      name,
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  IsleStatusBadge(
+                    label: running ? '运行中' : (enabled ? '已启用' : '已暂停'),
+                    color: running
+                        ? const Color(0xFF0A84FF)
+                        : enabled
+                        ? const Color(0xFF10B981)
+                        : const Color(0xFF64748B),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 4),
+              Text(
+                '$id · $entry · $cron ($tz)',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  color: colors.onSurfaceVariant,
+                ),
+              ),
+              if (nextRun is num && nextRun > 0)
+                Text('下次执行 ${_formatEpoch(nextRun)}（本机时间）'),
+              if (lastRun is Map)
+                Text(
+                  '上次结果 ${_runState(lastRun['state'])} · ${_formatEpoch(lastRun['finishedAt'])}',
+                ),
+              if (lastError.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Text(
+                  lastError,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    color: colors.error,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTaskActions(Map<String, dynamic> task, ColorScheme colors) {
+    final id = task['id']?.toString() ?? '';
+    final enabled = task['enabled'] == true;
+    final running = task['running'] == true;
+    final lastError = task['lastError']?.toString() ?? '';
+    return Wrap(
+      spacing: 8,
+      runSpacing: 8,
+      children: [
+        OutlinedButton.icon(
+          onPressed: _busy || lastError.isNotEmpty
+              ? null
+              : () => _toggleTask(task),
+          icon: Icon(
+            enabled ? Icons.pause_rounded : Icons.play_arrow_rounded,
+            size: 16,
+          ),
+          label: Text(enabled ? '关闭' : '启用'),
+        ),
+        OutlinedButton.icon(
+          onPressed: _busy || lastError.isNotEmpty
+              ? null
+              : () => _startEdit(task),
+          icon: const Icon(Icons.schedule_rounded, size: 16),
+          label: const Text('Cron 与通知'),
+        ),
+        OutlinedButton.icon(
+          onPressed: _busy ? null : () => _loadRuns(id),
+          icon: const Icon(Icons.receipt_long_rounded, size: 16),
+          label: const Text('日志'),
+        ),
+        TextButton.icon(
+          onPressed: _busy || running ? null : () => _deleteTask(task),
+          style: TextButton.styleFrom(foregroundColor: colors.error),
+          icon: const Icon(Icons.delete_outline_rounded, size: 16),
+          label: const Text('删除'),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTaskInlineEditor(
+    BuildContext context,
+    String id,
+    ColorScheme colors,
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Divider(height: 24),
+        Text(
+          '仅修改任务启停、Cron 和通知事件/渠道；不会改动脚本代码、env.json 或本地邮件模板设置。',
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: colors.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            Expanded(
+              child: TextField(
+                controller: _cronController,
+                decoration: const InputDecoration(
+                  labelText: '五段 Cron',
+                  hintText: '0 8 * * *',
+                ),
+              ),
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: TextField(
+                controller: _timezoneController,
+                decoration: const InputDecoration(
+                  labelText: '时区',
+                  hintText: 'Asia/Shanghai',
+                ),
+              ),
+            ),
+          ],
+        ),
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          title: const Text('启用此任务'),
+          value: _editingEnabled,
+          onChanged: (v) => setState(() => _editingEnabled = v),
+        ),
+        Text('通知事件', style: Theme.of(context).textTheme.labelLarge),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          children: [
+            for (final (evId, evLabel) in _eventOptions)
+              FilterChip(
+                label: Text(evLabel),
+                selected: _editingEvents.contains(evId),
+                onSelected: (selected) {
+                  setState(() {
+                    if (selected) {
+                      _editingEvents.add(evId);
+                    } else {
+                      _editingEvents.remove(evId);
+                    }
+                  });
+                },
+              ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        Text('通知渠道', style: Theme.of(context).textTheme.labelLarge),
+        const SizedBox(height: 6),
+        Wrap(
+          spacing: 8,
+          runSpacing: 6,
+          children: [
+            for (final (chId, chLabel) in _channelOptions)
+              FilterChip(
+                label: Text(
+                  _configuredChannels.contains(chId)
+                      ? chLabel
+                      : '$chLabel（未配置）',
+                ),
+                selected: _editingChannels.contains(chId),
+                onSelected: _configuredChannels.contains(chId)
+                    ? (selected) {
+                        setState(() {
+                          if (selected) {
+                            _editingChannels.add(chId);
+                          } else {
+                            _editingChannels.remove(chId);
+                          }
+                        });
+                      }
+                    : null,
+              ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        Row(
+          children: [
+            FilledButton(
+              onPressed: _busy ? null : _saveEdit,
+              child: const Text('保存设置'),
+            ),
+            const SizedBox(width: 8),
+            OutlinedButton(
+              onPressed: _busy ? null : () => _reloadEditingTask(id),
+              child: const Text('加载最新配置'),
+            ),
+            const SizedBox(width: 8),
+            TextButton(
+              onPressed: _busy
+                  ? null
+                  : () => setState(() {
+                      _editingTaskId = null;
+                      _editingRevision = null;
+                    }),
+              child: const Text('取消'),
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTaskRunsPanel(
+    BuildContext context,
+    String id,
+    ColorScheme colors,
+  ) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Divider(height: 24),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                '最近 30 次执行记录',
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            TextButton(
+              onPressed: _runsBusy ? null : () => _loadRuns(id),
+              child: const Text('刷新日志'),
+            ),
+            TextButton(
+              onPressed: () => setState(() {
+                _selectedRunsTaskId = null;
+                _runs = const [];
+              }),
+              child: const Text('收起'),
+            ),
+          ],
+        ),
+        if (_runsBusy)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 8),
+            child: LinearProgressIndicator(),
+          )
+        else if (_runs.isEmpty)
+          Text(
+            '暂无执行记录；定时触发后会显示退出码和标准输出。',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: colors.onSurfaceVariant,
+            ),
+          )
+        else
+          for (final run in _runs)
+            ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              title: Text(
+                '${_formatEpoch(run['startedAt'])} · ${_runState(run['state'])}'
+                '${run['exitCode'] is int && run['exitCode'] >= 0 ? ' · 退出码 ${run['exitCode']}' : ''}',
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              children: [
+                ..._deliveryLines(run['deliveries']),
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(10),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.16),
+                    borderRadius: BorderRadius.circular(10),
+                  ),
+                  child: SelectableText(
+                    (run['output']?.toString().trim().isNotEmpty == true)
+                        ? run['output'].toString()
+                        : '（没有标准输出）',
+                    style: const TextStyle(
+                      fontFamily: 'monospace',
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+      ],
+    );
+  }
+
+  Widget _buildTaskCard(BuildContext context, Map<String, dynamic> task) {
+    final colors = Theme.of(context).colorScheme;
+    final id = task['id']?.toString() ?? '';
     return IsleSurface(
       key: ValueKey('automationTask_$id'),
       margin: EdgeInsets.zero,
@@ -399,288 +716,12 @@ class _AutomationPageState extends State<AutomationPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              IsleSquircleBadge(
-                icon: Icons.terminal_rounded,
-                color: colors.primary,
-                size: 40,
-                iconSize: 20,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            name,
-                            style: Theme.of(context).textTheme.titleMedium
-                                ?.copyWith(fontWeight: FontWeight.w700),
-                          ),
-                        ),
-                        IsleStatusBadge(
-                          label: running
-                              ? '运行中'
-                              : enabled
-                              ? '已启用'
-                              : '已暂停',
-                          color: running
-                              ? const Color(0xFF0A84FF)
-                              : enabled
-                              ? const Color(0xFF10B981)
-                              : const Color(0xFF64748B),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '$id · $entry · $cron ($tz)',
-                      style: Theme.of(context).textTheme.bodySmall
-                          ?.copyWith(color: colors.onSurfaceVariant),
-                    ),
-                    if (nextRun is num && nextRun > 0)
-                      Text('下次执行 ${_formatEpoch(nextRun)}（本机时间）'),
-                    if (lastRun is Map)
-                      Text(
-                        '上次结果 ${_runState(lastRun['state'])} · ${_formatEpoch(lastRun['finishedAt'])}',
-                      ),
-                    if (lastError.isNotEmpty) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        lastError,
-                        style: TextStyle(
-                          fontSize: 12.5,
-                          color: colors.error,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ],
-                  ],
-                ),
-              ),
-            ],
-          ),
+          _buildTaskHeader(context, task, colors),
           const SizedBox(height: 12),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              OutlinedButton.icon(
-                onPressed: _busy || lastError.isNotEmpty
-                    ? null
-                    : () => _toggleTask(task),
-                icon: Icon(
-                  enabled ? Icons.pause_rounded : Icons.play_arrow_rounded,
-                  size: 16,
-                ),
-                label: Text(enabled ? '关闭' : '启用'),
-              ),
-              OutlinedButton.icon(
-                onPressed: _busy || lastError.isNotEmpty
-                    ? null
-                    : () => _startEdit(task),
-                icon: const Icon(Icons.schedule_rounded, size: 16),
-                label: const Text('Cron 与通知'),
-              ),
-              OutlinedButton.icon(
-                onPressed: _busy ? null : () => _loadRuns(id),
-                icon: const Icon(Icons.receipt_long_rounded, size: 16),
-                label: const Text('日志'),
-              ),
-              TextButton.icon(
-                onPressed: _busy || running ? null : () => _deleteTask(task),
-                style: TextButton.styleFrom(foregroundColor: colors.error),
-                icon: const Icon(Icons.delete_outline_rounded, size: 16),
-                label: const Text('删除'),
-              ),
-            ],
-          ),
-          if (_editingTaskId == id) ...[
-            const Divider(height: 24),
-            Text(
-              '仅修改任务启停、Cron 和通知事件/渠道；不会改动脚本代码、env.json 或本地邮件模板设置。',
-              style: Theme.of(context).textTheme.bodySmall
-                  ?.copyWith(color: colors.onSurfaceVariant),
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: TextField(
-                    controller: _cronController,
-                    decoration: const InputDecoration(
-                      labelText: '五段 Cron',
-                      hintText: '0 8 * * *',
-                    ),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: TextField(
-                    controller: _timezoneController,
-                    decoration: const InputDecoration(
-                      labelText: '时区',
-                      hintText: 'Asia/Shanghai',
-                    ),
-                  ),
-                ),
-              ],
-            ),
-            SwitchListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('启用此任务'),
-              value: _editingEnabled,
-              onChanged: (v) => setState(() => _editingEnabled = v),
-            ),
-            Text('通知事件', style: Theme.of(context).textTheme.labelLarge),
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 8,
-              runSpacing: 6,
-              children: [
-                for (final (evId, evLabel) in _eventOptions)
-                  FilterChip(
-                    label: Text(evLabel),
-                    selected: _editingEvents.contains(evId),
-                    onSelected: (selected) {
-                      setState(() {
-                        if (selected) {
-                          _editingEvents.add(evId);
-                        } else {
-                          _editingEvents.remove(evId);
-                        }
-                      });
-                    },
-                  ),
-              ],
-            ),
-            const SizedBox(height: 10),
-            Text('通知渠道', style: Theme.of(context).textTheme.labelLarge),
-            const SizedBox(height: 6),
-            Wrap(
-              spacing: 8,
-              runSpacing: 6,
-              children: [
-                for (final (chId, chLabel) in _channelOptions)
-                  FilterChip(
-                    label: Text(
-                      _configuredChannels.contains(chId)
-                          ? chLabel
-                          : '$chLabel（未配置）',
-                    ),
-                    selected: _editingChannels.contains(chId),
-                    onSelected: _configuredChannels.contains(chId)
-                        ? (selected) {
-                            setState(() {
-                              if (selected) {
-                                _editingChannels.add(chId);
-                              } else {
-                                _editingChannels.remove(chId);
-                              }
-                            });
-                          }
-                        : null,
-                  ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Row(
-              children: [
-                FilledButton(
-                  onPressed: _busy ? null : _saveEdit,
-                  child: const Text('保存设置'),
-                ),
-                const SizedBox(width: 8),
-                OutlinedButton(
-                  onPressed: _busy ? null : () => _reloadEditingTask(id),
-                  child: const Text('加载最新配置'),
-                ),
-                const SizedBox(width: 8),
-                TextButton(
-                  onPressed: _busy
-                      ? null
-                      : () => setState(() {
-                          _editingTaskId = null;
-                          _editingRevision = null;
-                        }),
-                  child: const Text('取消'),
-                ),
-              ],
-            ),
-          ],
-          if (_selectedRunsTaskId == id) ...[
-            const Divider(height: 24),
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    '最近 30 次执行记录',
-                    style: Theme.of(context).textTheme.titleSmall
-                        ?.copyWith(fontWeight: FontWeight.w700),
-                  ),
-                ),
-                TextButton(
-                  onPressed: _runsBusy ? null : () => _loadRuns(id),
-                  child: const Text('刷新日志'),
-                ),
-                TextButton(
-                  onPressed: () => setState(() {
-                    _selectedRunsTaskId = null;
-                    _runs = const [];
-                  }),
-                  child: const Text('收起'),
-                ),
-              ],
-            ),
-            if (_runsBusy)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 8),
-                child: LinearProgressIndicator(),
-              )
-            else if (_runs.isEmpty)
-              Text(
-                '暂无执行记录；定时触发后会显示退出码和标准输出。',
-                style: Theme.of(context).textTheme.bodySmall
-                    ?.copyWith(color: colors.onSurfaceVariant),
-              )
-            else
-              for (final run in _runs)
-                ExpansionTile(
-                  tilePadding: EdgeInsets.zero,
-                  title: Text(
-                    '${_formatEpoch(run['startedAt'])} · ${_runState(run['state'])}'
-                    '${run['exitCode'] is int && run['exitCode'] >= 0 ? ' · 退出码 ${run['exitCode']}' : ''}',
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                  children: [
-                    ..._deliveryLines(run['deliveries']),
-                    Container(
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: Colors.black.withValues(alpha: 0.16),
-                        borderRadius: BorderRadius.circular(10),
-                      ),
-                      child: SelectableText(
-                        (run['output']?.toString().trim().isNotEmpty == true)
-                            ? run['output'].toString()
-                            : '（没有标准输出）',
-                        style: const TextStyle(
-                          fontFamily: 'monospace',
-                          fontSize: 12,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-          ],
+          _buildTaskActions(task, colors),
+          if (_editingTaskId == id) _buildTaskInlineEditor(context, id, colors),
+          if (_selectedRunsTaskId == id)
+            _buildTaskRunsPanel(context, id, colors),
         ],
       ),
     );

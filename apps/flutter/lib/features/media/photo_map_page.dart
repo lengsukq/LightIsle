@@ -255,7 +255,9 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
             : const LatLng(31.2304, 121.4737));
     try {
       center = _controller.camera.center;
-    } catch (_) {}
+    } catch (_) {
+      // MapController camera is unavailable before initial layout attachment.
+    }
     setState(() => _zoom = nextZoom);
     _moveCameraSafe(center, nextZoom);
   }
@@ -424,6 +426,231 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
     super.dispose();
   }
 
+  Widget _buildTopBannerArea(
+    BuildContext context,
+    BoxConstraints viewport, {
+    required String? clustersNotice,
+    required bool compactOptions,
+  }) => ConstrainedBox(
+    constraints: BoxConstraints(
+      maxHeight: (viewport.maxHeight * .38).clamp(88.0, 220.0),
+    ),
+    child: SingleChildScrollView(
+      child: Column(
+        children: [
+          _PhotoMapOptionsHeader(
+            total: _total,
+            loadedCount: _points.length,
+            truncated: _truncated,
+            clustersNotice: clustersNotice,
+            compactOptions: compactOptions,
+            expanded: _mapOptionsExpanded,
+            tileSourceReady: _tileSourceReady,
+            tileSource: _tileSource,
+            mapStatusError: _mapStatusError,
+            tilesFailed: _tilesFailed,
+            onToggleExpand: () =>
+                setState(() => _mapOptionsExpanded = !_mapOptionsExpanded),
+            onConfigureTiles: _configureTiles,
+            onRefreshConfig: _refreshMapConfiguration,
+            onRetryTiles: () => setState(_resetTileFailure),
+          ),
+          if (_error != null)
+            Padding(
+              padding: EdgeInsets.symmetric(
+                horizontal: IsleLayout.pageInset(
+                  MediaQuery.sizeOf(context).width,
+                ),
+              ),
+              child: Notice(_error!, error: true, onRetry: _load),
+            ),
+        ],
+      ),
+    ),
+  );
+
+  Widget _buildEmptyGeoState() => LayoutBuilder(
+    builder: (context, remaining) => SingleChildScrollView(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(minHeight: remaining.maxHeight),
+        child: Center(
+          child: MediaEmptyState(
+            icon: Icons.map_outlined,
+            title: _error == null ? '暂无带 GPS 位置的照片' : '位置照片未能读取',
+            message: _error == null
+                ? '请确认拍摄时开启了定位，并等待 NAS 完成索引。'
+                : '请确认 NAS 在线、存储盘已连接，或稍后重试。',
+            action: OutlinedButton.icon(
+              onPressed: _load,
+              icon: const Icon(Icons.refresh),
+              label: const Text('重新读取位置'),
+            ),
+          ),
+        ),
+      ),
+    ),
+  );
+
+  List<Widget> _buildMapTileLayers() {
+    if (!_showOnlineTiles) return const <Widget>[];
+    if (_tileSource == PhotoMapTileSource.tianditu) {
+      final origin = widget.api.uri('/api/v2/map/status').origin;
+      return <Widget>[
+        TileLayer(
+          key: ValueKey('tdt-vector-$_tileRevision'),
+          urlTemplate: origin + PhotoMapTiles.tiandituUrl('vec'),
+          tileProvider: NetworkTileProvider(httpClient: _nasTileClient),
+          maxNativeZoom: 18,
+          maxZoom: 18,
+          userAgentPackageName: 'dev.lightisle.client',
+          errorTileCallback: (_, _, _) => _onTileError(),
+        ),
+        TileLayer(
+          key: ValueKey('tdt-labels-$_tileRevision'),
+          urlTemplate: origin + PhotoMapTiles.tiandituUrl('cva'),
+          tileProvider: NetworkTileProvider(httpClient: _nasTileClient),
+          maxNativeZoom: 18,
+          maxZoom: 18,
+          userAgentPackageName: 'dev.lightisle.client',
+          errorTileCallback: (_, _, _) => _onTileError(),
+        ),
+      ];
+    }
+    return <Widget>[
+      TileLayer(
+        key: ValueKey('tiles-$_tileRevision'),
+        urlTemplate: _tileSource == PhotoMapTileSource.openStreetMap
+            ? PhotoMapTiles.openStreetMapUrl
+            : _tileUrl,
+        tileProvider: NetworkTileProvider(httpClient: _publicTileClient),
+        maxNativeZoom: 18,
+        maxZoom: 18,
+        userAgentPackageName: 'dev.lightisle.client',
+        errorTileCallback: (_, _, _) => _onTileError(),
+      ),
+    ];
+  }
+
+  Widget _buildInteractiveMapStack(
+    ThemeData theme,
+    List<_GeoGroup> groups,
+    _GeoGroup? activeGroup,
+    int selectedIndex,
+  ) => Stack(
+    children: [
+      FlutterMap(
+        mapController: _controller,
+        options: MapOptions(
+          initialCenter:
+              widget.initialCenter ??
+              LatLng(_points.first.lat, _points.first.lon),
+          initialZoom: _zoom,
+          minZoom: photoMapMinZoom,
+          maxZoom: photoMapMaxZoom,
+          cameraConstraint: CameraConstraint.contain(
+            bounds: LatLngBounds(
+              const LatLng(-85.0, -180.0),
+              const LatLng(85.0, 180.0),
+            ),
+          ),
+          backgroundColor: theme.colorScheme.surfaceContainer,
+          onTap: (_, _) {
+            if (_selectedGroup != null) {
+              setState(() {
+                _selectedGroup = null;
+                _selectedAssets = const [];
+                _sheetError = null;
+              });
+            }
+          },
+          onPositionChanged: (camera, _) {
+            final clamped = camera.zoom.clamp(photoMapMinZoom, photoMapMaxZoom);
+            if ((clamped - _zoom).abs() >= .25 && mounted) {
+              setState(() => _zoom = clamped);
+            }
+          },
+        ),
+        children: [
+          ..._buildMapTileLayers(),
+          MarkerLayer(
+            markers: [
+              for (var i = 0; i < groups.length; i++)
+                Marker(
+                  point: groups[i].location,
+                  width: 68,
+                  height: 70,
+                  child: _PhotoMapPin(
+                    key: ValueKey('photo-map-pin-${groups[i].coverId}'),
+                    api: widget.api,
+                    memoryCache: _thumbCache,
+                    group: groups[i],
+                    selected: groups[i].key == activeGroup?.key,
+                    loadThumbnail:
+                        i < _maxThumbnailMarkers ||
+                        groups[i].key == activeGroup?.key,
+                    onTap: () => _selectGroup(groups[i]),
+                  ),
+                ),
+            ],
+          ),
+          if (_showOnlineTiles)
+            RichAttributionWidget(
+              attributions: [
+                TextSourceAttribution(switch (_tileSource) {
+                  PhotoMapTileSource.tianditu => '© 天地图',
+                  PhotoMapTileSource.openStreetMap =>
+                    '© OpenStreetMap contributors',
+                  PhotoMapTileSource.custom => '地图来源：用户配置的瓦片服务',
+                }),
+              ],
+            ),
+        ],
+      ),
+      Positioned(
+        top: 12,
+        right: 12,
+        child: _MapZoomControls(
+          zoom: _zoom,
+          onZoomIn: () => _zoomBy(1.5),
+          onZoomOut: () => _zoomBy(-1.5),
+          onFitAll: _fitAllFootprints,
+        ),
+      ),
+      if (activeGroup != null)
+        _LocationPhotoSheet(
+          api: widget.api,
+          memoryCache: _thumbCache,
+          group: activeGroup,
+          assets: _selectedAssets,
+          loading: _opening,
+          error: _sheetError,
+          expanded: _sheetExpanded,
+          canZoomCluster:
+              activeGroup.ids.length > 1 &&
+              (activeGroup.hasSpread || _zoom < 15.5) &&
+              _zoom < photoMapMaxZoom - 0.1,
+          clusterIndex: selectedIndex >= 0 ? selectedIndex : 0,
+          totalClusters: groups.length,
+          onToggleExpand: () =>
+              setState(() => _sheetExpanded = !_sheetExpanded),
+          onZoomCluster: () => _zoomIntoCluster(activeGroup),
+          onStepCluster: (delta) => _stepCluster(delta, groups),
+          onRetry: () => _selectGroup(activeGroup, centerCamera: false),
+          onClose: () => setState(() {
+            _selectedGroup = null;
+            _selectedAssets = const [];
+            _sheetError = null;
+          }),
+          onOpenAsset: _openAssetInViewer,
+        ),
+      if (_opening)
+        const Align(
+          alignment: Alignment.topCenter,
+          child: LinearProgressIndicator(),
+        ),
+    ],
+  );
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -454,245 +681,22 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
       body: LayoutBuilder(
         builder: (context, viewport) => Column(
           children: [
-            ConstrainedBox(
-              constraints: BoxConstraints(
-                maxHeight: (viewport.maxHeight * .38).clamp(88.0, 220.0),
-              ),
-              child: SingleChildScrollView(
-                child: Column(
-                  children: [
-                    _PhotoMapOptionsHeader(
-                      total: _total,
-                      loadedCount: _points.length,
-                      truncated: _truncated,
-                      clustersNotice: clustersNotice,
-                      compactOptions: compactOptions,
-                      expanded: _mapOptionsExpanded,
-                      tileSourceReady: _tileSourceReady,
-                      tileSource: _tileSource,
-                      mapStatusError: _mapStatusError,
-                      tilesFailed: _tilesFailed,
-                      onToggleExpand: () => setState(
-                        () => _mapOptionsExpanded = !_mapOptionsExpanded,
-                      ),
-                      onConfigureTiles: _configureTiles,
-                      onRefreshConfig: _refreshMapConfiguration,
-                      onRetryTiles: () => setState(_resetTileFailure),
-                    ),
-                    if (_error != null)
-                      Padding(
-                        padding: EdgeInsets.symmetric(
-                          horizontal: IsleLayout.pageInset(
-                            MediaQuery.sizeOf(context).width,
-                          ),
-                        ),
-                        child: Notice(_error!, error: true, onRetry: _load),
-                      ),
-                  ],
-                ),
-              ),
+            _buildTopBannerArea(
+              context,
+              viewport,
+              clustersNotice: clustersNotice,
+              compactOptions: compactOptions,
             ),
             Expanded(
               child: _loading
                   ? const Center(child: CircularProgressIndicator())
                   : _points.isEmpty
-                  ? LayoutBuilder(
-                      builder: (context, remaining) => SingleChildScrollView(
-                        child: ConstrainedBox(
-                          constraints: BoxConstraints(
-                            minHeight: remaining.maxHeight,
-                          ),
-                          child: Center(
-                            child: MediaEmptyState(
-                              icon: Icons.map_outlined,
-                              title: _error == null
-                                  ? '暂无带 GPS 位置的照片'
-                                  : '位置照片未能读取',
-                              message: _error == null
-                                  ? '请确认拍摄时开启了定位，并等待 NAS 完成索引。'
-                                  : '请确认 NAS 在线、存储盘已连接，或稍后重试。',
-                              action: OutlinedButton.icon(
-                                onPressed: _load,
-                                icon: const Icon(Icons.refresh),
-                                label: const Text('重新读取位置'),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    )
-                  : Stack(
-                      children: [
-                        FlutterMap(
-                          mapController: _controller,
-                          options: MapOptions(
-                            initialCenter:
-                                widget.initialCenter ??
-                                LatLng(_points.first.lat, _points.first.lon),
-                            initialZoom: _zoom,
-                            minZoom: photoMapMinZoom,
-                            maxZoom: photoMapMaxZoom,
-                            cameraConstraint: CameraConstraint.contain(
-                              bounds: LatLngBounds(
-                                const LatLng(-85.0, -180.0),
-                                const LatLng(85.0, 180.0),
-                              ),
-                            ),
-                            backgroundColor: theme.colorScheme.surfaceContainer,
-                            onTap: (_, _) {
-                              if (_selectedGroup != null) {
-                                setState(() {
-                                  _selectedGroup = null;
-                                  _selectedAssets = const [];
-                                  _sheetError = null;
-                                });
-                              }
-                            },
-                            onPositionChanged: (camera, _) {
-                              final clamped = camera.zoom.clamp(
-                                photoMapMinZoom,
-                                photoMapMaxZoom,
-                              );
-                              if ((clamped - _zoom).abs() >= .25 && mounted) {
-                                setState(() => _zoom = clamped);
-                              }
-                            },
-                          ),
-                          children: [
-                            if (_showOnlineTiles &&
-                                _tileSource == PhotoMapTileSource.tianditu) ...[
-                              TileLayer(
-                                key: ValueKey('tdt-vector-$_tileRevision'),
-                                urlTemplate:
-                                    widget.api
-                                        .uri('/api/v2/map/status')
-                                        .origin +
-                                    PhotoMapTiles.tiandituUrl('vec'),
-                                tileProvider: NetworkTileProvider(
-                                  httpClient: _nasTileClient,
-                                ),
-                                maxNativeZoom: 18,
-                                maxZoom: 18,
-                                userAgentPackageName: 'dev.lightisle.client',
-                                errorTileCallback: (_, _, _) => _onTileError(),
-                              ),
-                              TileLayer(
-                                key: ValueKey('tdt-labels-$_tileRevision'),
-                                urlTemplate:
-                                    widget.api
-                                        .uri('/api/v2/map/status')
-                                        .origin +
-                                    PhotoMapTiles.tiandituUrl('cva'),
-                                tileProvider: NetworkTileProvider(
-                                  httpClient: _nasTileClient,
-                                ),
-                                maxNativeZoom: 18,
-                                maxZoom: 18,
-                                userAgentPackageName: 'dev.lightisle.client',
-                                errorTileCallback: (_, _, _) => _onTileError(),
-                              ),
-                            ] else if (_showOnlineTiles)
-                              TileLayer(
-                                key: ValueKey('tiles-$_tileRevision'),
-                                urlTemplate:
-                                    _tileSource ==
-                                        PhotoMapTileSource.openStreetMap
-                                    ? PhotoMapTiles.openStreetMapUrl
-                                    : _tileUrl,
-                                tileProvider: NetworkTileProvider(
-                                  httpClient: _publicTileClient,
-                                ),
-                                maxNativeZoom: 18,
-                                maxZoom: 18,
-                                userAgentPackageName: 'dev.lightisle.client',
-                                errorTileCallback: (_, _, _) => _onTileError(),
-                              ),
-                            MarkerLayer(
-                              markers: [
-                                for (var i = 0; i < groups.length; i++)
-                                  Marker(
-                                    point: groups[i].location,
-                                    width: 68,
-                                    height: 70,
-                                    child: _PhotoMapPin(
-                                      key: ValueKey(
-                                        'photo-map-pin-${groups[i].coverId}',
-                                      ),
-                                      api: widget.api,
-                                      memoryCache: _thumbCache,
-                                      group: groups[i],
-                                      selected:
-                                          groups[i].key == activeGroup?.key,
-                                      loadThumbnail:
-                                          i < _maxThumbnailMarkers ||
-                                          groups[i].key == activeGroup?.key,
-                                      onTap: () => _selectGroup(groups[i]),
-                                    ),
-                                  ),
-                              ],
-                            ),
-                            if (_showOnlineTiles)
-                              RichAttributionWidget(
-                                attributions: [
-                                  TextSourceAttribution(switch (_tileSource) {
-                                    PhotoMapTileSource.tianditu => '© 天地图',
-                                    PhotoMapTileSource.openStreetMap =>
-                                      '© OpenStreetMap contributors',
-                                    PhotoMapTileSource.custom =>
-                                      '地图来源：用户配置的瓦片服务',
-                                  }),
-                                ],
-                              ),
-                          ],
-                        ),
-                        Positioned(
-                          top: 12,
-                          right: 12,
-                          child: _MapZoomControls(
-                            zoom: _zoom,
-                            onZoomIn: () => _zoomBy(1.5),
-                            onZoomOut: () => _zoomBy(-1.5),
-                            onFitAll: _fitAllFootprints,
-                          ),
-                        ),
-                        if (activeGroup != null)
-                          _LocationPhotoSheet(
-                            api: widget.api,
-                            memoryCache: _thumbCache,
-                            group: activeGroup,
-                            assets: _selectedAssets,
-                            loading: _opening,
-                            error: _sheetError,
-                            expanded: _sheetExpanded,
-                            canZoomCluster:
-                                activeGroup.ids.length > 1 &&
-                                (activeGroup.hasSpread || _zoom < 15.5) &&
-                                _zoom < photoMapMaxZoom - 0.1,
-                            clusterIndex: selectedIndex >= 0
-                                ? selectedIndex
-                                : 0,
-                            totalClusters: groups.length,
-                            onToggleExpand: () => setState(
-                              () => _sheetExpanded = !_sheetExpanded,
-                            ),
-                            onZoomCluster: () => _zoomIntoCluster(activeGroup),
-                            onStepCluster: (delta) =>
-                                _stepCluster(delta, groups),
-                            onRetry: () =>
-                                _selectGroup(activeGroup, centerCamera: false),
-                            onClose: () => setState(() {
-                              _selectedGroup = null;
-                              _selectedAssets = const [];
-                              _sheetError = null;
-                            }),
-                            onOpenAsset: _openAssetInViewer,
-                          ),
-                        if (_opening)
-                          const Align(
-                            alignment: Alignment.topCenter,
-                            child: LinearProgressIndicator(),
-                          ),
-                      ],
+                  ? _buildEmptyGeoState()
+                  : _buildInteractiveMapStack(
+                      theme,
+                      groups,
+                      activeGroup,
+                      selectedIndex,
                     ),
             ),
           ],

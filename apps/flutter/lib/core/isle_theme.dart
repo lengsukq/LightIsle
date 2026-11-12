@@ -5,47 +5,140 @@ import 'package:flutter/services.dart';
 import 'isle_style.dart';
 export 'isle_style.dart';
 
+ColorScheme _buildIsleColorScheme(
+  Brightness brightness,
+  IslePalette p, {
+  required bool highContrast,
+}) {
+  final dark = brightness == Brightness.dark;
+  final primary = p['accentPrimary'];
+  return ColorScheme.fromSeed(
+    seedColor: primary,
+    brightness: brightness,
+    contrastLevel: highContrast ? 1 : 0,
+  ).copyWith(
+    primary: primary,
+    onPrimary: dark ? const Color(0xff101b30) : Colors.white,
+    surface: p['cardTop'],
+    onSurface: p['textPrimary'],
+    onSurfaceVariant: dark ? const Color(0xffa6b5ca) : const Color(0xff52647e),
+    surfaceContainerLowest: p['canvasTop'],
+    surfaceContainerLow: p['canvasTop'],
+    surfaceContainer: p['cardItemBottom'],
+    surfaceContainerHigh: p['cardHover'],
+    surfaceContainerHighest: dark
+        ? const Color(0xff353c59)
+        : const Color(0xffe5eaf6),
+    primaryContainer: dark ? const Color(0xff1c3260) : const Color(0xffe8efff),
+    onPrimaryContainer: dark
+        ? const Color(0xffc6d9ff)
+        : const Color(0xff1746a2),
+    secondary: dark ? const Color(0xff94a3b8) : const Color(0xff475569),
+    onSecondary: dark ? const Color(0xff0f172a) : Colors.white,
+    secondaryContainer: dark
+        ? const Color(0xff1e2638)
+        : const Color(0xffedf1f7),
+    onSecondaryContainer: dark
+        ? const Color(0xffe2e8f0)
+        : const Color(0xff1e293b),
+    outline: dark ? const Color(0xff667b98) : const Color(0xff7386a3),
+    outlineVariant: p['rim'],
+  );
+}
+
+AppBarTheme _buildIsleAppBarTheme(
+  ThemeData base,
+  ColorScheme colors,
+  IslePalette p,
+  bool dark,
+) {
+  return AppBarTheme(
+    backgroundColor: Colors.transparent,
+    foregroundColor: colors.onSurface,
+    surfaceTintColor: Colors.transparent,
+    elevation: 0,
+    scrolledUnderElevation: 0,
+    centerTitle: false,
+    titleTextStyle: base.textTheme.titleMedium?.copyWith(
+      color: colors.onSurface,
+      fontWeight: FontWeight.w600,
+      letterSpacing: -.2,
+    ),
+    systemOverlayStyle: SystemUiOverlayStyle(
+      statusBarColor: Colors.transparent,
+      statusBarIconBrightness: dark ? Brightness.light : Brightness.dark,
+      statusBarBrightness: dark ? Brightness.dark : Brightness.light,
+      systemNavigationBarColor: p['canvasBottom'],
+      systemNavigationBarIconBrightness: dark
+          ? Brightness.light
+          : Brightness.dark,
+    ),
+  );
+}
+
+InputDecorationTheme _buildIsleInputDecorationTheme(
+  ColorScheme colors,
+  Color primary,
+  bool dark,
+) {
+  final outlineSide = BorderSide(
+    color: colors.outlineVariant.withValues(alpha: dark ? 0.35 : 0.18),
+    width: 0.8,
+  );
+  return InputDecorationTheme(
+    errorMaxLines: 4,
+    filled: true,
+    fillColor: dark ? const Color(0xff1f2436) : const Color(0xfff1f3f8),
+    contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+    border: OutlineInputBorder(
+      borderRadius: IsleRadius.brControl,
+      borderSide: outlineSide,
+    ),
+    enabledBorder: OutlineInputBorder(
+      borderRadius: IsleRadius.brControl,
+      borderSide: outlineSide,
+    ),
+    focusedBorder: OutlineInputBorder(
+      borderRadius: IsleRadius.brControl,
+      borderSide: BorderSide(color: primary, width: 1.8),
+    ),
+  );
+}
+
+NavigationBarThemeData _buildIsleNavigationBarTheme(ColorScheme colors) {
+  return NavigationBarThemeData(
+    height: 64,
+    backgroundColor: colors.surface,
+    surfaceTintColor: Colors.transparent,
+    elevation: 0,
+    indicatorColor: colors.primary.withValues(alpha: 0.14),
+    indicatorShape: const StadiumBorder(),
+    iconTheme: WidgetStateProperty.resolveWith((states) {
+      if (states.contains(WidgetState.selected)) {
+        return IconThemeData(color: colors.primary, size: 24);
+      }
+      return IconThemeData(color: colors.onSurfaceVariant, size: 23);
+    }),
+    labelTextStyle: WidgetStateProperty.resolveWith((states) {
+      final selected = states.contains(WidgetState.selected);
+      return TextStyle(
+        fontSize: 11.5,
+        fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
+        color: selected ? colors.primary : colors.onSurfaceVariant,
+      );
+    }),
+  );
+}
+
 ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
   final dark = brightness == Brightness.dark;
   final p = IslePalette(dark);
   final primary = p['accentPrimary'];
-  final colors =
-      ColorScheme.fromSeed(
-        seedColor: primary,
-        brightness: brightness,
-        contrastLevel: highContrast ? 1 : 0,
-      ).copyWith(
-        primary: primary,
-        onPrimary: dark ? const Color(0xff101b30) : Colors.white,
-        surface: p['cardTop'],
-        onSurface: p['textPrimary'],
-        onSurfaceVariant: dark
-            ? const Color(0xffa6b5ca)
-            : const Color(0xff52647e),
-        surfaceContainerLowest: p['canvasTop'],
-        surfaceContainerLow: p['canvasTop'],
-        surfaceContainer: p['cardItemBottom'],
-        surfaceContainerHigh: p['cardHover'],
-        surfaceContainerHighest: dark
-            ? const Color(0xff353c59)
-            : const Color(0xffe5eaf6),
-        primaryContainer: dark
-            ? const Color(0xff1c3260)
-            : const Color(0xffe8efff),
-        onPrimaryContainer: dark
-            ? const Color(0xffc6d9ff)
-            : const Color(0xff1746a2),
-        secondary: dark ? const Color(0xff94a3b8) : const Color(0xff475569),
-        onSecondary: dark ? const Color(0xff0f172a) : Colors.white,
-        secondaryContainer: dark
-            ? const Color(0xff1e2638)
-            : const Color(0xffedf1f7),
-        onSecondaryContainer: dark
-            ? const Color(0xffe2e8f0)
-            : const Color(0xff1e293b),
-        outline: dark ? const Color(0xff667b98) : const Color(0xff7386a3),
-        outlineVariant: p['rim'],
-      );
+  final colors = _buildIsleColorScheme(
+    brightness,
+    p,
+    highContrast: highContrast,
+  );
   final base = ThemeData(
     useMaterial3: true,
     colorScheme: colors,
@@ -76,28 +169,7 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
         height: 1.45,
       ),
     ),
-    appBarTheme: AppBarTheme(
-      backgroundColor: Colors.transparent,
-      foregroundColor: colors.onSurface,
-      surfaceTintColor: Colors.transparent,
-      elevation: 0,
-      scrolledUnderElevation: 0,
-      centerTitle: false,
-      titleTextStyle: base.textTheme.titleMedium?.copyWith(
-        color: colors.onSurface,
-        fontWeight: FontWeight.w600,
-        letterSpacing: -.2,
-      ),
-      systemOverlayStyle: SystemUiOverlayStyle(
-        statusBarColor: Colors.transparent,
-        statusBarIconBrightness: dark ? Brightness.light : Brightness.dark,
-        statusBarBrightness: dark ? Brightness.dark : Brightness.light,
-        systemNavigationBarColor: p['canvasBottom'],
-        systemNavigationBarIconBrightness: dark
-            ? Brightness.light
-            : Brightness.dark,
-      ),
-    ),
+    appBarTheme: _buildIsleAppBarTheme(base, colors, p, dark),
     cardTheme: CardThemeData(
       elevation: 0,
       color: colors.surface,
@@ -107,30 +179,7 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
         side: BorderSide(color: IsleGlass.rimBorderColor(dark), width: 0.8),
       ),
     ),
-    inputDecorationTheme: InputDecorationTheme(
-      errorMaxLines: 4,
-      filled: true,
-      fillColor: dark ? const Color(0xff1f2436) : const Color(0xfff1f3f8),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-      border: OutlineInputBorder(
-        borderRadius: IsleRadius.brControl,
-        borderSide: BorderSide(
-          color: colors.outlineVariant.withValues(alpha: dark ? 0.35 : 0.18),
-          width: 0.8,
-        ),
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: IsleRadius.brControl,
-        borderSide: BorderSide(
-          color: colors.outlineVariant.withValues(alpha: dark ? 0.35 : 0.18),
-          width: 0.8,
-        ),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: IsleRadius.brControl,
-        borderSide: BorderSide(color: primary, width: 1.8),
-      ),
-    ),
+    inputDecorationTheme: _buildIsleInputDecorationTheme(colors, primary, dark),
     filledButtonTheme: FilledButtonThemeData(
       style: FilledButton.styleFrom(
         minimumSize: const Size(48, 46),
@@ -176,34 +225,7 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
       ),
       shape: const StadiumBorder(),
     ),
-    navigationBarTheme: NavigationBarThemeData(
-      height: 64,
-      backgroundColor: colors.surface,
-      surfaceTintColor: Colors.transparent,
-      elevation: 0,
-      indicatorColor: colors.primary.withValues(alpha: 0.14),
-      indicatorShape: const StadiumBorder(),
-      iconTheme: WidgetStateProperty.resolveWith((states) {
-        if (states.contains(WidgetState.selected)) {
-          return IconThemeData(color: colors.primary, size: 24);
-        }
-        return IconThemeData(color: colors.onSurfaceVariant, size: 23);
-      }),
-      labelTextStyle: WidgetStateProperty.resolveWith((states) {
-        if (states.contains(WidgetState.selected)) {
-          return TextStyle(
-            fontSize: 11.5,
-            fontWeight: FontWeight.w700,
-            color: colors.primary,
-          );
-        }
-        return TextStyle(
-          fontSize: 11.5,
-          fontWeight: FontWeight.w500,
-          color: colors.onSurfaceVariant,
-        );
-      }),
-    ),
+    navigationBarTheme: _buildIsleNavigationBarTheme(colors),
     navigationRailTheme: NavigationRailThemeData(
       backgroundColor: colors.surface,
       indicatorColor: colors.primaryContainer,

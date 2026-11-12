@@ -305,10 +305,96 @@ class _CinemaFilmOverviewState extends State<CinemaFilmOverview> {
     return '';
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
+  Widget _buildPoster(ColorScheme scheme) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16),
+      child: AspectRatio(
+        aspectRatio: 2 / 3,
+        child: AuthenticatedMediaImage(
+          api: widget.api,
+          memoryCache: widget.memoryCache,
+          path: '/api/v2/cinema/${_film.id}/poster',
+          fit: BoxFit.cover,
+          maxBytes: 4 * 1024 * 1024,
+          loadingBuilder: (_) => ColoredBox(
+            color: scheme.surfaceContainerHigh,
+            child: const Center(child: Icon(Icons.movie_outlined, size: 48)),
+          ),
+          errorBuilder: (_, _, retry) => ColoredBox(
+            color: scheme.surfaceContainerHigh,
+            child: Center(
+              child: IconButton(
+                tooltip: '重新加载影片封面',
+                onPressed: retry,
+                icon: const Icon(Icons.refresh_rounded),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildActionButtons(BuildContext context) {
+    return Wrap(
+      spacing: 10,
+      runSpacing: 10,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      children: [
+        FilledButton.icon(
+          key: const ValueKey('cinemaOverviewPlay'),
+          style: FilledButton.styleFrom(
+            backgroundColor: const Color(0xFFE50914),
+            foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(horizontal: 22, vertical: 13),
+          ),
+          onPressed: () => widget.onPlay(),
+          icon: Icon(
+            _film.canResume
+                ? Icons.play_circle_filled_rounded
+                : Icons.play_arrow_rounded,
+          ),
+          label: Text(_film.canResume ? '继续观看' : '开始播放'),
+        ),
+        OutlinedButton.icon(
+          onPressed: _actionBusy ? null : _toggleWatched,
+          icon: Icon(
+            _film.completed
+                ? Icons.check_circle_rounded
+                : Icons.check_circle_outline_rounded,
+            size: 18,
+          ),
+          label: Text(_film.completed ? '已看完' : '标记已看'),
+        ),
+        if (widget.isAdmin && widget.onRename != null)
+          OutlinedButton.icon(
+            onPressed: _actionBusy ? null : _handleRename,
+            icon: const Icon(Icons.drive_file_rename_outline, size: 18),
+            label: const Text('修改名称'),
+          ),
+        if (_film.path.isNotEmpty)
+          OutlinedButton.icon(
+            onPressed: () => showDialog<void>(
+              context: context,
+              builder: (_) => FileShareDialog(
+                api: widget.api,
+                path: _film.path,
+                name: _film.title,
+                isFolder: false,
+              ),
+            ),
+            icon: const Icon(Icons.ios_share_outlined, size: 18),
+            label: const Text('分享'),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildOverviewDetails(
+    BuildContext context, {
+    required ThemeData theme,
+    required ColorScheme scheme,
+  }) {
     final matchScore = _film.rating > 0
         ? (_film.rating * 10).round().clamp(75, 99)
         : 0;
@@ -319,6 +405,132 @@ class _CinemaFilmOverviewState extends State<CinemaFilmOverview> {
       if (_film.container.isNotEmpty) _film.container.toUpperCase(),
     ].join(' · ');
 
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: const Color(0xFFE50914).withValues(alpha: 0.14),
+                borderRadius: BorderRadius.circular(6),
+              ),
+              child: Text(
+                _film.isSeries ? 'LIGHTISLE 剧集' : 'LIGHTISLE 影院',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: const Color(0xFFE50914),
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: 0.6,
+                ),
+              ),
+            ),
+            if (matchScore > 0) ...[
+              const SizedBox(width: 10),
+              Text(
+                '$matchScore% 推荐 · ★ ${_film.rating.toStringAsFixed(1)}',
+                style: theme.textTheme.labelLarge?.copyWith(
+                  color: const Color(0xFF15803D),
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ],
+        ),
+        const SizedBox(height: 10),
+        Text(
+          _film.title,
+          style: theme.textTheme.headlineMedium?.copyWith(
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            if (_film.year > 0) Chip(label: Text('${_film.year}')),
+            Chip(label: Text(_film.isSeries ? '剧集' : '电影')),
+            Chip(
+              label: Text(
+                formatMediaSeconds(
+                  _film.durationSeconds > 0
+                      ? _film.durationSeconds
+                      : _film.duration,
+                ),
+              ),
+            ),
+            if (_film.rating > 0)
+              Chip(label: Text('评分 ${_film.rating.toStringAsFixed(1)}')),
+            if (codecLabel.isNotEmpty) Chip(label: Text(codecLabel)),
+          ],
+        ),
+        const SizedBox(height: 20),
+        _buildActionButtons(context),
+        if (_film.canResume) ...[
+          const SizedBox(height: 10),
+          Text(
+            '上次看到 ${formatMediaSeconds(_film.position)}',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+        if (_statusMessage != null) ...[
+          const SizedBox(height: 14),
+          MediaStatusBanner(message: _statusMessage!, isError: _statusIsError),
+        ],
+        if (_film.overview.isNotEmpty) ...[
+          const SizedBox(height: 24),
+          Text('剧情简介', style: theme.textTheme.titleMedium),
+          const SizedBox(height: 8),
+          Text(_film.overview, style: theme.textTheme.bodyLarge),
+        ],
+        const SizedBox(height: 20),
+        Wrap(
+          spacing: 16,
+          runSpacing: 8,
+          children: [
+            if (_film.size > 0)
+              Text(
+                '文件大小：${formatMediaSize(_film.size)}',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            if (_film.width > 0 && _film.height > 0)
+              Text(
+                '分辨率：${_film.width} × ${_film.height}',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
+              ),
+            Text(
+              '资料来源：${_film.metadataSource.isEmpty ? '未匹配' : _film.metadataSource.toUpperCase()}',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+        ),
+        if (!_film.canAttemptPlayback) ...[
+          const SizedBox(height: 16),
+          Text(
+            '当前设备可能无法直接播放此格式。可以尝试播放时的服务端实时转码兼容方案，或保存原文件。',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     return Scaffold(
       appBar: const IsleAppBar(title: Text('影片详情')),
       body: SafeArea(
@@ -329,226 +541,11 @@ class _CinemaFilmOverviewState extends State<CinemaFilmOverview> {
             child: LayoutBuilder(
               builder: (context, constraints) {
                 final wide = constraints.maxWidth >= 650;
-                final poster = ClipRRect(
-                  borderRadius: BorderRadius.circular(16),
-                  child: AspectRatio(
-                    aspectRatio: 2 / 3,
-                    child: AuthenticatedMediaImage(
-                      api: widget.api,
-                      memoryCache: widget.memoryCache,
-                      path: '/api/v2/cinema/${_film.id}/poster',
-                      fit: BoxFit.cover,
-                      maxBytes: 4 * 1024 * 1024,
-                      loadingBuilder: (_) => ColoredBox(
-                        color: scheme.surfaceContainerHigh,
-                        child: const Center(
-                          child: Icon(Icons.movie_outlined, size: 48),
-                        ),
-                      ),
-                      errorBuilder: (_, _, retry) => ColoredBox(
-                        color: scheme.surfaceContainerHigh,
-                        child: Center(
-                          child: IconButton(
-                            tooltip: '重新加载影片封面',
-                            onPressed: retry,
-                            icon: const Icon(Icons.refresh_rounded),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                );
-                final content = Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 3,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFFE50914)
-                                .withValues(alpha: 0.14),
-                            borderRadius: BorderRadius.circular(6),
-                          ),
-                          child: Text(
-                            _film.isSeries ? 'LIGHTISLE 剧集' : 'LIGHTISLE 影院',
-                            style: theme.textTheme.labelSmall?.copyWith(
-                              color: const Color(0xFFE50914),
-                              fontWeight: FontWeight.w800,
-                              letterSpacing: 0.6,
-                            ),
-                          ),
-                        ),
-                        if (matchScore > 0) ...[
-                          const SizedBox(width: 10),
-                          Text(
-                            '$matchScore% 推荐 · ★ ${_film.rating.toStringAsFixed(1)}',
-                            style: theme.textTheme.labelLarge?.copyWith(
-                              color: const Color(0xFF15803D),
-                              fontWeight: FontWeight.w800,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    Text(
-                      _film.title,
-                      style: theme.textTheme.headlineMedium?.copyWith(
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    Wrap(
-                      spacing: 8,
-                      runSpacing: 8,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        if (_film.year > 0) Chip(label: Text('${_film.year}')),
-                        Chip(label: Text(_film.isSeries ? '剧集' : '电影')),
-                        Chip(
-                          label: Text(
-                            formatMediaSeconds(
-                              _film.durationSeconds > 0
-                                  ? _film.durationSeconds
-                                  : _film.duration,
-                            ),
-                          ),
-                        ),
-                        if (_film.rating > 0)
-                          Chip(
-                            label: Text(
-                              '评分 ${_film.rating.toStringAsFixed(1)}',
-                            ),
-                          ),
-                        if (codecLabel.isNotEmpty)
-                          Chip(label: Text(codecLabel)),
-                      ],
-                    ),
-                    const SizedBox(height: 20),
-                    Wrap(
-                      spacing: 10,
-                      runSpacing: 10,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        FilledButton.icon(
-                          key: const ValueKey('cinemaOverviewPlay'),
-                          style: FilledButton.styleFrom(
-                            backgroundColor: const Color(0xFFE50914),
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 22,
-                              vertical: 13,
-                            ),
-                          ),
-                          onPressed: () => widget.onPlay(),
-                          icon: Icon(
-                            _film.canResume
-                                ? Icons.play_circle_filled_rounded
-                                : Icons.play_arrow_rounded,
-                          ),
-                          label: Text(_film.canResume ? '继续观看' : '开始播放'),
-                        ),
-                        OutlinedButton.icon(
-                          onPressed: _actionBusy ? null : _toggleWatched,
-                          icon: Icon(
-                            _film.completed
-                                ? Icons.check_circle_rounded
-                                : Icons.check_circle_outline_rounded,
-                            size: 18,
-                          ),
-                          label: Text(_film.completed ? '已看完' : '标记已看'),
-                        ),
-                        if (widget.isAdmin && widget.onRename != null)
-                          OutlinedButton.icon(
-                            onPressed: _actionBusy ? null : _handleRename,
-                            icon: const Icon(
-                              Icons.drive_file_rename_outline,
-                              size: 18,
-                            ),
-                            label: const Text('修改名称'),
-                          ),
-                        if (_film.path.isNotEmpty)
-                          OutlinedButton.icon(
-                            onPressed: () => showDialog<void>(
-                              context: context,
-                              builder: (_) => FileShareDialog(
-                                api: widget.api,
-                                path: _film.path,
-                                name: _film.title,
-                                isFolder: false,
-                              ),
-                            ),
-                            icon: const Icon(
-                              Icons.ios_share_outlined,
-                              size: 18,
-                            ),
-                            label: const Text('分享'),
-                          ),
-                      ],
-                    ),
-                    if (_film.canResume) ...[
-                      const SizedBox(height: 10),
-                      Text(
-                        '上次看到 ${formatMediaSeconds(_film.position)}',
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: scheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                    if (_statusMessage != null) ...[
-                      const SizedBox(height: 14),
-                      MediaStatusBanner(
-                        message: _statusMessage!,
-                        isError: _statusIsError,
-                      ),
-                    ],
-                    if (_film.overview.isNotEmpty) ...[
-                      const SizedBox(height: 24),
-                      Text('剧情简介', style: theme.textTheme.titleMedium),
-                      const SizedBox(height: 8),
-                      Text(_film.overview, style: theme.textTheme.bodyLarge),
-                    ],
-                    const SizedBox(height: 20),
-                    Wrap(
-                      spacing: 16,
-                      runSpacing: 8,
-                      children: [
-                        if (_film.size > 0)
-                          Text(
-                            '文件大小：${formatMediaSize(_film.size)}',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: scheme.onSurfaceVariant,
-                            ),
-                          ),
-                        if (_film.width > 0 && _film.height > 0)
-                          Text(
-                            '分辨率：${_film.width} × ${_film.height}',
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: scheme.onSurfaceVariant,
-                            ),
-                          ),
-                        Text(
-                          '资料来源：${_film.metadataSource.isEmpty ? '未匹配' : _film.metadataSource.toUpperCase()}',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: scheme.onSurfaceVariant,
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (!_film.canAttemptPlayback) ...[
-                      const SizedBox(height: 16),
-                      Text(
-                        '当前设备可能无法直接播放此格式。可以尝试播放时的服务端实时转码兼容方案，或保存原文件。',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: scheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ],
-                  ],
+                final poster = _buildPoster(scheme);
+                final content = _buildOverviewDetails(
+                  context,
+                  theme: theme,
+                  scheme: scheme,
                 );
                 return ListView(
                   padding: EdgeInsets.all(wide ? 32 : 20),

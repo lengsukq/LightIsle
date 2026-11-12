@@ -98,9 +98,6 @@ class _OverviewPageState extends State<OverviewPage>
     } catch (e) {
       if (mounted) setState(() => _error = userFacingError(e));
     }
-    // Root discovery is permission filtered by the backend. Refresh more
-    // slowly than the 5s system metrics; a device swap still requires a new
-    // generation and is validated again when opening the file browser.
     final now = DateTime.now();
     if (_lastRootCheck == null ||
         now.difference(_lastRootCheck!) >= const Duration(seconds: 30)) {
@@ -240,13 +237,159 @@ class _OverviewPageState extends State<OverviewPage>
     );
   }
 
+  Widget _buildHeaderTrailing({required bool compact}) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        if (widget.onOpenFiles != null)
+          FilledButton.tonalIcon(
+            key: const ValueKey('headerOpenFilesButton'),
+            style: compact
+                ? FilledButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    minimumSize: const Size(40, 36),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 6,
+                    ),
+                  )
+                : null,
+            onPressed: widget.onOpenFiles,
+            icon: const Icon(Icons.folder_open_rounded, size: 16),
+            label: const Text('文件管理'),
+          ),
+        const SizedBox(width: 4),
+        IconButton(
+          tooltip: '刷新状态',
+          visualDensity: compact ? VisualDensity.compact : null,
+          onPressed: _busy ? null : _refresh,
+          icon: const Icon(Icons.refresh_rounded),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildAdminStatsGrid(Map<String, dynamic> stats) {
+    final memoryTotal = (stats['memoryTotal'] as num?) ?? 0;
+    final memoryUsed = (stats['memoryUsed'] as num?) ?? 0;
+    final diskTotal = (stats['diskTotal'] as num?) ?? 0;
+    final diskFree = (stats['diskFree'] as num?) ?? 0;
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final width = constraints.maxWidth;
+        final largeText = MediaQuery.textScalerOf(context).scale(14) > 19;
+        final columns = largeText
+            ? (width >= 760 ? 2 : 1)
+            : width >= 680
+            ? 4
+            : 2;
+        final gap = width < IsleLayout.compactPageWidth ? 8.0 : 12.0;
+        final cpuPct = stats['cpuPercent'] is num
+            ? (stats['cpuPercent'] as num).toDouble() / 100
+            : null;
+        final memPct = memoryTotal > 0
+            ? (memoryUsed / memoryTotal).clamp(0.0, 1.0)
+            : null;
+        final diskPct = diskTotal > 0
+            ? (1.0 - (diskFree / diskTotal)).clamp(0.0, 1.0)
+            : null;
+        final cards = [
+          IsleBentoStatCard(
+            title: '处理器',
+            value: _percent(stats['cpuPercent']),
+            detail: '${stats['cpuCount']} 核 · ${stats['architecture']}',
+            icon: Icons.memory_rounded,
+            color: const Color(0xff0071e3),
+            gradient: const [Color(0xff2589ff), Color(0xff0066cc)],
+            progress: cpuPct,
+          ),
+          IsleBentoStatCard(
+            title: '内存',
+            value: formatBytes(memoryUsed),
+            detail:
+                '共 ${formatBytes(memoryTotal)} · ${memoryTotal == 0 ? '—' : _percent(memoryUsed / memoryTotal * 100)}',
+            icon: Icons.speed_rounded,
+            color: const Color(0xff8b5cf6),
+            gradient: const [Color(0xffa78bfa), Color(0xff7c3aed)],
+            progress: memPct,
+          ),
+          IsleBentoStatCard(
+            title: '系统磁盘',
+            value: '${formatBytes(diskFree)} 可用',
+            detail: '共 ${formatBytes(diskTotal)}',
+            icon: Icons.storage_rounded,
+            color: const Color(0xff0ea5e9),
+            gradient: const [Color(0xff38bdf8), Color(0xff0284c7)],
+            progress: diskPct,
+          ),
+          IsleBentoStatCard(
+            title: '网络',
+            value: '↓ ${formatBytes(stats['networkDownBps'] as num?)}/s',
+            detail: '↑ ${formatBytes(stats['networkUpBps'] as num?)}/s',
+            icon: Icons.swap_vert_rounded,
+            color: const Color(0xff10b981),
+            gradient: const [Color(0xff34d399), Color(0xff059669)],
+          ),
+        ];
+        return Wrap(
+          spacing: gap,
+          runSpacing: gap,
+          children: List.generate(
+            cards.length,
+            (i) => SizedBox(
+              width: (width - (columns - 1) * gap) / columns,
+              child: IsleAnimatedEntrance(
+                delay: Duration(milliseconds: 35 * i),
+                child: cards[i],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  List<Widget> _buildAdminTasksSection(BuildContext context) {
+    return [
+      IsleSectionHeader(
+        title: '任务中心',
+        action: TextButton(
+          style: TextButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            minimumSize: const Size(40, 32),
+            padding: const EdgeInsets.symmetric(horizontal: 8),
+          ),
+          onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => TaskHistoryPage(api: widget.api),
+            ),
+          ),
+          child: const Text('查看历史'),
+        ),
+      ),
+      if (_taskError != null)
+        Notice('任务状态更新失败：$_taskError', error: true, onRetry: _refresh),
+      if (_tasks.isEmpty && _taskError == null)
+        const Notice('暂无后台任务。可在图库或影视中开始扫描。'),
+      if (_tasks.isNotEmpty)
+        IsleResponsiveGrid(
+          minItemWidth: 280,
+          maxColumns: 3,
+          spacing: 10,
+          runSpacing: 10,
+          children: [
+            for (final task in _tasks)
+              TaskTile(api: widget.api, task: task, onChanged: _refresh),
+          ],
+        ),
+      const SizedBox(height: 6),
+      const Notice('应用配置备份和恢复请在 Mac 原生管理端进行。原始文件请另行备份。'),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     final stats = _stats;
-    final memoryTotal = (stats?['memoryTotal'] as num?) ?? 0;
-    final memoryUsed = (stats?['memoryUsed'] as num?) ?? 0;
-    final diskTotal = (stats?['diskTotal'] as num?) ?? 0;
-    final diskFree = (stats?['diskFree'] as num?) ?? 0;
     final coreRss = stats?['coreRssBytes'] as num?;
     final hostname = stats?['hostname']?.toString().trim() ?? '';
     final hero = IsleDeviceHero(
@@ -284,35 +427,7 @@ class _OverviewPageState extends State<OverviewPage>
                     ? '设备活力、文件管理、个人媒体与后台任务，一屏掌控。'
                     : '文件、照片与影片，都在自己的私密空间。',
                 hideSubtitleOnCompact: true,
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    if (widget.onOpenFiles != null)
-                      FilledButton.tonalIcon(
-                        key: const ValueKey('headerOpenFilesButton'),
-                        style: compact
-                            ? FilledButton.styleFrom(
-                                visualDensity: VisualDensity.compact,
-                                minimumSize: const Size(40, 36),
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 12,
-                                  vertical: 6,
-                                ),
-                              )
-                            : null,
-                        onPressed: widget.onOpenFiles,
-                        icon: const Icon(Icons.folder_open_rounded, size: 16),
-                        label: const Text('文件管理'),
-                      ),
-                    const SizedBox(width: 4),
-                    IconButton(
-                      tooltip: '刷新状态',
-                      visualDensity: compact ? VisualDensity.compact : null,
-                      onPressed: _busy ? null : _refresh,
-                      icon: const Icon(Icons.refresh_rounded),
-                    ),
-                  ],
-                ),
+                trailing: _buildHeaderTrailing(compact: compact),
               ),
               Padding(
                 padding: EdgeInsets.only(bottom: compact ? 8 : 12),
@@ -379,85 +494,7 @@ class _OverviewPageState extends State<OverviewPage>
                         )
                       : null,
                 ),
-                LayoutBuilder(
-                  builder: (context, constraints) {
-                    final width = constraints.maxWidth;
-                    final largeText =
-                        MediaQuery.textScalerOf(context).scale(14) > 19;
-                    final columns = largeText
-                        ? (width >= 760 ? 2 : 1)
-                        : width >= 680
-                        ? 4
-                        : 2;
-                    final gap = width < IsleLayout.compactPageWidth
-                        ? 8.0
-                        : 12.0;
-                    final cpuPct = stats['cpuPercent'] is num
-                        ? (stats['cpuPercent'] as num).toDouble() / 100
-                        : null;
-                    final memPct = memoryTotal > 0
-                        ? (memoryUsed / memoryTotal).clamp(0.0, 1.0)
-                        : null;
-                    final diskPct = diskTotal > 0
-                        ? (1.0 - (diskFree / diskTotal)).clamp(0.0, 1.0)
-                        : null;
-                    final cards = [
-                      IsleBentoStatCard(
-                        title: '处理器',
-                        value: _percent(stats['cpuPercent']),
-                        detail:
-                            '${stats['cpuCount']} 核 · ${stats['architecture']}',
-                        icon: Icons.memory_rounded,
-                        color: const Color(0xff0071e3),
-                        gradient: const [Color(0xff2589ff), Color(0xff0066cc)],
-                        progress: cpuPct,
-                      ),
-                      IsleBentoStatCard(
-                        title: '内存',
-                        value: formatBytes(memoryUsed),
-                        detail:
-                            '共 ${formatBytes(memoryTotal)} · ${memoryTotal == 0 ? '—' : _percent(memoryUsed / memoryTotal * 100)}',
-                        icon: Icons.speed_rounded,
-                        color: const Color(0xff8b5cf6),
-                        gradient: const [Color(0xffa78bfa), Color(0xff7c3aed)],
-                        progress: memPct,
-                      ),
-                      IsleBentoStatCard(
-                        title: '系统磁盘',
-                        value: '${formatBytes(diskFree)} 可用',
-                        detail: '共 ${formatBytes(diskTotal)}',
-                        icon: Icons.storage_rounded,
-                        color: const Color(0xff0ea5e9),
-                        gradient: const [Color(0xff38bdf8), Color(0xff0284c7)],
-                        progress: diskPct,
-                      ),
-                      IsleBentoStatCard(
-                        title: '网络',
-                        value:
-                            '↓ ${formatBytes(stats['networkDownBps'] as num?)}/s',
-                        detail:
-                            '↑ ${formatBytes(stats['networkUpBps'] as num?)}/s',
-                        icon: Icons.swap_vert_rounded,
-                        color: const Color(0xff10b981),
-                        gradient: const [Color(0xff34d399), Color(0xff059669)],
-                      ),
-                    ];
-                    return Wrap(
-                      spacing: gap,
-                      runSpacing: gap,
-                      children: List.generate(
-                        cards.length,
-                        (i) => SizedBox(
-                          width: (width - (columns - 1) * gap) / columns,
-                          child: IsleAnimatedEntrance(
-                            delay: Duration(milliseconds: 35 * i),
-                            child: cards[i],
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
+                _buildAdminStatsGrid(stats),
                 const SizedBox(height: 6),
                 AdminVolumeBrowser(
                   volumes: objectList(stats['volumes']),
@@ -466,49 +503,7 @@ class _OverviewPageState extends State<OverviewPage>
                   onOpen: widget.onBrowseDirectory,
                 ),
               ],
-              if (widget.isAdmin) ...[
-                IsleSectionHeader(
-                  title: '任务中心',
-                  action: TextButton(
-                    style: TextButton.styleFrom(
-                      visualDensity: VisualDensity.compact,
-                      minimumSize: const Size(40, 32),
-                      padding: const EdgeInsets.symmetric(horizontal: 8),
-                    ),
-                    onPressed: () => Navigator.of(context).push(
-                      MaterialPageRoute<void>(
-                        builder: (_) => TaskHistoryPage(api: widget.api),
-                      ),
-                    ),
-                    child: const Text('查看历史'),
-                  ),
-                ),
-                if (_taskError != null)
-                  Notice(
-                    '任务状态更新失败：$_taskError',
-                    error: true,
-                    onRetry: _refresh,
-                  ),
-                if (_tasks.isEmpty && _taskError == null)
-                  const Notice('暂无后台任务。可在图库或影视中开始扫描。'),
-                if (_tasks.isNotEmpty)
-                  IsleResponsiveGrid(
-                    minItemWidth: 280,
-                    maxColumns: 3,
-                    spacing: 10,
-                    runSpacing: 10,
-                    children: [
-                      for (final task in _tasks)
-                        TaskTile(
-                          api: widget.api,
-                          task: task,
-                          onChanged: _refresh,
-                        ),
-                    ],
-                  ),
-                const SizedBox(height: 6),
-                const Notice('应用配置备份和恢复请在 Mac 原生管理端进行。原始文件请另行备份。'),
-              ],
+              if (widget.isAdmin) ..._buildAdminTasksSection(context),
             ],
           );
         },

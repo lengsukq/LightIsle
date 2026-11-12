@@ -66,6 +66,308 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
   String _value(double? n, {int decimals = 1}) =>
       n == null || !n.isFinite ? '—' : n.toStringAsFixed(decimals);
 
+  Widget _buildFailedHeroContent(
+    NetworkDiagnosticsController test, {
+    required ColorScheme scheme,
+    required bool wide,
+  }) {
+    return Padding(
+      padding: EdgeInsets.all(wide ? 26 : 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 46,
+                height: 46,
+                decoration: BoxDecoration(
+                  color: scheme.errorContainer.withValues(alpha: .65),
+                  borderRadius: BorderRadius.circular(14),
+                ),
+                child: Icon(
+                  Icons.wifi_off_rounded,
+                  color: scheme.error,
+                  size: 24,
+                ),
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '连接检测中断',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      widget.api.uri('/').host,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 16),
+          Semantics(
+            liveRegion: true,
+            child: Container(
+              key: const ValueKey('networkTestFailureCard'),
+              width: double.infinity,
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: scheme.errorContainer.withValues(alpha: .52),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: scheme.error.withValues(alpha: .22)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Icon(Icons.info_outline_rounded, size: 20, color: scheme.error),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          test.error ?? '测速过程中发生未知错误。',
+                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        if (test.failureAdvice != null) ...[
+                          const SizedBox(height: 6),
+                          Text(
+                            test.failureAdvice!,
+                            style: Theme.of(context).textTheme.bodySmall
+                                ?.copyWith(color: scheme.onSurfaceVariant),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          const SizedBox(height: 12),
+          Text(
+            '中断阶段：${test.failureStep ?? '连接检查'} · 已完成 ${test.completedSteps}/${test.totalSteps} 步',
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: scheme.onSurfaceVariant,
+            ),
+          ),
+          const SizedBox(height: 15),
+          SizedBox(
+            width: wide ? 248 : double.infinity,
+            child: FilledButton.icon(
+              key: const ValueKey('networkTestStart'),
+              onPressed: () => unawaited(test.start()),
+              icon: const Icon(Icons.refresh_rounded),
+              label: const Text('重新检测'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _gaugePrimaryText(NetworkDiagnosticsController test) {
+    if (test.stage == NetworkTestStage.download) return _value(test.downloadMbps);
+    if (test.stage == NetworkTestStage.upload) return _value(test.uploadMbps);
+    if (test.stage == NetworkTestStage.completed) {
+      return test.mode == NetworkTestMode.observe
+          ? _value(test.successRate)
+          : _value(test.downloadMbps);
+    }
+    return test.busy ? '${(test.progress * 100).round()}' : '—';
+  }
+
+  String _gaugeUnitText(NetworkDiagnosticsController test) {
+    if (test.stage == NetworkTestStage.completed &&
+        test.mode == NetworkTestMode.observe) {
+      return '% 请求成功';
+    }
+    if (test.stage == NetworkTestStage.download ||
+        test.stage == NetworkTestStage.upload ||
+        test.stage == NetworkTestStage.completed) {
+      return 'Mbps';
+    }
+    return test.busy ? '% 已完成' : 'NAS LINK';
+  }
+
+  Widget _buildHeroGauge(
+    NetworkDiagnosticsController test, {
+    required ColorScheme scheme,
+    required IslePalette palette,
+    required bool reduced,
+    required bool wide,
+    required double maxWidth,
+  }) {
+    return SizedBox(
+      width: wide ? 280 : math.min(216, maxWidth - 32),
+      height: wide ? 280 : 204,
+      child: AnimatedBuilder(
+        animation: _motion,
+        builder: (context, child) => CustomPaint(
+          key: const ValueKey('networkTestGauge'),
+          painter: _TestGaugePainter(
+            progress:
+                (test.progress +
+                        (test.busy && test.totalSteps > 0
+                            ? test.transferProgress / test.totalSteps
+                            : 0))
+                    .clamp(0.0, 1.0),
+            pulse: _motion.value,
+            animated: test.busy && !reduced,
+            primary: palette['brandBlue'],
+            secondary: palette['brandCyan'],
+            tertiary: palette['brandIndigo'],
+            track: scheme.outlineVariant,
+          ),
+          child: child,
+        ),
+        child: Center(
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 55),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  switch (test.stage) {
+                    NetworkTestStage.completed =>
+                      Icons.check_circle_outline_rounded,
+                    NetworkTestStage.failed => Icons.error_outline_rounded,
+                    NetworkTestStage.cancelled => Icons.pause_circle_outline,
+                    _ => Icons.wifi_tethering_rounded,
+                  },
+                  size: 24,
+                  color: test.stage == NetworkTestStage.failed
+                      ? scheme.error
+                      : palette['brandBlue'],
+                ),
+                const SizedBox(height: 13),
+                FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Text(
+                    _gaugePrimaryText(test),
+                    style: Theme.of(context).textTheme.displayMedium?.copyWith(
+                      fontSize: 46,
+                      fontWeight: FontWeight.w700,
+                      letterSpacing: -1.8,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  _gaugeUnitText(test),
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                    letterSpacing: 1.6,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildHeroControls(
+    NetworkDiagnosticsController test, {
+    required ColorScheme scheme,
+    required IslePalette palette,
+    required bool wide,
+  }) {
+    return Column(
+      crossAxisAlignment:
+          wide ? CrossAxisAlignment.start : CrossAxisAlignment.center,
+      children: [
+        Text(
+          test.stage == NetworkTestStage.completed
+              ? test.verdict
+              : '当前 NAS 连接检测',
+          style: Theme.of(context).textTheme.titleLarge,
+          textAlign: wide ? TextAlign.start : TextAlign.center,
+        ),
+        const SizedBox(height: 8),
+        Text(
+          test.stageText,
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 9),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.dns_outlined, size: 16, color: scheme.onSurfaceVariant),
+            const SizedBox(width: 7),
+            Flexible(
+              child: Text(
+                widget.api.uri('/').host,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 22),
+        SizedBox(
+          width: wide ? 270 : double.infinity,
+          child: LinearProgressIndicator(
+            value: test.progress,
+            minHeight: 5,
+            borderRadius: BorderRadius.circular(10),
+            color: palette['brandCyan'],
+            backgroundColor: scheme.outlineVariant.withValues(alpha: .5),
+          ),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          test.busy
+              ? '检测步骤 ${test.completedSteps} / ${test.totalSteps}'
+              : '只使用内存测试数据，不创建 NAS 文件',
+          textAlign: wide ? TextAlign.start : TextAlign.center,
+          style: Theme.of(context).textTheme.bodySmall?.copyWith(
+            color: scheme.onSurfaceVariant,
+          ),
+        ),
+        const SizedBox(height: 19),
+        SizedBox(
+          width: wide ? 270 : double.infinity,
+          child: test.busy
+              ? OutlinedButton.icon(
+                  key: const ValueKey('networkTestStop'),
+                  onPressed: test.stop,
+                  icon: const Icon(Icons.stop_circle_outlined),
+                  label: const Text('停止检测'),
+                )
+              : FilledButton.icon(
+                  key: const ValueKey('networkTestStart'),
+                  onPressed: () => unawaited(test.start()),
+                  icon: Icon(
+                    test.stage == NetworkTestStage.idle
+                        ? Icons.bolt_rounded
+                        : Icons.refresh_rounded,
+                  ),
+                  label: Text(
+                    test.stage == NetworkTestStage.idle ? '开始检测' : '重新检测',
+                  ),
+                ),
+        ),
+      ],
+    );
+  }
+
   Widget _hero(NetworkDiagnosticsController test) {
     final scheme = Theme.of(context).colorScheme;
     final palette = IslePalette.of(context);
@@ -98,292 +400,21 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
         builder: (context, constraints) {
           final wide = constraints.maxWidth >= 680 && wideText;
           if (test.stage == NetworkTestStage.failed) {
-            // Failures should be actionable at the top of the page, not
-            // hidden beneath an empty gauge and multiple metric cards.
-            return Padding(
-              padding: EdgeInsets.all(wide ? 26 : 18),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    children: [
-                      Container(
-                        width: 46,
-                        height: 46,
-                        decoration: BoxDecoration(
-                          color: scheme.errorContainer.withValues(alpha: .65),
-                          borderRadius: BorderRadius.circular(14),
-                        ),
-                        child: Icon(
-                          Icons.wifi_off_rounded,
-                          color: scheme.error,
-                          size: 24,
-                        ),
-                      ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              '连接检测中断',
-                              style: Theme.of(context).textTheme.titleLarge,
-                            ),
-                            const SizedBox(height: 3),
-                            Text(
-                              widget.api.uri('/').host,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: Theme.of(context).textTheme.bodySmall
-                                  ?.copyWith(color: scheme.onSurfaceVariant),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  Semantics(
-                    liveRegion: true,
-                    child: Container(
-                      key: const ValueKey('networkTestFailureCard'),
-                      width: double.infinity,
-                      padding: const EdgeInsets.all(14),
-                      decoration: BoxDecoration(
-                        color: scheme.errorContainer.withValues(alpha: .52),
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(
-                          color: scheme.error.withValues(alpha: .22),
-                        ),
-                      ),
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Icon(
-                            Icons.info_outline_rounded,
-                            size: 20,
-                            color: scheme.error,
-                          ),
-                          const SizedBox(width: 10),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  test.error ?? '测速过程中发生未知错误。',
-                                  style: Theme.of(context).textTheme.bodyMedium
-                                      ?.copyWith(fontWeight: FontWeight.w600),
-                                ),
-                                if (test.failureAdvice != null) ...[
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    test.failureAdvice!,
-                                    style: Theme.of(context).textTheme.bodySmall
-                                        ?.copyWith(
-                                          color: scheme.onSurfaceVariant,
-                                        ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  Text(
-                    '中断阶段：${test.failureStep ?? '连接检查'} · 已完成 ${test.completedSteps}/${test.totalSteps} 步',
-                    style: Theme.of(context).textTheme.bodySmall
-                        ?.copyWith(color: scheme.onSurfaceVariant),
-                  ),
-                  const SizedBox(height: 15),
-                  SizedBox(
-                    width: wide ? 248 : double.infinity,
-                    child: FilledButton.icon(
-                      key: const ValueKey('networkTestStart'),
-                      onPressed: () => unawaited(test.start()),
-                      icon: const Icon(Icons.refresh_rounded),
-                      label: const Text('重新检测'),
-                    ),
-                  ),
-                ],
-              ),
-            );
+            return _buildFailedHeroContent(test, scheme: scheme, wide: wide);
           }
-          final gauge = SizedBox(
-            width: wide ? 280 : math.min(216, constraints.maxWidth - 32),
-            height: wide ? 280 : 204,
-            child: AnimatedBuilder(
-              animation: _motion,
-              builder: (context, child) => CustomPaint(
-                key: const ValueKey('networkTestGauge'),
-                painter: _TestGaugePainter(
-                  progress:
-                      (test.progress +
-                              (test.busy && test.totalSteps > 0
-                                  ? test.transferProgress / test.totalSteps
-                                  : 0))
-                          .clamp(0.0, 1.0),
-                  pulse: _motion.value,
-                  animated: test.busy && !reduced,
-                  primary: palette['brandBlue'],
-                  secondary: palette['brandCyan'],
-                  tertiary: palette['brandIndigo'],
-                  track: scheme.outlineVariant,
-                ),
-                child: child,
-              ),
-              child: Center(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 55),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        switch (test.stage) {
-                          NetworkTestStage.completed =>
-                            Icons.check_circle_outline_rounded,
-                          NetworkTestStage.failed =>
-                            Icons.error_outline_rounded,
-                          NetworkTestStage.cancelled =>
-                            Icons.pause_circle_outline,
-                          _ => Icons.wifi_tethering_rounded,
-                        },
-                        size: 24,
-                        color: test.stage == NetworkTestStage.failed
-                            ? scheme.error
-                            : palette['brandBlue'],
-                      ),
-                      const SizedBox(height: 13),
-                      FittedBox(
-                        fit: BoxFit.scaleDown,
-                        child: Text(
-                          test.stage == NetworkTestStage.download
-                              ? _value(test.downloadMbps)
-                              : test.stage == NetworkTestStage.upload
-                              ? _value(test.uploadMbps)
-                              : test.stage == NetworkTestStage.completed
-                              ? test.mode == NetworkTestMode.observe
-                                    ? _value(test.successRate)
-                                    : _value(test.downloadMbps)
-                              : test.busy
-                              ? '${(test.progress * 100).round()}'
-                              : '—',
-                          style: Theme.of(context).textTheme.displayMedium
-                              ?.copyWith(
-                                fontSize: 46,
-                                fontWeight: FontWeight.w700,
-                                letterSpacing: -1.8,
-                              ),
-                        ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        test.stage == NetworkTestStage.completed &&
-                                test.mode == NetworkTestMode.observe
-                            ? '% 请求成功'
-                            : test.stage == NetworkTestStage.download ||
-                                  test.stage == NetworkTestStage.upload ||
-                                  test.stage == NetworkTestStage.completed
-                            ? 'Mbps'
-                            : test.busy
-                            ? '% 已完成'
-                            : 'NAS LINK',
-                        style: Theme.of(context).textTheme.labelMedium
-                            ?.copyWith(
-                              color: scheme.onSurfaceVariant,
-                              letterSpacing: 1.6,
-                            ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
+          final gauge = _buildHeroGauge(
+            test,
+            scheme: scheme,
+            palette: palette,
+            reduced: reduced,
+            wide: wide,
+            maxWidth: constraints.maxWidth,
           );
-          final controls = Column(
-            crossAxisAlignment: wide
-                ? CrossAxisAlignment.start
-                : CrossAxisAlignment.center,
-            children: [
-              Text(
-                test.stage == NetworkTestStage.completed
-                    ? test.verdict
-                    : '当前 NAS 连接检测',
-                style: Theme.of(context).textTheme.titleLarge,
-                textAlign: wide ? TextAlign.start : TextAlign.center,
-              ),
-              const SizedBox(height: 8),
-              Text(
-                test.stageText,
-                style: Theme.of(context).textTheme.bodyMedium
-                    ?.copyWith(color: scheme.onSurfaceVariant),
-              ),
-              const SizedBox(height: 9),
-              Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.dns_outlined,
-                    size: 16,
-                    color: scheme.onSurfaceVariant,
-                  ),
-                  const SizedBox(width: 7),
-                  Flexible(
-                    child: Text(
-                      widget.api.uri('/').host,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 22),
-              SizedBox(
-                width: wide ? 270 : double.infinity,
-                child: LinearProgressIndicator(
-                  value: test.progress,
-                  minHeight: 5,
-                  borderRadius: BorderRadius.circular(10),
-                  color: palette['brandCyan'],
-                  backgroundColor: scheme.outlineVariant.withValues(alpha: .5),
-                ),
-              ),
-              const SizedBox(height: 8),
-              Text(
-                test.busy
-                    ? '检测步骤 ${test.completedSteps} / ${test.totalSteps}'
-                    : '只使用内存测试数据，不创建 NAS 文件',
-                textAlign: wide ? TextAlign.start : TextAlign.center,
-                style: Theme.of(context).textTheme.bodySmall
-                    ?.copyWith(color: scheme.onSurfaceVariant),
-              ),
-              const SizedBox(height: 19),
-              SizedBox(
-                width: wide ? 270 : double.infinity,
-                child: test.busy
-                    ? OutlinedButton.icon(
-                        key: const ValueKey('networkTestStop'),
-                        onPressed: test.stop,
-                        icon: const Icon(Icons.stop_circle_outlined),
-                        label: const Text('停止检测'),
-                      )
-                    : FilledButton.icon(
-                        key: const ValueKey('networkTestStart'),
-                        onPressed: () => unawaited(test.start()),
-                        icon: Icon(
-                          test.stage == NetworkTestStage.idle
-                              ? Icons.bolt_rounded
-                              : Icons.refresh_rounded,
-                        ),
-                        label: Text(
-                          test.stage == NetworkTestStage.idle ? '开始检测' : '重新检测',
-                        ),
-                      ),
-              ),
-            ],
+          final controls = _buildHeroControls(
+            test,
+            scheme: scheme,
+            palette: palette,
+            wide: wide,
           );
           return Padding(
             padding: EdgeInsets.all(wide ? 26 : 18),

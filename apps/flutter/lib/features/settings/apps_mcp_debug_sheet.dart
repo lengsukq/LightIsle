@@ -42,6 +42,41 @@ class _AppsMcpDebugSheet extends StatefulWidget {
 }
 
 class _AppsMcpDebugSheetState extends State<_AppsMcpDebugSheet> {
+  static const List<String> _mcpToolNames = <String>[
+    'lightisle_get_health',
+    'lightisle_get_system',
+    'lightisle_list_disks',
+    'lightisle_list_roots',
+    'lightisle_list_files',
+    'lightisle_move_to_trash',
+    'lightisle_list_trash',
+    'lightisle_get_photo_status',
+    'lightisle_get_cinema_status',
+    'lightisle_list_downloads',
+    'lightisle_list_members',
+    'lightisle_list_automation_tasks',
+    'lightisle_trigger_automation_task',
+    'lightisle_list_tasks',
+    'lightisle_list_alerts',
+    'lightisle_get_audit_history',
+    'lightisle_get_environment',
+    'lightisle_list_apps',
+    'lightisle_scaffold_app',
+    'lightisle_validate_and_reload',
+    'lightisle_read_plugin_file',
+    'lightisle_write_plugin_file',
+    'lightisle_app_action',
+    'lightisle_get_app_logs',
+    'lightisle_probe_app',
+  ];
+
+  static const List<String> _mcpSpecUris = <String>[
+    'lightisle://specs/mcp-security',
+    'lightisle://specs/plugin-v2',
+    'lightisle://specs/ui-theme',
+    'lightisle://specs/automation-v1',
+  ];
+
   late bool _mcpEnabled;
   late bool _mcpLanEnabled;
   late String _mcpToken;
@@ -239,13 +274,16 @@ class _AppsMcpDebugSheetState extends State<_AppsMcpDebugSheet> {
     if (mounted) setState(() => _notice = label);
   }
 
+  String get _maskedToken {
+    if (_mcpToken.length > 10) {
+      return '${_mcpToken.substring(0, 6)}••••••••${_mcpToken.substring(_mcpToken.length - 4)}';
+    }
+    return _mcpToken.isEmpty ? '未生成' : '••••••';
+  }
+
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context), colors = theme.colorScheme;
-    final maskedToken = _mcpToken.length > 10
-        ? '${_mcpToken.substring(0, 6)}••••••••${_mcpToken.substring(_mcpToken.length - 4)}'
-        : (_mcpToken.isEmpty ? '未生成' : '••••••');
-
+    final theme = Theme.of(context);
     return DraggableScrollableSheet(
       expand: false,
       initialChildSize: 0.86,
@@ -255,386 +293,298 @@ class _AppsMcpDebugSheetState extends State<_AppsMcpDebugSheet> {
         controller: scrollCtrl,
         padding: const EdgeInsets.fromLTRB(20, 8, 20, 28),
         children: [
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  '局域网 MCP 配置与在线调试台',
-                  style: theme.textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-              ),
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(_latestSnapshot),
-                child: const Text('完成'),
-              ),
-            ],
-          ),
+          _buildSheetHeader(context, theme),
           if (_error != null) Notice(_error!, error: true),
           if (_notice != null) Notice(_notice!),
           const SizedBox(height: 8),
-          SwitchListTile(
-            key: const ValueKey('lanMcpEnableSwitch'),
-            contentPadding: EdgeInsets.zero,
-            title: const Text('允许局域网远程 MCP (HTTP / SSE) 接入'),
-            subtitle: Text('端点：$_lanHttpUrl（仅限本机与私有局域网 IP 持 Token 访问）'),
-            value: _mcpLanEnabled,
-            onChanged: _busy ? null : _toggleLanMcp,
+          ..._buildLanAccessSection(),
+          const Divider(height: 28),
+          ..._buildMcpInspectorSection(theme),
+          const Divider(height: 28),
+          if (widget.apps.isNotEmpty) ...[
+            ..._buildGatewayProbeSection(theme),
+            const Divider(height: 28),
+          ],
+          ..._buildTraceLogsSection(theme),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSheetHeader(BuildContext context, ThemeData theme) {
+    return Row(
+      children: [
+        Expanded(
+          child: Text(
+            '局域网 MCP 配置与在线调试台',
+            style: theme.textTheme.titleLarge?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
           ),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            children: [
-              FilledButton.tonalIcon(
-                key: const ValueKey('copyLanMcpPromptButton'),
-                onPressed: _lanPrompt.isEmpty
-                    ? null
-                    : () => _copyText(_lanPrompt, '已复制局域网 MCP 接入提示词'),
-                icon: const Icon(Icons.copy_all_rounded, size: 16),
-                label: const Text('复制局域网 MCP 提示词'),
-              ),
-              OutlinedButton.icon(
-                onPressed: _configJson.isEmpty
-                    ? null
-                    : () => _copyText(_configJson, '已复制 mcpServers JSON 配置'),
-                icon: const Icon(Icons.data_object_rounded, size: 16),
-                label: const Text('复制 JSON 配置'),
-              ),
-              if (_mcpToken.isNotEmpty) ...[
-                OutlinedButton.icon(
-                  onPressed: () => setState(() => _showToken = !_showToken),
-                  icon: const Icon(Icons.visibility_outlined, size: 16),
-                  label: Text(_showToken ? _mcpToken : 'Token: $maskedToken'),
+        ),
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(_latestSnapshot),
+          child: const Text('完成'),
+        ),
+      ],
+    );
+  }
+
+  List<Widget> _buildLanAccessSection() {
+    return [
+      SwitchListTile(
+        key: const ValueKey('lanMcpEnableSwitch'),
+        contentPadding: EdgeInsets.zero,
+        title: const Text('允许局域网远程 MCP (HTTP / SSE) 接入'),
+        subtitle: Text('端点：$_lanHttpUrl（仅限本机与私有局域网 IP 持 Token 访问）'),
+        value: _mcpLanEnabled,
+        onChanged: _busy ? null : _toggleLanMcp,
+      ),
+      Wrap(
+        spacing: 8,
+        runSpacing: 8,
+        children: [
+          FilledButton.tonalIcon(
+            key: const ValueKey('copyLanMcpPromptButton'),
+            onPressed: _lanPrompt.isEmpty
+                ? null
+                : () => _copyText(_lanPrompt, '已复制局域网 MCP 接入提示词'),
+            icon: const Icon(Icons.copy_all_rounded, size: 16),
+            label: const Text('复制局域网 MCP 提示词'),
+          ),
+          OutlinedButton.icon(
+            onPressed: _configJson.isEmpty
+                ? null
+                : () => _copyText(_configJson, '已复制 mcpServers JSON 配置'),
+            icon: const Icon(Icons.data_object_rounded, size: 16),
+            label: const Text('复制 JSON 配置'),
+          ),
+          if (_mcpToken.isNotEmpty) ...[
+            OutlinedButton.icon(
+              onPressed: () => setState(() => _showToken = !_showToken),
+              icon: const Icon(Icons.visibility_outlined, size: 16),
+              label: Text(_showToken ? _mcpToken : 'Token: $_maskedToken'),
+            ),
+            OutlinedButton.icon(
+              onPressed: () => _copyText(_mcpToken, '已复制 MCP Bearer Token'),
+              icon: const Icon(Icons.key_rounded, size: 16),
+              label: const Text('复制 Token'),
+            ),
+            OutlinedButton.icon(
+              onPressed: _busy ? null : _rotateToken,
+              icon: const Icon(Icons.autorenew_rounded, size: 16),
+              label: const Text('轮换 Token'),
+            ),
+          ],
+        ],
+      ),
+    ];
+  }
+
+  List<Widget> _buildMcpInspectorSection(ThemeData theme) {
+    final colors = theme.colorScheme;
+    return [
+      Text(
+        'MCP 交互式调试器 (MCP Inspector)',
+        style: theme.textTheme.titleMedium?.copyWith(
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      const SizedBox(height: 8),
+      Row(
+        children: [
+          Expanded(
+            child: DropdownButtonFormField<String>(
+              key: const ValueKey('mcpDebugMethodDropdown'),
+              isExpanded: true,
+              initialValue: _debugMethod,
+              decoration: const InputDecoration(labelText: '请求方法'),
+              items: const [
+                DropdownMenuItem(
+                  value: 'tools/call',
+                  child: Text('tools/call (调用工具)'),
                 ),
-                OutlinedButton.icon(
-                  onPressed: () => _copyText(_mcpToken, '已复制 MCP Bearer Token'),
-                  icon: const Icon(Icons.key_rounded, size: 16),
-                  label: const Text('复制 Token'),
+                DropdownMenuItem(
+                  value: 'tools/list',
+                  child: Text('tools/list (列出工具)'),
                 ),
-                OutlinedButton.icon(
-                  onPressed: _busy ? null : _rotateToken,
-                  icon: const Icon(Icons.autorenew_rounded, size: 16),
-                  label: const Text('轮换 Token'),
+                DropdownMenuItem(
+                  value: 'resources/list',
+                  child: Text('resources/list (列出资源)'),
+                ),
+                DropdownMenuItem(
+                  value: 'resources/read',
+                  child: Text('resources/read (读取规范资源)'),
                 ),
               ],
-            ],
+              onChanged: (v) =>
+                  setState(() => _debugMethod = v ?? 'tools/call'),
+            ),
           ),
-          const Divider(height: 28),
+          if (_debugMethod == 'tools/call') ...[
+            const SizedBox(width: 12),
+            Expanded(
+              child: DropdownButtonFormField<String>(
+                isExpanded: true,
+                initialValue: _selectedTool,
+                decoration: const InputDecoration(labelText: 'MCP 工具'),
+                items: [
+                  for (final name in _mcpToolNames)
+                    DropdownMenuItem(value: name, child: Text(name)),
+                ],
+                onChanged: (v) => setState(
+                  () => _selectedTool = v ?? 'lightisle_get_environment',
+                ),
+              ),
+            ),
+          ],
+          if (_debugMethod == 'resources/read') ...[
+            const SizedBox(width: 12),
+            Expanded(
+              child: DropdownButtonFormField<String>(
+                key: const ValueKey('mcpDebugResourceUriDropdown'),
+                isExpanded: true,
+                initialValue: _selectedUri,
+                decoration: const InputDecoration(labelText: 'MCP 规范资源 URI'),
+                items: [
+                  for (final uri in _mcpSpecUris)
+                    DropdownMenuItem(value: uri, child: Text(uri)),
+                ],
+                onChanged: (v) => setState(
+                  () => _selectedUri = v ?? 'lightisle://specs/plugin-v2',
+                ),
+              ),
+            ),
+          ],
+        ],
+      ),
+      if (_debugMethod == 'tools/call') ...[
+        const SizedBox(height: 8),
+        TextField(
+          controller: _argsCtrl,
+          maxLines: 2,
+          style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
+          decoration: const InputDecoration(labelText: '工具参数 (JSON)'),
+        ),
+      ],
+      const SizedBox(height: 8),
+      Align(
+        alignment: Alignment.centerLeft,
+        child: FilledButton.icon(
+          key: const ValueKey('runMcpDebugButton'),
+          onPressed: _busy ? null : _runMcpDebug,
+          icon: const Icon(Icons.play_arrow_rounded, size: 18),
+          label: const Text('发送 MCP 调试请求'),
+        ),
+      ),
+      if (_debugRes != null) ...[
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: colors.surfaceContainerHighest.withValues(alpha: 0.5),
+            borderRadius: BorderRadius.circular(10),
+          ),
+          child: SelectableText(
+            _debugRes!['responseJson']?.toString() ?? '',
+            style: const TextStyle(fontFamily: 'monospace', fontSize: 11.5),
+          ),
+        ),
+      ],
+    ];
+  }
+
+  List<Widget> _buildGatewayProbeSection(ThemeData theme) {
+    return [
+      Text(
+        '轻应用网关 HTTP 探针',
+        style: theme.textTheme.titleMedium?.copyWith(
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      const SizedBox(height: 8),
+      Row(
+        children: [
+          Expanded(
+            child: DropdownButtonFormField<String>(
+              isExpanded: true,
+              initialValue: _probeAppId,
+              decoration: const InputDecoration(labelText: '目标应用'),
+              items: [
+                for (final a in widget.apps)
+                  DropdownMenuItem(
+                    value: a['id']?.toString() ?? '',
+                    child: Text('${a['name'] ?? a['id']}'),
+                  ),
+              ],
+              onChanged: (v) => setState(() => _probeAppId = v ?? ''),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: TextField(
+              controller: _probePathCtrl,
+              decoration: const InputDecoration(labelText: '探测路径 (如 /)'),
+            ),
+          ),
+          const SizedBox(width: 10),
+          FilledButton.tonal(
+            onPressed: _busy ? null : _runProbe,
+            child: const Text('发送探针'),
+          ),
+        ],
+      ),
+      if (_probeRes != null) ...[
+        const SizedBox(height: 8),
+        Text(
+          'HTTP ${_probeRes!['statusCode']} · ${_probeRes!['durationMs']} ms · 状态 ${_probeRes!['status']}',
+          style: theme.textTheme.bodySmall?.copyWith(
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const SizedBox(height: 4),
+        SelectableText(
+          _probeRes!['bodyPreview']?.toString() ?? '',
+          style: const TextStyle(fontFamily: 'monospace', fontSize: 11.5),
+        ),
+      ],
+    ];
+  }
+
+  List<Widget> _buildTraceLogsSection(ThemeData theme) {
+    return [
+      Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
           Text(
-            'MCP 交互式调试器 (MCP Inspector)',
+            'MCP 调用追踪日志 (${_logs.length})',
             style: theme.textTheme.titleMedium?.copyWith(
               fontWeight: FontWeight.w700,
             ),
           ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: DropdownButtonFormField<String>(
-                  key: const ValueKey('mcpDebugMethodDropdown'),
-                  isExpanded: true,
-                  initialValue: _debugMethod,
-                  decoration: const InputDecoration(labelText: '请求方法'),
-                  items: const [
-                    DropdownMenuItem(
-                      value: 'tools/call',
-                      child: Text('tools/call (调用工具)'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'tools/list',
-                      child: Text('tools/list (列出工具)'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'resources/list',
-                      child: Text('resources/list (列出资源)'),
-                    ),
-                    DropdownMenuItem(
-                      value: 'resources/read',
-                      child: Text('resources/read (读取规范资源)'),
-                    ),
-                  ],
-                  onChanged: (v) =>
-                      setState(() => _debugMethod = v ?? 'tools/call'),
-                ),
-              ),
-              if (_debugMethod == 'tools/call') ...[
-                const SizedBox(width: 12),
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    isExpanded: true,
-                    initialValue: _selectedTool,
-                    decoration: const InputDecoration(labelText: 'MCP 工具'),
-                    items: const [
-                      DropdownMenuItem(
-                        value: 'lightisle_get_health',
-                        child: Text('lightisle_get_health'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'lightisle_get_system',
-                        child: Text('lightisle_get_system'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'lightisle_list_disks',
-                        child: Text('lightisle_list_disks'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'lightisle_list_roots',
-                        child: Text('lightisle_list_roots'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'lightisle_list_files',
-                        child: Text('lightisle_list_files'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'lightisle_move_to_trash',
-                        child: Text('lightisle_move_to_trash'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'lightisle_list_trash',
-                        child: Text('lightisle_list_trash'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'lightisle_get_photo_status',
-                        child: Text('lightisle_get_photo_status'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'lightisle_get_cinema_status',
-                        child: Text('lightisle_get_cinema_status'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'lightisle_list_downloads',
-                        child: Text('lightisle_list_downloads'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'lightisle_list_members',
-                        child: Text('lightisle_list_members'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'lightisle_list_automation_tasks',
-                        child: Text('lightisle_list_automation_tasks'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'lightisle_trigger_automation_task',
-                        child: Text('lightisle_trigger_automation_task'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'lightisle_list_tasks',
-                        child: Text('lightisle_list_tasks'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'lightisle_list_alerts',
-                        child: Text('lightisle_list_alerts'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'lightisle_get_audit_history',
-                        child: Text('lightisle_get_audit_history'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'lightisle_get_environment',
-                        child: Text('lightisle_get_environment'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'lightisle_list_apps',
-                        child: Text('lightisle_list_apps'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'lightisle_scaffold_app',
-                        child: Text('lightisle_scaffold_app'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'lightisle_validate_and_reload',
-                        child: Text('lightisle_validate_and_reload'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'lightisle_read_plugin_file',
-                        child: Text('lightisle_read_plugin_file'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'lightisle_write_plugin_file',
-                        child: Text('lightisle_write_plugin_file'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'lightisle_app_action',
-                        child: Text('lightisle_app_action'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'lightisle_get_app_logs',
-                        child: Text('lightisle_get_app_logs'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'lightisle_probe_app',
-                        child: Text('lightisle_probe_app'),
-                      ),
-                    ],
-                    onChanged: (v) => setState(
-                      () => _selectedTool = v ?? 'lightisle_get_environment',
-                    ),
-                  ),
-                ),
-              ],
-              if (_debugMethod == 'resources/read') ...[
-                const SizedBox(width: 12),
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    key: const ValueKey('mcpDebugResourceUriDropdown'),
-                    isExpanded: true,
-                    initialValue: _selectedUri,
-                    decoration: const InputDecoration(
-                      labelText: 'MCP 规范资源 URI',
-                    ),
-                    items: const [
-                      DropdownMenuItem(
-                        value: 'lightisle://specs/mcp-security',
-                        child: Text('lightisle://specs/mcp-security'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'lightisle://specs/plugin-v2',
-                        child: Text('lightisle://specs/plugin-v2'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'lightisle://specs/ui-theme',
-                        child: Text('lightisle://specs/ui-theme'),
-                      ),
-                      DropdownMenuItem(
-                        value: 'lightisle://specs/automation-v1',
-                        child: Text('lightisle://specs/automation-v1'),
-                      ),
-                    ],
-                    onChanged: (v) => setState(
-                      () => _selectedUri = v ?? 'lightisle://specs/plugin-v2',
-                    ),
-                  ),
-                ),
-              ],
-            ],
-          ),
-          if (_debugMethod == 'tools/call') ...[
-            const SizedBox(height: 8),
-            TextField(
-              controller: _argsCtrl,
-              maxLines: 2,
-              style: const TextStyle(fontFamily: 'monospace', fontSize: 12),
-              decoration: const InputDecoration(labelText: '工具参数 (JSON)'),
+          if (_logs.isNotEmpty)
+            TextButton(
+              onPressed: _busy ? null : _clearLogs,
+              child: const Text('清空日志'),
             ),
-          ],
-          const SizedBox(height: 8),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: FilledButton.icon(
-              key: const ValueKey('runMcpDebugButton'),
-              onPressed: _busy ? null : _runMcpDebug,
-              icon: const Icon(Icons.play_arrow_rounded, size: 18),
-              label: const Text('发送 MCP 调试请求'),
-            ),
-          ),
-          if (_debugRes != null) ...[
-            const SizedBox(height: 8),
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: colors.surfaceContainerHighest.withValues(alpha: 0.5),
-                borderRadius: BorderRadius.circular(10),
-              ),
-              child: SelectableText(
-                _debugRes!['responseJson']?.toString() ?? '',
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 11.5),
-              ),
-            ),
-          ],
-          const Divider(height: 28),
-          if (widget.apps.isNotEmpty) ...[
-            Text(
-              '轻应用网关 HTTP 探针',
-              style: theme.textTheme.titleMedium?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 8),
-            Row(
-              children: [
-                Expanded(
-                  child: DropdownButtonFormField<String>(
-                    isExpanded: true,
-                    initialValue: _probeAppId,
-                    decoration: const InputDecoration(labelText: '目标应用'),
-                    items: [
-                      for (final a in widget.apps)
-                        DropdownMenuItem(
-                          value: a['id']?.toString() ?? '',
-                          child: Text('${a['name'] ?? a['id']}'),
-                        ),
-                    ],
-                    onChanged: (v) => setState(() => _probeAppId = v ?? ''),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: TextField(
-                    controller: _probePathCtrl,
-                    decoration: const InputDecoration(labelText: '探测路径 (如 /)'),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                FilledButton.tonal(
-                  onPressed: _busy ? null : _runProbe,
-                  child: const Text('发送探针'),
-                ),
-              ],
-            ),
-            if (_probeRes != null) ...[
-              const SizedBox(height: 8),
-              Text(
-                'HTTP ${_probeRes!['statusCode']} · ${_probeRes!['durationMs']} ms · 状态 ${_probeRes!['status']}',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              const SizedBox(height: 4),
-              SelectableText(
-                _probeRes!['bodyPreview']?.toString() ?? '',
-                style: const TextStyle(fontFamily: 'monospace', fontSize: 11.5),
-              ),
-            ],
-            const Divider(height: 28),
-          ],
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              Text(
-                'MCP 调用追踪日志 (${_logs.length})',
-                style: theme.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              if (_logs.isNotEmpty)
-                TextButton(
-                  onPressed: _busy ? null : _clearLogs,
-                  child: const Text('清空日志'),
-                ),
-            ],
-          ),
-          if (_logs.isEmpty)
-            Text(
-              '暂无 MCP 调用记录',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: colors.onSurfaceVariant,
-              ),
-            )
-          else
-            for (final entry in _logs.take(12))
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Text(
-                  '[${entry['transport']}] ${entry['method']} ${entry['target'] ?? ''} · ${entry['durationMs']} ms · ${entry['remoteAddr'] ?? 'local'}',
-                  style: const TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 11.5,
-                  ),
-                ),
-              ),
         ],
       ),
-    );
+      if (_logs.isEmpty)
+        Text(
+          '暂无 MCP 调用记录',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.onSurfaceVariant,
+          ),
+        )
+      else
+        for (final entry in _logs.take(12))
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 4),
+            child: Text(
+              '[${entry['transport']}] ${entry['method']} ${entry['target'] ?? ''} · ${entry['durationMs']} ms · ${entry['remoteAddr'] ?? 'local'}',
+              style: const TextStyle(fontFamily: 'monospace', fontSize: 11.5),
+            ),
+          ),
+    ];
   }
 }

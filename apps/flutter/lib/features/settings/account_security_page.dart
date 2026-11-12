@@ -148,7 +148,9 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
             widget.currentUsername!,
             newPassword,
           );
-        } catch (_) {}
+        } catch (error) {
+          debugPrint('AccountSecurityPage: saved password sync skipped: $error');
+        }
       }
       if (!mounted) return;
       _current.clear();

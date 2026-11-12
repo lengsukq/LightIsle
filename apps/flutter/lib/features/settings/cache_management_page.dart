@@ -62,7 +62,9 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
         for (final item in photos) {
           offlinePhotoBytes += item.size;
         }
-      } catch (_) {}
+      } catch (error) {
+        debugPrint('CacheManagementPage: offline photo stats unavailable: $error');
+      }
       try {
         final videos = await OfflineVideoStore(
           api: widget.api,
@@ -72,7 +74,9 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
         for (final item in videos) {
           offlineVideoBytes += item.size;
         }
-      } catch (_) {}
+      } catch (error) {
+        debugPrint('CacheManagementPage: offline video stats unavailable: $error');
+      }
     }
 
     final report = await IsleCacheManager.instance.inspect(
@@ -85,7 +89,9 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
     Map<String, dynamic>? serverStatus;
     try {
       serverStatus = await widget.api.get('/api/v2/cache/status');
-    } catch (_) {}
+    } catch (error) {
+      debugPrint('CacheManagementPage: server cache status unavailable: $error');
+    }
 
     if (!mounted) return;
     setState(() {

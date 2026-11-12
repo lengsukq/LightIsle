@@ -3,31 +3,30 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-
-import 'cinema_detail_header.dart';
-import 'cinema_hls_session_service.dart';
-import 'cinema_progress_save_queue.dart';
-import 'cinema_metadata_repository.dart';
-import 'cinema_subtitle_repository.dart';
-import 'cinema_episode_navigator.dart';
-import 'cinema_pip_lifecycle_policy.dart';
-
 import 'package:flutter/services.dart';
-import 'package:video_player/video_player.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:video_player/video_player.dart';
 
 import '../../core/isle_theme.dart';
-import '../../core/widgets.dart';
 import '../../core/lightisle_api.dart';
-import 'media_models.dart';
-import 'media_ui.dart';
-import 'android_pip_session.dart';
-import 'offline_video_store.dart';
-import 'dlna_cast.dart';
-import 'cinema_dlna_cast_service.dart';
-import 'cinema_decode_preference.dart';
+import '../../core/widgets.dart';
 import '../files/file_export_service.dart';
 import '../files/file_share_dialog.dart';
+import 'android_pip_session.dart';
+import 'cinema_decode_preference.dart';
+import 'cinema_detail_header.dart';
+import 'cinema_detail_state_models.dart';
+import 'cinema_dlna_cast_service.dart';
+import 'cinema_episode_navigator.dart';
+import 'cinema_hls_session_service.dart';
+import 'cinema_metadata_repository.dart';
+import 'cinema_pip_lifecycle_policy.dart';
+import 'cinema_progress_save_queue.dart';
+import 'cinema_subtitle_repository.dart';
+import 'dlna_cast.dart';
+import 'media_models.dart';
+import 'media_ui.dart';
+import 'offline_video_store.dart';
 
 part 'cinema_detail_session_actions.dart';
 part 'cinema_detail_player_state.dart';
@@ -68,65 +67,21 @@ class CinemaDetailDialog extends StatefulWidget {
 class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     with WidgetsBindingObserver {
   late final AndroidPipSession _pip;
-  final TextEditingController _tmdbTokenController = TextEditingController();
-  late final TextEditingController _tmdbQueryController;
   late CinemaFilm _film;
-  VideoPlayerController? _controller;
-  bool _loading = true;
-  bool _busy = false;
-  bool _closing = false;
-  bool _completionSaved = false;
-  bool _autoPlayNext = false;
-  bool _nextEpisodeBusy = false;
-  bool _showPlayerDetails = false;
-  bool _showPlaylistSheet = false;
-  List<CinemaFilm> _directoryFilms = const [];
-  bool _directoryLoading = false;
-  bool _directoryLoaded = false;
-  int _directoryGeneration = 0;
-  bool _mediaActionBusy = false;
-  double? _offlineProgress;
-  DlnaCastSession? _castSession;
-  String? _playbackMessage;
-  String? _progressSaveMessage;
-  String? _subtitleMessage;
-  String _captionLanguage = 'off';
-  List<SubtitleCue> _cues = const [];
-  int _subtitleGeneration = 0;
+  final CinemaPlaybackSessionState _playback = CinemaPlaybackSessionState();
+  final CinemaSubtitleViewState _subtitles = CinemaSubtitleViewState();
+  final CinemaDirectoryPlaylistState _playlistState =
+      CinemaDirectoryPlaylistState();
+  late final CinemaMetadataMatchState _metaMatch;
+  final CinemaPlayerChromeState _chrome = CinemaPlayerChromeState();
+  final CinemaExternalActionState _externalActions =
+      CinemaExternalActionState();
   final CinemaProgressSaveQueue _progressQueue = CinemaProgressSaveQueue();
+
   CinemaMetadataRepository get _metadataRepository =>
       CinemaMetadataRepository(widget.api);
   CinemaSubtitleRepository get _subtitleRepository =>
       CinemaSubtitleRepository(widget.api);
-  bool _hasQueuedFinalSave = false;
-  bool _metadataBusy = false;
-  bool _tmdbSearching = false;
-  bool _tmdbMatching = false;
-  bool _doubanSearching = false;
-  int _metadataGeneration = 0;
-  List<TMDBCandidate> _tmdbCandidates = const [];
-  List<DoubanCandidate> _doubanCandidates = const [];
-  String? _metadataMessage;
-  String? _tmdbMessage;
-  String? _doubanMessage;
-  bool _metadataIsError = false;
-  // HLS playback starts at its requested offset; saved positions remain
-  // relative to the original file.
-  CinemaHlsSession? _hlsSession;
-  CinemaTrackInfo? _tracks;
-  bool _transcodeStarting = false;
-  double _playbackSpeed = 1.0;
-  double _subtitleFontSize = 17.0;
-  double _subtitleOffsetSeconds = 0.0;
-  bool _directLocalActive = false;
-  double? _seekDraft;
-  bool _chromeVisible = true;
-  bool _dockManuallyCollapsed = false;
-  Offset _dockDragOffset = Offset.zero;
-  bool _fillScreen = false;
-  bool _windowFullscreen = false;
-  double _lastNonZeroVolume = 1.0;
-  Timer? _chromeTimer;
 
   void _updateState(VoidCallback fn) => setState(fn);
 
@@ -134,26 +89,36 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _pip = AndroidPipSession(
+    _pip = _createPipSession()..attach();
+    _film = widget.film;
+    _metaMatch = CinemaMetadataMatchState(initialQuery: _film.title);
+    _restorePlaybackSpeed();
+    _restoreAutoplayNext();
+    unawaited(CinemaDecodePreference.load());
+    _loadDetailAndPlayer();
+  }
+
+  AndroidPipSession _createPipSession() {
+    return AndroidPipSession(
       onChanged: () {
         if (mounted) setState(() {});
       },
       onTimeout: () {
         if (!mounted) return;
         setState(() {
-          _playbackMessage = '未确认进入画中画，请在设备设置中检查权限。';
+          _playback.playbackMessage = '未确认进入画中画，请在设备设置中检查权限。';
         });
         if (CinemaPipLifecyclePolicy.shouldPauseAfterPipExit(
           WidgetsBinding.instance.lifecycleState,
         )) {
           unawaited(_queueProgressSave(force: true));
-          unawaited(_controller?.pause());
+          unawaited(_playback.controller?.pause());
         }
       },
       onError: (error) {
         if (mounted) {
           setState(
-            () => _playbackMessage = error == null
+            () => _playback.playbackMessage = error == null
                 ? '无法进入画中画，请检查系统权限。'
                 : mediaErrorLabel(error),
           );
@@ -165,16 +130,10 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
               WidgetsBinding.instance.lifecycleState,
             )) {
           unawaited(_queueProgressSave(force: true));
-          unawaited(_controller?.pause());
+          unawaited(_playback.controller?.pause());
         }
       },
-    )..attach();
-    _film = widget.film;
-    _tmdbQueryController = TextEditingController(text: _film.title);
-    _restorePlaybackSpeed();
-    _restoreAutoplayNext();
-    unawaited(CinemaDecodePreference.load());
-    _loadDetailAndPlayer();
+    );
   }
 
   @override
@@ -187,7 +146,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
       pipActive: _pip.active,
     )) {
       unawaited(_queueProgressSave(force: true));
-      final controller = _controller;
+      final controller = _playback.controller;
       if (controller?.value.isPlaying == true) unawaited(controller!.pause());
     }
   }
@@ -202,17 +161,17 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
   ];
 
   Future<void> _close({bool allowUnsaved = false}) async {
-    if (_closing) return;
+    if (_playback.closing) return;
     HapticFeedback.lightImpact();
-    if (allowUnsaved && _progressSaveMessage != null) {
-      _hasQueuedFinalSave = true;
+    if (allowUnsaved && _playback.progressSaveMessage != null) {
+      _playback.hasQueuedFinalSave = true;
       unawaited(_exitNativeFullscreen());
       Navigator.pop(context);
       return;
     }
-    setState(() => _closing = true);
+    setState(() => _playback.closing = true);
     try {
-      await _controller?.pause();
+      await _playback.controller?.pause();
     } catch (_) {
       // Still try to persist the last known position if the native player
       // cannot pause cleanly.
@@ -220,38 +179,35 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     final saved = await _queueProgressSave(force: true);
     if (!mounted) return;
     if (!saved) {
-      setState(() => _closing = false);
+      setState(() => _playback.closing = false);
       return;
     }
-    _hasQueuedFinalSave = true;
+    _playback.hasQueuedFinalSave = true;
     unawaited(_exitNativeFullscreen());
     Navigator.pop(context);
   }
 
   @override
   void dispose() {
-    _chromeTimer?.cancel();
-    if (_windowFullscreen) {
+    _chrome.cancelTimer();
+    if (_chrome.windowFullscreen) {
       unawaited(_exitNativeFullscreen());
     }
     WidgetsBinding.instance.removeObserver(this);
-    final castSession = _castSession;
+    final castSession = _externalActions.castSession;
     if (castSession != null) {
       unawaited(castSession.stop().catchError((Object _) {}));
-      _castSession = null;
+      _externalActions.castSession = null;
     }
     _pip.dispose();
-    _metadataGeneration++;
-    _directoryGeneration++;
-    _tmdbTokenController.clear();
-    _tmdbTokenController.dispose();
-    _tmdbQueryController.dispose();
-    _subtitleGeneration++;
-    if (!_hasQueuedFinalSave) {
-      _hasQueuedFinalSave = true;
+    _playlistState.generation++;
+    _metaMatch.dispose();
+    _subtitles.generation++;
+    if (!_playback.hasQueuedFinalSave) {
+      _playback.hasQueuedFinalSave = true;
       unawaited(_queueProgressSave(force: true));
     }
-    final controller = _controller;
+    final controller = _playback.controller;
     controller?.removeListener(_onVideoChanged);
     controller?.dispose();
     super.dispose();
@@ -260,7 +216,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
   @override
   Widget build(BuildContext context) {
     if (widget.playerOnly) return _buildPlayerPage(context);
-    final position = _controller?.value.position;
+    final position = _playback.controller?.value.position;
     final resume = _film.canResume && position == null;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final compact = MediaQuery.sizeOf(context).width < 600;
@@ -273,220 +229,224 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
         backgroundColor: Colors.transparent,
         elevation: 0,
         insetPadding: compact ? EdgeInsets.zero : const EdgeInsets.all(14),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(compact ? 0 : 24),
-          child: BackdropFilter(
-            filter: ui.ImageFilter.blur(
-              sigmaX: compact ? 0 : 24,
-              sigmaY: compact ? 0 : 24,
+        child: _buildDialogSurface(context, compact: compact, isDark: isDark, resume: resume),
+      ),
+    );
+  }
+
+  Widget _buildDialogSurface(
+    BuildContext context, {
+    required bool compact,
+    required bool isDark,
+    required bool resume,
+  }) {
+    final scheme = Theme.of(context).colorScheme;
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(compact ? 0 : 24),
+      child: BackdropFilter(
+        filter: ui.ImageFilter.blur(
+          sigmaX: compact ? 0 : 24,
+          sigmaY: compact ? 0 : 24,
+        ),
+        child: Container(
+          constraints: BoxConstraints(
+            maxWidth: 1040,
+            maxHeight: MediaQuery.sizeOf(context).height * (compact ? 1 : .94),
+          ),
+          decoration: BoxDecoration(
+            color: scheme.surface.withValues(alpha: isDark ? 0.88 : 0.94),
+            borderRadius: BorderRadius.circular(compact ? 0 : 24),
+            border: Border.all(
+              color: isDark
+                  ? Colors.white.withValues(alpha: 0.16)
+                  : scheme.outlineVariant.withValues(alpha: 0.45),
+              width: 0.85,
             ),
-            child: Container(
-              constraints: BoxConstraints(
-                maxWidth: 1040,
-                maxHeight:
-                    MediaQuery.sizeOf(context).height * (compact ? 1 : .94),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withValues(alpha: isDark ? 0.45 : 0.15),
+                blurRadius: 36,
+                offset: const Offset(0, 12),
               ),
-              decoration: BoxDecoration(
-                color: Theme.of(context).colorScheme.surface
-                    .withValues(alpha: isDark ? 0.88 : 0.94),
-                borderRadius: BorderRadius.circular(compact ? 0 : 24),
-                border: Border.all(
-                  color: isDark
-                      ? Colors.white.withValues(alpha: 0.16)
-                      : Theme.of(context).colorScheme.outlineVariant
-                            .withValues(alpha: 0.45),
-                  width: 0.85,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: Colors.black.withValues(alpha: isDark ? 0.45 : 0.15),
-                    blurRadius: 36,
-                    offset: const Offset(0, 12),
-                  ),
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  CinemaDetailHeader(
-                    api: widget.api,
-                    film: _film,
-                    isAdmin: widget.isAdmin,
-                    canRename: !_busy,
-                    mediaActionsEnabled: !_mediaActionBusy && !_closing,
-                    canSaveOffline: widget.accountName.isNotEmpty,
-                    casting: _castSession != null,
-                    canClose: !_closing,
-                    onRename: () => unawaited(_renameFilm()),
-                    onMediaAction: (value) => unawaited(_mediaAction(value)),
-                    canDelete: widget.isAdmin || _film.canWrite,
-                    onClose: () => unawaited(_close()),
-                  ),
-                  Flexible(
-                    child: SingleChildScrollView(
-                      physics: const AlwaysScrollableScrollPhysics(),
-                      padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          if (_offlineProgress != null) ...[
-                            Text(
-                              '正在保存离线影片：${(_offlineProgress! * 100).clamp(0, 100).round()}%',
-                            ),
-                            const SizedBox(height: 6),
-                            LinearProgressIndicator(
-                              value: _offlineProgress!.clamp(0, 1),
-                            ),
-                            const SizedBox(height: 12),
-                          ],
-                          if (resume && _film.position > 5)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 10),
-                              child: Text(
-                                '上次观看至 ${_timeLabel(Duration(seconds: _film.position.round()))}。',
-                                style: Theme.of(context).textTheme.bodyMedium
-                                    ?.copyWith(
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .primary,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                              ),
-                            ),
-                          if (_playbackMessage != null &&
-                              !_film.canAttemptPlayback)
-                            MediaStatusBanner(
-                              message: _playbackMessage!,
-                              icon: Icons.info_outline,
-                            ),
-                          if (_playbackMessage != null &&
-                              _film.canAttemptPlayback)
-                            MediaStatusBanner(
-                              message: _playbackMessage!,
-                              icon: Icons.warning_amber_outlined,
-                            ),
-                          const SizedBox(height: 10),
-                          Container(
-                            constraints: const BoxConstraints(minHeight: 180),
-                            decoration: BoxDecoration(
-                              color: Colors.black,
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            clipBehavior: Clip.antiAlias,
-                            child: _player(context),
-                          ),
-                          if (_progressSaveMessage != null)
-                            MediaStatusBanner(
-                              message: _progressSaveMessage!,
-                              icon: Icons.cloud_off_outlined,
-                              isError: true,
-                              trailing: Wrap(
-                                alignment: WrapAlignment.end,
-                                spacing: 4,
-                                children: [
-                                  TextButton(
-                                    onPressed: _closing
-                                        ? null
-                                        : () => unawaited(
-                                            _queueProgressSave(force: true),
-                                          ),
-                                    child: const Text('重试'),
-                                  ),
-                                  TextButton(
-                                    onPressed: _closing
-                                        ? null
-                                        : () => _close(allowUnsaved: true),
-                                    child: const Text('仍然关闭'),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          if (_subtitleMessage != null)
-                            Padding(
-                              padding: const EdgeInsets.only(top: 8),
-                              child: Text(
-                                _subtitleMessage!,
-                                style: Theme.of(context).textTheme.bodySmall
-                                    ?.copyWith(
-                                      color: Theme.of(context)
-                                          .colorScheme
-                                          .onSurfaceVariant,
-                                    ),
-                              ),
-                            ),
-                          if (_film.canAttemptPlayback) ...[
-                            const SizedBox(height: 18),
-                            Text(
-                              '播放进度',
-                              style: Theme.of(context).textTheme.titleMedium,
-                            ),
-                            const SizedBox(height: 12),
-                            _metadata(context),
-                          ] else ...[
-                            const SizedBox(height: 18),
-                            Text(
-                              '媒体信息',
-                              style: Theme.of(context).textTheme.titleMedium,
-                            ),
-                            const SizedBox(height: 12),
-                            _metadata(context),
-                          ],
-                          if (_film.overview.isNotEmpty) ...[
-                            const SizedBox(height: 18),
-                            Text(
-                              '简介',
-                              style: Theme.of(context).textTheme.titleMedium,
-                            ),
-                            const SizedBox(height: 6),
-                            Text(_film.overview),
-                          ],
-                          if (_film.metadataSource.isNotEmpty) ...[
-                            const SizedBox(height: 10),
-                            Text(
-                              '${_film.metadataSource.startsWith('nfo:') ? '资料来源：本地 NFO' : '资料来源：TMDB'}${_film.rating > 0 ? ' · 评分 ${_film.rating.toStringAsFixed(1)} / 10' : ''}',
-                              style: Theme.of(context).textTheme.bodySmall
-                                  ?.copyWith(
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onSurfaceVariant,
-                                  ),
-                            ),
-                          ],
-                          if (widget.isAdmin) ...[
-                            const SizedBox(height: 18),
-                            _metadataMatchingPanel(context),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
+            ],
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _buildDetailHeader(),
+              Flexible(child: _buildDialogScrollBody(context, resume: resume)),
+            ],
           ),
         ),
       ),
     );
   }
 
-  Widget _buildPlayerPage(BuildContext context) {
-    final controller = _controller;
-    final videoReady =
-        controller != null &&
-        controller.value.isInitialized &&
-        !controller.value.hasError;
-    final showChrome =
-        !_dockManuallyCollapsed &&
-        (_chromeVisible ||
-            _loading ||
+  CinemaDetailHeader _buildDetailHeader({
+    bool darkOverlay = false,
+    bool reserveMacTrafficLights = false,
+    List<Widget> trailingActions = const [],
+  }) {
+    return CinemaDetailHeader(
+      api: widget.api,
+      film: _film,
+      isAdmin: widget.isAdmin,
+      canRename: !_playback.busy,
+      mediaActionsEnabled:
+          !_externalActions.mediaActionBusy && !_playback.closing,
+      canSaveOffline: widget.accountName.isNotEmpty,
+      casting: _externalActions.castSession != null,
+      canClose: !_playback.closing,
+      onRename: () => unawaited(_renameFilm()),
+      onMediaAction: (value) => unawaited(_mediaAction(value)),
+      canDelete: widget.isAdmin || _film.canWrite,
+      onClose: () => unawaited(_close()),
+      darkOverlay: darkOverlay,
+      reserveMacTrafficLights: reserveMacTrafficLights,
+      trailingActions: trailingActions,
+    );
+  }
+
+  Widget _buildDialogScrollBody(BuildContext context, {required bool resume}) {
+    final theme = Theme.of(context);
+    final offlineProgress = _externalActions.offlineProgress;
+    final playbackMessage = _playback.playbackMessage;
+    return SingleChildScrollView(
+      physics: const AlwaysScrollableScrollPhysics(),
+      padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          if (offlineProgress != null) ...[
+            Text('正在保存离线影片：${(offlineProgress * 100).clamp(0, 100).round()}%'),
+            const SizedBox(height: 6),
+            LinearProgressIndicator(value: offlineProgress.clamp(0, 1)),
+            const SizedBox(height: 12),
+          ],
+          if (resume && _film.position > 5)
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: Text(
+                '上次观看至 ${_timeLabel(Duration(seconds: _film.position.round()))}。',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: theme.colorScheme.primary,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          if (playbackMessage != null)
+            MediaStatusBanner(
+              message: playbackMessage,
+              icon: _film.canAttemptPlayback
+                  ? Icons.warning_amber_outlined
+                  : Icons.info_outline,
+            ),
+          const SizedBox(height: 10),
+          Container(
+            constraints: const BoxConstraints(minHeight: 180),
+            decoration: BoxDecoration(
+              color: Colors.black,
+              borderRadius: BorderRadius.circular(12),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: _player(context),
+          ),
+          if (_playback.progressSaveMessage != null)
+            _buildProgressFailureBanner(
+              message: _playback.progressSaveMessage!,
+              retryLabel: '重试',
+              dismissLabel: '仍然关闭',
+            ),
+          if (_subtitles.message != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: Text(
+                _subtitles.message!,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: theme.colorScheme.onSurfaceVariant,
+                ),
+              ),
+            ),
+          const SizedBox(height: 18),
+          Text(
+            _film.canAttemptPlayback ? '播放进度' : '媒体信息',
+            style: theme.textTheme.titleMedium,
+          ),
+          const SizedBox(height: 12),
+          _metadata(context),
+          if (_film.overview.isNotEmpty) ...[
+            const SizedBox(height: 18),
+            Text('简介', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 6),
+            Text(_film.overview),
+          ],
+          if (_film.metadataSource.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Text(
+              '${_film.metadataSource.startsWith('nfo:') ? '资料来源：本地 NFO' : '资料来源：TMDB'}${_film.rating > 0 ? ' · 评分 ${_film.rating.toStringAsFixed(1)} / 10' : ''}',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ],
+          if (widget.isAdmin) ...[
+            const SizedBox(height: 18),
+            _metadataMatchingPanel(context),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildProgressFailureBanner({
+    required String message,
+    required String retryLabel,
+    required String dismissLabel,
+  }) {
+    return MediaStatusBanner(
+      message: message,
+      icon: Icons.cloud_off_outlined,
+      isError: true,
+      trailing: Wrap(
+        alignment: WrapAlignment.end,
+        spacing: 6,
+        children: [
+          TextButton(
+            onPressed: _playback.closing
+                ? null
+                : () => unawaited(_queueProgressSave(force: true)),
+            child: Text(retryLabel),
+          ),
+          TextButton(
+            onPressed: _playback.closing
+                ? null
+                : () => _close(allowUnsaved: true),
+            child: Text(dismissLabel),
+          ),
+        ],
+      ),
+    );
+  }
+
+  bool _shouldShowPlayerChrome(bool videoReady) {
+    final controller = _playback.controller;
+    return !_chrome.dockManuallyCollapsed &&
+        (_chrome.visible ||
+            _playback.loading ||
             !videoReady ||
+            controller == null ||
             !controller.value.isPlaying ||
-            _showPlayerDetails ||
-            _showPlaylistSheet ||
-            _progressSaveMessage != null ||
-            _offlineProgress != null);
+            _chrome.showPlayerDetails ||
+            _chrome.showPlaylistSheet ||
+            _playback.progressSaveMessage != null ||
+            _externalActions.offlineProgress != null);
+  }
+
+  Widget _buildPlayerPage(BuildContext context) {
+    final videoReady = _playback.isVideoReady;
+    final showChrome = _shouldShowPlayerChrome(videoReady);
 
     return Focus(
       autofocus: true,
@@ -509,224 +469,9 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                   top: 0,
                   left: 0,
                   right: 0,
-                  child: IgnorePointer(
-                    ignoring: !showChrome,
-                    child: AnimatedOpacity(
-                      opacity: showChrome ? 1.0 : 0.0,
-                      duration: const Duration(milliseconds: 220),
-                      curve: Curves.easeOutCubic,
-                      child: DecoratedBox(
-                        decoration: const BoxDecoration(
-                          gradient: LinearGradient(
-                            begin: Alignment.topCenter,
-                            end: Alignment.bottomCenter,
-                            colors: [
-                              Color(0xD8000000),
-                              Color(0x78000000),
-                              Colors.transparent,
-                            ],
-                            stops: [0.0, 0.62, 1.0],
-                          ),
-                        ),
-                        child: SafeArea(
-                          bottom: false,
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              CinemaDetailHeader(
-                                api: widget.api,
-                                film: _film,
-                                isAdmin: widget.isAdmin,
-                                canRename: !_busy,
-                                mediaActionsEnabled:
-                                    !_mediaActionBusy && !_closing,
-                                canSaveOffline: widget.accountName.isNotEmpty,
-                                casting: _castSession != null,
-                                canClose: !_closing,
-                                onRename: () => unawaited(_renameFilm()),
-                                onMediaAction: (value) =>
-                                    unawaited(_mediaAction(value)),
-                                canDelete: widget.isAdmin || _film.canWrite,
-                                onClose: () => unawaited(_close()),
-                                darkOverlay: true,
-                                reserveMacTrafficLights: !_windowFullscreen,
-                                trailingActions: [
-                                  if (_film.isSeries)
-                                    Padding(
-                                      padding: const EdgeInsets.only(right: 6),
-                                      child: FilledButton.tonalIcon(
-                                        key: const ValueKey(
-                                          'cinemaPlayerNextEpisode',
-                                        ),
-                                        style: FilledButton.styleFrom(
-                                          backgroundColor: const Color(
-                                            0x29FFFFFF,
-                                          ),
-                                          foregroundColor: Colors.white,
-                                          visualDensity: VisualDensity.compact,
-                                          padding: const EdgeInsets.symmetric(
-                                            horizontal: 12,
-                                            vertical: 8,
-                                          ),
-                                        ),
-                                        onPressed: _closing || _nextEpisodeBusy
-                                            ? null
-                                            : () =>
-                                                  unawaited(_goToNextEpisode()),
-                                        icon: const Icon(
-                                          Icons.skip_next_rounded,
-                                          size: 18,
-                                        ),
-                                        label: Text(
-                                          _nextEpisodeBusy ? '查找下一集…' : '下一集',
-                                        ),
-                                      ),
-                                    ),
-                                  Padding(
-                                    padding: const EdgeInsets.only(right: 4),
-                                    child: TextButton.icon(
-                                      key: const ValueKey(
-                                        'cinemaPlayerDetailsToggle',
-                                      ),
-                                      style: TextButton.styleFrom(
-                                        backgroundColor: _showPlayerDetails
-                                            ? const Color(0x47FFFFFF)
-                                            : const Color(0x24FFFFFF),
-                                        foregroundColor: Colors.white,
-                                        visualDensity: VisualDensity.compact,
-                                        padding: const EdgeInsets.symmetric(
-                                          horizontal: 12,
-                                          vertical: 8,
-                                        ),
-                                        shape: RoundedRectangleBorder(
-                                          borderRadius: BorderRadius.circular(
-                                            999,
-                                          ),
-                                        ),
-                                      ),
-                                      onPressed: () {
-                                        final opening = !_showPlayerDetails;
-                                        if (opening) {
-                                          unawaited(_controller?.pause());
-                                          unawaited(
-                                            _queueProgressSave(force: true),
-                                          );
-                                        }
-                                        setState(
-                                          () => _showPlayerDetails = opening,
-                                        );
-                                      },
-                                      icon: Icon(
-                                        _showPlayerDetails
-                                            ? Icons.keyboard_arrow_up_rounded
-                                            : Icons.tune_rounded,
-                                        size: 18,
-                                      ),
-                                      label: Text(
-                                        _showPlayerDetails
-                                            ? '收起播放信息'
-                                            : '播放信息与设置',
-                                      ),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              if (_offlineProgress != null ||
-                                  (_playbackMessage != null && videoReady) ||
-                                  _progressSaveMessage != null ||
-                                  _subtitleMessage != null)
-                                Padding(
-                                  padding: const EdgeInsets.fromLTRB(
-                                    20,
-                                    0,
-                                    20,
-                                    10,
-                                  ),
-                                  child: Theme(
-                                    data: buildIsleTheme(Brightness.dark),
-                                    child: Column(
-                                      mainAxisSize: MainAxisSize.min,
-                                      crossAxisAlignment:
-                                          CrossAxisAlignment.stretch,
-                                      children: [
-                                        if (_offlineProgress != null) ...[
-                                          Text(
-                                            '正在保存离线影片：${(_offlineProgress! * 100).clamp(0, 100).round()}%',
-                                            style: const TextStyle(
-                                              color: Colors.white,
-                                              fontSize: 13,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 6),
-                                          LinearProgressIndicator(
-                                            value: _offlineProgress!.clamp(
-                                              0,
-                                              1,
-                                            ),
-                                          ),
-                                          const SizedBox(height: 8),
-                                        ],
-                                        if (_playbackMessage != null &&
-                                            videoReady)
-                                          MediaStatusBanner(
-                                            message: _playbackMessage!,
-                                            isError: _film.canAttemptPlayback,
-                                            icon: _film.canAttemptPlayback
-                                                ? Icons.warning_amber_outlined
-                                                : Icons.info_outline,
-                                          ),
-                                        if (_progressSaveMessage != null)
-                                          MediaStatusBanner(
-                                            message: _progressSaveMessage!,
-                                            isError: true,
-                                            icon: Icons.cloud_off_outlined,
-                                            trailing: Wrap(
-                                              spacing: 6,
-                                              children: [
-                                                TextButton(
-                                                  onPressed: _closing
-                                                      ? null
-                                                      : () => unawaited(
-                                                          _queueProgressSave(
-                                                            force: true,
-                                                          ),
-                                                        ),
-                                                  child: const Text('重试保存'),
-                                                ),
-                                                TextButton(
-                                                  onPressed: _closing
-                                                      ? null
-                                                      : () => _close(
-                                                          allowUnsaved: true,
-                                                        ),
-                                                  child: const Text('仍然退出'),
-                                                ),
-                                              ],
-                                            ),
-                                          ),
-                                        if (_subtitleMessage != null)
-                                          Padding(
-                                            padding: const EdgeInsets.only(
-                                              top: 4,
-                                            ),
-                                            child: Text(
-                                              _subtitleMessage!,
-                                              style: const TextStyle(
-                                                color: Colors.white70,
-                                                fontSize: 12,
-                                              ),
-                                            ),
-                                          ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    ),
+                  child: _buildPlayerTopChromeOverlay(
+                    showChrome: showChrome,
+                    videoReady: videoReady,
                   ),
                 ),
                 if (videoReady)
@@ -744,34 +489,190 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                       ),
                     ),
                   ),
-                if (videoReady && _dockManuallyCollapsed)
-                  Positioned(
-                    right: 18,
-                    bottom: 16,
-                    child: SafeArea(
-                      top: false,
-                      child: FilledButton.tonalIcon(
-                        key: const ValueKey('cinemaRestoreDockButton'),
-                        style: FilledButton.styleFrom(
-                          backgroundColor: const Color(0xA60E121A),
-                          foregroundColor: Colors.white,
-                          visualDensity: VisualDensity.compact,
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                        ),
-                        onPressed: () {
-                          _updateState(() => _dockManuallyCollapsed = false);
-                          _revealChrome();
-                        },
-                        icon: const Icon(Icons.keyboard_arrow_up_rounded, size: 18),
-                        label: const Text('控制栏', style: TextStyle(fontSize: 12)),
-                      ),
-                    ),
-                  ),
-                if (_showPlaylistSheet) _buildPlaylistSheet(context),
-                if (_showPlayerDetails) _buildPlayerDetailsSheet(context),
+                if (videoReady && _chrome.dockManuallyCollapsed)
+                  _buildRestoreDockButton(),
+                if (_chrome.showPlaylistSheet) _buildPlaylistSheet(context),
+                if (_chrome.showPlayerDetails)
+                  _buildPlayerDetailsSheet(context),
               ],
             ),
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildPlayerTopChromeOverlay({
+    required bool showChrome,
+    required bool videoReady,
+  }) {
+    final hasBanner =
+        _externalActions.offlineProgress != null ||
+        (_playback.playbackMessage != null && videoReady) ||
+        _playback.progressSaveMessage != null ||
+        _subtitles.message != null;
+
+    return IgnorePointer(
+      ignoring: !showChrome,
+      child: AnimatedOpacity(
+        opacity: showChrome ? 1.0 : 0.0,
+        duration: const Duration(milliseconds: 220),
+        curve: Curves.easeOutCubic,
+        child: DecoratedBox(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [
+                Color(0xD8000000),
+                Color(0x78000000),
+                Colors.transparent,
+              ],
+              stops: [0.0, 0.62, 1.0],
+            ),
+          ),
+          child: SafeArea(
+            bottom: false,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _buildDetailHeader(
+                  darkOverlay: true,
+                  reserveMacTrafficLights: !_chrome.windowFullscreen,
+                  trailingActions: _buildPlayerHeaderTrailingActions(),
+                ),
+                if (hasBanner) _buildPlayerOverlayBanners(videoReady: videoReady),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  List<Widget> _buildPlayerHeaderTrailingActions() {
+    return [
+      if (_film.isSeries)
+        Padding(
+          padding: const EdgeInsets.only(right: 6),
+          child: FilledButton.tonalIcon(
+            key: const ValueKey('cinemaPlayerNextEpisode'),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0x29FFFFFF),
+              foregroundColor: Colors.white,
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            ),
+            onPressed: _playback.closing || _playlistState.nextEpisodeBusy
+                ? null
+                : () => unawaited(_goToNextEpisode()),
+            icon: const Icon(Icons.skip_next_rounded, size: 18),
+            label: Text(_playlistState.nextEpisodeBusy ? '查找下一集…' : '下一集'),
+          ),
+        ),
+      Padding(
+        padding: const EdgeInsets.only(right: 4),
+        child: TextButton.icon(
+          key: const ValueKey('cinemaPlayerDetailsToggle'),
+          style: TextButton.styleFrom(
+            backgroundColor: _chrome.showPlayerDetails
+                ? const Color(0x47FFFFFF)
+                : const Color(0x24FFFFFF),
+            foregroundColor: Colors.white,
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(999),
+            ),
+          ),
+          onPressed: () {
+            final opening = !_chrome.showPlayerDetails;
+            if (opening) {
+              unawaited(_playback.controller?.pause());
+              unawaited(_queueProgressSave(force: true));
+            }
+            setState(() => _chrome.showPlayerDetails = opening);
+          },
+          icon: Icon(
+            _chrome.showPlayerDetails
+                ? Icons.keyboard_arrow_up_rounded
+                : Icons.tune_rounded,
+            size: 18,
+          ),
+          label: Text(_chrome.showPlayerDetails ? '收起播放信息' : '播放信息与设置'),
+        ),
+      ),
+    ];
+  }
+
+  Widget _buildPlayerOverlayBanners({required bool videoReady}) {
+    final offlineProgress = _externalActions.offlineProgress;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
+      child: Theme(
+        data: buildIsleTheme(Brightness.dark),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (offlineProgress != null) ...[
+              Text(
+                '正在保存离线影片：${(offlineProgress * 100).clamp(0, 100).round()}%',
+                style: const TextStyle(color: Colors.white, fontSize: 13),
+              ),
+              const SizedBox(height: 6),
+              LinearProgressIndicator(value: offlineProgress.clamp(0, 1)),
+              const SizedBox(height: 8),
+            ],
+            if (_playback.playbackMessage != null && videoReady)
+              MediaStatusBanner(
+                message: _playback.playbackMessage!,
+                isError: _film.canAttemptPlayback,
+                icon: _film.canAttemptPlayback
+                    ? Icons.warning_amber_outlined
+                    : Icons.info_outline,
+              ),
+            if (_playback.progressSaveMessage != null)
+              _buildProgressFailureBanner(
+                message: _playback.progressSaveMessage!,
+                retryLabel: '重试保存',
+                dismissLabel: '仍然退出',
+              ),
+            if (_subtitles.message != null)
+              Padding(
+                padding: const EdgeInsets.only(top: 4),
+                child: Text(
+                  _subtitles.message!,
+                  style: const TextStyle(color: Colors.white70, fontSize: 12),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildRestoreDockButton() {
+    return Positioned(
+      right: 18,
+      bottom: 16,
+      child: SafeArea(
+        top: false,
+        child: FilledButton.tonalIcon(
+          key: const ValueKey('cinemaRestoreDockButton'),
+          style: FilledButton.styleFrom(
+            backgroundColor: const Color(0xA60E121A),
+            foregroundColor: Colors.white,
+            visualDensity: VisualDensity.compact,
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          ),
+          onPressed: () {
+            _updateState(() => _chrome.dockManuallyCollapsed = false);
+            _revealChrome();
+          },
+          icon: const Icon(Icons.keyboard_arrow_up_rounded, size: 18),
+          label: const Text('控制栏', style: TextStyle(fontSize: 12)),
         ),
       ),
     );

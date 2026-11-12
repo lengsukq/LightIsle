@@ -1,19 +1,18 @@
 part of 'cinema_page.dart';
 
 extension _CinemaPageHomeRails on _CinemaPageState {
-  /// Netflix-inspired featured billboard sourced from the user's NAS library.
   Widget _featuredFilmBanner() {
     final screenWidth = MediaQuery.sizeOf(context).width;
     final textScale = (MediaQuery.textScalerOf(context).scale(14) / 14)
         .clamp(1.0, 3.0)
         .toDouble();
     if (screenWidth < 420 && textScale > 1.5) return const SizedBox.shrink();
-    final film = _resumeShelf.isNotEmpty
-        ? _resumeShelf.first
-        : _recentShelf.isNotEmpty
-        ? _recentShelf.first
-        : _films.isNotEmpty
-        ? _films.first
+    final film = _catalog.resumeShelf.isNotEmpty
+        ? _catalog.resumeShelf.first
+        : _catalog.recentShelf.isNotEmpty
+        ? _catalog.recentShelf.first
+        : _catalog.films.isNotEmpty
+        ? _catalog.films.first
         : null;
     if (film == null) return const SizedBox.shrink();
     final theme = Theme.of(context);
@@ -199,11 +198,14 @@ extension _CinemaPageHomeRails on _CinemaPageState {
   }
 
   Widget _topRatedRail() {
-    if (_mode != 'all' ||
-        !shouldShowCinemaDiscoveryRails(_films.length, _nextCursor)) {
+    if (_catalog.mode != 'all' ||
+        !shouldShowCinemaDiscoveryRails(
+          _catalog.films.length,
+          _catalog.nextCursor,
+        )) {
       return const SizedBox.shrink();
     }
-    final ranked = _films.where((f) => f.rating >= 7.0).toList()
+    final ranked = _catalog.films.where((f) => f.rating >= 7.0).toList()
       ..sort((a, b) => b.rating.compareTo(a.rating));
     if (ranked.length < 2) return const SizedBox.shrink();
     final top = ranked.take(10).toList();
@@ -313,11 +315,11 @@ extension _CinemaPageHomeRails on _CinemaPageState {
   }
 
   Widget _continueWatchingRail() {
-    if (_mode != 'all') return const SizedBox.shrink();
+    if (_catalog.mode != 'all') return const SizedBox.shrink();
     final films =
-        (_shelvesLoaded
-                ? _resumeShelf
-                : _films.where((film) => film.canResume).toList())
+        (_catalog.shelvesLoaded
+                ? _catalog.resumeShelf
+                : _catalog.films.where((film) => film.canResume).toList())
             .take(6)
             .toList();
     if (films.isEmpty) return const SizedBox.shrink();
@@ -449,11 +451,14 @@ extension _CinemaPageHomeRails on _CinemaPageState {
   }
 
   Widget _recentlyAddedRail() {
-    if (_recentShelf.isEmpty ||
-        !shouldShowCinemaDiscoveryRails(_films.length, _nextCursor)) {
+    if (_catalog.recentShelf.isEmpty ||
+        !shouldShowCinemaDiscoveryRails(
+          _catalog.films.length,
+          _catalog.nextCursor,
+        )) {
       return const SizedBox.shrink();
     }
-    final duplicateKeys = duplicateCinemaTitleKeys(_recentShelf);
+    final duplicateKeys = duplicateCinemaTitleKeys(_catalog.recentShelf);
     final theme = Theme.of(context);
     final compact = MediaQuery.sizeOf(context).width < 600;
     final textScale = (MediaQuery.textScalerOf(context).scale(14) / 14)
@@ -471,16 +476,14 @@ extension _CinemaPageHomeRails on _CinemaPageState {
             child: Text('最近添加', style: theme.textTheme.titleMedium),
           ),
           SizedBox(
-            // Match CinemaFilmTile's 2:3 cover plus its scaled footer. A
-            // fixed-height shelf clipped at 200% accessibility text size.
             height: cardWidth * 1.5 + footerHeight,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.only(right: 18),
-              itemCount: _recentShelf.length,
+              itemCount: _catalog.recentShelf.length,
               separatorBuilder: (_, _) => SizedBox(width: compact ? 10 : 12),
               itemBuilder: (context, index) {
-                final film = _recentShelf[index];
+                final film = _catalog.recentShelf[index];
                 return SizedBox(
                   width: cardWidth,
                   child: CinemaFilmTile(

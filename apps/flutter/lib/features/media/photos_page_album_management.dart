@@ -123,11 +123,11 @@ extension _PhotosPageAlbumManagement on _PhotosPageState {
   }
 
   Future<void> _refreshAlbums() async {
-    final generation = ++_albumsGeneration;
+    final generation = ++_catalog.sharedGeneration;
     try {
       final albums = await _albumRepository.list(PhotoAlbumScope.shared);
-      if (!mounted || generation != _albumsGeneration) return;
-      _updateState(() => _albums = albums);
+      if (!mounted || generation != _catalog.sharedGeneration) return;
+      _updateState(() => _catalog.sharedAlbums = albums);
     } catch (_) {
       // Keep previously loaded album navigation visible if a refresh fails.
     }
@@ -138,31 +138,31 @@ extension _PhotosPageAlbumManagement on _PhotosPageState {
       final result = await widget.api.get('/api/v2/photos/folder-albums');
       if (!mounted) return;
       final list = objectList(result['albums']);
-      _updateState(() => _folderAlbums = list);
+      _updateState(() => _catalog.folderAlbums = list);
     } catch (_) {
       // Folder albums are optional in environments without assigned personal photo dirs.
     }
   }
 
   Future<void> _refreshPrivateAlbums() async {
-    final generation = ++_privateAlbumsGeneration;
+    final generation = ++_catalog.privateGeneration;
     if (mounted) {
-      _updateState(() => _privateAlbumsRefreshing = true);
+      _updateState(() => _catalog.privateRefreshing = true);
     }
     try {
       final albums = await _albumRepository.list(PhotoAlbumScope.personal);
-      if (!mounted || generation != _privateAlbumsGeneration) return;
+      if (!mounted || generation != _catalog.privateGeneration) return;
       _updateState(() {
-        _privateAlbums = albums;
-        _privateAlbumsFailure = null;
+        _catalog.privateAlbums = albums;
+        _catalog.privateFailure = null;
       });
     } catch (error) {
-      if (mounted && generation == _privateAlbumsGeneration) {
-        _updateState(() => _privateAlbumsFailure = error);
+      if (mounted && generation == _catalog.privateGeneration) {
+        _updateState(() => _catalog.privateFailure = error);
       }
     } finally {
-      if (mounted && generation == _privateAlbumsGeneration) {
-        _updateState(() => _privateAlbumsRefreshing = false);
+      if (mounted && generation == _catalog.privateGeneration) {
+        _updateState(() => _catalog.privateRefreshing = false);
       }
     }
   }
@@ -180,16 +180,15 @@ extension _PhotosPageAlbumManagement on _PhotosPageState {
     if (!mounted) return asset.withFavorite(favorite);
     final updated = asset.withFavorite(favorite);
     _updateState(() {
-      final index = _assets.indexWhere((item) => item.id == asset.id);
+      final index = _feed.assets.indexWhere((item) => item.id == asset.id);
       if (index >= 0) {
-        if (_favoritesOnly && !favorite) {
-          _assets.removeAt(index);
+        if (_scope.favoritesOnly && !favorite) {
+          _feed.assets.removeAt(index);
         } else {
-          _assets[index] = updated;
+          _feed.assets[index] = updated;
         }
       }
-      _actionMessage = favorite ? '已加入共享收藏。' : '已从共享收藏移除。';
-      _actionIsError = false;
+      _feed.setActionFeedback(favorite ? '已加入共享收藏。' : '已从共享收藏移除。');
     });
     return updated;
   }
@@ -204,16 +203,15 @@ extension _PhotosPageAlbumManagement on _PhotosPageState {
     final updated = asset.withPersonalFavorite(favorite);
     if (!mounted) return updated;
     _updateState(() {
-      final index = _assets.indexWhere((item) => item.id == asset.id);
+      final index = _feed.assets.indexWhere((item) => item.id == asset.id);
       if (index >= 0) {
-        if (_personalFavoritesOnly && !favorite) {
-          _assets.removeAt(index);
+        if (_scope.personalFavoritesOnly && !favorite) {
+          _feed.assets.removeAt(index);
         } else {
-          _assets[index] = updated;
+          _feed.assets[index] = updated;
         }
       }
-      _actionMessage = favorite ? '已加入我的收藏。' : '已从我的收藏移除。';
-      _actionIsError = false;
+      _feed.setActionFeedback(favorite ? '已加入我的收藏。' : '已从我的收藏移除。');
     });
     return updated;
   }
@@ -224,7 +222,7 @@ extension _PhotosPageAlbumManagement on _PhotosPageState {
       builder: (context) => AlbumNameDialog(initialName: album?.name ?? ''),
     );
     if (name == null || !mounted) return;
-    _updateState(() => _albumBusy = true);
+    _updateState(() => _catalog.busy = true);
     try {
       await _albumRepository.save(
         PhotoAlbumScope.shared,
@@ -232,20 +230,18 @@ extension _PhotosPageAlbumManagement on _PhotosPageState {
         albumId: album?.id,
       );
       if (!mounted) return;
-      _updateState(() {
-        _actionMessage = album == null ? '相册已创建。' : '相册名称已更新。';
-        _actionIsError = false;
-      });
+      _updateState(
+        () => _feed.setActionFeedback(album == null ? '相册已创建。' : '相册名称已更新。'),
+      );
       await _refreshAlbums();
     } catch (error) {
       if (mounted) {
-        _updateState(() {
-          _actionMessage = mediaErrorLabel(error);
-          _actionIsError = true;
-        });
+        _updateState(
+          () => _feed.setActionFeedback(mediaErrorLabel(error), isError: true),
+        );
       }
     } finally {
-      if (mounted) _updateState(() => _albumBusy = false);
+      if (mounted) _updateState(() => _catalog.busy = false);
     }
   }
 
@@ -256,7 +252,7 @@ extension _PhotosPageAlbumManagement on _PhotosPageState {
           AlbumNameDialog(initialName: album?.name ?? '', privateAlbum: true),
     );
     if (name == null || !mounted) return;
-    _updateState(() => _albumBusy = true);
+    _updateState(() => _catalog.busy = true);
     try {
       await _albumRepository.save(
         PhotoAlbumScope.personal,
@@ -264,20 +260,20 @@ extension _PhotosPageAlbumManagement on _PhotosPageState {
         albumId: album?.id,
       );
       if (!mounted) return;
-      _updateState(() {
-        _actionMessage = album == null ? '私人相册已创建，仅当前账号可见。' : '私人相册名称已更新。';
-        _actionIsError = false;
-      });
+      _updateState(
+        () => _feed.setActionFeedback(
+          album == null ? '私人相册已创建，仅当前账号可见。' : '私人相册名称已更新。',
+        ),
+      );
       await _refreshPrivateAlbums();
     } catch (error) {
       if (mounted) {
-        _updateState(() {
-          _actionMessage = mediaErrorLabel(error);
-          _actionIsError = true;
-        });
+        _updateState(
+          () => _feed.setActionFeedback(mediaErrorLabel(error), isError: true),
+        );
       }
     } finally {
-      if (mounted) _updateState(() => _albumBusy = false);
+      if (mounted) _updateState(() => _catalog.busy = false);
     }
   }
 
@@ -300,28 +296,26 @@ extension _PhotosPageAlbumManagement on _PhotosPageState {
       ),
     );
     if (confirmed != true || !mounted) return;
-    _updateState(() => _albumBusy = true);
+    _updateState(() => _catalog.busy = true);
     try {
       await _albumRepository.delete(PhotoAlbumScope.shared, album.id);
       if (!mounted) return;
-      if (_activeAlbum == album.id) {
-        _activeAlbum = 0;
-        _favoritesOnly = false;
+      if (_scope.activeAlbum == album.id) {
+        _scope.activeAlbum = 0;
+        _scope.favoritesOnly = false;
       }
-      _updateState(() {
-        _actionMessage = '相册已删除，原始媒体仍保留。';
-        _actionIsError = false;
-      });
+      _updateState(
+        () => _feed.setActionFeedback('相册已删除，原始媒体仍保留。'),
+      );
       await Future.wait([_refreshAlbums(), _loadAssets(reset: true)]);
     } catch (error) {
       if (mounted) {
-        _updateState(() {
-          _actionMessage = mediaErrorLabel(error);
-          _actionIsError = true;
-        });
+        _updateState(
+          () => _feed.setActionFeedback(mediaErrorLabel(error), isError: true),
+        );
       }
     } finally {
-      if (mounted) _updateState(() => _albumBusy = false);
+      if (mounted) _updateState(() => _catalog.busy = false);
     }
   }
 
@@ -344,35 +338,33 @@ extension _PhotosPageAlbumManagement on _PhotosPageState {
       ),
     );
     if (confirmed != true || !mounted) return;
-    _updateState(() => _albumBusy = true);
+    _updateState(() => _catalog.busy = true);
     try {
       await _albumRepository.delete(PhotoAlbumScope.personal, album.id);
       if (!mounted) return;
-      final wasCurrent = _activePrivateAlbum == album.id;
-      if (wasCurrent) _activePrivateAlbum = 0;
-      _updateState(() {
-        _actionMessage = '私人相册已删除，原始媒体和共享相册仍保留。';
-        _actionIsError = false;
-      });
+      final wasCurrent = _scope.activePrivateAlbum == album.id;
+      if (wasCurrent) _scope.activePrivateAlbum = 0;
+      _updateState(
+        () => _feed.setActionFeedback('私人相册已删除，原始媒体和共享相册仍保留。'),
+      );
       await Future.wait([
         _refreshPrivateAlbums(),
         if (wasCurrent) _loadAssets(reset: true),
       ]);
     } catch (error) {
       if (mounted) {
-        _updateState(() {
-          _actionMessage = mediaErrorLabel(error);
-          _actionIsError = true;
-        });
+        _updateState(
+          () => _feed.setActionFeedback(mediaErrorLabel(error), isError: true),
+        );
       }
     } finally {
-      if (mounted) _updateState(() => _albumBusy = false);
+      if (mounted) _updateState(() => _catalog.busy = false);
     }
   }
 
   Future<void> _addToAlbum(int albumId, int assetId) async {
     if (!widget.isAdmin || albumId < 1) return;
-    _updateState(() => _albumBusy = true);
+    _updateState(() => _catalog.busy = true);
     try {
       await _albumRepository.addItem(
         PhotoAlbumScope.shared,
@@ -380,27 +372,23 @@ extension _PhotosPageAlbumManagement on _PhotosPageState {
         assetId: assetId,
       );
       if (!mounted) return;
-      _updateState(() {
-        _actionMessage = '已加入相册。';
-        _actionIsError = false;
-      });
+      _updateState(() => _feed.setActionFeedback('已加入相册。'));
       await _refreshAlbums();
     } catch (error) {
       if (mounted) {
-        _updateState(() {
-          _actionMessage = mediaErrorLabel(error);
-          _actionIsError = true;
-        });
+        _updateState(
+          () => _feed.setActionFeedback(mediaErrorLabel(error), isError: true),
+        );
       }
       rethrow;
     } finally {
-      if (mounted) _updateState(() => _albumBusy = false);
+      if (mounted) _updateState(() => _catalog.busy = false);
     }
   }
 
   Future<void> _removeFromAlbum(int albumId, int assetId) async {
     if (!widget.isAdmin || albumId < 1) return;
-    _updateState(() => _albumBusy = true);
+    _updateState(() => _catalog.busy = true);
     try {
       await _albumRepository.removeItem(
         PhotoAlbumScope.shared,
@@ -408,27 +396,23 @@ extension _PhotosPageAlbumManagement on _PhotosPageState {
         assetId: assetId,
       );
       if (!mounted) return;
-      _updateState(() {
-        _actionMessage = '已从相册移出，原始媒体仍保留。';
-        _actionIsError = false;
-      });
+      _updateState(() => _feed.setActionFeedback('已从相册移出，原始媒体仍保留。'));
       await Future.wait([_refreshAlbums(), _loadAssets(reset: true)]);
     } catch (error) {
       if (mounted) {
-        _updateState(() {
-          _actionMessage = mediaErrorLabel(error);
-          _actionIsError = true;
-        });
+        _updateState(
+          () => _feed.setActionFeedback(mediaErrorLabel(error), isError: true),
+        );
       }
       rethrow;
     } finally {
-      if (mounted) _updateState(() => _albumBusy = false);
+      if (mounted) _updateState(() => _catalog.busy = false);
     }
   }
 
   Future<void> _addToPrivateAlbum(int albumId, int assetId) async {
     if (albumId < 1) return;
-    _updateState(() => _albumBusy = true);
+    _updateState(() => _catalog.busy = true);
     try {
       await _albumRepository.addItem(
         PhotoAlbumScope.personal,
@@ -436,27 +420,23 @@ extension _PhotosPageAlbumManagement on _PhotosPageState {
         assetId: assetId,
       );
       if (!mounted) return;
-      _updateState(() {
-        _actionMessage = '已加入我的私人相册。';
-        _actionIsError = false;
-      });
+      _updateState(() => _feed.setActionFeedback('已加入我的私人相册。'));
       await _refreshPrivateAlbums();
     } catch (error) {
       if (mounted) {
-        _updateState(() {
-          _actionMessage = mediaErrorLabel(error);
-          _actionIsError = true;
-        });
+        _updateState(
+          () => _feed.setActionFeedback(mediaErrorLabel(error), isError: true),
+        );
       }
       rethrow;
     } finally {
-      if (mounted) _updateState(() => _albumBusy = false);
+      if (mounted) _updateState(() => _catalog.busy = false);
     }
   }
 
   Future<void> _removeFromPrivateAlbum(int albumId, int assetId) async {
     if (albumId < 1) return;
-    _updateState(() => _albumBusy = true);
+    _updateState(() => _catalog.busy = true);
     try {
       await _albumRepository.removeItem(
         PhotoAlbumScope.personal,
@@ -464,26 +444,22 @@ extension _PhotosPageAlbumManagement on _PhotosPageState {
         assetId: assetId,
       );
       if (!mounted) return;
-      final wasCurrent = _activePrivateAlbum == albumId;
-      if (wasCurrent) _assets.removeWhere((item) => item.id == assetId);
-      _updateState(() {
-        _actionMessage = '已从私人相册移出，原始媒体仍保留。';
-        _actionIsError = false;
-      });
+      final wasCurrent = _scope.activePrivateAlbum == albumId;
+      if (wasCurrent) _feed.assets.removeWhere((item) => item.id == assetId);
+      _updateState(() => _feed.setActionFeedback('已从私人相册移出，原始媒体仍保留。'));
       await Future.wait([
         _refreshPrivateAlbums(),
         if (wasCurrent) _loadAssets(reset: true),
       ]);
     } catch (error) {
       if (mounted) {
-        _updateState(() {
-          _actionMessage = mediaErrorLabel(error);
-          _actionIsError = true;
-        });
+        _updateState(
+          () => _feed.setActionFeedback(mediaErrorLabel(error), isError: true),
+        );
       }
       rethrow;
     } finally {
-      if (mounted) _updateState(() => _albumBusy = false);
+      if (mounted) _updateState(() => _catalog.busy = false);
     }
   }
 

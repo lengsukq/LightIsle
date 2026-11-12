@@ -2,18 +2,18 @@ part of 'cinema_page.dart';
 
 extension _CinemaPageHistory on _CinemaPageState {
   Future<void> _loadHistory({bool reset = true}) async {
-    if (_historyLoading) return;
-    if (!reset && _historyNext == 0) return;
+    if (_subpages.historyLoading) return;
+    if (!reset && _subpages.historyNext == 0) return;
     _updateState(() {
-      _historyLoading = true;
-      _historyError = null;
+      _subpages.historyLoading = true;
+      _subpages.historyError = null;
     });
     try {
       final response = await widget.api.get(
         '/api/v2/cinema/history',
         query: <String, String>{
           'limit': '48',
-          'cursor': '${reset ? 0 : _historyNext}',
+          'cursor': '${reset ? 0 : _subpages.historyNext}',
         },
       );
       final page = <CinemaFilm>[];
@@ -33,20 +33,22 @@ extension _CinemaPageHistory on _CinemaPageState {
       if (!mounted) return;
       _updateState(() {
         if (reset) {
-          _history
+          _subpages.history
             ..clear()
             ..addAll(page);
         } else {
-          _history.addAll(page);
+          _subpages.history.addAll(page);
         }
-        _historyNext = next is num ? next.toInt() : int.tryParse('$next') ?? 0;
-        _historyLoading = false;
+        _subpages.historyNext = next is num
+            ? next.toInt()
+            : int.tryParse('$next') ?? 0;
+        _subpages.historyLoading = false;
       });
     } catch (error) {
       if (!mounted) return;
       _updateState(() {
-        _historyLoading = false;
-        _historyError = mediaErrorLabel(error);
+        _subpages.historyLoading = false;
+        _subpages.historyError = mediaErrorLabel(error);
       });
     }
   }
@@ -74,26 +76,28 @@ extension _CinemaPageHistory on _CinemaPageState {
       await widget.api.send('DELETE', '/api/v2/cinema/history');
       if (!mounted) return;
       _updateState(() {
-        _history.clear();
-        _historyNext = 0;
+        _subpages.history.clear();
+        _subpages.historyNext = 0;
       });
       unawaited(_loadFilms(reset: true));
     } catch (error) {
-      if (mounted) _updateState(() => _historyError = mediaErrorLabel(error));
+      if (mounted) {
+        _updateState(() => _subpages.historyError = mediaErrorLabel(error));
+      }
     }
   }
 
   List<Widget> _historyView() {
     final theme = Theme.of(context);
     return <Widget>[
-      if (_historyLoading && _history.isEmpty)
+      if (_subpages.historyLoading && _subpages.history.isEmpty)
         const Padding(
           padding: EdgeInsets.symmetric(vertical: 30),
           child: Center(child: CircularProgressIndicator()),
         )
-      else if (_historyError != null && _history.isEmpty)
+      else if (_subpages.historyError != null && _subpages.history.isEmpty)
         MediaStatusBanner(
-          message: '历史读取失败：$_historyError',
+          message: '历史读取失败：${_subpages.historyError}',
           isError: true,
           icon: Icons.error_outline,
           trailing: TextButton(
@@ -101,7 +105,7 @@ extension _CinemaPageHistory on _CinemaPageState {
             child: const Text('重试'),
           ),
         )
-      else if (_history.isEmpty)
+      else if (_subpages.history.isEmpty)
         MediaEmptyState(
           icon: Icons.history_rounded,
           title: '还没有观看记录',
@@ -127,7 +131,7 @@ extension _CinemaPageHistory on _CinemaPageState {
         IsleGroupCard(
           margin: EdgeInsets.fromLTRB(_pageInset, 8, _pageInset, 0),
           children: [
-            for (final film in _history)
+            for (final film in _subpages.history)
               ListTile(
                 leading: Icon(
                   film.isSeries ? Icons.live_tv_outlined : Icons.movie_outlined,
@@ -148,11 +152,11 @@ extension _CinemaPageHistory on _CinemaPageState {
               ),
           ],
         ),
-        if (_historyNext > 0)
+        if (_subpages.historyNext > 0)
           Padding(
             padding: EdgeInsets.fromLTRB(_pageInset, 10, _pageInset, 0),
             child: Center(
-              child: _historyLoading
+              child: _subpages.historyLoading
                   ? const SizedBox(
                       width: 18,
                       height: 18,
@@ -169,8 +173,6 @@ extension _CinemaPageHistory on _CinemaPageState {
   }
 
   String _historyLabel(CinemaFilm film) {
-    // CinemaFilm currently keeps no watch timestamp; the ordering already
-    // reflects recency, so the label stays positional.
     return film.isSeries ? '第 ${film.season} 季第 ${film.episode} 集' : '电影';
   }
 }

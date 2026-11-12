@@ -65,6 +65,94 @@ class AboutArchitectureShowcase extends StatelessWidget {
   final ColorScheme colors;
   final ThemeData theme;
 
+  Widget _buildArchitectureStage(double effectivePhase) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final isWide = constraints.maxWidth >= 520;
+        final macNode = AboutStageFloatingNode(
+          icon: Icons.laptop_mac_rounded,
+          title: 'Mac 原生核心',
+          subtitle: 'lightisled · 静默常驻',
+          accent: const Color(0xFF0071E3),
+          isDark: isDark,
+          pulse: 0.5 + 0.5 * math.sin(effectivePhase * math.pi * 2),
+        );
+        final rootANode = AboutStageFloatingNode(
+          icon: Icons.dns_rounded,
+          title: '物理卷 Root A',
+          subtitle: '100 GiB 独立配额 · device+inode',
+          accent: const Color(0xFF0071E3),
+          isDark: isDark,
+          pulse: 0.5 + 0.5 * math.cos(effectivePhase * math.pi * 2),
+        );
+        final tmNode = AboutStageFloatingNode(
+          icon: Icons.shield_rounded,
+          title: 'Time Machine 保护',
+          subtitle: '无私有格式锁定 · 原片直存',
+          accent: const Color(0xFF10B981),
+          isDark: isDark,
+          pulse: 0.5 + 0.5 * math.sin(effectivePhase * math.pi * 2 + 1.5),
+        );
+
+        return Stack(
+          children: [
+            Positioned.fill(
+              child: RepaintBoundary(
+                child: CustomPaint(
+                  painter: MacStorageStagePainter(
+                    phase: effectivePhase,
+                    isDark: isDark,
+                    verticalFlow: !isWide,
+                  ),
+                ),
+              ),
+            ),
+            Padding(
+              padding: EdgeInsets.fromLTRB(16, 16, 16, isWide ? 28 : 24),
+              child: isWide
+                  ? Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        Expanded(
+                          flex: 5,
+                          child: Align(
+                            alignment: Alignment.centerLeft,
+                            child: macNode,
+                          ),
+                        ),
+                        const Spacer(flex: 2),
+                        Expanded(
+                          flex: 6,
+                          child: Column(
+                            mainAxisSize: MainAxisSize.min,
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              rootANode,
+                              const SizedBox(height: 12),
+                              tmNode,
+                            ],
+                          ),
+                        ),
+                      ],
+                    )
+                  : Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        macNode,
+                        const SizedBox(height: 8),
+                        rootANode,
+                        const SizedBox(height: 8),
+                        tmNode,
+                      ],
+                    ),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final effectivePhase = (phase + scrollOffset * 0.0008) % 1.0;
@@ -117,91 +205,7 @@ class AboutArchitectureShowcase extends StatelessWidget {
       accent: const Color(0xFF0071E3),
       title: '系统架构与数据原则',
       subtitle: '轻屿将 Mac 变成安静可靠的家庭私有云主机：原生守护进程常驻低功耗运行，每块外置硬盘独立核算配额，原始数据始终以标准文件形态交由您和 Time Machine 守护。',
-      stageCanvas: LayoutBuilder(
-        builder: (context, constraints) {
-          final isWide = constraints.maxWidth >= 520;
-          final macNode = AboutStageFloatingNode(
-            icon: Icons.laptop_mac_rounded,
-            title: 'Mac 原生核心',
-            subtitle: 'lightisled · 静默常驻',
-            accent: const Color(0xFF0071E3),
-            isDark: isDark,
-            pulse: 0.5 + 0.5 * math.sin(effectivePhase * math.pi * 2),
-          );
-          final rootANode = AboutStageFloatingNode(
-            icon: Icons.dns_rounded,
-            title: '物理卷 Root A',
-            subtitle: '100 GiB 独立配额 · device+inode',
-            accent: const Color(0xFF0071E3),
-            isDark: isDark,
-            pulse: 0.5 + 0.5 * math.cos(effectivePhase * math.pi * 2),
-          );
-          final tmNode = AboutStageFloatingNode(
-            icon: Icons.shield_rounded,
-            title: 'Time Machine 保护',
-            subtitle: '无私有格式锁定 · 原片直存',
-            accent: const Color(0xFF10B981),
-            isDark: isDark,
-            pulse: 0.5 + 0.5 * math.sin(effectivePhase * math.pi * 2 + 1.5),
-          );
-
-          return Stack(
-            children: [
-              Positioned.fill(
-                child: RepaintBoundary(
-                  child: CustomPaint(
-                    painter: MacStorageStagePainter(
-                      phase: effectivePhase,
-                      isDark: isDark,
-                      verticalFlow: !isWide,
-                    ),
-                  ),
-                ),
-              ),
-              Padding(
-                padding: EdgeInsets.fromLTRB(16, 16, 16, isWide ? 28 : 24),
-                child: isWide
-                    ? Row(
-                        crossAxisAlignment: CrossAxisAlignment.center,
-                        children: [
-                          Expanded(
-                            flex: 5,
-                            child: Align(
-                              alignment: Alignment.centerLeft,
-                              child: macNode,
-                            ),
-                          ),
-                          const Spacer(flex: 2),
-                          Expanded(
-                            flex: 6,
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              crossAxisAlignment: CrossAxisAlignment.end,
-                              children: [
-                                rootANode,
-                                const SizedBox(height: 12),
-                                tmNode,
-                              ],
-                            ),
-                          ),
-                        ],
-                      )
-                    : Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          macNode,
-                          const SizedBox(height: 8),
-                          rootANode,
-                          const SizedBox(height: 8),
-                          tmNode,
-                        ],
-                      ),
-              ),
-            ],
-          );
-        },
-      ),
+      stageCanvas: _buildArchitectureStage(effectivePhase),
       bottomContent: LayoutBuilder(
         builder: (context, constraints) {
           final w = constraints.maxWidth;
@@ -271,24 +275,73 @@ class AboutMediaExperienceShowcase extends StatelessWidget {
   final ColorScheme colors;
   final ThemeData theme;
 
-  @override
-  Widget build(BuildContext context) {
-    final p = (phase + scrollOffset * 0.001) % 1.0;
-    const memories = <(String, String, Color, IconData)>[
-      ('那年今日', '2023 · 镰仓海街', Color(0xFF8B5CF6), Icons.auto_awesome_rounded),
-      ('星标精选', '128 张家庭高光', Color(0xFFEC4899), Icons.favorite_rounded),
-      ('足迹地图', 'EXIF 经纬度聚簇', Color(0xFF06B6D4), Icons.map_rounded),
-      ('共享相册', '受控软链接直通', Color(0xFF10B981), Icons.folder_shared_rounded),
-    ];
+  static const _memories = <(String, String, Color, IconData)>[
+    ('那年今日', '2023 · 镰仓海街', Color(0xFF8B5CF6), Icons.auto_awesome_rounded),
+    ('星标精选', '128 张家庭高光', Color(0xFFEC4899), Icons.favorite_rounded),
+    ('足迹地图', 'EXIF 经纬度聚簇', Color(0xFF06B6D4), Icons.map_rounded),
+    ('共享相册', '受控软链接直通', Color(0xFF10B981), Icons.folder_shared_rounded),
+  ];
 
-    const posters = <(int, String, String, String, Color)>[
-      (1, '深海归屿', '4K HDR10 · 原盘', '9.4', Color(0xFF0071E3)),
-      (2, '镰仓物语', '杜比视界 · 双语', '9.2', Color(0xFF8B5CF6)),
-      (3, '流光之屿', 'REMUX · 无损音轨', '9.0', Color(0xFF10B981)),
-      (4, '星际漫游', 'IMAX 画幅 · 4K', '9.5', Color(0xFFF59E0B)),
-    ];
+  static const _posters = <(int, String, String, String, Color)>[
+    (1, '深海归屿', '4K HDR10 · 原盘', '9.4', Color(0xFF0071E3)),
+    (2, '镰仓物语', '杜比视界 · 双语', '9.2', Color(0xFF8B5CF6)),
+    (3, '流光之屿', 'REMUX · 无损音轨', '9.0', Color(0xFF10B981)),
+    (4, '星际漫游', 'IMAX 画幅 · 4K', '9.5', Color(0xFFF59E0B)),
+  ];
 
-    final photoChapter = AboutChapterContainer(
+  Widget _buildPhotoRadarPod(double p, {required bool isWide}) {
+    return Container(
+      height: isWide ? 148 : 112,
+      decoration: BoxDecoration(
+        color: isDark
+            ? const Color(0xFF0A1120).withValues(alpha: 0.65)
+            : Colors.white.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: const Color(0xFF8B5CF6).withValues(alpha: 0.24),
+        ),
+      ),
+      child: Stack(
+        fit: StackFit.expand,
+        children: [
+          RepaintBoundary(
+            child: CustomPaint(
+              painter: PhotoRadarPainter(phase: p, isDark: isDark),
+            ),
+          ),
+          Align(
+            alignment: Alignment.bottomRight,
+            child: Padding(
+              padding: const EdgeInsets.all(8),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: isDark
+                      ? const Color(0xFF0F172A).withValues(alpha: 0.88)
+                      : Colors.white.withValues(alpha: 0.92),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(
+                    color: const Color(0xFF8B5CF6).withValues(alpha: 0.35),
+                  ),
+                ),
+                child: const Text(
+                  'EXIF · GPS 实时聚簇',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF8B5CF6),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPhotoChapter(double p) {
+    return AboutChapterContainer(
       isDark: isDark,
       chapterNumber: '02',
       eyebrow: 'MEMORIES & TIMELINE · 光影图库漫游',
@@ -309,19 +362,17 @@ class AboutMediaExperienceShowcase extends StatelessWidget {
           builder: (context, constraints) {
             final isWide = constraints.maxWidth >= 540;
             final useTwoColPills = constraints.maxWidth >= 340;
-
             final pills = [
-              for (var i = 0; i < memories.length; i++)
+              for (var i = 0; i < _memories.length; i++)
                 AboutDriftingMemoryPill(
-                  title: memories[i].$1,
-                  subtitle: memories[i].$2,
-                  color: memories[i].$3,
-                  icon: memories[i].$4,
+                  title: _memories[i].$1,
+                  subtitle: _memories[i].$2,
+                  color: _memories[i].$3,
+                  icon: _memories[i].$4,
                   offsetPhase: (p + i * 0.25) % 1.0,
                   isDark: isDark,
                 ),
             ];
-
             final memoryGrid = useTwoColPills
                 ? Column(
                     mainAxisSize: MainAxisSize.min,
@@ -352,60 +403,7 @@ class AboutMediaExperienceShowcase extends StatelessWidget {
                       ],
                     ],
                   );
-
-            final radarPod = Container(
-              height: isWide ? 148 : 112,
-              decoration: BoxDecoration(
-                color: isDark
-                    ? const Color(0xFF0A1120).withValues(alpha: 0.65)
-                    : Colors.white.withValues(alpha: 0.72),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(
-                  color: const Color(0xFF8B5CF6).withValues(alpha: 0.24),
-                ),
-              ),
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  RepaintBoundary(
-                    child: CustomPaint(
-                      painter: PhotoRadarPainter(phase: p, isDark: isDark),
-                    ),
-                  ),
-                  Align(
-                    alignment: Alignment.bottomRight,
-                    child: Padding(
-                      padding: const EdgeInsets.all(8),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: isDark
-                              ? const Color(0xFF0F172A).withValues(alpha: 0.88)
-                              : Colors.white.withValues(alpha: 0.92),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(
-                            color: const Color(0xFF8B5CF6)
-                                .withValues(alpha: 0.35),
-                          ),
-                        ),
-                        child: const Text(
-                          'EXIF · GPS 实时聚簇',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF8B5CF6),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            );
-
+            final radarPod = _buildPhotoRadarPod(p, isWide: isWide);
             return Padding(
               padding: const EdgeInsets.all(14),
               child: isWide
@@ -431,8 +429,10 @@ class AboutMediaExperienceShowcase extends StatelessWidget {
         ),
       ),
     );
+  }
 
-    final cinemaChapter = AboutChapterContainer(
+  Widget _buildCinemaChapter(double p) {
+    return AboutChapterContainer(
       isDark: isDark,
       chapterNumber: '03',
       eyebrow: 'PRIVATE CINEMA · 巨幕私人影院',
@@ -442,9 +442,7 @@ class AboutMediaExperienceShowcase extends StatelessWidget {
       stageCanvas: LayoutBuilder(
         builder: (context, constraints) {
           final w = constraints.maxWidth;
-          // Adapt visible poster count so every card has generous width and ZERO "..." truncation!
           final visibleCount = w >= 620 ? 4 : (w >= 430 ? 3 : 2);
-
           return Stack(
             children: [
               Positioned.fill(
@@ -460,7 +458,6 @@ class AboutMediaExperienceShowcase extends StatelessWidget {
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // 1. Top Billboard Header (Wrap so badges never truncate!)
                     Wrap(
                       spacing: 8,
                       runSpacing: 6,
@@ -513,13 +510,10 @@ class AboutMediaExperienceShowcase extends StatelessWidget {
                             ),
                           ],
                         ),
-                        // Live audio spectrum indicator in its own dedicated slot
                         AboutCinemaAudioSpectrumPill(phase: p),
                       ],
                     ),
                     const SizedBox(height: 14),
-
-                    // 2. Responsive Poster Row (2 on mobile, 3 on tablet, 4 on desktop)
                     Row(
                       children: [
                         for (var i = 0; i < visibleCount; i++) ...[
@@ -530,11 +524,11 @@ class AboutMediaExperienceShowcase extends StatelessWidget {
                                 math.sin(p * math.pi * 2 + i * 0.9) * 2.5,
                               ),
                               child: AboutMiniCinemaPosterCard(
-                                rank: posters[i].$1,
-                                title: posters[i].$2,
-                                tag: posters[i].$3,
-                                rating: posters[i].$4,
-                                accent: posters[i].$5,
+                                rank: _posters[i].$1,
+                                title: _posters[i].$2,
+                                tag: _posters[i].$3,
+                                rating: _posters[i].$4,
+                                accent: _posters[i].$5,
                                 progress: (p + i * 0.21) % 1.0,
                               ),
                             ),
@@ -544,8 +538,6 @@ class AboutMediaExperienceShowcase extends StatelessWidget {
                       ],
                     ),
                     const SizedBox(height: 14),
-
-                    // 3. Dedicated Player Scrubber Bar at the bottom
                     AboutCinemaPlayerScrubberBar(phase: p),
                   ],
                 ),
@@ -555,10 +547,18 @@ class AboutMediaExperienceShowcase extends StatelessWidget {
         },
       ),
     );
+  }
 
+  @override
+  Widget build(BuildContext context) {
+    final p = (phase + scrollOffset * 0.001) % 1.0;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [photoChapter, const SizedBox(height: 18), cinemaChapter],
+      children: [
+        _buildPhotoChapter(p),
+        const SizedBox(height: 18),
+        _buildCinemaChapter(p),
+      ],
     );
   }
 }

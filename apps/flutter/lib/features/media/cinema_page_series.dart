@@ -2,10 +2,10 @@ part of 'cinema_page.dart';
 
 extension _CinemaPageSeries on _CinemaPageState {
   Future<void> _loadSeries() async {
-    if (_seriesLoading) return;
+    if (_subpages.seriesLoading) return;
     _updateState(() {
-      _seriesLoading = true;
-      _seriesError = null;
+      _subpages.seriesLoading = true;
+      _subpages.seriesError = null;
     });
     try {
       final response = await widget.api.get(
@@ -25,16 +25,16 @@ extension _CinemaPageSeries on _CinemaPageState {
       }
       if (!mounted) return;
       _updateState(() {
-        _series
+        _subpages.series
           ..clear()
           ..addAll(items);
-        _seriesLoading = false;
+        _subpages.seriesLoading = false;
       });
     } catch (error) {
       if (!mounted) return;
       _updateState(() {
-        _seriesLoading = false;
-        _seriesError = mediaErrorLabel(error);
+        _subpages.seriesLoading = false;
+        _subpages.seriesError = mediaErrorLabel(error);
       });
     }
   }
@@ -81,17 +81,19 @@ extension _CinemaPageSeries on _CinemaPageState {
         await widget.api.get('/api/v2/cinema/scrape/status'),
       );
       if (!mounted) return;
-      _updateState(() => _scrapeStatus = status);
+      _updateState(() => _indexing.scrapeStatus = status);
     } catch (_) {
       // Status polling is best-effort.
     }
   }
 
   Future<void> _startScrape() async {
-    if (_scrapeBusy || (_scrapeStatus?.running ?? false)) return;
+    if (_indexing.scrapeBusy || (_indexing.scrapeStatus?.running ?? false)) {
+      return;
+    }
     _updateState(() {
-      _scrapeBusy = true;
-      _scrapeMessage = null;
+      _indexing.scrapeBusy = true;
+      _indexing.scrapeMessage = null;
     });
     try {
       await widget.api.send(
@@ -101,7 +103,7 @@ extension _CinemaPageSeries on _CinemaPageState {
       );
       if (!mounted) return;
       _updateState(() {
-        _scrapeMessage = '已触发未匹配影片重试刮削。';
+        _indexing.scrapeMessage = '已触发未匹配影片重试刮削。';
       });
       await _refreshScrape();
     } catch (error) {
@@ -116,9 +118,9 @@ extension _CinemaPageSeries on _CinemaPageState {
       } else {
         message = mediaErrorLabel(error);
       }
-      _updateState(() => _scrapeMessage = message);
+      _updateState(() => _indexing.scrapeMessage = message);
     } finally {
-      if (mounted) _updateState(() => _scrapeBusy = false);
+      if (mounted) _updateState(() => _indexing.scrapeBusy = false);
     }
   }
 
@@ -136,23 +138,24 @@ extension _CinemaPageSeries on _CinemaPageState {
 
   List<Widget> _seriesView() {
     final theme = Theme.of(context);
-    final filteredSeries = _query.isEmpty
-        ? _series
-        : _series
+    final filteredSeries = _catalog.query.isEmpty
+        ? _subpages.series
+        : _subpages.series
               .where(
-                (item) =>
-                    item.name.toLowerCase().contains(_query.toLowerCase()),
+                (item) => item.name.toLowerCase().contains(
+                  _catalog.query.toLowerCase(),
+                ),
               )
               .toList();
     return <Widget>[
-      if (_seriesLoading)
+      if (_subpages.seriesLoading)
         const Padding(
           padding: EdgeInsets.symmetric(vertical: 30),
           child: Center(child: CircularProgressIndicator()),
         )
-      else if (_seriesError != null)
+      else if (_subpages.seriesError != null)
         MediaStatusBanner(
-          message: '剧集库读取失败：$_seriesError',
+          message: '剧集库读取失败：${_subpages.seriesError}',
           isError: true,
           icon: Icons.error_outline,
           trailing: TextButton(onPressed: _loadSeries, child: const Text('重试')),
@@ -160,8 +163,8 @@ extension _CinemaPageSeries on _CinemaPageState {
       else if (filteredSeries.isEmpty)
         MediaEmptyState(
           icon: Icons.live_tv_outlined,
-          title: _query.isNotEmpty ? '没有找到匹配的剧集' : '还没有可聚合的剧集',
-          message: _query.isNotEmpty
+          title: _catalog.query.isNotEmpty ? '没有找到匹配的剧集' : '还没有可聚合的剧集',
+          message: _catalog.query.isNotEmpty
               ? '请调整搜索关键词后再试。'
               : '将剧集文件（如 Show.S01E01.mkv）加入共享目录并扫描后，这里会按剧名聚合。',
         )
@@ -248,6 +251,7 @@ extension _CinemaPageSeries on _CinemaPageState {
   Widget _adminScrapeBar() {
     if (!widget.isAdmin) return const SizedBox.shrink();
     final theme = Theme.of(context);
+    final status = _indexing.scrapeStatus;
     return Padding(
       key: const ValueKey('cinemaAdminScrapeBar'),
       padding: EdgeInsets.fromLTRB(_pageInset, 8, _pageInset, 8),
@@ -265,21 +269,21 @@ extension _CinemaPageSeries on _CinemaPageState {
               children: <Widget>[
                 const Icon(Icons.auto_awesome_rounded, size: 18),
                 Text('TMDB 自动刮削', style: theme.textTheme.titleSmall),
-                if (_scrapeStatus == null)
+                if (status == null)
                   TextButton(
                     onPressed: _refreshScrape,
                     child: const Text('查看状态'),
                   )
-                else if (!_scrapeStatus!.tmdbConfigured)
+                else if (!status.tmdbConfigured)
                   Text(
                     '需要在 Mac App「偏好与安全」中配置 TMDB Token 后使用',
                     style: theme.textTheme.bodySmall?.copyWith(
                       color: theme.colorScheme.onSurfaceVariant,
                     ),
                   )
-                else if (_scrapeStatus!.running)
+                else if (status.running)
                   Text(
-                    '刮削进行中：已处理 ${_scrapeStatus!.processed} 项 · 匹配 ${_scrapeStatus!.matched} 项',
+                    '刮削进行中：已处理 ${status.processed} 项 · 匹配 ${status.matched} 项',
                     style: theme.textTheme.bodySmall,
                   )
                 else ...<Widget>[
@@ -290,8 +294,8 @@ extension _CinemaPageSeries on _CinemaPageState {
                     ),
                   ),
                   OutlinedButton.icon(
-                    onPressed: _scrapeBusy ? null : _startScrape,
-                    icon: _scrapeBusy
+                    onPressed: _indexing.scrapeBusy ? null : _startScrape,
+                    icon: _indexing.scrapeBusy
                         ? const SizedBox(
                             width: 15,
                             height: 15,
@@ -303,9 +307,9 @@ extension _CinemaPageSeries on _CinemaPageState {
                 ],
               ],
             ),
-            if (_scrapeMessage != null) ...[
+            if (_indexing.scrapeMessage != null) ...[
               const SizedBox(height: 6),
-              Text(_scrapeMessage!, style: theme.textTheme.bodySmall),
+              Text(_indexing.scrapeMessage!, style: theme.textTheme.bodySmall),
             ],
           ],
         ),
@@ -314,7 +318,7 @@ extension _CinemaPageSeries on _CinemaPageState {
   }
 
   Widget _filmGrid() {
-    if (_films.isEmpty && _loading) {
+    if (_catalog.films.isEmpty && _catalog.loading) {
       return const SliverToBoxAdapter(
         child: IsleLoadingState(
           padding: EdgeInsets.all(48),
@@ -322,31 +326,33 @@ extension _CinemaPageSeries on _CinemaPageState {
         ),
       );
     }
-    if (_films.isEmpty && _loadError != null) {
+    if (_catalog.films.isEmpty && _catalog.loadError != null) {
       return SliverToBoxAdapter(
         child: MediaEmptyState(
           icon: Icons.local_movies_outlined,
           title: '暂时无法读取影视库',
-          message: _loadError!,
+          message: _catalog.loadError!,
           action: OutlinedButton.icon(
-            onPressed: _loading ? null : () => _loadFilms(reset: true),
+            onPressed: _catalog.loading ? null : () => _loadFilms(reset: true),
             icon: const Icon(Icons.refresh),
             label: const Text('重试'),
           ),
         ),
       );
     }
-    if (_films.isEmpty) {
+    if (_catalog.films.isEmpty) {
       return SliverToBoxAdapter(
         child: MediaEmptyState(
           icon: Icons.local_movies_outlined,
-          title: _query.isNotEmpty
+          title: _catalog.query.isNotEmpty
               ? '没有找到匹配影片'
-              : _mode == 'continue'
+              : _catalog.mode == 'continue'
               ? '没有待续播的影片'
               : '影视库还没有影片',
-          message: _query.isNotEmpty ? '调整关键词后再搜索。' : '点击上传，把设备上的视频保存到 NAS。',
-          action: _query.isEmpty
+          message: _catalog.query.isNotEmpty
+              ? '调整关键词后再搜索。'
+              : '点击上传，把设备上的视频保存到 NAS。',
+          action: _catalog.query.isEmpty
               ? FilledButton.icon(
                   onPressed: _upload,
                   icon: const Icon(Icons.add_rounded),
@@ -375,14 +381,12 @@ extension _CinemaPageSeries on _CinemaPageState {
         final mainSpacing = width < 600 ? 10.0 : 14.0;
         final posterWidth =
             (width - _pageInset * 2 - (columns - 1) * crossSpacing) / columns;
-        // The footer can have title, kind/duration, resume/codec status and
-        // an admin edit action. Keep generous height when all status lines show.
         final footerHeight = 88 * textScale + 12;
-        final duplicateKeys = duplicateCinemaTitleKeys(_films);
+        final duplicateKeys = duplicateCinemaTitleKeys(_catalog.films);
         return SliverPadding(
           padding: EdgeInsets.fromLTRB(_pageInset, 2, _pageInset, 0),
           sliver: SliverGrid.builder(
-            itemCount: _films.length,
+            itemCount: _catalog.films.length,
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
               crossAxisCount: columns,
               crossAxisSpacing: crossSpacing,
@@ -390,15 +394,15 @@ extension _CinemaPageSeries on _CinemaPageState {
               mainAxisExtent: posterWidth * 1.5 + footerHeight,
             ),
             itemBuilder: (context, index) {
-              final film = _films[index];
+              final film = _catalog.films[index];
               return CinemaFilmTile(
                 api: widget.api,
                 memoryCache: _posterCache,
                 film: film,
                 folderBadge: cinemaDisambiguationBadge(film, duplicateKeys),
                 isAdmin: widget.isAdmin,
-                selecting: _selecting,
-                selected: _selectedFilmIds.contains(film.id),
+                selecting: _selection.selecting,
+                selected: _selection.selectedFilmIds.contains(film.id),
                 onToggle: () => _toggleFilmSelection(film),
                 onOpen: () => _openFilm(film),
                 onDetails: () => _openFilmDetails(film),

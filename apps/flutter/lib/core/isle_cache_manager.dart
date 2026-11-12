@@ -299,6 +299,12 @@ class IsleCacheManager extends ChangeNotifier {
   static String _hashKey(String rawKey) =>
       sha256.convert(utf8.encode(rawKey)).toString();
 
+  static void _logDiskCacheWarning(String stage, Object error) {
+    if (kDebugMode && !_isFlutterTest) {
+      debugPrint('IsleCacheManager [$stage]: $error');
+    }
+  }
+
   // Production runs 100% async dart:io; under FLUTTER_TEST, WidgetTester's
   // FakeAsync zone intercepts timers/microtasks and deadlocks real OS I/O
   // futures unless synchronous fallbacks are used in tests.
@@ -417,7 +423,9 @@ class IsleCacheManager extends ChangeNotifier {
           if (!validBin) {
             try {
               await _fileDelete(entity);
-            } catch (_) {}
+            } catch (e) {
+              _logDiskCacheWarning('delete_invalid_bin', e);
+            }
             continue;
           }
           try {
@@ -431,10 +439,14 @@ class IsleCacheManager extends ChangeNotifier {
               stat.size,
               stat.modified.millisecondsSinceEpoch,
             ));
-          } catch (_) {}
+          } catch (e) {
+            _logDiskCacheWarning('stat_cache_entry', e);
+          }
         }
       }
-    } catch (_) {}
+    } catch (e) {
+      _logDiskCacheWarning('scan_cache_dir', e);
+    }
     discovered.sort((a, b) => a.$3.compareTo(b.$3));
     for (final (name, size, modifiedMs) in discovered) {
       idx.files[name] = _DiskFileMeta(size, modifiedMs);
@@ -463,7 +475,9 @@ class IsleCacheManager extends ChangeNotifier {
         if (await _fileExists(victim)) {
           await _fileDelete(victim);
         }
-      } catch (_) {}
+      } catch (e) {
+        _logDiskCacheWarning('evict_lru_entry', e);
+      }
     }
   }
 
@@ -590,7 +604,9 @@ class IsleCacheManager extends ChangeNotifier {
           if (stale != null) idx.totalBytes -= stale.size;
           try {
             await _fileDelete(file);
-          } catch (_) {}
+          } catch (e) {
+            _logDiskCacheWarning('delete_empty_entry', e);
+          }
           return null;
         }
         final existingMeta = idx.files.remove(fileName);
@@ -627,7 +643,9 @@ class IsleCacheManager extends ChangeNotifier {
         if (await _fileExists(file)) {
           await _fileDelete(file);
         }
-      } catch (_) {}
+      } catch (e) {
+        _logDiskCacheWarning('remove_entry', e);
+      }
     });
   }
 
@@ -736,12 +754,16 @@ class IsleCacheManager extends ChangeNotifier {
               if (entity is File) {
                 try {
                   await _fileDelete(entity);
-                } catch (_) {}
+                } catch (e) {
+                  _logDiskCacheWarning('clear_category_file', e);
+                }
               }
             }
           }
           _diskIndexes[cat]?.initialized = true;
-        } catch (_) {}
+        } catch (e) {
+          _logDiskCacheWarning('clear_category_dir', e);
+        }
       });
     }
     notifyListeners();

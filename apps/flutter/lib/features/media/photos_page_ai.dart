@@ -14,43 +14,43 @@ extension _PhotosPageAIAndTimeline on _PhotosPageState {
           .where((e) => e >= 1970)
           .toList();
       _updateState(() {
-        _facetCameras = cameras;
-        _facetYears = years;
+        _scope.facetCameras = cameras;
+        _scope.facetYears = years;
       });
     } catch (_) {
       if (mounted) {
         _updateState(() {
-          _facetCameras = const [];
-          _facetYears = const [];
+          _scope.facetCameras = const [];
+          _scope.facetYears = const [];
         });
       }
     }
   }
 
   Future<void> _refreshTimelineIndex() async {
-    final generation = ++_timelineIndexGeneration;
+    final generation = ++_timeline.indexGeneration;
     try {
       final response = await widget.api.get('/api/v2/photos/timeline');
-      if (!mounted || generation != _timelineIndexGeneration) return;
+      if (!mounted || generation != _timeline.indexGeneration) return;
       _updateState(
-        () => _timelineMonths = PhotoTimelineMonth.parse(response['months']),
+        () => _timeline.months = PhotoTimelineMonth.parse(response['months']),
       );
     } catch (_) {
-      if (mounted && generation == _timelineIndexGeneration) {
-        _updateState(() => _timelineMonths = const []);
+      if (mounted && generation == _timeline.indexGeneration) {
+        _updateState(() => _timeline.months = const []);
       }
     }
   }
 
   Future<void> _jumpToTimelineMonth(PhotoTimelineMonth month) async {
-    if (!_fullTimelineSelected || _loading || _loadingMore) return;
+    if (!_fullTimelineSelected || _feed.loading || _feed.loadingMore) return;
     await _loadAssets(reset: true, startCursor: month.firstIndex);
-    if (!mounted || _loadError != null) return;
-    _updateState(() => _timelineActiveFirstIndex = month.firstIndex);
-    if (_timelineScroll.hasClients) {
-      _timelineScroll.jumpTo(0);
+    if (!mounted || _feed.loadError != null) return;
+    _updateState(() => _timeline.activeFirstIndex = month.firstIndex);
+    if (_timeline.scrollController.hasClients) {
+      _timeline.scrollController.jumpTo(0);
       await WidgetsBinding.instance.endOfFrame;
-      final heading = _firstMonthHeadingKey.currentContext;
+      final heading = _timeline.firstMonthHeadingKey.currentContext;
       if (mounted && heading != null && heading.mounted) {
         await Scrollable.ensureVisible(heading, alignment: .08);
       }
@@ -58,12 +58,13 @@ extension _PhotosPageAIAndTimeline on _PhotosPageState {
   }
 
   Future<void> _chooseTimelineMonth() async {
-    if (!_fullTimelineSelected || _loading) return;
-    if (_timelineMonths.isEmpty) await _refreshTimelineIndex();
+    if (!_fullTimelineSelected || _feed.loading) return;
+    if (_timeline.months.isEmpty) await _refreshTimelineIndex();
     if (!mounted) return;
-    if (_timelineMonths.isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('暂时无法读取拍摄年月，请检查网络并重试。')));
+    if (_timeline.months.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('暂时无法读取拍摄年月，请检查网络并重试。')));
       return;
     }
     final month = await showModalBottomSheet<PhotoTimelineMonth>(
@@ -80,9 +81,9 @@ extension _PhotosPageAIAndTimeline on _PhotosPageState {
               ),
               Expanded(
                 child: ListView.builder(
-                  itemCount: _timelineMonths.length,
+                  itemCount: _timeline.months.length,
                   itemBuilder: (context, index) {
-                    final month = _timelineMonths[index];
+                    final month = _timeline.months[index];
                     return ListTile(
                       leading: const Icon(Icons.calendar_month_outlined),
                       title: Text(month.label),
@@ -108,15 +109,10 @@ extension _PhotosPageAIAndTimeline on _PhotosPageState {
     );
     if (!mounted || selected == null) return;
     _updateState(() {
-      _activePersonId = selected.id;
-      _activePersonName = selected.displayName;
-      _activeAlbum = 0;
-      _activePrivateAlbum = 0;
-      _activeFolderPath = '';
-      _activeFolderName = '';
-      _favoritesOnly = false;
-      _personalFavoritesOnly = false;
-      _onThisDay = false;
+      _scope.setCollectionScope(
+        personId: selected.id,
+        personName: selected.displayName,
+      );
     });
     await _loadAssets(reset: true);
   }
@@ -133,46 +129,46 @@ extension _PhotosPageAIAndTimeline on _PhotosPageState {
   }
 
   Future<void> _toggleAIPause() async {
-    if (_aiPauseBusy) return;
-    final nextPaused = !_scanStatus.aiPaused;
-    _updateState(() => _aiPauseBusy = true);
+    if (_scan.aiPauseBusy) return;
+    final nextPaused = !_scan.status.aiPaused;
+    _updateState(() => _scan.aiPauseBusy = true);
     try {
       await PhotoAIRepository(widget.api).setAIPaused(nextPaused);
       if (!mounted) return;
-      _updateState(() {
-        _actionMessage = nextPaused ? '已暂停后台智能识图索引' : '已恢复后台智能识图索引';
-        _actionIsError = false;
-      });
+      _updateState(
+        () => _feed.setActionFeedback(
+          nextPaused ? '已暂停后台智能识图索引' : '已恢复后台智能识图索引',
+        ),
+      );
       await _refreshStatus();
     } catch (e) {
       if (mounted) {
-        _updateState(() {
-          _actionMessage = mediaErrorLabel(e);
-          _actionIsError = true;
-        });
+        _updateState(
+          () => _feed.setActionFeedback(mediaErrorLabel(e), isError: true),
+        );
       }
     } finally {
-      if (mounted) _updateState(() => _aiPauseBusy = false);
+      if (mounted) _updateState(() => _scan.aiPauseBusy = false);
     }
   }
 
   Widget _buildAIIndexBanner() {
-    if (!_scanStatus.aiRunning && !_scanStatus.aiPaused) {
+    if (!_scan.status.aiRunning && !_scan.status.aiPaused) {
       return const SizedBox.shrink();
     }
-    final remaining = _scanStatus.aiRemaining;
-    final text = _scanStatus.aiPaused
+    final remaining = _scan.status.aiRemaining;
+    final text = _scan.status.aiPaused
         ? '后台离线智能识图已暂停${remaining > 0 ? '（剩余 $remaining 张待索引）' : ''}'
         : '正在后台离线建立智能识图与 OCR 索引${remaining > 0 ? ' · 剩余 $remaining 张' : ''}';
     return MediaStatusBanner(
       message: text,
-      icon: _scanStatus.aiPaused
+      icon: _scan.status.aiPaused
           ? Icons.pause_circle_outline_rounded
           : Icons.auto_awesome_outlined,
       trailing: widget.isAdmin
           ? TextButton(
-              onPressed: _aiPauseBusy ? null : _toggleAIPause,
-              child: Text(_scanStatus.aiPaused ? '继续' : '暂停'),
+              onPressed: _scan.aiPauseBusy ? null : _toggleAIPause,
+              child: Text(_scan.status.aiPaused ? '继续' : '暂停'),
             )
           : null,
     );

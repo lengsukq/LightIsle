@@ -1,8 +1,17 @@
 part of 'cinema_detail_dialog.dart';
 
 extension _CinemaDetailPlayerControls on _CinemaDetailDialogState {
+  static const Color _crimsonAccent = Color(0xFFE50914);
+  static const TextStyle _tabularTimeStyle = TextStyle(
+    color: Colors.white,
+    fontSize: 12,
+    fontWeight: FontWeight.w600,
+    fontFeatures: [ui.FontFeature.tabularFigures()],
+  );
+
   String get _captionShortLabel {
-    switch (_captionLanguage) {
+    final lang = _subtitles.captionLanguage;
+    switch (lang) {
       case 'off':
         return '字幕';
       case 'auto':
@@ -14,10 +23,10 @@ extension _CinemaDetailPlayerControls on _CinemaDetailDialogState {
       case 'local':
         return '本机字幕';
       default:
-        if (_captionLanguage.startsWith('emb:')) {
-          final index = int.tryParse(_captionLanguage.substring(4));
+        if (lang.startsWith('emb:')) {
+          final index = int.tryParse(lang.substring(4));
           for (final track
-              in _tracks?.subtitles ?? const <CinemaSubtitleTrack>[]) {
+              in _playback.tracks?.subtitles ?? const <CinemaSubtitleTrack>[]) {
             if (track.streamIndex == index) return track.label;
           }
           return '内嵌字幕';
@@ -35,8 +44,9 @@ extension _CinemaDetailPlayerControls on _CinemaDetailDialogState {
   }
 
   String get _speedShortLabel {
-    if (_playbackSpeed == 1.0) return '1.0x';
-    final text = _playbackSpeed
+    final speed = _playback.playbackSpeed;
+    if (speed == 1.0) return '1.0x';
+    final text = speed
         .toStringAsFixed(2)
         .replaceAll(RegExp(r'0+$'), '')
         .replaceAll(RegExp(r'\.$'), '');
@@ -44,12 +54,21 @@ extension _CinemaDetailPlayerControls on _CinemaDetailDialogState {
   }
 
   String get _audioShortLabel {
-    final active = _hlsSession?.audioTrack ?? 0;
-    for (final track in _tracks?.audio ?? const <CinemaAudioTrack>[]) {
+    final active = _playback.hlsSession?.audioTrack ?? 0;
+    for (final track in _playback.tracks?.audio ?? const <CinemaAudioTrack>[]) {
       if (track.audioIndex == active) return track.label;
     }
     return '音轨';
   }
+
+  ButtonStyle get _compactTransportIconStyle => IconButton.styleFrom(
+    foregroundColor: Colors.white,
+    disabledForegroundColor: Colors.white38,
+    hoverColor: const Color(0x24FFFFFF),
+    padding: const EdgeInsets.all(6),
+    minimumSize: const Size(32, 32),
+    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+  );
 
   PopupMenuItem<T> _buildPopupChoice<T>({
     required T value,
@@ -64,7 +83,7 @@ extension _CinemaDetailPlayerControls on _CinemaDetailDialogState {
         Icon(
           Icons.check_rounded,
           size: 16,
-          color: selected ? const Color(0xFFE50914) : Colors.transparent,
+          color: selected ? _crimsonAccent : Colors.transparent,
         ),
         const SizedBox(width: 8),
         Flexible(
@@ -144,33 +163,243 @@ extension _CinemaDetailPlayerControls on _CinemaDetailDialogState {
   );
 
   Widget _buildBottomTransportDeck(BuildContext context) {
-    final controller = _controller;
+    final controller = _playback.controller;
     if (controller == null || !controller.value.isInitialized) {
       return const SizedBox.shrink();
     }
     final screenWidth = MediaQuery.sizeOf(context).width;
     final compactControls =
         screenWidth < 640 || MediaQuery.textScalerOf(context).scale(14) > 20;
-    const crimsonAccent = Color(0xFFE50914);
-    const tabularTimeStyle = TextStyle(
-      color: Colors.white,
-      fontSize: 12,
-      fontWeight: FontWeight.w600,
-      fontFeatures: [ui.FontFeature.tabularFigures()],
+    final buttonStyle = _compactTransportIconStyle;
+    final leftCluster = _buildTransportLeftCluster(
+      context,
+      controller,
+      buttonStyle,
+      compactControls: compactControls,
     );
+    final rightCluster = _buildTransportRightCluster(buttonStyle);
 
-    final compactIconButtonStyle = IconButton.styleFrom(
-      foregroundColor: Colors.white,
-      disabledForegroundColor: Colors.white38,
-      hoverColor: const Color(0x24FFFFFF),
-      padding: const EdgeInsets.all(6),
-      minimumSize: const Size(32, 32),
-      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    return _buildDraggableDockShell(
+      context: context,
+      compactControls: compactControls,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildDockDragHandleRow(),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: _buildTransportSeekBar(context, controller),
+          ),
+          const SizedBox(height: 2),
+          if (compactControls)
+            Wrap(
+              spacing: 8,
+              runSpacing: 6,
+              alignment: WrapAlignment.spaceBetween,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [leftCluster, rightCluster],
+            )
+          else
+            Row(
+              children: [
+                leftCluster,
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: rightCluster,
+                  ),
+                ),
+              ],
+            ),
+        ],
+      ),
     );
+  }
 
-    final playButton = IconButton(
+  Widget _buildDraggableDockShell({
+    required BuildContext context,
+    required bool compactControls,
+    required Widget child,
+  }) {
+    final screenSize = MediaQuery.sizeOf(context);
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: EdgeInsets.fromLTRB(
+          compactControls ? 12 : 24,
+          8,
+          compactControls ? 12 : 24,
+          compactControls ? 10 : 16,
+        ),
+        child: Center(
+          child: Transform.translate(
+            offset: _chrome.dockDragOffset,
+            child: GestureDetector(
+              behavior: HitTestBehavior.translucent,
+              onPanUpdate: (details) {
+                _revealChrome();
+                final maxDx = ((screenSize.width - 320) / 2).clamp(
+                  0.0,
+                  screenSize.width,
+                );
+                final minDy = -(screenSize.height - 160).clamp(
+                  0.0,
+                  screenSize.height,
+                );
+                _updateState(() {
+                  _chrome.dockDragOffset = Offset(
+                    (_chrome.dockDragOffset.dx + details.delta.dx).clamp(
+                      -maxDx,
+                      maxDx,
+                    ),
+                    (_chrome.dockDragOffset.dy + details.delta.dy).clamp(
+                      minDy,
+                      12.0,
+                    ),
+                  );
+                });
+              },
+              onDoubleTap: () {
+                _revealChrome();
+                _updateState(() => _chrome.dockDragOffset = Offset.zero);
+              },
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxWidth: 920),
+                child: DecoratedBox(
+                  decoration: const BoxDecoration(
+                    borderRadius: BorderRadius.all(Radius.circular(16)),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Color(0x66000000),
+                        blurRadius: 24,
+                        offset: Offset(0, 8),
+                      ),
+                    ],
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: IsleGlassBackdrop(
+                      blur: 24,
+                      child: Container(
+                        padding: EdgeInsets.fromLTRB(
+                          compactControls ? 10 : 14,
+                          4,
+                          compactControls ? 10 : 14,
+                          8,
+                        ),
+                        decoration: BoxDecoration(
+                          color: const Color(0xB80E121A),
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(
+                            color: const Color(0x26FFFFFF),
+                            width: 0.8,
+                          ),
+                        ),
+                        child: child,
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildDockDragHandleRow() {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Tooltip(
+          message: '按住拖动控制栏位置，双击复位',
+          child: Container(
+            width: 36,
+            height: 4,
+            margin: const EdgeInsets.symmetric(vertical: 2),
+            decoration: BoxDecoration(
+              color: const Color(0x4DFFFFFF),
+              borderRadius: BorderRadius.circular(999),
+            ),
+          ),
+        ),
+        if (_chrome.isDockMoved) ...[
+          const SizedBox(width: 8),
+          InkWell(
+            onTap: () =>
+                _updateState(() => _chrome.dockDragOffset = Offset.zero),
+            child: const Text(
+              '复位',
+              style: TextStyle(
+                color: Colors.white70,
+                fontSize: 10.5,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+
+  Widget _buildTransportSeekBar(
+    BuildContext context,
+    VideoPlayerController controller,
+  ) {
+    if (_playback.hlsSession != null && _originalPlaybackDuration > 0) {
+      final total = _originalPlaybackDuration;
+      return Semantics(
+        label: '原片完整进度',
+        child: SliderTheme(
+          data: SliderTheme.of(context).copyWith(
+            trackHeight: 3.5,
+            activeTrackColor: _crimsonAccent,
+            inactiveTrackColor: const Color(0x33FFFFFF),
+            thumbColor: Colors.white,
+            overlayColor: _crimsonAccent.withValues(alpha: 0.22),
+            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5.5),
+            overlayShape: const RoundSliderOverlayShape(overlayRadius: 10),
+          ),
+          child: Slider(
+            value: (_playback.seekDraft ?? _originalPlaybackSeconds).clamp(
+              0.0,
+              total,
+            ),
+            min: 0,
+            max: total,
+            onChanged: _playback.transcodeStarting
+                ? null
+                : (value) {
+                    _revealChrome();
+                    _updateState(() => _playback.seekDraft = value);
+                  },
+            onChangeEnd: (value) => unawaited(_seekAbsolute(value)),
+          ),
+        ),
+      );
+    }
+    return VideoProgressIndicator(
+      controller,
+      allowScrubbing: true,
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      colors: const VideoProgressColors(
+        playedColor: _crimsonAccent,
+        bufferedColor: Color(0x59FFFFFF),
+        backgroundColor: Color(0x2EFFFFFF),
+      ),
+    );
+  }
+
+  Widget _buildTransportPlayButton(
+    VideoPlayerController controller,
+    ButtonStyle buttonStyle,
+  ) {
+    return IconButton(
       tooltip: controller.value.isPlaying ? '暂停' : '播放',
-      style: compactIconButtonStyle,
+      style: buttonStyle,
       onPressed: () async {
         if (controller.value.isPlaying) {
           await controller.pause();
@@ -188,81 +417,114 @@ extension _CinemaDetailPlayerControls on _CinemaDetailDialogState {
         size: 24,
       ),
     );
+  }
 
+  Widget _buildTransportTimeReadout() {
     final currentStr = _timeLabel(
       Duration(milliseconds: (_originalPlaybackSeconds * 1000).round()),
     );
     final totalStr = _timeLabel(
       Duration(milliseconds: (_originalPlaybackDuration * 1000).round()),
     );
-    final timeReadout = Row(
+    return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        Text(currentStr, style: tabularTimeStyle),
+        Text(currentStr, style: _tabularTimeStyle),
         const Text(
           ' / ',
           style: TextStyle(color: Color(0x80FFFFFF), fontSize: 11.5),
         ),
         Text(
           totalStr,
-          style: tabularTimeStyle.copyWith(color: const Color(0xB3FFFFFF)),
+          style: _tabularTimeStyle.copyWith(color: const Color(0xB3FFFFFF)),
         ),
       ],
     );
+  }
 
-    Widget seekBar = VideoProgressIndicator(
-      controller,
-      allowScrubbing: true,
-      padding: const EdgeInsets.symmetric(vertical: 5),
-      colors: const VideoProgressColors(
-        playedColor: crimsonAccent,
-        bufferedColor: Color(0x59FFFFFF),
-        backgroundColor: Color(0x2EFFFFFF),
+  List<Widget> _buildTransportVolumeWidgets(
+    BuildContext context,
+    VideoPlayerController controller,
+    ButtonStyle buttonStyle, {
+    required bool compactControls,
+  }) {
+    return [
+      IconButton(
+        tooltip: controller.value.volume == 0 ? '取消静音' : '静音',
+        style: buttonStyle,
+        onPressed: () {
+          final current = controller.value.volume;
+          if (current > 0) {
+            _playback.lastNonZeroVolume = current;
+            unawaited(controller.setVolume(0));
+          } else {
+            unawaited(
+              controller.setVolume(
+                _playback.lastNonZeroVolume > 0
+                    ? _playback.lastNonZeroVolume
+                    : 1.0,
+              ),
+            );
+          }
+          _revealChrome();
+        },
+        icon: Icon(
+          controller.value.volume == 0
+              ? Icons.volume_off_rounded
+              : Icons.volume_up_rounded,
+          size: 18,
+        ),
       ),
-    );
-    if (_hlsSession != null && _originalPlaybackDuration > 0) {
-      final total = _originalPlaybackDuration;
-      seekBar = Semantics(
-        label: '原片完整进度',
-        child: SliderTheme(
-          data: SliderTheme.of(context).copyWith(
-            trackHeight: 3.5,
-            activeTrackColor: crimsonAccent,
-            inactiveTrackColor: const Color(0x33FFFFFF),
-            thumbColor: Colors.white,
-            overlayColor: crimsonAccent.withValues(alpha: 0.22),
-            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5.5),
-            overlayShape: const RoundSliderOverlayShape(overlayRadius: 10),
-          ),
-          child: Slider(
-            value: (_seekDraft ?? _originalPlaybackSeconds).clamp(0.0, total),
-            min: 0,
-            max: total,
-            onChanged: _transcodeStarting
-                ? null
-                : (value) {
-                    _revealChrome();
-                    _updateState(() => _seekDraft = value);
-                  },
-            onChangeEnd: (value) => unawaited(_seekAbsolute(value)),
+      if (!compactControls)
+        Semantics(
+          label: '音量',
+          child: SizedBox(
+            width: 78,
+            child: SliderTheme(
+              data: SliderTheme.of(context).copyWith(
+                trackHeight: 2.5,
+                activeTrackColor: Colors.white,
+                inactiveTrackColor: const Color(0x38FFFFFF),
+                thumbColor: Colors.white,
+                overlayColor: const Color(0x24FFFFFF),
+                thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5),
+                overlayShape: const RoundSliderOverlayShape(overlayRadius: 9),
+              ),
+              child: Slider(
+                value: controller.value.volume.clamp(0.0, 1.0).toDouble(),
+                onChanged: (value) {
+                  if (value > 0) {
+                    _playback.lastNonZeroVolume = value;
+                  }
+                  controller.setVolume(value);
+                  _revealChrome();
+                },
+                semanticFormatterCallback: (value) =>
+                    '音量 ${(value * 100).round()}%',
+              ),
+            ),
           ),
         ),
-      );
-    }
+    ];
+  }
 
-    final leftCluster = Row(
+  Widget _buildTransportLeftCluster(
+    BuildContext context,
+    VideoPlayerController controller,
+    ButtonStyle buttonStyle, {
+    required bool compactControls,
+  }) {
+    final busy = _playback.transcodeStarting || _playlistState.nextEpisodeBusy;
+    return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
-        playButton,
+        _buildTransportPlayButton(controller, buttonStyle),
         if (_sameDirectoryFilms.length > 1) ...[
           IconButton(
             key: const ValueKey('cinemaPlayerPrevButton'),
             tooltip: '上一部',
-            style: compactIconButtonStyle,
-            onPressed:
-                _transcodeStarting ||
-                    _nextEpisodeBusy ||
-                    _previousPlaylistFilm == null
+            style: buttonStyle,
+            onPressed: busy || _previousPlaylistFilm == null
                 ? null
                 : () {
                     _revealChrome();
@@ -273,11 +535,8 @@ extension _CinemaDetailPlayerControls on _CinemaDetailDialogState {
           IconButton(
             key: const ValueKey('cinemaPlayerNextButton'),
             tooltip: '下一部',
-            style: compactIconButtonStyle,
-            onPressed:
-                _transcodeStarting ||
-                    _nextEpisodeBusy ||
-                    _nextPlaylistFilm == null
+            style: buttonStyle,
+            onPressed: busy || _nextPlaylistFilm == null
                 ? null
                 : () {
                     _revealChrome();
@@ -289,8 +548,8 @@ extension _CinemaDetailPlayerControls on _CinemaDetailDialogState {
         const SizedBox(width: 2),
         IconButton(
           tooltip: '快退 10 秒',
-          style: compactIconButtonStyle,
-          onPressed: _transcodeStarting
+          style: buttonStyle,
+          onPressed: _playback.transcodeStarting
               ? null
               : () {
                   _revealChrome();
@@ -300,8 +559,8 @@ extension _CinemaDetailPlayerControls on _CinemaDetailDialogState {
         ),
         IconButton(
           tooltip: '快进 10 秒',
-          style: compactIconButtonStyle,
-          onPressed: _transcodeStarting
+          style: buttonStyle,
+          onPressed: _playback.transcodeStarting
               ? null
               : () {
                   _revealChrome();
@@ -310,327 +569,295 @@ extension _CinemaDetailPlayerControls on _CinemaDetailDialogState {
           icon: const Icon(Icons.forward_10_rounded, size: 19),
         ),
         const SizedBox(width: 2),
-        IconButton(
-          tooltip: controller.value.volume == 0 ? '取消静音' : '静音',
-          style: compactIconButtonStyle,
-          onPressed: () {
-            final current = controller.value.volume;
-            if (current > 0) {
-              _lastNonZeroVolume = current;
-              unawaited(controller.setVolume(0));
-            } else {
-              unawaited(
-                controller.setVolume(
-                  _lastNonZeroVolume > 0 ? _lastNonZeroVolume : 1.0,
-                ),
-              );
-            }
-            _revealChrome();
-          },
-          icon: Icon(
-            controller.value.volume == 0
-                ? Icons.volume_off_rounded
-                : Icons.volume_up_rounded,
-            size: 18,
-          ),
+        ..._buildTransportVolumeWidgets(
+          context,
+          controller,
+          buttonStyle,
+          compactControls: compactControls,
         ),
-        if (!compactControls)
-          Semantics(
-            label: '音量',
-            child: SizedBox(
-              width: 78,
-              child: SliderTheme(
-                data: SliderTheme.of(context).copyWith(
-                  trackHeight: 2.5,
-                  activeTrackColor: Colors.white,
-                  inactiveTrackColor: const Color(0x38FFFFFF),
-                  thumbColor: Colors.white,
-                  overlayColor: const Color(0x24FFFFFF),
-                  thumbShape: const RoundSliderThumbShape(
-                    enabledThumbRadius: 5,
-                  ),
-                  overlayShape: const RoundSliderOverlayShape(overlayRadius: 9),
-                ),
-                child: Slider(
-                  value: controller.value.volume.clamp(0.0, 1.0).toDouble(),
-                  onChanged: (value) {
-                    if (value > 0) {
-                      _lastNonZeroVolume = value;
-                    }
-                    controller.setVolume(value);
-                    _revealChrome();
-                  },
-                  semanticFormatterCallback: (value) =>
-                      '音量 ${(value * 100).round()}%',
-                ),
-              ),
-            ),
-          ),
         const SizedBox(width: 8),
-        timeReadout,
+        _buildTransportTimeReadout(),
       ],
     );
+  }
 
-    final rightCluster = Wrap(
+  Widget _buildPlaylistTogglePill() {
+    final active = _chrome.showPlaylistSheet;
+    final items = _sameDirectoryFilms;
+    return Semantics(
+      button: true,
+      label: '同目录播放列表',
+      child: Tooltip(
+        message: '同目录播放列表',
+        child: InkWell(
+          key: const ValueKey('cinemaPlayerPlaylistToggle'),
+          borderRadius: BorderRadius.circular(999),
+          onTap: _togglePlaylistSheet,
+          child: Container(
+            height: 30,
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            decoration: BoxDecoration(
+              color: active ? const Color(0x47FFFFFF) : const Color(0x1FFFFFFF),
+              borderRadius: BorderRadius.circular(999),
+              border: Border.all(
+                color: active
+                    ? const Color(0x59FFFFFF)
+                    : const Color(0x24FFFFFF),
+                width: 0.75,
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.playlist_play_rounded,
+                  size: 16,
+                  color: Colors.white,
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  items.length > 1
+                      ? '播放列表 ${_currentPlaylistIndex + 1}/${items.length}'
+                      : '播放列表',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                    height: 1.1,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _onCaptionMenuSelected(String value) {
+    if (value == 'import') {
+      unawaited(_importLocalSubtitles());
+    } else if (value.startsWith('size:')) {
+      final parsed = double.tryParse(value.substring(5));
+      if (parsed != null) {
+        _updateState(() => _subtitles.fontSize = parsed);
+      }
+    } else if (value.startsWith('offset:')) {
+      final arg = value.substring(7);
+      _updateState(() {
+        if (arg == 'reset') {
+          _subtitles.offsetSeconds = 0.0;
+        } else {
+          final delta = double.tryParse(arg) ?? 0.0;
+          _subtitles.offsetSeconds = (_subtitles.offsetSeconds + delta).clamp(
+            -10.0,
+            10.0,
+          );
+        }
+        final sign = _subtitles.offsetSeconds >= 0 ? '+' : '';
+        _subtitles.message = _subtitles.offsetSeconds == 0.0
+            ? '字幕时间偏移已重置'
+            : '字幕时间偏移：$sign${_subtitles.offsetSeconds.toStringAsFixed(1)} 秒';
+      });
+    } else if (value != 'local') {
+      unawaited(_loadSubtitles(value));
+    }
+  }
+
+  List<PopupMenuEntry<String>> _buildCaptionMenuItems() {
+    final lang = _subtitles.captionLanguage;
+    return <PopupMenuEntry<String>>[
+      _buildPopupChoice(value: 'off', label: '关闭字幕', selected: lang == 'off'),
+      _buildPopupChoice(
+        value: 'auto',
+        label: '同名字幕',
+        selected: lang == 'auto',
+      ),
+      _buildPopupChoice(value: 'zh', label: '中文字幕', selected: lang == 'zh'),
+      _buildPopupChoice(value: 'en', label: '英文字幕', selected: lang == 'en'),
+      if (lang == 'local')
+        _buildPopupChoice(
+          value: 'local',
+          label: '本机字幕（当前）',
+          selected: true,
+        ),
+      for (final track
+          in _playback.tracks?.subtitles ?? const <CinemaSubtitleTrack>[])
+        if (track.extractable)
+          _buildPopupChoice(
+            value: 'emb:${track.streamIndex}',
+            label: track.label,
+            selected: lang == 'emb:${track.streamIndex}',
+          ),
+      const PopupMenuDivider(height: 8),
+      const PopupMenuItem<String>(
+        value: 'import',
+        height: 36,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.folder_open_rounded, size: 15, color: Colors.white70),
+            SizedBox(width: 8),
+            Text(
+              '导入本机字幕…',
+              style: TextStyle(color: Colors.white, fontSize: 13),
+            ),
+          ],
+        ),
+      ),
+      if (lang != 'off') ...[
+        const PopupMenuDivider(height: 8),
+        for (final (size, label) in const [
+          (15.0, '字号：小'),
+          (17.0, '字号：标准'),
+          (21.0, '字号：大'),
+          (25.0, '字号：特大'),
+        ])
+          _buildPopupChoice(
+            value: 'size:$size',
+            label: label,
+            selected: _subtitles.fontSize == size,
+          ),
+        const PopupMenuDivider(height: 8),
+        const PopupMenuItem<String>(
+          value: 'offset:-0.5',
+          height: 34,
+          child: Text(
+            '字幕提前 0.5 秒',
+            style: TextStyle(color: Colors.white, fontSize: 13),
+          ),
+        ),
+        const PopupMenuItem<String>(
+          value: 'offset:+0.5',
+          height: 34,
+          child: Text(
+            '字幕延后 0.5 秒',
+            style: TextStyle(color: Colors.white, fontSize: 13),
+          ),
+        ),
+        if (_subtitles.offsetSeconds != 0.0)
+          PopupMenuItem<String>(
+            value: 'offset:reset',
+            height: 34,
+            child: Text(
+              '重置字幕偏移 (${_subtitles.offsetSeconds >= 0 ? '+' : ''}${_subtitles.offsetSeconds.toStringAsFixed(1)}s)',
+              style: const TextStyle(color: Colors.white70, fontSize: 12.5),
+            ),
+          ),
+      ],
+    ];
+  }
+
+  Widget _buildCaptionMenuPill() {
+    return _buildPlayerMenuPill<String>(
+      icon: Icons.subtitles_outlined,
+      label: _captionShortLabel,
+      tooltip: '字幕与字号',
+      active: _subtitles.captionLanguage != 'off',
+      onSelected: _onCaptionMenuSelected,
+      items: _buildCaptionMenuItems(),
+    );
+  }
+
+  Widget _buildQualityMenuPill() {
+    return _buildPlayerMenuPill<String>(
+      label: _qualityShortLabel,
+      tooltip: '清晰度',
+      enabled: !_playback.transcodeStarting,
+      onSelected: (value) => unawaited(_switchQuality(value)),
+      items: <PopupMenuEntry<String>>[
+        for (final option in _qualityOptions())
+          _buildPopupChoice(
+            value: option.$1,
+            label: option.$2,
+            selected: _currentQualityKey == option.$1,
+          ),
+      ],
+    );
+  }
+
+  Widget _buildSpeedMenuPill() {
+    return _buildPlayerMenuPill<double>(
+      label: _speedShortLabel,
+      tooltip: '播放倍速',
+      active: _playback.playbackSpeed != 1.0,
+      onSelected: (speed) => unawaited(_setPlaybackSpeed(speed)),
+      items: <PopupMenuEntry<double>>[
+        for (final speed in const [0.75, 1.0, 1.25, 1.5, 2.0])
+          _buildPopupChoice(
+            value: speed,
+            label: speed == 1.0 ? '1.0x（正常）' : '${speed}x',
+            selected: _playback.playbackSpeed == speed,
+          ),
+      ],
+    );
+  }
+
+  Widget _buildAudioTrackMenuPill() {
+    final session = _playback.hlsSession;
+    return _buildPlayerMenuPill<int>(
+      icon: Icons.graphic_eq_rounded,
+      label: _audioShortLabel,
+      tooltip: '音轨切换',
+      onSelected: (value) => unawaited(_switchAudio(value)),
+      items: <PopupMenuEntry<int>>[
+        for (final track
+            in _playback.tracks?.audio ?? const <CinemaAudioTrack>[])
+          _buildPopupChoice(
+            value: track.audioIndex,
+            label: track.label,
+            selected: session?.audioTrack == track.audioIndex,
+          ),
+      ],
+    );
+  }
+
+  Widget _buildTransportRightCluster(ButtonStyle buttonStyle) {
+    final hasMultiAudio =
+        (_playback.tracks?.audio.length ?? 0) > 1 &&
+        _playback.hlsSession != null;
+    return Wrap(
       spacing: 6,
       runSpacing: 6,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
-        Semantics(
-          button: true,
-          label: '同目录播放列表',
-          child: Tooltip(
-            message: '同目录播放列表',
-            child: InkWell(
-              key: const ValueKey('cinemaPlayerPlaylistToggle'),
-              borderRadius: BorderRadius.circular(999),
-              onTap: _togglePlaylistSheet,
-              child: Container(
-                height: 30,
-                padding: const EdgeInsets.symmetric(horizontal: 10),
-                decoration: BoxDecoration(
-                  color: _showPlaylistSheet
-                      ? const Color(0x47FFFFFF)
-                      : const Color(0x1FFFFFFF),
-                  borderRadius: BorderRadius.circular(999),
-                  border: Border.all(
-                    color: _showPlaylistSheet
-                        ? const Color(0x59FFFFFF)
-                        : const Color(0x24FFFFFF),
-                    width: 0.75,
-                  ),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(
-                      Icons.playlist_play_rounded,
-                      size: 16,
-                      color: Colors.white,
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      _sameDirectoryFilms.length > 1
-                          ? '播放列表 ${_currentPlaylistIndex + 1}/${_sameDirectoryFilms.length}'
-                          : '播放列表',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 12,
-                        fontWeight: FontWeight.w600,
-                        height: 1.1,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ),
-        ),
-        _buildPlayerMenuPill<String>(
-          icon: Icons.subtitles_outlined,
-          label: _captionShortLabel,
-          tooltip: '字幕与字号',
-          active: _captionLanguage != 'off',
-          onSelected: (value) {
-            if (value == 'import') {
-              unawaited(_importLocalSubtitles());
-            } else if (value.startsWith('size:')) {
-              final parsed = double.tryParse(value.substring(5));
-              if (parsed != null) {
-                _updateState(() => _subtitleFontSize = parsed);
-              }
-            } else if (value.startsWith('offset:')) {
-              final arg = value.substring(7);
-              _updateState(() {
-                if (arg == 'reset') {
-                  _subtitleOffsetSeconds = 0.0;
-                } else {
-                  final delta = double.tryParse(arg) ?? 0.0;
-                  _subtitleOffsetSeconds = (_subtitleOffsetSeconds + delta)
-                      .clamp(-10.0, 10.0);
-                }
-                final sign = _subtitleOffsetSeconds >= 0 ? '+' : '';
-                _subtitleMessage = _subtitleOffsetSeconds == 0.0
-                    ? '字幕时间偏移已重置'
-                    : '字幕时间偏移：$sign${_subtitleOffsetSeconds.toStringAsFixed(1)} 秒';
-              });
-            } else if (value != 'local') {
-              unawaited(_loadSubtitles(value));
-            }
-          },
-          items: <PopupMenuEntry<String>>[
-            _buildPopupChoice(
-              value: 'off',
-              label: '关闭字幕',
-              selected: _captionLanguage == 'off',
-            ),
-            _buildPopupChoice(
-              value: 'auto',
-              label: '同名字幕',
-              selected: _captionLanguage == 'auto',
-            ),
-            _buildPopupChoice(
-              value: 'zh',
-              label: '中文字幕',
-              selected: _captionLanguage == 'zh',
-            ),
-            _buildPopupChoice(
-              value: 'en',
-              label: '英文字幕',
-              selected: _captionLanguage == 'en',
-            ),
-            if (_captionLanguage == 'local')
-              _buildPopupChoice(
-                value: 'local',
-                label: '本机字幕（当前）',
-                selected: true,
-              ),
-            for (final track
-                in _tracks?.subtitles ?? const <CinemaSubtitleTrack>[])
-              if (track.extractable)
-                _buildPopupChoice(
-                  value: 'emb:${track.streamIndex}',
-                  label: track.label,
-                  selected: _captionLanguage == 'emb:${track.streamIndex}',
-                ),
-            const PopupMenuDivider(height: 8),
-            const PopupMenuItem<String>(
-              value: 'import',
-              height: 36,
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.folder_open_rounded,
-                    size: 15,
-                    color: Colors.white70,
-                  ),
-                  SizedBox(width: 8),
-                  Text(
-                    '导入本机字幕…',
-                    style: TextStyle(color: Colors.white, fontSize: 13),
-                  ),
-                ],
-              ),
-            ),
-            if (_captionLanguage != 'off') ...[
-              const PopupMenuDivider(height: 8),
-              for (final (size, label) in const [
-                (15.0, '字号：小'),
-                (17.0, '字号：标准'),
-                (21.0, '字号：大'),
-                (25.0, '字号：特大'),
-              ])
-                _buildPopupChoice(
-                  value: 'size:$size',
-                  label: label,
-                  selected: _subtitleFontSize == size,
-                ),
-              const PopupMenuDivider(height: 8),
-              const PopupMenuItem<String>(
-                value: 'offset:-0.5',
-                height: 34,
-                child: Text(
-                  '字幕提前 0.5 秒',
-                  style: TextStyle(color: Colors.white, fontSize: 13),
-                ),
-              ),
-              const PopupMenuItem<String>(
-                value: 'offset:+0.5',
-                height: 34,
-                child: Text(
-                  '字幕延后 0.5 秒',
-                  style: TextStyle(color: Colors.white, fontSize: 13),
-                ),
-              ),
-              if (_subtitleOffsetSeconds != 0.0)
-                PopupMenuItem<String>(
-                  value: 'offset:reset',
-                  height: 34,
-                  child: Text(
-                    '重置字幕偏移 (${_subtitleOffsetSeconds >= 0 ? '+' : ''}${_subtitleOffsetSeconds.toStringAsFixed(1)}s)',
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 12.5,
-                    ),
-                  ),
-                ),
-            ],
-          ],
-        ),
-        _buildPlayerMenuPill<String>(
-          label: _qualityShortLabel,
-          tooltip: '清晰度',
-          enabled: !_transcodeStarting,
-          onSelected: (value) => unawaited(_switchQuality(value)),
-          items: <PopupMenuEntry<String>>[
-            for (final option in _qualityOptions())
-              _buildPopupChoice(
-                value: option.$1,
-                label: option.$2,
-                selected: _currentQualityKey == option.$1,
-              ),
-          ],
-        ),
-        _buildPlayerMenuPill<double>(
-          label: _speedShortLabel,
-          tooltip: '播放倍速',
-          active: _playbackSpeed != 1.0,
-          onSelected: (speed) => unawaited(_setPlaybackSpeed(speed)),
-          items: <PopupMenuEntry<double>>[
-            for (final speed in const [0.75, 1.0, 1.25, 1.5, 2.0])
-              _buildPopupChoice(
-                value: speed,
-                label: speed == 1.0 ? '1.0x（正常）' : '${speed}x',
-                selected: _playbackSpeed == speed,
-              ),
-          ],
-        ),
-        if ((_tracks?.audio.length ?? 0) > 1 && _hlsSession != null)
-          _buildPlayerMenuPill<int>(
-            icon: Icons.graphic_eq_rounded,
-            label: _audioShortLabel,
-            tooltip: '音轨切换',
-            onSelected: (value) => unawaited(_switchAudio(value)),
-            items: <PopupMenuEntry<int>>[
-              for (final track in _tracks?.audio ?? const <CinemaAudioTrack>[])
-                _buildPopupChoice(
-                  value: track.audioIndex,
-                  label: track.label,
-                  selected: _hlsSession!.audioTrack == track.audioIndex,
-                ),
-            ],
-          ),
+        _buildPlaylistTogglePill(),
+        _buildCaptionMenuPill(),
+        _buildQualityMenuPill(),
+        _buildSpeedMenuPill(),
+        if (hasMultiAudio) _buildAudioTrackMenuPill(),
         IconButton(
-          tooltip: _fillScreen ? '适应屏幕' : '铺满画面',
-          style: compactIconButtonStyle,
+          tooltip: _chrome.fillScreen ? '适应屏幕' : '铺满画面',
+          style: buttonStyle,
           onPressed: () {
             _revealChrome();
-            _updateState(() => _fillScreen = !_fillScreen);
+            _updateState(() => _chrome.fillScreen = !_chrome.fillScreen);
           },
           icon: Icon(
-            _fillScreen ? Icons.fit_screen_rounded : Icons.aspect_ratio_rounded,
+            _chrome.fillScreen
+                ? Icons.fit_screen_rounded
+                : Icons.aspect_ratio_rounded,
             size: 19,
           ),
         ),
         if (_pip.supported)
           IconButton(
             tooltip: '画中画',
-            style: compactIconButtonStyle,
+            style: buttonStyle,
             onPressed: _enterPiP,
             icon: const Icon(Icons.picture_in_picture_alt_rounded, size: 19),
           ),
         IconButton(
-          tooltip: _windowFullscreen ? '退出全屏' : '全屏播放',
-          style: compactIconButtonStyle,
-          onPressed: _transcodeStarting
+          tooltip: _chrome.windowFullscreen ? '退出全屏' : '全屏播放',
+          style: buttonStyle,
+          onPressed: _playback.transcodeStarting
               ? null
               : () {
                   _revealChrome();
                   unawaited(_toggleFullscreen());
                 },
           icon: Icon(
-            _windowFullscreen
+            _chrome.windowFullscreen
                 ? Icons.fullscreen_exit_rounded
                 : Icons.fullscreen_rounded,
             size: 21,
@@ -639,136 +866,17 @@ extension _CinemaDetailPlayerControls on _CinemaDetailDialogState {
         IconButton(
           key: const ValueKey('cinemaCollapseDockButton'),
           tooltip: '收起控制栏（避免遮挡字幕）',
-          style: compactIconButtonStyle,
+          style: buttonStyle,
           onPressed: () {
-            _chromeTimer?.cancel();
+            _chrome.cancelTimer();
             _updateState(() {
-              _dockManuallyCollapsed = true;
-              _chromeVisible = false;
+              _chrome.dockManuallyCollapsed = true;
+              _chrome.visible = false;
             });
           },
           icon: const Icon(Icons.visibility_off_outlined, size: 18),
         ),
       ],
-    );
-
-    final screenSize = MediaQuery.sizeOf(context);
-    final dockMoved = _dockDragOffset.dx.abs() > 2 || _dockDragOffset.dy.abs() > 2;
-
-    return SafeArea(
-      top: false,
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(
-          compactControls ? 12 : 24, 8, compactControls ? 12 : 24, compactControls ? 10 : 16,
-        ),
-        child: Center(
-          child: Transform.translate(
-            offset: _dockDragOffset,
-            child: GestureDetector(
-              behavior: HitTestBehavior.translucent,
-              onPanUpdate: (details) {
-                _revealChrome();
-                final maxDx = ((screenSize.width - 320) / 2).clamp(0.0, screenSize.width);
-                final minDy = -(screenSize.height - 160).clamp(0.0, screenSize.height);
-                _updateState(() {
-                  _dockDragOffset = Offset(
-                    (_dockDragOffset.dx + details.delta.dx).clamp(-maxDx, maxDx),
-                    (_dockDragOffset.dy + details.delta.dy).clamp(minDy, 12.0),
-                  );
-                });
-              },
-              onDoubleTap: () {
-                _revealChrome();
-                _updateState(() => _dockDragOffset = Offset.zero);
-              },
-              child: ConstrainedBox(
-                constraints: const BoxConstraints(maxWidth: 920),
-                child: DecoratedBox(
-                  decoration: const BoxDecoration(
-                    borderRadius: BorderRadius.all(Radius.circular(16)),
-                    boxShadow: [
-                      BoxShadow(color: Color(0x66000000), blurRadius: 24, offset: Offset(0, 8)),
-                    ],
-                  ),
-                  child: ClipRRect(
-                    borderRadius: BorderRadius.circular(16),
-                    child: IsleGlassBackdrop(
-                      blur: 24,
-                      child: Container(
-                        padding: EdgeInsets.fromLTRB(
-                          compactControls ? 10 : 14, 4, compactControls ? 10 : 14, 8,
-                        ),
-                        decoration: BoxDecoration(
-                          color: const Color(0xB80E121A),
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: const Color(0x26FFFFFF), width: 0.8),
-                        ),
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.center,
-                              children: [
-                                Tooltip(
-                                  message: '按住拖动控制栏位置，双击复位',
-                                  child: Container(
-                                    width: 36, height: 4,
-                                    margin: const EdgeInsets.symmetric(vertical: 2),
-                                    decoration: BoxDecoration(
-                                      color: const Color(0x4DFFFFFF),
-                                      borderRadius: BorderRadius.circular(999),
-                                    ),
-                                  ),
-                                ),
-                                if (dockMoved) ...[
-                                  const SizedBox(width: 8),
-                                  InkWell(
-                                    onTap: () => _updateState(() => _dockDragOffset = Offset.zero),
-                                    child: const Text(
-                                      '复位',
-                                      style: TextStyle(color: Colors.white70, fontSize: 10.5, fontWeight: FontWeight.w600),
-                                    ),
-                                  ),
-                                ],
-                              ],
-                            ),
-                            Padding(
-                              padding: const EdgeInsets.symmetric(horizontal: 4),
-                              child: seekBar,
-                            ),
-                            const SizedBox(height: 2),
-                            if (compactControls)
-                              Wrap(
-                                spacing: 8, runSpacing: 6,
-                                alignment: WrapAlignment.spaceBetween,
-                                crossAxisAlignment: WrapCrossAlignment.center,
-                                children: [leftCluster, rightCluster],
-                              )
-                            else
-                              Row(
-                                children: [
-                                  leftCluster,
-                                  const SizedBox(width: 12),
-                                  Expanded(
-                                    child: Align(
-                                      alignment: Alignment.centerRight,
-                                      child: rightCluster,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
     );
   }
 }

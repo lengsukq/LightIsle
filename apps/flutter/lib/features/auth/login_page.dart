@@ -165,7 +165,9 @@ class _LoginPageState extends State<LoginPage> {
           _password.clear();
         }
       });
-    } catch (_) {}
+    } catch (error) {
+      debugPrint('LoginPage: history entry removal skipped: $error');
+    }
   }
 
   Future<void> _loadAddress() async {
@@ -378,6 +380,157 @@ class _LoginPageState extends State<LoginPage> {
     ),
   );
 
+  List<Widget> _buildServerAddressFields(ThemeData theme, ColorScheme colors) {
+    return [
+      TextFormField(
+        controller: _server,
+        enabled: !_busy,
+        keyboardType: TextInputType.url,
+        textInputAction: TextInputAction.next,
+        autocorrect: false,
+        onChanged: _addressChanged,
+        decoration: const InputDecoration(
+          labelText: '服务器地址',
+          hintText: 'http://192.168.1.100:16666',
+          prefixIcon: Icon(Icons.dns_outlined, size: 20),
+        ),
+        validator: (v) =>
+            v == null || v.trim().isEmpty ? '请输入 Mac 管理端显示的连接地址' : null,
+      ),
+      CurrentServerLatencyBar(
+        serverUrl: _server.text,
+        result: _currentServerLatency,
+        enabled: !_busy,
+        onProbe: _probeCurrentServer,
+      ),
+      NasDiscoveryPicker(
+        enabled: !_busy,
+        onSelected: (server) async {
+          if (_busy) return;
+          _server.text = server.address;
+          _addressChanged(server.address);
+          setState(() {
+            _securityExpanded = true;
+            _error = null;
+          });
+        },
+      ),
+      Padding(
+        padding: const EdgeInsets.only(top: 6),
+        child: Text(
+          '家庭局域网默认使用 HTTP；需要加密时可在 Mac 设置中开启 HTTPS。HTTP 请勿暴露到公网。',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: colors.onSurfaceVariant,
+          ),
+        ),
+      ),
+    ];
+  }
+
+  List<Widget> _buildCredentialFields() {
+    return [
+      TextFormField(
+        controller: _username,
+        enabled: !_busy,
+        textInputAction: TextInputAction.next,
+        autocorrect: false,
+        autofillHints: const [AutofillHints.username],
+        onChanged: (_) {
+          if (_selectedHistoryKey != null &&
+              LoginHistoryEntry.buildKey(_server.text, _username.text) !=
+                  _selectedHistoryKey) {
+            setState(() => _selectedHistoryKey = null);
+          }
+        },
+        decoration: const InputDecoration(
+          labelText: '用户名',
+          prefixIcon: Icon(Icons.person_outline_rounded, size: 20),
+        ),
+        validator: (v) => v == null || v.trim().isEmpty ? '请输入用户名' : null,
+      ),
+      const SizedBox(height: 16),
+      TextFormField(
+        controller: _password,
+        enabled: !_busy,
+        obscureText: _hide,
+        textInputAction: TextInputAction.done,
+        autofillHints: const [AutofillHints.password],
+        decoration: InputDecoration(
+          labelText: '密码',
+          prefixIcon: const Icon(Icons.lock_outline_rounded, size: 20),
+          suffixIcon: IconButton(
+            tooltip: _hide ? '显示密码' : '隐藏密码',
+            onPressed: () => setState(() => _hide = !_hide),
+            icon: Icon(
+              _hide ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+            ),
+          ),
+        ),
+        validator: (v) => v == null || v.isEmpty ? '请输入密码' : null,
+        onFieldSubmitted: (_) => _login(),
+      ),
+    ];
+  }
+
+  List<Widget> _buildSecurityPinFields() {
+    return [
+      Align(
+        alignment: Alignment.centerLeft,
+        child: TextButton.icon(
+          onPressed: _busy
+              ? null
+              : () => setState(() => _securityExpanded = !_securityExpanded),
+          icon: Icon(
+            _securityExpanded ? Icons.expand_less : Icons.shield_outlined,
+          ),
+          label: Text(
+            _fingerprint.text.isEmpty ? '连接安全设置' : '连接安全设置 · 已记住证书指纹',
+          ),
+        ),
+      ),
+      IsleAnimatedExpand(
+        expanded: _securityExpanded,
+        child: _securityExpanded
+            ? Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  TextFormField(
+                    key: const Key('certificateFingerprint'),
+                    controller: _fingerprint,
+                    enabled: !_busy,
+                    autocorrect: false,
+                    enableSuggestions: false,
+                    minLines: 2,
+                    maxLines: 3,
+                    decoration: const InputDecoration(
+                      labelText: '连接验证信息（加密连接时使用）',
+                      helperText:
+                          '第一次连接 Mac 时，从 Mac「连接其他设备」中复制验证信息并仔细核对。使用已受信任的证书时可留空。',
+                      helperMaxLines: 5,
+                      prefixIcon: Icon(Icons.verified_user_outlined, size: 20),
+                    ),
+                    validator: (value) {
+                      final pin = (value ?? '').replaceAll(
+                        RegExp(r'[:\s]'),
+                        '',
+                      );
+                      if (pin.isEmpty) return null;
+                      if (_httpsOrigin(_server.text) == null) {
+                        return '证书指纹仅用于 HTTPS 地址';
+                      }
+                      return RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(pin)
+                          ? null
+                          : '请输入完整的 64 位 SHA-256 指纹';
+                    },
+                  ),
+                  const SizedBox(height: 8),
+                ],
+              )
+            : const SizedBox.shrink(),
+      ),
+    ];
+  }
+
   Widget _buildForm(BuildContext context, {required bool wide}) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
@@ -444,163 +597,11 @@ class _LoginPageState extends State<LoginPage> {
                   if (widget.expired) const Notice('登录已过期或失效，请重新登录。'),
                   if (widget.notice != null)
                     Notice(widget.notice!, error: true),
-                  TextFormField(
-                    controller: _server,
-                    enabled: !_busy,
-                    keyboardType: TextInputType.url,
-                    textInputAction: TextInputAction.next,
-                    autocorrect: false,
-                    onChanged: _addressChanged,
-                    decoration: const InputDecoration(
-                      labelText: '服务器地址',
-                      hintText: 'http://192.168.1.100:16666',
-                      prefixIcon: Icon(Icons.dns_outlined, size: 20),
-                    ),
-                    validator: (v) => v == null || v.trim().isEmpty
-                        ? '请输入 Mac 管理端显示的连接地址'
-                        : null,
-                  ),
-                  CurrentServerLatencyBar(
-                    serverUrl: _server.text,
-                    result: _currentServerLatency,
-                    enabled: !_busy,
-                    onProbe: _probeCurrentServer,
-                  ),
-                  NasDiscoveryPicker(
-                    enabled: !_busy,
-                    onSelected: (server) async {
-                      if (_busy) return;
-                      _server.text = server.address;
-                      _addressChanged(server.address);
-                      setState(() {
-                        _securityExpanded = true;
-                        _error = null;
-                      });
-                    },
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: Text(
-                      '家庭局域网默认使用 HTTP；需要加密时可在 Mac 设置中开启 HTTPS。HTTP 请勿暴露到公网。',
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: colors.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
+                  ..._buildServerAddressFields(theme, colors),
                   const SizedBox(height: 16),
-                  TextFormField(
-                    controller: _username,
-                    enabled: !_busy,
-                    textInputAction: TextInputAction.next,
-                    autocorrect: false,
-                    autofillHints: const [AutofillHints.username],
-                    onChanged: (_) {
-                      if (_selectedHistoryKey != null &&
-                          LoginHistoryEntry.buildKey(
-                                _server.text,
-                                _username.text,
-                              ) !=
-                              _selectedHistoryKey) {
-                        setState(() => _selectedHistoryKey = null);
-                      }
-                    },
-                    decoration: const InputDecoration(
-                      labelText: '用户名',
-                      prefixIcon: Icon(Icons.person_outline_rounded, size: 20),
-                    ),
-                    validator: (v) =>
-                        v == null || v.trim().isEmpty ? '请输入用户名' : null,
-                  ),
-                  const SizedBox(height: 16),
-                  TextFormField(
-                    controller: _password,
-                    enabled: !_busy,
-                    obscureText: _hide,
-                    textInputAction: TextInputAction.done,
-                    autofillHints: const [AutofillHints.password],
-                    decoration: InputDecoration(
-                      labelText: '密码',
-                      prefixIcon: const Icon(
-                        Icons.lock_outline_rounded,
-                        size: 20,
-                      ),
-                      suffixIcon: IconButton(
-                        tooltip: _hide ? '显示密码' : '隐藏密码',
-                        onPressed: () => setState(() => _hide = !_hide),
-                        icon: Icon(
-                          _hide
-                              ? Icons.visibility_outlined
-                              : Icons.visibility_off_outlined,
-                        ),
-                      ),
-                    ),
-                    validator: (v) => v == null || v.isEmpty ? '请输入密码' : null,
-                    onFieldSubmitted: (_) => _login(),
-                  ),
+                  ..._buildCredentialFields(),
                   const SizedBox(height: 6),
-                  Align(
-                    alignment: Alignment.centerLeft,
-                    child: TextButton.icon(
-                      onPressed: _busy
-                          ? null
-                          : () => setState(
-                              () => _securityExpanded = !_securityExpanded,
-                            ),
-                      icon: Icon(
-                        _securityExpanded
-                            ? Icons.expand_less
-                            : Icons.shield_outlined,
-                      ),
-                      label: Text(
-                        _fingerprint.text.isEmpty
-                            ? '连接安全设置'
-                            : '连接安全设置 · 已记住证书指纹',
-                      ),
-                    ),
-                  ),
-                  IsleAnimatedExpand(
-                    expanded: _securityExpanded,
-                    child: _securityExpanded
-                        ? Column(
-                            crossAxisAlignment: CrossAxisAlignment.stretch,
-                            children: [
-                              TextFormField(
-                                key: const Key('certificateFingerprint'),
-                                controller: _fingerprint,
-                                enabled: !_busy,
-                                autocorrect: false,
-                                enableSuggestions: false,
-                                minLines: 2,
-                                maxLines: 3,
-                                decoration: const InputDecoration(
-                                  labelText: '连接验证信息（加密连接时使用）',
-                                  helperText: '第一次连接 Mac 时，从 Mac「连接其他设备」中复制验证信息并仔细核对。使用已受信任的证书时可留空。',
-                                  helperMaxLines: 5,
-                                  prefixIcon: Icon(
-                                    Icons.verified_user_outlined,
-                                    size: 20,
-                                  ),
-                                ),
-                                validator: (value) {
-                                  final pin = (value ?? '').replaceAll(
-                                    RegExp(r'[:\s]'),
-                                    '',
-                                  );
-                                  if (pin.isEmpty) return null;
-                                  if (_httpsOrigin(_server.text) == null) {
-                                    return '证书指纹仅用于 HTTPS 地址';
-                                  }
-                                  return RegExp(r'^[a-fA-F0-9]{64}$')
-                                          .hasMatch(pin)
-                                      ? null
-                                      : '请输入完整的 64 位 SHA-256 指纹';
-                                },
-                              ),
-                              const SizedBox(height: 8),
-                            ],
-                          )
-                        : const SizedBox.shrink(),
-                  ),
+                  ..._buildSecurityPinFields(),
                   if (_error != null) Notice(_error!, error: true),
                   const SizedBox(height: 10),
                   FilledButton.icon(

@@ -2,43 +2,43 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/login_history_store.dart';
-import '../../core/widgets.dart';
-import '../../core/isle_theme.dart';
 import '../../core/user_facing_error.dart';
+import '../../core/widgets.dart';
 import '../auth/login_history_section.dart';
+import '../files/desktop_backup_engine.dart';
+import '../files/downloads_page.dart';
+import '../files/file_shares_page.dart';
+import '../media/cinema_decode_preference.dart';
+import '../media/offline_photo_store.dart';
+import '../media/offline_video_store.dart';
+import 'about_page.dart';
 import 'account_security_page.dart';
+import 'accounts_page.dart';
 import 'admin_activity_page.dart';
 import 'admin_diagnostics_page.dart';
-import 'network_diagnostics_page.dart';
-import 'dav_page.dart';
-import 'storage_page.dart';
-import 'accounts_page.dart';
-import 'upload_maintenance_page.dart';
-import 'missing_media_page.dart';
-import 'about_page.dart';
-import 'automation_page.dart';
-import 'apps_center_page.dart';
 import 'admin_smb_page.dart';
+import 'apps_center_page.dart';
+import 'automation_page.dart';
+import 'beta_diagnostic_report.dart';
 import 'cache_management_page.dart';
+import 'dav_page.dart';
+import 'missing_media_page.dart';
+import 'network_diagnostics_page.dart';
+import 'settings_backup_entries.dart';
+import 'storage_page.dart';
+import 'upload_maintenance_page.dart';
 
+export 'about_page.dart';
 export 'accounts_page.dart';
+export 'admin_smb_page.dart';
+export 'apps_center_page.dart';
+export 'automation_page.dart';
+export 'cache_management_page.dart';
 export 'grants_page.dart';
 export 'upload_maintenance_page.dart';
-export 'about_page.dart';
-export 'automation_page.dart';
-export 'apps_center_page.dart';
-export 'admin_smb_page.dart';
-export 'cache_management_page.dart';
-import '../files/desktop_backup_engine.dart';
-import '../files/file_shares_page.dart';
-import '../files/downloads_page.dart';
-import '../media/offline_video_store.dart';
-import '../media/offline_photo_store.dart';
-import '../media/cinema_decode_preference.dart';
-import 'beta_diagnostic_report.dart';
-import 'settings_backup_entries.dart';
 
 class SettingsPage extends StatelessWidget {
   const SettingsPage({
@@ -81,7 +81,6 @@ class SettingsPage extends StatelessWidget {
     required IconData icon,
     required String title,
     required String subtitle,
-    required Color color,
     required VoidCallback onTap,
   }) => IsleGroupTile(
     icon: icon,
@@ -346,8 +345,96 @@ class SettingsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isAdmin = identity['role'] == 'admin';
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+        final isWide = constraints.maxWidth >= 600 && textScale <= 1.35;
+        return IsleListView(
+          maxWidth: isWide ? 1080 : IsleLayout.settingsWidth,
+          children: [
+            IslePageHeader(
+              title: '设置',
+              hideSubtitleOnCompact: true,
+              subtitle: isAdmin ? '家庭管理、存储权限与服务维护' : '个人空间、连接与账号安全',
+              icon: Icons.tune_rounded,
+            ),
+            _identityCard(context, isAdmin),
+            const SizedBox(height: 6),
+            _buildResponsiveSectionsLayout(
+              context,
+              isAdmin: isAdmin,
+              isWide: isWide,
+            ),
+            const SizedBox(height: 20),
+            _buildVersionFooter(context),
+            const SizedBox(height: 16),
+          ],
+        );
+      },
+    );
+  }
 
-    final familyAndStorageSection = _section(
+  Widget _buildResponsiveSectionsLayout(
+    BuildContext context, {
+    required bool isAdmin,
+    required bool isWide,
+  }) {
+    final primarySpaceSection = isAdmin
+        ? _buildFamilyAndStorageSection(context)
+        : _buildMySpaceSection(context);
+    final filesSection = _buildFilesAndConnectionSection(
+      context,
+      isAdmin: isAdmin,
+    );
+    final securitySection = _buildAccountSecuritySection(
+      context,
+      isAdmin: isAdmin,
+    );
+    final aboutSection = _buildAboutAndDataSection(context);
+
+    if (isWide) {
+      return Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                primarySpaceSection,
+                const SizedBox(height: 6),
+                securitySection,
+              ],
+            ),
+          ),
+          const SizedBox(width: 14),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                filesSection,
+                const SizedBox(height: 6),
+                aboutSection,
+              ],
+            ),
+          ),
+        ],
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        primarySpaceSection,
+        filesSection,
+        securitySection,
+        const SizedBox(height: 4),
+        aboutSection,
+      ],
+    );
+  }
+
+  Widget _buildFamilyAndStorageSection(BuildContext context) {
+    return _section(
       context,
       title: '家庭与存储',
       index: 0,
@@ -357,7 +444,6 @@ class SettingsPage extends StatelessWidget {
           icon: Icons.people_alt_rounded,
           title: '账号与目录授权',
           subtitle: '成员、目录与读写权限',
-          color: const Color(0xFF007AFF),
           onTap: () => _go(
             context,
             AccountsPage(
@@ -371,7 +457,6 @@ class SettingsPage extends StatelessWidget {
           icon: Icons.storage_rounded,
           title: '存储与成员配额',
           subtitle: '逐盘配置空间与容量',
-          color: const Color(0xFF34C759),
           onTap: () => _go(context, StoragePage(api: api, isAdmin: true)),
         ),
         _entry(
@@ -379,7 +464,6 @@ class SettingsPage extends StatelessWidget {
           icon: Icons.folder_shared_rounded,
           title: 'Mac 文件共享 (SMB)',
           subtitle: '局域网广播、共享目录与访客权限',
-          color: const Color(0xFFFF9500),
           onTap: () => _go(context, AdminSmbPage(api: api)),
         ),
         _entry(
@@ -387,7 +471,6 @@ class SettingsPage extends StatelessWidget {
           icon: Icons.notifications_active_outlined,
           title: '存储与任务通知',
           subtitle: '磁盘、备份与后台任务',
-          color: const Color(0xFFFF3B30),
           onTap: () => _go(
             context,
             AdminActivityPage(api: api, kind: AdminActivity.alerts),
@@ -398,13 +481,14 @@ class SettingsPage extends StatelessWidget {
           icon: Icons.monitor_heart_outlined,
           title: '设备诊断与 Key 状态',
           subtitle: '性能历史、网卡、磁盘 SMART 和第三方配置状态',
-          color: const Color(0xFF5856D6),
           onTap: () => _go(context, AdminDiagnosticsPage(api: api)),
         ),
       ],
     );
+  }
 
-    final mySpaceSection = _section(
+  Widget _buildMySpaceSection(BuildContext context) {
+    return _section(
       context,
       title: '我的空间',
       index: 0,
@@ -414,20 +498,23 @@ class SettingsPage extends StatelessWidget {
           icon: Icons.storage_rounded,
           title: '我的存储空间',
           subtitle: '查看各硬盘额度及已计用量',
-          color: const Color(0xFF34C759),
           onTap: () => _go(context, StoragePage(api: api, isAdmin: false)),
         ),
       ],
     );
+  }
 
+  Widget _buildFilesAndConnectionSection(
+    BuildContext context, {
+    required bool isAdmin,
+  }) {
     final backupEntry = buildPlatformBackupSettingsEntry(
       context,
       api: api,
       identity: identity,
       desktopBackupController: desktopBackupController,
     );
-
-    final filesAndConnectionSection = _section(
+    return _section(
       context,
       title: '文件与连接',
       index: 1,
@@ -440,7 +527,6 @@ class SettingsPage extends StatelessWidget {
           subtitle: isAdmin
               ? '按需轻应用、成员权限分配与 AI Agent (MCP) 开关'
               : '打开管理员授权给你的家庭轻应用与工具',
-          color: const Color(0xFF5856D6),
           onTap: () => _go(context, AppsCenterPage(api: api, isAdmin: isAdmin)),
         ),
         _entry(
@@ -448,7 +534,6 @@ class SettingsPage extends StatelessWidget {
           icon: Icons.speed_rounded,
           title: '连接测速',
           subtitle: '延迟、上下行速度与 NAS 连接稳定性',
-          color: const Color(0xFF30B0C7),
           onTap: () => _go(context, NetworkDiagnosticsPage(api: api)),
         ),
         _entry(
@@ -456,7 +541,6 @@ class SettingsPage extends StatelessWidget {
           icon: Icons.downloading_rounded,
           title: '下载中心',
           subtitle: '离线下载、进度和任务',
-          color: const Color(0xFF007AFF),
           onTap: () => _go(context, DownloadsPage(api: api)),
         ),
         _entry(
@@ -464,7 +548,6 @@ class SettingsPage extends StatelessWidget {
           icon: Icons.smart_display_rounded,
           title: '影视播放与本地解码',
           subtitle: '设置原画直传硬解优先或服务器转码兼容',
-          color: const Color(0xFFE50914),
           onTap: () => unawaited(showCinemaDecodeSettingsDialog(context)),
         ),
         _entry(
@@ -472,7 +555,6 @@ class SettingsPage extends StatelessWidget {
           icon: Icons.link_rounded,
           title: '我的文件分享',
           subtitle: '查看及撤销分享链接',
-          color: const Color(0xFFFF9500),
           onTap: () => _go(context, FileSharesPage(api: api)),
         ),
         _entry(
@@ -480,7 +562,6 @@ class SettingsPage extends StatelessWidget {
           icon: Icons.cleaning_services_rounded,
           title: '缓存与本地存储管理',
           subtitle: '查看缩略图、海报、地图瓦片与离线副本占用并按项清理',
-          color: const Color(0xFF10B981),
           onTap: () => _go(
             context,
             CacheManagementPage(
@@ -497,7 +578,6 @@ class SettingsPage extends StatelessWidget {
           icon: Icons.folder_shared_rounded,
           title: 'WebDAV 访问',
           subtitle: '通过独立密码连接设备',
-          color: const Color(0xFFAF52DE),
           onTap: () => _go(
             context,
             DavPage(api: api, accountId: identity['id']?.toString()),
@@ -505,8 +585,13 @@ class SettingsPage extends StatelessWidget {
         ),
       ],
     );
+  }
 
-    final accountSecuritySection = _section(
+  Widget _buildAccountSecuritySection(
+    BuildContext context, {
+    required bool isAdmin,
+  }) {
+    return _section(
       context,
       title: '账号与安全',
       index: 2,
@@ -516,7 +601,6 @@ class SettingsPage extends StatelessWidget {
           icon: Icons.folder_off_outlined,
           title: isAdmin ? '缺失媒体与资料' : '我的缺失媒体',
           subtitle: '检查找不到的照片、影视及保留的资料',
-          color: const Color(0xFFFF9500),
           onTap: () =>
               _go(context, MissingMediaPage(api: api, isAdmin: isAdmin)),
         ),
@@ -525,7 +609,6 @@ class SettingsPage extends StatelessWidget {
           icon: Icons.security_rounded,
           title: '密码与登录会话',
           subtitle: '改密、管理已登录设备',
-          color: const Color(0xFFFF9500),
           onTap: () => _go(
             context,
             AccountSecurityPage(
@@ -542,7 +625,6 @@ class SettingsPage extends StatelessWidget {
             icon: Icons.terminal_rounded,
             title: '本机脚本自动化',
             subtitle: '定时调度本地脚本、通知渠道与执行日志',
-            color: const Color(0xFF10B981),
             onTap: () => _go(context, AutomationPage(api: api)),
           ),
         if (isAdmin)
@@ -551,7 +633,6 @@ class SettingsPage extends StatelessWidget {
             icon: Icons.policy_outlined,
             title: '安全审计',
             subtitle: '查看管理员操作记录',
-            color: const Color(0xFF8E8E93),
             onTap: () => _go(
               context,
               AdminActivityPage(api: api, kind: AdminActivity.audit),
@@ -563,20 +644,14 @@ class SettingsPage extends StatelessWidget {
             icon: Icons.cloud_upload_rounded,
             title: '上传维护',
             subtitle: '处理残留与过期上传',
-            color: const Color(0xFF007AFF),
             onTap: () => _go(context, UploadMaintenancePage(api: api)),
           ),
       ],
     );
+  }
 
-    const helpDisclosure = IsleHelpDisclosure(
-      summary: '关于 LightIsle 客户端与数据',
-      details:
-          'Mac 原生管理端负责运行 NAS、存储权限和配置恢复。'
-          '关闭这个客户端不会停止 NAS；原始文件需要通过 Time Machine 或其他工具备份。',
-    );
-
-    final aboutAndDataSection = IsleAnimatedEntrance(
+  Widget _buildAboutAndDataSection(BuildContext context) {
+    return IsleAnimatedEntrance(
       delay: const Duration(milliseconds: 105),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -593,46 +668,7 @@ class SettingsPage extends StatelessWidget {
                 iconBgColor: const Color(0xFF5856D6),
                 title: '关于轻屿 LightIsle',
                 subtitle: 'GitHub 源码仓库、非商业许可与开发信息',
-                trailing: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 7,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF238636).withValues(alpha: 0.15),
-                        borderRadius: BorderRadius.circular(999),
-                        border: Border.all(
-                          color: const Color(0xFF238636).withValues(alpha: 0.4),
-                          width: 0.7,
-                        ),
-                      ),
-                      child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(
-                            Icons.code_rounded,
-                            size: 11,
-                            color: Color(0xFF238636),
-                          ),
-                          SizedBox(width: 3),
-                          Text(
-                            'GitHub',
-                            style: TextStyle(
-                              fontSize: 10.5,
-                              fontWeight: FontWeight.w700,
-                              color: Color(0xFF238636),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const SizedBox(width: 4),
-                    const Icon(Icons.chevron_right_rounded, size: 20),
-                  ],
-                ),
+                trailing: _buildGithubBadgeTrailing(),
                 onTap: () => _go(context, const AboutPage()),
               ),
               IsleGroupTile(
@@ -645,93 +681,62 @@ class SettingsPage extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 8),
-          helpDisclosure,
+          const IsleHelpDisclosure(
+            summary: '关于 LightIsle 客户端与数据',
+            details:
+                'Mac 原生管理端负责运行 NAS、存储权限和配置恢复。'
+                '关闭这个客户端不会停止 NAS；原始文件需要通过 Time Machine 或其他工具备份。',
+          ),
         ],
       ),
     );
+  }
 
-    final versionFooter = Text(
+  Widget _buildGithubBadgeTrailing() {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+          decoration: BoxDecoration(
+            color: const Color(0xFF238636).withValues(alpha: 0.15),
+            borderRadius: BorderRadius.circular(999),
+            border: Border.all(
+              color: const Color(0xFF238636).withValues(alpha: 0.4),
+              width: 0.7,
+            ),
+          ),
+          child: const Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.code_rounded, size: 11, color: Color(0xFF238636)),
+              SizedBox(width: 3),
+              Text(
+                'GitHub',
+                style: TextStyle(
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF238636),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 4),
+        const Icon(Icons.chevron_right_rounded, size: 20),
+      ],
+    );
+  }
+
+  Widget _buildVersionFooter(BuildContext context) {
+    return Text(
       '轻屿 LightIsle · Flutter 开发预览 0.1.0',
       textAlign: TextAlign.center,
       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-        color: Theme.of(context).colorScheme.onSurfaceVariant
-            .withValues(alpha: 0.7),
+        color: Theme.of(
+          context,
+        ).colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
       ),
-    );
-
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final availableWidth = constraints.maxWidth;
-        final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
-        final isWide = availableWidth >= 600 && textScale <= 1.35;
-
-        final Widget contentLayout;
-        if (isWide) {
-          contentLayout = Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    if (isAdmin) familyAndStorageSection,
-                    if (!isAdmin) ...[
-                      mySpaceSection,
-                      const SizedBox(height: 6),
-                      accountSecuritySection,
-                    ],
-                    if (isAdmin) ...[
-                      const SizedBox(height: 6),
-                      accountSecuritySection,
-                    ],
-                  ],
-                ),
-              ),
-              const SizedBox(width: 14),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    filesAndConnectionSection,
-                    const SizedBox(height: 6),
-                    aboutAndDataSection,
-                  ],
-                ),
-              ),
-            ],
-          );
-        } else {
-          contentLayout = Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              if (isAdmin) familyAndStorageSection,
-              if (!isAdmin) mySpaceSection,
-              filesAndConnectionSection,
-              accountSecuritySection,
-              const SizedBox(height: 4),
-              aboutAndDataSection,
-            ],
-          );
-        }
-
-        return IsleListView(
-          maxWidth: isWide ? 1080 : IsleLayout.settingsWidth,
-          children: [
-            IslePageHeader(
-              title: '设置',
-              hideSubtitleOnCompact: true,
-              subtitle: isAdmin ? '家庭管理、存储权限与服务维护' : '个人空间、连接与账号安全',
-              icon: Icons.tune_rounded,
-            ),
-            _identityCard(context, isAdmin),
-            const SizedBox(height: 6),
-            contentLayout,
-            const SizedBox(height: 20),
-            versionFooter,
-            const SizedBox(height: 16),
-          ],
-        );
-      },
     );
   }
 }

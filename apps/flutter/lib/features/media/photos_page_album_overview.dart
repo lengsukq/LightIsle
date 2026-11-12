@@ -18,10 +18,11 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
         widget.api.selectedRoot?.identity != root) {
       return false;
     }
-    _updateState(() {
-      _actionMessage = result.moved ? '照片已移动到相册，图库正在更新。' : '照片已复制到相册，图库正在更新。';
-      _actionIsError = false;
-    });
+    _updateState(
+      () => _feed.setActionFeedback(
+        result.moved ? '照片已移动到相册，图库正在更新。' : '照片已复制到相册，图库正在更新。',
+      ),
+    );
     await _loadAssets(reset: true);
     return result.moved;
   }
@@ -31,23 +32,14 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
       // Close the detail modal AND the fullscreen viewer if present.
       Navigator.of(context).popUntil((route) => route.isFirst);
       if (!mounted) return;
-      _searchTimer?.cancel();
-      _searchController.text = label;
+      _scope.searchTimer?.cancel();
+      _scope.searchController.text = label;
       _updateState(() {
-        _selecting = false;
-        _selectedAssets.clear();
-        _activeAlbum = 0;
-        _activePrivateAlbum = 0;
-        _activeFolderPath = '';
-        _activeFolderName = '';
-        _activePersonId = 0;
-        _activePersonName = '';
-        _favoritesOnly = false;
-        _personalFavoritesOnly = false;
-        _onThisDay = false;
-        _showSearch = true;
-        _searchMode = PhotoSearchMode.scene;
-        _query = label;
+        _selection.clear();
+        _scope.setCollectionScope();
+        _scope.showSearch = true;
+        _scope.searchMode = PhotoSearchMode.scene;
+        _scope.query = label;
       });
       unawaited(_loadAssets(reset: true));
     }
@@ -56,17 +48,11 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
       Navigator.of(context).popUntil((route) => route.isFirst);
       if (!mounted) return;
       _updateState(() {
-        _selecting = false;
-        _selectedAssets.clear();
-        _activeAlbum = 0;
-        _activePrivateAlbum = 0;
-        _activeFolderPath = '';
-        _activeFolderName = '';
-        _favoritesOnly = false;
-        _personalFavoritesOnly = false;
-        _onThisDay = false;
-        _activePersonId = personId;
-        _activePersonName = personName;
+        _selection.clear();
+        _scope.setCollectionScope(
+          personId: personId,
+          personName: personName,
+        );
       });
       unawaited(_loadAssets(reset: true));
     }
@@ -74,12 +60,12 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
     Widget details() => PhotoDetailDialog(
       api: widget.api,
       asset: asset,
-      albums: _albums,
-      privateAlbums: _privateAlbums,
+      albums: _catalog.sharedAlbums,
+      privateAlbums: _catalog.privateAlbums,
       isAdmin: widget.isAdmin,
-      currentAlbumId: _activeAlbum,
-      currentPrivateAlbumId: _activePrivateAlbum,
-      personalFavoritesOnly: _personalFavoritesOnly,
+      currentAlbumId: _scope.activeAlbum,
+      currentPrivateAlbumId: _scope.activePrivateAlbum,
+      personalFavoritesOnly: _scope.personalFavoritesOnly,
       canToggleFavorite: widget.isAdmin || asset.canWrite,
       onToggleFavorite: _toggleFavorite,
       onTogglePersonalFavorite: _togglePersonalFavorite,
@@ -168,7 +154,7 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
               ),
               icon: const Icon(Icons.add_rounded, size: 18),
               label: const Text('文件夹相册'),
-              onPressed: _albumBusy
+              onPressed: _catalog.busy
                   ? null
                   : () async {
                       final root = widget.api.selectedRoot?.identity;
@@ -217,9 +203,12 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
                   const SizedBox(height: 12),
                   actions,
                 ],
-                if (_actionIsError && _actionMessage != null) ...[
+                if (_feed.actionIsError && _feed.actionMessage != null) ...[
                   const SizedBox(height: 12),
-                  MediaStatusBanner(message: _actionMessage!, isError: true),
+                  MediaStatusBanner(
+                    message: _feed.actionMessage!,
+                    isError: true,
+                  ),
                 ],
                 const SizedBox(height: 22),
                 if (sideBySide)
@@ -290,7 +279,7 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
                 child: _albumSectionHeading(
                   pageContext,
                   '照片目录中的相册',
-                  _folderAlbums.length,
+                  _catalog.folderAlbums.length,
                   '对应个人照片目录下的真实文件夹，支持家庭受控软链接共享',
                 ),
               ),
@@ -321,7 +310,7 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
             ],
           ),
           const SizedBox(height: 14),
-          if (_folderAlbums.isEmpty)
+          if (_catalog.folderAlbums.isEmpty)
             _emptyAlbumSection(
               pageContext,
               Icons.folder_special_outlined,
@@ -333,7 +322,7 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
               spacing: 12,
               runSpacing: 12,
               children: [
-                for (final item in _folderAlbums)
+                for (final item in _catalog.folderAlbums)
                   ActionChip(
                     avatar: Icon(
                       item['shared'] == true
@@ -433,7 +422,8 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
     required bool private,
   }) {
     final scheme = Theme.of(pageContext).colorScheme;
-    final albums = private ? _privateAlbums : _albums;
+    final albums = private ? _catalog.privateAlbums : _catalog.sharedAlbums;
+    final privateFailure = _catalog.privateFailure;
     return Container(
       key: ValueKey(private ? 'privateAlbumSection' : 'sharedAlbumSection'),
       padding: const EdgeInsets.all(16),
@@ -452,12 +442,12 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
             private ? '仅自己可见' : '家庭成员共享',
           ),
           const SizedBox(height: 14),
-          if (private && _privateAlbumsFailure != null)
+          if (private && privateFailure != null)
             MediaStatusBanner(
-              message: '私人相册暂时无法读取：${mediaErrorLabel(_privateAlbumsFailure!)}',
+              message: '私人相册暂时无法读取：${mediaErrorLabel(privateFailure)}',
               isError: true,
               trailing: TextButton(
-                onPressed: _privateAlbumsRefreshing
+                onPressed: _catalog.privateRefreshing
                     ? null
                     : () async {
                         await _refreshPrivateAlbums();

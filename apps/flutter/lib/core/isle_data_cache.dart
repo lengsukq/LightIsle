@@ -1,7 +1,8 @@
 import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
-import 'dart:typed_data';
+
+import 'package:flutter/foundation.dart';
 
 import 'isle_cache_manager.dart';
 import 'lightisle_api.dart';
@@ -114,7 +115,12 @@ class IsleDataCache {
         _putMemory(key, cloned, raw.lengthInBytes);
         return _cloneValue(cloned) as Map<String, dynamic>;
       }
-    } catch (_) {}
+    } catch (error) {
+      if (kDebugMode) {
+        debugPrint('IsleDataCache.getJsonMap evicted corrupt entry $key: $error');
+      }
+      unawaited(IsleCacheManager.instance.remove(IsleCacheCategory.metadata, key));
+    }
     return null;
   }
 
@@ -141,7 +147,11 @@ class IsleDataCache {
           skipMemoryBucket: true,
         ),
       );
-    } catch (_) {}
+    } catch (error) {
+      if (kDebugMode) {
+        debugPrint('IsleDataCache.putJsonMap persist skipped for $key: $error');
+      }
+    }
   }
 
   /// Read a cached JSON list synchronously from L1 memory (with L2 fallback).
@@ -165,7 +175,12 @@ class IsleDataCache {
         _putMemory(key, cloned, raw.lengthInBytes);
         return _cloneValue(cloned) as List<dynamic>;
       }
-    } catch (_) {}
+    } catch (error) {
+      if (kDebugMode) {
+        debugPrint('IsleDataCache.getJsonList evicted corrupt entry $key: $error');
+      }
+      unawaited(IsleCacheManager.instance.remove(IsleCacheCategory.metadata, key));
+    }
     return null;
   }
 
@@ -192,7 +207,11 @@ class IsleDataCache {
           skipMemoryBucket: true,
         ),
       );
-    } catch (_) {}
+    } catch (error) {
+      if (kDebugMode) {
+        debugPrint('IsleDataCache.putJsonList persist skipped for $key: $error');
+      }
+    }
   }
 
   /// Invalidate a specific cached entry.
