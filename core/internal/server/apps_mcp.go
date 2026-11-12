@@ -28,6 +28,7 @@ const (
 
 type mcpSSESession struct {
 	id         string
+	ownerKey   string
 	msgCh      chan []byte
 	done       chan struct{}
 	lastActive atomic.Int64
@@ -65,14 +66,15 @@ func (h *mcpSSEHub) sweepExpiredLocked(now time.Time) {
 	}
 }
 
-func (h *mcpSSEHub) register() (*mcpSSESession, bool) {
+func (h *mcpSSEHub) register(ownerKey string) (*mcpSSESession, bool) {
 	now := time.Now()
 	var buf [16]byte
 	_, _ = rand.Read(buf[:])
 	sess := &mcpSSESession{
-		id:    hex.EncodeToString(buf[:]),
-		msgCh: make(chan []byte, mcpSSEQueueSize),
-		done:  make(chan struct{}),
+		id:       hex.EncodeToString(buf[:]),
+		ownerKey: ownerKey,
+		msgCh:    make(chan []byte, mcpSSEQueueSize),
+		done:     make(chan struct{}),
 	}
 	sess.lastActive.Store(now.UnixNano())
 
@@ -296,9 +298,6 @@ func extractMCPTokenFromRequest(r *http.Request) string {
 			token = strings.TrimSpace(strings.TrimPrefix(authHeader, "Bearer "))
 		}
 	}
-	if token == "" {
-		token = strings.TrimSpace(r.URL.Query().Get("token"))
-	}
 	return token
 }
 
@@ -470,11 +469,16 @@ func handleHTTPMCPEndpoint(
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 
 	isLoop, isLAN := isPrivateOrLoopbackAddr(r.RemoteAddr)
-	if (!isLoop && !isLAN) || hasReverseProxyHeaders(r) {
+	if (!isLoop && !isLAN) || !localMCPHost(r.Host) || hasReverseProxyHeaders(r) {
 		jsonReply(w, http.StatusForbidden, map[string]string{
 			"error":   "mcp_lan_only",
-			"message": "LightIsle MCP 仅允许本机回环或局域网私有 IP 直连访问，拒绝公网或反向代理转发请求",
+			"message": "LightIsle MCP 仅允许本机回环或局域网私有 IP 直连访问，拒绝公网、非本地 Host 或反向代理转发请求",
 		})
+		return
+	}
+	origins := r.Header.Values("Origin")
+	if len(origins) > 1 || (len(origins) == 1 && origins[0] != "" && !originMatchesHost(origins[0], r.Host)) {
+		jsonReply(w, http.StatusForbidden, map[string]string{"error": "cross_origin_request_rejected"})
 		return
 	}
 	cfg := appsMgr.GetSystemConfig()
@@ -526,11 +530,8 @@ func handleHTTPMCPEndpoint(
 			jsonReply(w, http.StatusForbidden, map[string]string{"error": "request_header_required"})
 			return
 		}
-		if origin := r.Header.Get("Origin"); origin != "" && !originMatchesHost(origin, r.Host) {
-			jsonReply(w, http.StatusForbidden, map[string]string{"error": "cross_origin_request_rejected"})
-			return
-		}
 	}
+	sseOwnerKey := fmt.Sprintf("u:%d|c:%s|r:%t", authedUser.ID, authedConn.ID, reloadOnlyOK)
 
 	transport := "local-http"
 	if !isLoop {
@@ -543,7 +544,7 @@ func handleHTTPMCPEndpoint(
 	if r.Method == http.MethodGet {
 		accept := strings.ToLower(r.Header.Get("Accept"))
 		if path == "/api/v2/mcp/sse" || strings.Contains(accept, "text/event-stream") {
-			serveMCPSSEStream(w, r, sseHub)
+			serveMCPSSEStream(w, r, sseHub, sseOwnerKey)
 			return
 		}
 		jsonReply(w, http.StatusOK, map[string]any{
@@ -578,7 +579,7 @@ func handleHTTPMCPEndpoint(
 	}
 
 	if path == "/api/v2/mcp/message" {
-		handleMCPSSESessionMessage(w, r, transport, sseHub, execRPC)
+		handleMCPSSESessionMessage(w, r, transport, sseHub, sseOwnerKey, execRPC)
 		return
 	}
 
@@ -600,13 +601,13 @@ func handleHTTPMCPEndpoint(
 	_, _ = w.Write(respBytes)
 }
 
-func serveMCPSSEStream(w http.ResponseWriter, r *http.Request, sseHub *mcpSSEHub) {
+func serveMCPSSEStream(w http.ResponseWriter, r *http.Request, sseHub *mcpSSEHub, ownerKey string) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
 		return
 	}
-	sess, registered := sseHub.register()
+	sess, registered := sseHub.register(ownerKey)
 	if !registered {
 		jsonReply(w, http.StatusTooManyRequests, map[string]string{
 			"error":   "mcp_sse_limit_reached",
@@ -622,9 +623,6 @@ func serveMCPSSEStream(w http.ResponseWriter, r *http.Request, sseHub *mcpSSEHub
 	w.Header().Set("X-Accel-Buffering", "no")
 
 	msgEndpoint := "/api/v2/mcp/message?sessionId=" + url.QueryEscape(sess.id)
-	if qTok := strings.TrimSpace(r.URL.Query().Get("token")); qTok != "" {
-		msgEndpoint += "&token=" + url.QueryEscape(qTok)
-	}
 	fmt.Fprintf(w, "event: endpoint\ndata: %s\n\n", msgEndpoint)
 	flusher.Flush()
 
@@ -655,6 +653,7 @@ func handleMCPSSESessionMessage(
 	r *http.Request,
 	transport string,
 	sseHub *mcpSSEHub,
+	callerOwnerKey string,
 	execRPC func(string, []byte) ([]byte, bool),
 ) {
 	sessionID := strings.TrimSpace(r.URL.Query().Get("sessionId"))
@@ -665,8 +664,13 @@ func handleMCPSSESessionMessage(
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "missing_session_id"})
 		return
 	}
-	if sseHub.get(sessionID) == nil {
+	sess := sseHub.get(sessionID)
+	if sess == nil {
 		jsonReply(w, http.StatusNotFound, map[string]string{"error": "mcp_session_not_found"})
+		return
+	}
+	if sess.ownerKey != callerOwnerKey {
+		jsonReply(w, http.StatusForbidden, map[string]string{"error": "mcp_session_forbidden"})
 		return
 	}
 

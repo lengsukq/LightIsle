@@ -273,6 +273,8 @@ func (m *Manager) ServeIcon(w http.ResponseWriter, r *http.Request, appID string
 		}
 	}
 	w.Header().Set("Cache-Control", "private, max-age=60")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
 	http.ServeContent(w, r, st.Name(), st.ModTime(), f)
 }
 
@@ -291,7 +293,7 @@ func (m *Manager) ServeApp(w http.ResponseWriter, r *http.Request, resolveSessio
 	}
 	rec := &snap
 
-	setAppGatewayHeaders(w.Header())
+	setAppGatewayHeadersForApp(w.Header(), r, appID)
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)
 		return
@@ -519,7 +521,7 @@ func (m *Manager) serveDynamicApp(w http.ResponseWriter, r *http.Request, rec *a
 			strippedPath: strippedPath,
 		},
 		ModifyResponse: func(resp *http.Response) error {
-			setAppGatewayHeaders(resp.Header)
+			setAppGatewayHeadersForApp(resp.Header, r, rec.id)
 			return nil
 		},
 		ErrorHandler: func(rw http.ResponseWriter, req *http.Request, proxyErr error) {
@@ -551,9 +553,10 @@ func (t *adaptiveAppTransport) RoundTrip(req *http.Request) (*http.Response, err
 		t.inst.pathProbed.Store(true)
 		return resp, nil
 	}
-	// If backend returned 404 on the full /apps/<id> path and the request is bodyless,
-	// transparently retry once with the stripped path (or vice versa) and remember preference.
-	if (req.Body == nil || req.Body == http.NoBody || req.ContentLength == 0) && t.fullPath != t.strippedPath {
+	// Only probe the alternate prefix before the instance's path mode has been
+	// confirmed. Once pathProbed is true, normal business 404 responses must
+	// never trigger duplicate requests or flip preferStrippedPath mid-flight.
+	if !t.inst.pathProbed.Load() && bodyless && t.fullPath != t.strippedPath {
 		altPath := t.strippedPath
 		preferStripped := true
 		if req.URL.Path == t.strippedPath {
@@ -613,11 +616,27 @@ func parseAppRoute(path string) (string, string, bool) {
 }
 
 func setAppGatewayHeaders(h interface{ Set(string, string) }) {
+	setAppGatewayHeadersForApp(h, nil, "")
+}
+
+func setAppGatewayHeadersForApp(h interface{ Set(string, string) }, r *http.Request, appID string) {
 	h.Set("X-Content-Type-Options", "nosniff")
 	h.Set("Referrer-Policy", "same-origin")
 	h.Set("X-Frame-Options", "SAMEORIGIN")
 	h.Set("Cross-Origin-Opener-Policy", "same-origin")
-	h.Set("Content-Security-Policy", "frame-ancestors 'self'")
+	h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=(), usb=()")
+	csp := "frame-ancestors 'self'; base-uri 'self'"
+	if r != nil && r.Host != "" && ValidPluginID(appID) {
+		scheme, wsScheme := "http", "ws"
+		if isSecureReq(r) {
+			scheme, wsScheme = "https", "wss"
+		}
+		appBare := scheme + "://" + r.Host + "/apps/" + appID
+		appPrefix := appBare + "/"
+		wsPrefix := wsScheme + "://" + r.Host + "/apps/" + appID + "/"
+		csp += "; form-action " + appBare + " " + appPrefix + "; connect-src " + appBare + " " + appPrefix + " " + wsPrefix
+	}
+	h.Set("Content-Security-Policy", csp)
 }
 
 func isSecureReq(r *http.Request) bool {

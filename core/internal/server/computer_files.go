@@ -12,12 +12,21 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
+	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/computerfiles"
 	"github.com/lengsukq/lightisle/core/internal/storageidentity"
 	"golang.org/x/sys/unix"
 )
+
+func (a *API) isProtectedComputerPath(clean string) bool {
+	if a != nil && a.auth != nil && a.auth.DataDir() != "" {
+		return computerfiles.IsProtectedHostPath(clean, a.auth.DataDir())
+	}
+	return computerfiles.IsProtectedHostPath(clean)
+}
 
 func registerComputerFiles(mux *http.ServeMux, a *API) {
 	mux.HandleFunc("GET /api/v2/computer-files/status", a.requireLogin(a.computerFileStatus))
@@ -106,6 +115,10 @@ func (a *API) setComputerFileGrant(w http.ResponseWriter, r *http.Request) {
 				jsonReply(w, 400, map[string]string{"error": "computer_path_invalid"})
 				return
 			}
+			if a.isProtectedComputerPath(path) {
+				computerFileError(w, fs.ErrPermission)
+				return
+			}
 			f, openErr := computerfiles.Open(path)
 			if openErr != nil {
 				computerFileError(w, openErr)
@@ -134,6 +147,10 @@ type computerAccess struct {
 	a                *API
 	session          string
 	userID           int64
+	role             string
+	sessionExpiresAt *atomic.Int64
+	verifiedEpoch    *atomic.Uint64
+	lastFolderStatNs *atomic.Int64
 	mode             string
 	folder           auth.ComputerFolder
 	openIdentity     string
@@ -143,7 +160,8 @@ type computerAccess struct {
 }
 
 func (a *API) openComputerFile(r *http.Request, path string) (*os.File, computerAccess, error) {
-	user, ok := a.auth.Identity(token(r))
+	epochSnapshot := a.auth.AccessEpoch()
+	user, expiresAt, ok := a.auth.IdentityWithExpiry(token(r))
 	enabled, revision := a.auth.ComputerFilesState()
 	if !ok || !enabled {
 		return nil, computerAccess{}, fs.ErrPermission
@@ -152,7 +170,25 @@ func (a *API) openComputerFile(r *http.Request, path string) (*os.File, computer
 	if err != nil {
 		return nil, computerAccess{}, err
 	}
-	access := computerAccess{a: a, session: token(r), userID: user.ID, mode: "all", settingsRevision: revision}
+	if a.isProtectedComputerPath(clean) {
+		return nil, computerAccess{}, fs.ErrPermission
+	}
+	expAtom := &atomic.Int64{}
+	expAtom.Store(expiresAt)
+	epochAtom := &atomic.Uint64{}
+	epochAtom.Store(epochSnapshot)
+	folderStatAtom := &atomic.Int64{}
+	access := computerAccess{
+		a:                a,
+		session:          token(r),
+		userID:           user.ID,
+		role:             user.Role,
+		sessionExpiresAt: expAtom,
+		verifiedEpoch:    epochAtom,
+		lastFolderStatNs: folderStatAtom,
+		mode:             "all",
+		settingsRevision: revision,
+	}
 	if user.Role == auth.RoleAdmin {
 		f, e := computerfiles.Open(clean)
 		return f, access, e
@@ -168,6 +204,9 @@ func (a *API) openComputerFile(r *http.Request, path string) (*os.File, computer
 	}
 	if grant.Mode == "folders" {
 		for _, folder := range grant.Folders {
+			if a.isProtectedComputerPath(folder.Path) {
+				continue
+			}
 			rel, e := filepath.Rel(folder.Path, clean)
 			if e == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 				access.mode = "folders"
@@ -192,6 +231,7 @@ func (a *API) openComputerFile(r *http.Request, path string) (*os.File, computer
 				if e != nil {
 					return nil, access, computerfiles.ErrChanged
 				}
+				folderStatAtom.Store(time.Now().UnixNano())
 				f, e := computerfiles.OpenInGrant(folder.Path, access.openIdentity, clean)
 				return f, access, e
 			}
@@ -199,32 +239,85 @@ func (a *API) openComputerFile(r *http.Request, path string) (*os.File, computer
 	}
 	return nil, access, fs.ErrPermission
 }
+
+func (x computerAccess) verifyFolderOnDisk(nowNs int64) bool {
+	f, e := computerfiles.Open(x.folder.Path)
+	if e != nil {
+		return false
+	}
+	defer f.Close()
+	id, e := computerfiles.Identity(f)
+	info, statErr := f.Stat()
+	if e != nil || statErr != nil || id != x.openIdentity || !storageidentity.MatchesDirectory(x.binding, info) {
+		return false
+	}
+	if x.lastFolderStatNs != nil {
+		x.lastFolderStatNs.Store(nowNs)
+	}
+	return true
+}
+
 func (x computerAccess) valid() bool {
-	user, ok := x.a.auth.Identity(x.session)
+	if x.a == nil || x.a.auth == nil {
+		return false
+	}
+	now := time.Now()
+	curEpoch := x.a.auth.AccessEpoch()
+	if curEpoch > 0 && x.verifiedEpoch != nil && x.sessionExpiresAt != nil &&
+		x.verifiedEpoch.Load() == curEpoch && now.Unix() < x.sessionExpiresAt.Load() {
+		if x.mode == "all" {
+			return true
+		}
+		if x.mode == "folders" {
+			if x.lastFolderStatNs != nil && now.UnixNano()-x.lastFolderStatNs.Load() < int64(250*time.Millisecond) {
+				return true
+			}
+			return x.verifyFolderOnDisk(now.UnixNano())
+		}
+		return false
+	}
+	user, expiresAt, ok := x.a.auth.IdentityWithExpiry(x.session)
 	enabled, revision := x.a.auth.ComputerFilesState()
 	if !ok || user.ID != x.userID || !enabled || revision != x.settingsRevision {
 		return false
 	}
 	if user.Role == auth.RoleAdmin {
-		return x.mode == "all"
+		if x.mode != "all" {
+			return false
+		}
+		if x.sessionExpiresAt != nil {
+			x.sessionExpiresAt.Store(expiresAt)
+		}
+		if x.verifiedEpoch != nil {
+			x.verifiedEpoch.Store(curEpoch)
+		}
+		return true
 	}
 	g, err := x.a.auth.ComputerFileGrant(user.ID)
 	if err != nil || g.Mode != x.mode || g.Revision != x.grantRevision {
 		return false
 	}
 	if x.mode == "all" {
+		if x.sessionExpiresAt != nil {
+			x.sessionExpiresAt.Store(expiresAt)
+		}
+		if x.verifiedEpoch != nil {
+			x.verifiedEpoch.Store(curEpoch)
+		}
 		return true
 	}
 	for _, folder := range g.Folders {
-		if folder == x.folder {
-			f, e := computerfiles.Open(folder.Path)
-			if e != nil {
+		if folder == x.folder && !x.a.isProtectedComputerPath(folder.Path) {
+			if !x.verifyFolderOnDisk(now.UnixNano()) {
 				return false
 			}
-			defer f.Close()
-			id, e := computerfiles.Identity(f)
-			info, statErr := f.Stat()
-			return e == nil && statErr == nil && id == x.openIdentity && storageidentity.MatchesDirectory(x.binding, info)
+			if x.sessionExpiresAt != nil {
+				x.sessionExpiresAt.Store(expiresAt)
+			}
+			if x.verifiedEpoch != nil {
+				x.verifiedEpoch.Store(curEpoch)
+			}
+			return true
 		}
 	}
 	return false
@@ -286,6 +379,9 @@ func (a *API) computerFileList(w http.ResponseWriter, r *http.Request) {
 		if grant.Mode == "folders" {
 			entries := []computerEntry{}
 			for _, folder := range grant.Folders {
+				if a.isProtectedComputerPath(folder.Path) {
+					continue
+				}
 				entries = append(entries, computerEntry{Name: folder.Path, Path: folder.Path, Type: "folder"})
 			}
 			jsonReply(w, 200, map[string]any{"path": "", "entries": entries})
@@ -346,7 +442,11 @@ func (a *API) computerFileList(w http.ResponseWriter, r *http.Request) {
 			if kind == "" {
 				continue
 			}
-			entries = append(entries, computerEntry{Name: dir.Name(), Path: filepath.Join(path, dir.Name()), Type: kind, Size: st.Size})
+			childPath := filepath.Join(path, dir.Name())
+			if a.isProtectedComputerPath(childPath) {
+				continue
+			}
+			entries = append(entries, computerEntry{Name: dir.Name(), Path: childPath, Type: kind, Size: st.Size})
 			if len(entries) == 200 {
 				next = strconv.Itoa(consumed)
 				break

@@ -72,6 +72,9 @@ func (a *API) computerFolderArchive(w http.ResponseWriter, r *http.Request) {
 					return err
 				}
 				child, childName := filepath.Join(path, dir.Name()), name+"/"+dir.Name()
+				if a.isProtectedComputerPath(child) {
+					continue
+				}
 				switch st.Mode & unix.S_IFMT {
 				case unix.S_IFDIR:
 					if err := walk(child, childName, depth+1); err != nil {

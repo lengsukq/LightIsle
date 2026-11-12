@@ -261,4 +261,20 @@ func TestComputerFilesRangeAndSwitchGeneration(t *testing.T) {
 	if w := f.call("PUT", endpoint, "bad", f.admin); w.Code != 405 {
 		t.Fatalf("write endpoint exists: %d", w.Code)
 	}
+	// Protected LightIsle dataDir and SSH key directories must remain blocked even when enabled.
+	sshDir := filepath.Join(f.root, ".ssh")
+	if err := os.MkdirAll(sshDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	sshKey := filepath.Join(sshDir, "id_ed25519")
+	if err := os.WriteFile(sshKey, []byte("private"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if w := f.call("GET", "/api/v2/computer-files/content?path="+url.QueryEscape(sshKey), "", f.admin); w.Code != http.StatusForbidden {
+		t.Fatalf("ssh key exposed over computer-files: %d", w.Code)
+	}
+	dbFile := filepath.Join(f.root, "data", "accounts.db")
+	if w := f.call("GET", "/api/v2/computer-files/content?path="+url.QueryEscape(dbFile), "", f.admin); w.Code != http.StatusForbidden {
+		t.Fatalf("accounts.db exposed over computer-files: %d", w.Code)
+	}
 }

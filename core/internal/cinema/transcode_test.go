@@ -134,6 +134,14 @@ func TestEstimateOutputBytes(t *testing.T) {
 	if encode != 2_000_000_000 {
 		t.Errorf("2160p transcode estimate = %d, want 2000000000", encode)
 	}
+	// Downscaling a 2160p source to 720p (2500 kbps) or 480p (1200 kbps) must
+	// estimate disk usage from the target tier rather than the 4K 16 Mbps rate.
+	if scaled720 := estimateOutputBytes(film, info, "transcode", 0, "720"); scaled720 != 312_500_000 {
+		t.Errorf("720p scaled estimate = %d, want 312500000", scaled720)
+	}
+	if scaled480 := estimateOutputBytes(film, info, "transcode", 0, "480"); scaled480 != 150_000_000 {
+		t.Errorf("480p scaled estimate = %d, want 150000000", scaled480)
+	}
 }
 
 func TestHLSFileRule(t *testing.T) {

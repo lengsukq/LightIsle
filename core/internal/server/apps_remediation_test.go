@@ -96,6 +96,7 @@ func TestAppsRemediationMembersCSRFAndMCPSSE(t *testing.T) {
 
 	// Cookie-fallback POST to /api/v2/mcp without X-LightIsle-Request must also be rejected with 403
 	reqCookieMCP := httptest.NewRequest(http.MethodPost, "/api/v2/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
+	reqCookieMCP.Host = "127.0.0.1:16666"
 	reqCookieMCP.RemoteAddr = "127.0.0.1:54321"
 	reqCookieMCP.Header.Set("Content-Type", "application/json")
 	reqCookieMCP.AddCookie(&http.Cookie{Name: sessionCookie, Value: adminTok})
@@ -103,6 +104,25 @@ func TestAppsRemediationMembersCSRFAndMCPSSE(t *testing.T) {
 	handler.ServeHTTP(recCookieMCP, reqCookieMCP)
 	if recCookieMCP.Code != http.StatusForbidden || !strings.Contains(recCookieMCP.Body.String(), "request_header_required") {
 		t.Fatalf("cookie-authenticated POST /api/v2/mcp without CSRF header: got %d %s", recCookieMCP.Code, recCookieMCP.Body.String())
+	}
+
+	// Query-string token must not be accepted and DNS-rebinding Host must be rejected
+	reqQueryTok := httptest.NewRequest(http.MethodGet, "/api/v2/mcp?token="+mcpToken, nil)
+	reqQueryTok.Host = "127.0.0.1:16666"
+	reqQueryTok.RemoteAddr = "127.0.0.1:54321"
+	recQueryTok := httptest.NewRecorder()
+	handler.ServeHTTP(recQueryTok, reqQueryTok)
+	if recQueryTok.Code != http.StatusUnauthorized {
+		t.Fatalf("query token should be rejected with 401, got %d %s", recQueryTok.Code, recQueryTok.Body.String())
+	}
+	reqRebind := httptest.NewRequest(http.MethodPost, "/api/v2/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"ping"}`))
+	reqRebind.Host = "evil.rebind.test:16666"
+	reqRebind.RemoteAddr = "127.0.0.1:54321"
+	reqRebind.Header.Set("Authorization", "Bearer "+mcpToken)
+	recRebind := httptest.NewRecorder()
+	handler.ServeHTTP(recRebind, reqRebind)
+	if recRebind.Code != http.StatusForbidden || !strings.Contains(recRebind.Body.String(), "mcp_lan_only") {
+		t.Fatalf("DNS rebinding Host should be rejected with 403 mcp_lan_only, got %d %s", recRebind.Code, recRebind.Body.String())
 	}
 
 	ts := httptest.NewServer(handler)
@@ -157,6 +177,23 @@ func TestAppsRemediationMembersCSRFAndMCPSSE(t *testing.T) {
 	}
 
 	rpcBody := []byte(`{"jsonrpc":"2.0","id":42,"method":"resources/list"}`)
+	// Cross-owner injection attempt (cookie admin instead of Bearer token owner) must be rejected with 403
+	hijackReq, err := http.NewRequestWithContext(sseCtx, http.MethodPost, ts.URL+endpointPath, bytes.NewReader(rpcBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hijackReq.AddCookie(&http.Cookie{Name: sessionCookie, Value: adminTok})
+	hijackReq.Header.Set("X-LightIsle-Request", "1")
+	hijackReq.Header.Set("Content-Type", "application/json")
+	hijackResp, err := ts.Client().Do(hijackReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = hijackResp.Body.Close()
+	if hijackResp.StatusCode != http.StatusForbidden {
+		t.Fatalf("cross-owner POST %s = %d, want 403 Forbidden", endpointPath, hijackResp.StatusCode)
+	}
+
 	msgReq, err := http.NewRequestWithContext(sseCtx, http.MethodPost, ts.URL+endpointPath, bytes.NewReader(rpcBody))
 	if err != nil {
 		t.Fatal(err)

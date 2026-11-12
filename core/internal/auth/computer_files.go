@@ -29,7 +29,7 @@ func (s *Store) ComputerFilesEnabled() bool {
 func (s *Store) ComputerFilesState() (bool, int64) {
 	var enabled int
 	var revision int64
-	if s == nil || s.db.QueryRow(`SELECT enabled,revision FROM computer_file_settings WHERE id=1`).Scan(&enabled, &revision) != nil {
+	if s == nil || s.readDB().QueryRow(`SELECT enabled,revision FROM computer_file_settings WHERE id=1`).Scan(&enabled, &revision) != nil {
 		return false, 0
 	}
 	return enabled == 1, revision
@@ -42,13 +42,16 @@ func (s *Store) SetComputerFilesEnabled(enabled bool) error {
 		value = 1
 	}
 	_, err := s.db.Exec(`INSERT INTO computer_file_settings(id,enabled) VALUES(1,?) ON CONFLICT(id) DO UPDATE SET enabled=excluded.enabled, revision=computer_file_settings.revision+1`, value)
+	if err == nil {
+		s.bumpAccessEpoch()
+	}
 	return err
 }
 
 func (s *Store) ComputerFileGrant(userID int64) (ComputerFileGrant, error) {
 	g := ComputerFileGrant{Mode: "none", Folders: []ComputerFolder{}}
 	var data string
-	err := s.db.QueryRow(`SELECT mode,folders,revision FROM computer_file_grants WHERE user_id=?`, userID).Scan(&g.Mode, &data, &g.Revision)
+	err := s.readDB().QueryRow(`SELECT mode,folders,revision FROM computer_file_grants WHERE user_id=?`, userID).Scan(&g.Mode, &data, &g.Revision)
 	if errors.Is(err, sql.ErrNoRows) {
 		return g, nil
 	}
@@ -91,5 +94,9 @@ func (s *Store) SetComputerFileGrant(actorToken string, userID int64, grant Comp
 	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.bumpAccessEpoch()
+	return nil
 }

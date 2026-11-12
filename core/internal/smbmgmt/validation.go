@@ -60,7 +60,31 @@ func resolveAndValidateTargetPath(req AddRequest, roots []RootInfo) (string, err
 		return "", ErrInvalid
 	}
 
-	return validateSharePath(candidate)
+	validated, err := validateSharePath(candidate)
+	if err != nil {
+		return "", err
+	}
+	if len(roots) > 0 {
+		matchedOnline := false
+		matchedAny := false
+		for _, r := range roots {
+			rootClean := filepath.Clean(r.Path)
+			if rootClean != "" && rootClean != "." && pathContains(rootClean, validated) {
+				matchedAny = true
+				if r.Online {
+					matchedOnline = true
+					break
+				}
+			}
+		}
+		if !matchedAny {
+			return "", ErrProtectedPath
+		}
+		if !matchedOnline {
+			return "", ErrRootOffline
+		}
+	}
+	return validated, nil
 }
 
 func validateSharePath(candidate string) (string, error) {

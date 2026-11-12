@@ -100,10 +100,13 @@ func handleSMBCommand(ctx context.Context, command string) bool {
 		case "service":
 			status, actErr = smbmgmt.Shared().SetService(ctx, req.Enabled)
 		case "add":
+			if strings.TrimSpace(req.Path) != "" || strings.TrimSpace(req.RootID) == "" {
+				actErr = smbmgmt.ErrInvalid
+				break
+			}
 			status, actErr = smbmgmt.Shared().AddShare(ctx, smbmgmt.AddRequest{
 				RootID:            req.RootID,
 				Subpath:           req.Subpath,
-				Path:              req.Path,
 				SMBName:           req.SMBName,
 				GuestAccess:       req.GuestAccess,
 				ReadOnly:          req.ReadOnly,

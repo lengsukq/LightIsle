@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 
 	"github.com/lengsukq/lightisle/core/internal/smbmgmt"
 )
@@ -44,6 +45,14 @@ func (a *API) smbAddShare(w http.ResponseWriter, r *http.Request) {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_smb_request"})
+		return
+	}
+	if strings.TrimSpace(req.Path) != "" {
+		writeSMBError(w, smbmgmt.ErrProtectedPath)
+		return
+	}
+	if strings.TrimSpace(req.RootID) == "" {
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_smb_request"})
 		return
 	}

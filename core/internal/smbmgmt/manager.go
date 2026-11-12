@@ -34,7 +34,7 @@ var (
 	ErrLocalConfirmation = errors.New("smb_personal_confirmation_required")
 	ErrOperationFailed   = errors.New("smb_operation_failed")
 
-	shareNameRule = regexp.MustCompile(`^[^/\\\x00-\x1f\x7f:]{1,64}$`)
+	shareNameRule = regexp.MustCompile(`^[^-/\\\x00-\x1f\x7f:][^/\\\x00-\x1f\x7f:]{0,63}$`)
 )
 
 type RootInfo struct {
@@ -520,6 +520,9 @@ func (m *Manager) UpdateShare(ctx context.Context, recordName string, req Update
 	if found == nil {
 		return Status{}, ErrNotFound
 	}
+	if len(roots) > 0 && found.RootID == "" {
+		return Status{}, ErrProtectedPath
+	}
 	if containsInternalSegment(found.Path) {
 		return Status{}, ErrProtectedPath
 	}
@@ -600,15 +603,18 @@ func (m *Manager) RemoveShare(ctx context.Context, recordName string) (Status, e
 	if parseErr != nil {
 		return Status{}, parseErr
 	}
-	found := false
-	for _, item := range existing {
-		if item.RecordName == recordName {
-			found = true
+	var found *SharePoint
+	for i := range existing {
+		if existing[i].RecordName == recordName {
+			found = &existing[i]
 			break
 		}
 	}
-	if !found {
+	if found == nil {
 		return Status{}, ErrNotFound
+	}
+	if len(roots) > 0 && found.RootID == "" {
+		return Status{}, ErrProtectedPath
 	}
 
 	_, stderr, code, err := m.exec(ctx, "/usr/bin/sudo", "-n", "/usr/sbin/sharing", "-r", recordName)

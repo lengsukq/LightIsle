@@ -41,6 +41,7 @@ var (
 // Root registration, one-click default selection and old-file copying cannot
 // be triggered by remote HTTP clients. Paths remain private to the Mac owner.
 type rootControl struct {
+	dataDir             string
 	registry            *roots.Registry
 	accounts            *auth.Store
 	output              io.Writer
@@ -494,7 +495,14 @@ func (c *rootControl) executeMutation(ctx context.Context, operation string, req
 		if !request.present.hasOnly("requestID", "rootID", "generation") || !request.present.id || !request.present.generation {
 			return nil, roots.ErrInvalid
 		}
-		return map[string]string{"rootID": request.ID}, c.registry.Remove(request.ID)
+		if err := c.registry.Remove(request.ID); err != nil {
+			return nil, err
+		}
+		if c.server != nil {
+			_ = c.server.EvictRootRuntime(request.ID)
+		}
+		retireRemovedRootSQLite(c.dataDir, request.ID)
+		return map[string]string{"rootID": request.ID}, nil
 	case "set-default":
 		if !request.present.hasOnly("requestID", "rootID", "generation") || !request.present.id || !request.present.generation {
 			return nil, roots.ErrInvalid

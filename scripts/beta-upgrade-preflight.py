@@ -38,25 +38,34 @@ def inspect(data_dir: Path) -> tuple[dict, int]:
         report["status"] = "blocked"
         return report, 2
     try:
-        files = sorted(p for p in data_dir.iterdir() if p.name.endswith(".sqlite"))
+        candidates = [(p.name, p) for p in sorted(data_dir.iterdir()) if p.name.endswith(".sqlite")]
     except OSError:
         report["issues"].append("data_directory_unreadable")
         report["status"] = "blocked"
         return report, 2
-    if len(files) > MAX_DATABASES:
+    auto_dir = data_dir / "automation"
+    if auto_dir.exists() or auto_dir.is_symlink():
+        if auto_dir.is_symlink() or not auto_dir.is_dir():
+            report["issues"].append("unsafe_database_path:automation")
+            report["status"] = "blocked"
+            return report, 2
+        auto_db = auto_dir / "automation.sqlite"
+        if auto_db.exists() or auto_db.is_symlink():
+            candidates.append(("automation/automation.sqlite", auto_db))
+    if len(candidates) > MAX_DATABASES:
         report["issues"].append("too_many_sqlite_databases")
         report["status"] = "blocked"
         return report, 2
-    if not files:
+    if not candidates:
         report["issues"].append("no_existing_sqlite_metadata")
         report["status"] = "blocked"
         return report, 2
-    for path in files:
-        entry = {"name": path.name, "status": "unknown"}
+    for label, path in candidates:
+        entry = {"name": label, "status": "unknown"}
         report["databases"].append(entry)
         if path.is_symlink() or not path.is_file():
             entry["status"] = "unsafe_path"
-            report["issues"].append("unsafe_database_path:" + path.name)
+            report["issues"].append("unsafe_database_path:" + label)
             continue
         try:
             # URI mode=ro avoids any schema migration, repair or WAL writes.
@@ -70,13 +79,13 @@ def inspect(data_dir: Path) -> tuple[dict, int]:
                 entry["tables"] = len(db.execute(
                     "SELECT name FROM sqlite_master WHERE type='table'").fetchall())
                 if entry["status"] != "ok":
-                    report["issues"].append("sqlite_integrity_failed:" + path.name)
+                    report["issues"].append("sqlite_integrity_failed:" + label)
             finally:
                 db.close()
         except (OSError, sqlite3.Error):
             entry["status"] = "unreadable"
-            report["issues"].append("sqlite_unreadable:" + path.name)
-    if files and not (data_dir / "accounts.sqlite").exists():
+            report["issues"].append("sqlite_unreadable:" + label)
+    if candidates and not (data_dir / "accounts.sqlite").exists():
         report["issues"].append("missing_accounts_database")
     if report["issues"]:
         report["status"] = "blocked"

@@ -80,5 +80,5 @@ func ensureGalleryAISchema(db *sql.DB) error {
 			return err
 		}
 	}
-	return nil
+	return ensureOCRTokenBackfill(db)
 }

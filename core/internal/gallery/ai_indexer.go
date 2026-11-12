@@ -257,6 +257,11 @@ func (l *Library) persistAIAnalysis(share string, c aiCandidate, res mediaworker
 			if _, err := tx.Exec(`INSERT INTO asset_ocr(asset_id, raw_text, updated_at) VALUES(?, ?, ?)`, c.id, text, nowUnix); err != nil {
 				return err
 			}
+			for _, ngram := range extractOCRIndexTokens(text) {
+				if _, err := tx.Exec(`INSERT OR IGNORE INTO asset_search_tokens(token, source, asset_id, score) VALUES(?, 'ocr', ?, 1.0)`, ngram, c.id); err != nil {
+					return err
+				}
+			}
 		}
 		for _, tok := range res.OCRTokens {
 			norm := normalizeSearchToken(tok)

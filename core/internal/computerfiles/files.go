@@ -15,6 +15,49 @@ import (
 var ErrPath = errors.New("computer_path_invalid")
 var ErrChanged = errors.New("computer_folder_changed")
 
+// IsProtectedHostPath reports whether a cleaned absolute host path points into
+// LightIsle's private metadata directory or sensitive host credential stores
+// (such as SSH/GPG/AWS keys or macOS Keychains) that must never be exported
+// over HTTP even when whole-computer read access is enabled.
+func IsProtectedHostPath(clean string, protectedDirs ...string) bool {
+	if clean == "" {
+		return false
+	}
+	cleaned := filepath.Clean(clean)
+	lower := strings.ToLower(cleaned)
+	for _, dir := range protectedDirs {
+		if dir == "" {
+			continue
+		}
+		d := strings.ToLower(filepath.Clean(dir))
+		if d != "" && d != "." && d != "/" && (lower == d || strings.HasPrefix(lower, d+"/")) {
+			return true
+		}
+	}
+	if strings.Contains(lower, "/library/application support/lightisle") &&
+		(strings.HasSuffix(lower, "/library/application support/lightisle") ||
+			strings.Contains(lower, "/library/application support/lightisle/")) {
+		return true
+	}
+	if strings.Contains(lower, "/library/keychains") &&
+		(strings.HasSuffix(lower, "/library/keychains") || strings.Contains(lower, "/library/keychains/")) {
+		return true
+	}
+	if lower == "/private/var/db" || strings.HasPrefix(lower, "/private/var/db/") ||
+		lower == "/var/db" || strings.HasPrefix(lower, "/var/db/") ||
+		lower == "/etc/sudoers.d" || strings.HasPrefix(lower, "/etc/sudoers.d/") ||
+		lower == "/private/etc/sudoers.d" || strings.HasPrefix(lower, "/private/etc/sudoers.d/") {
+		return true
+	}
+	for _, seg := range strings.Split(lower, "/") {
+		switch seg {
+		case ".ssh", ".gnupg", ".aws", ".kube":
+			return true
+		}
+	}
+	return false
+}
+
 func openComponent(fd int, name string, directory bool) (int, error) {
 	var before unix.Stat_t
 	if err := unix.Fstatat(fd, name, &before, unix.AT_SYMLINK_NOFOLLOW); err != nil {

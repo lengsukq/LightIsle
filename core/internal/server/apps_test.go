@@ -268,8 +268,12 @@ func TestLANMCPEndpointsDebugProbeAndTokenRotation(t *testing.T) {
 	call := func(method, path, session, remoteAddr string, body []byte, headers map[string]string) *httptest.ResponseRecorder {
 		t.Helper()
 		req := httptest.NewRequest(method, path, bytes.NewReader(body))
+		req.Host = "localhost:16666"
 		if remoteAddr != "" {
 			req.RemoteAddr = remoteAddr
+			if strings.HasPrefix(remoteAddr, "192.168.") {
+				req.Host = "192.168.1.10:16666"
+			}
 		}
 		if session != "" {
 			req.AddCookie(&http.Cookie{Name: sessionCookie, Value: session})
@@ -281,6 +285,10 @@ func TestLANMCPEndpointsDebugProbeAndTokenRotation(t *testing.T) {
 			req.Header.Set("X-LightIsle-Request", "1")
 		}
 		for k, v := range headers {
+			if strings.EqualFold(k, "Host") {
+				req.Host = v
+				continue
+			}
 			req.Header.Set(k, v)
 		}
 		rec := httptest.NewRecorder()

@@ -588,6 +588,9 @@ func estimateOutputBytes(film Film, info TrackInfo, profile string, start float6
 	if height <= 0 {
 		height = film.Height
 	}
+	if scaled := targetHeightFor(quality, height); scaled > 0 {
+		height = scaled
+	}
 	return int64(bitrateNumber(bitrateForVideo(height)) * remaining / 8)
 }
 
@@ -679,6 +682,13 @@ func (t *Transcoder) spawnMuxer(ctx context.Context, s *session, source *os.File
 		return ErrTranscodeFailed
 	}
 	cmd := exec.CommandContext(ctx, bin, hlsArgs(s, videoCopy, audioCopy, tagHevc, info.Height, targetHeight, encoder, preset)...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	cmd.Cancel = func() error {
+		if cmd.Process != nil && cmd.Process.Pid > 0 {
+			return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+		return nil
+	}
 	cmd.ExtraFiles = []*os.File{source}
 	cmd.WaitDelay = 5 * time.Second
 	stderr := &limitedBuffer{limit: 8 << 10}

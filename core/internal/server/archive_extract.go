@@ -123,6 +123,7 @@ func (a *API) extractZipArchive(w http.ResponseWriter, r *http.Request) {
 	}
 	extractedFiles, ok := a.writeZipExtractEntries(w, r, targetDir, dirs, plan, reservations, accounted)
 	if !ok {
+		_ = a.files.MoveToTrash(targetDir)
 		return
 	}
 
