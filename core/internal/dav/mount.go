@@ -56,9 +56,9 @@ func (s *Service) selectMount(r *http.Request, user auth.User) (davMount, error)
 	} else {
 		relative, ok := strings.CutPrefix(r.URL.Path, registeredDAVPrefix)
 		id, suffix, separator := strings.Cut(relative, "/")
-		generationText, _, slash := strings.Cut(suffix, "/")
+		generationText, _, _ := strings.Cut(suffix, "/")
 		generation, err := strconv.ParseUint(generationText, 10, 64)
-		if !ok || !separator || !slash || err != nil || generation == 0 ||
+		if !ok || !separator || id == "" || err != nil || generation == 0 ||
 			strconv.FormatUint(generation, 10) != generationText {
 			return davMount{}, roots.ErrMissing
 		}

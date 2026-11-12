@@ -260,6 +260,14 @@ func TestRootDAVPersonalReadAndIsolation(t *testing.T) {
 	if response.Code != http.StatusOK || response.Body.String() != "123" {
 		t.Fatalf("explicit mount changed with the default: %d %s", response.Code, response.Body.String())
 	}
+	response = f.request(t, "PROPFIND", strings.TrimSuffix(scoped, "/"), f.memberName, f.memberPass, nil, nil)
+	if response.Code != http.StatusPermanentRedirect || response.Header().Get("Location") != scoped {
+		t.Fatalf("mount root without trailing slash did not redirect to %s: %d %q", scoped, response.Code, response.Header().Get("Location"))
+	}
+	crossOwnerMove := f.request(t, "MOVE", copied, f.memberName, f.memberPass, nil, map[string]string{"Destination": scoped + "public/moved-out.mp4"})
+	if crossOwnerMove.Code != http.StatusForbidden || !strings.Contains(crossOwnerMove.Body.String(), "dav_cross_owner_move") {
+		t.Fatalf("expected 403 dav_cross_owner_move on personal-to-public move, got %d %s", crossOwnerMove.Code, crossOwnerMove.Body.String())
+	}
 	response = f.request(t, "PROPFIND", fmt.Sprintf("/dav-roots/%s/%d/", second.ID, second.Generation), f.memberName, f.memberPass, nil, nil)
 	if response.Code != http.StatusNotFound {
 		t.Fatalf("unauthorized second mount: %d %s", response.Code, response.Body.String())

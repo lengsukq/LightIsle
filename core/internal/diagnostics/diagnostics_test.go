@@ -47,6 +47,30 @@ func TestHTTPDiagnosticCorrelatesFailureWithoutRequestData(t *testing.T) {
 	}
 }
 
+func TestHTTPDiagnosticRecordsDAVErrorCodesAndComponent(t *testing.T) {
+	dir := t.TempDir()
+	logger := Start(dir)
+	defer logger.Close()
+	previous := slog.Default()
+	slog.SetDefault(slog.New(logger.Handler()))
+	defer slog.SetDefault(previous)
+	handler := HTTP(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		SetErrorCode(w, "dav_cross_owner_move")
+		w.WriteHeader(http.StatusForbidden)
+	}))
+	request := httptest.NewRequest("MOVE", "/dav-roots/0123456789abcdef0123456789abcdef/1/Users/u1/files/a.txt", nil)
+	result := httptest.NewRecorder()
+	handler.ServeHTTP(result, request)
+	logger.Close()
+	data, err := os.ReadFile(filepath.Join(dir, "diagnostics", "core", "events-0.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(data, []byte(`"component":"webdav"`)) || !bytes.Contains(data, []byte(`"code":"dav_cross_owner_move"`)) {
+		t.Fatalf("expected webdav component and dav_cross_owner_move code in %s", data)
+	}
+}
+
 func TestLogRotatesAndRejectsSymlink(t *testing.T) {
 	data := t.TempDir()
 	dir := filepath.Join(data, "diagnostics", "core")

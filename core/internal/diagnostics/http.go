@@ -86,6 +86,8 @@ func requestComponent(path string) (string, bool) {
 	switch head {
 	case "uploads", "downloads", "files", "photos", "cinema", "automation", "backup", "apps", "auth":
 		return head, true
+	case "dav":
+		return "webdav", true
 	case "users", "storage", "roots":
 		return "storage", true
 	default:
@@ -130,7 +132,11 @@ func SetErrorCode(w http.ResponseWriter, code string) {
 		"offset_mismatch", "upload_outcome_uncertain", "upload_begin_uncertain", "insufficient_storage_space",
 		"dav_unauthorized", "share_root_offline", "dav_remount_required", "dav_mount_not_found",
 		"dav_replace_unsupported_save_as", "dav_invalid_destination", "dav_copy_unavailable",
-		"dav_destination_exists", "download_permission_revoked", "download_unavailable", "transcode_unavailable":
+		"dav_destination_exists", "dav_busy", "dav_upload_too_large", "dav_metadata_too_large",
+		"dav_invalid_metadata", "dav_source_destination_overlap", "dav_cross_owner_move",
+		"dav_access_denied", "invalid_dav_request", "dav_credential_limit_reached",
+		"dav_credential_failed", "dav_credential_not_found",
+		"download_permission_revoked", "download_unavailable", "transcode_unavailable":
 	default:
 		return
 	}

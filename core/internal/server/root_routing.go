@@ -301,7 +301,7 @@ func NewWithRoots(
 	mux := http.NewServeMux()
 	mux.Handle("/api/v2/", securedRoots)
 	mux.HandleFunc("/api/v2", http.NotFound)
-	registryDAV := dav.NewRootRegistry(store, registry, s.QueueNativeRootRefreshDirs)
+	registryDAV := securityHeaders(dav.NewRootRegistry(store, registry, s.QueueNativeRootRefreshDirs))
 	mux.Handle("/dav-roots/", registryDAV)
 	mux.Handle("/dav/", registryDAV)
 	mux.Handle("/dav", registryDAV)

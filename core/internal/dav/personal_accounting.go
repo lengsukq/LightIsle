@@ -106,6 +106,7 @@ func (f *grantedFS) replaceMovedFile(state *requestState, from, to string, sourc
 	previous, next := storageVersion(targetInfo), storageVersion(sourceInfo)
 	if personalHomeNamespace(from) || personalHomeNamespace(to) {
 		if !personalHomeNamespace(from) || !personalHomeNamespace(to) {
+			state.writeStatus = http.StatusForbidden
 			state.writeCode = "dav_cross_owner_move"
 			return os.ErrPermission
 		}
@@ -167,8 +168,12 @@ func (f *grantedFS) renamePersonalEntry(
 	newParent *os.File, newLeaf string, newParentInfo os.FileInfo,
 	sourceInfo os.FileInfo,
 ) error {
-	if !personalHomeNamespace(oldName) || !personalHomeNamespace(newName) ||
-		state.root.rootID == "" || state.root.generation == 0 {
+	if !personalHomeNamespace(oldName) || !personalHomeNamespace(newName) {
+		state.writeStatus = http.StatusForbidden
+		state.writeCode = "dav_cross_owner_move"
+		return os.ErrPermission
+	}
+	if state.root.rootID == "" || state.root.generation == 0 {
 		return os.ErrPermission
 	}
 	rootID := state.root.rootID
@@ -178,6 +183,11 @@ func (f *grantedFS) renamePersonalEntry(
 			state.user, rootID, gen, oldName, newName,
 		)
 		if err != nil {
+			if errors.Is(err, auth.ErrForbidden) {
+				state.writeStatus = http.StatusForbidden
+				state.writeCode = "dav_cross_owner_move"
+				return os.ErrPermission
+			}
 			state.writeStatus = http.StatusConflict
 			return os.ErrPermission
 		}
@@ -234,6 +244,11 @@ func (f *grantedFS) renamePersonalEntry(
 		state.user, rootID, gen, oldName, newName,
 	)
 	if err != nil {
+		if errors.Is(err, auth.ErrForbidden) {
+			state.writeStatus = http.StatusForbidden
+			state.writeCode = "dav_cross_owner_move"
+			return os.ErrPermission
+		}
 		state.writeStatus = http.StatusConflict
 		return os.ErrPermission
 	}

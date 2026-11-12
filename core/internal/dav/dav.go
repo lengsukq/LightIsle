@@ -211,6 +211,10 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeMountError(w, err)
 		return
 	}
+	if r.URL.Path == strings.TrimSuffix(mount.prefix, "/") {
+		http.Redirect(w, r, mount.prefix, http.StatusPermanentRedirect)
+		return
+	}
 	root, err := s.openRequestRoot(r.Context(), mount)
 	if err != nil {
 		jsonError(w, http.StatusServiceUnavailable, "share_root_offline")

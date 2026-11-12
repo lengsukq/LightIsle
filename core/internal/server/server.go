@@ -287,6 +287,7 @@ func NewWithDownloads(webRoot string, store *auth.Store, fileStore files.Access,
 	mux.HandleFunc("POST /api/v2/cinema/{id}/watched", a.requireMedia(a.cinemaMarkWatched))
 	// WebDAV mounts with its own Basic-auth credential model; every method
 	// (PROPFIND, PUT, LOCK, ...) matches this unscoped pattern.
+	mux.Handle("/dav", a.davEndpoint())
 	mux.Handle("/dav/", a.davEndpoint())
 	mux.HandleFunc("GET /api/v2/dav/credentials", a.requireLogin(a.davCredentials))
 	mux.HandleFunc("POST /api/v2/dav/credentials", a.requireLogin(a.davCredentials))
@@ -345,6 +346,11 @@ func (a *API) davEndpoint() http.Handler {
 	})
 }
 
+func isDAVRequestPath(path string) bool {
+	return path == "/dav" || strings.HasPrefix(path, "/dav/") ||
+		path == "/dav-roots" || strings.HasPrefix(path, "/dav-roots/")
+}
+
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -352,7 +358,7 @@ func securityHeaders(next http.Handler) http.Handler {
 		w.Header().Set("X-Frame-Options", "DENY")
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https:; font-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
-		if r.Method != http.MethodGet && r.Method != http.MethodHead && !strings.HasPrefix(r.URL.Path, "/dav/") {
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && !isDAVRequestPath(r.URL.Path) {
 			// WebDAV clients authenticate per request with their own
 			// credentials and cannot send the browser CSRF header. The Origin
 			// check stays relevant only for cookie-authenticated surfaces.

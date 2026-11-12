@@ -193,6 +193,12 @@ func (m *Manager) snapshotLocked() State {
 			}
 		}
 	}
+	if s.ProxyCount == 0 {
+		if raw, err := readLocalBounded(m.ConfigPath(), maxConfig); err == nil &&
+			len(raw) > 0 && !strings.Contains(string(raw), "REPLACE_WITH_") {
+			s.ProxyCount = configuredProxyCount(string(raw))
+		}
+	}
 	return s
 }
 

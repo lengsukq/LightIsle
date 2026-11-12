@@ -24,6 +24,7 @@ type tunnelControl struct {
 	manager *tunnel.Manager
 
 	mu       sync.Mutex
+	apiMu    sync.Mutex
 	apiToken string
 }
 
@@ -89,7 +90,13 @@ func (t *tunnelControl) handle(ctx context.Context, command string) bool {
 		t.manager.Stop()
 		t.emitStatus()
 	case strings.HasPrefix(command, "tunnel api "):
-		t.handleAPI(ctx, strings.TrimPrefix(command, "tunnel api "))
+		spec := strings.TrimPrefix(command, "tunnel api ")
+		// Do not block the private stdin command loop on Cloudflare networking.
+		go func() {
+			t.apiMu.Lock()
+			defer t.apiMu.Unlock()
+			t.handleAPI(ctx, spec)
+		}()
 	default:
 		return false
 	}

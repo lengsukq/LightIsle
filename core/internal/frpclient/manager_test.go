@@ -78,6 +78,9 @@ func TestStartRequiresVerifiedLocalExecutableAndCompletedConfig(t *testing.T) {
 	if err := os.WriteFile(m.ConfigPath(), []byte("serverAddr = \"my-frps.example\"\nserverPort = 7000\n[[proxies]]\nname = \"test\"\ntype = \"tcp\"\nlocalPort = 16666\nremotePort = 16666\n"), 0600); err != nil {
 		t.Fatal(err)
 	}
+	if s := m.Status(); s.Status != "stopped" || s.ProxyCount != 1 {
+		t.Fatalf("stopped status did not report configured proxyCount=1 for auto-restore: %+v", s)
+	}
 	if err := m.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -87,8 +90,8 @@ func TestStartRequiresVerifiedLocalExecutableAndCompletedConfig(t *testing.T) {
 	if err := m.Start(); !errors.Is(err, ErrBusy) {
 		t.Fatalf("duplicate start: %v", err)
 	}
-	if s := m.Stop(); s.Status != "stopped" || s.PID != 0 {
-		t.Fatalf("not stopped: %+v", s)
+	if s := m.Stop(); s.Status != "stopped" || s.PID != 0 || s.ProxyCount != 1 {
+		t.Fatalf("not stopped or lost configured proxyCount: %+v", s)
 	}
 }
 
