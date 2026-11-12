@@ -28,17 +28,16 @@ extension _MobilePhotoBackupTransfer on _MobilePhotoBackupState {
   }
 
   void _cancelActivePrepare() {
-    final requestId = _activePrepareRequestId;
-    if (requestId == null || _cancelledPrepareRequestId == requestId) return;
-    _cancelledPrepareRequestId = requestId;
+    final requestId = _prepare.activeRequestId;
+    if (requestId == null || _prepare.cancelledRequestId == requestId) return;
+    _prepare.cancelledRequestId = requestId;
     unawaited(_cancelPrepare(requestId));
   }
 
-  String _newPrepareRequestId() =>
-      '$_deviceId-${DateTime.now().microsecondsSinceEpoch}-${_prepareSequence++}';
+  String _newPrepareRequestId() => _prepare.nextRequestId(_options.deviceId);
 
   void _ensureActive() {
-    if (_cancel || !mounted || !_isForeground) {
+    if (_progress.cancel || !mounted || !_progress.isForeground) {
       throw const _PausePhotoBackup();
     }
     final root = _boundRoot;
@@ -57,7 +56,7 @@ extension _MobilePhotoBackupTransfer on _MobilePhotoBackupState {
     bool checkForegroundRun = false,
     bool? includeVideos,
   }) async {
-    final videos = includeVideos ?? _includeVideos;
+    final videos = includeVideos ?? _options.includeVideos;
     final granted = await _photosChannel.invokeMethod<bool>('permission', {
       'includeVideos': videos,
     });
@@ -171,12 +170,16 @@ extension _MobilePhotoBackupTransfer on _MobilePhotoBackupState {
   Future<_NativeStreamInspection> _inspectAndroidStreamAsset(String id) async {
     _ensureActive();
     final requestId = _newPrepareRequestId();
-    _activePrepareRequestId = requestId;
-    _cancelledPrepareRequestId = null;
+    _prepare.activeRequestId = requestId;
+    _prepare.cancelledRequestId = null;
     try {
       final inspected = await _photosChannel.invokeMapMethod<String, dynamic>(
         'inspectAndHash',
-        {'id': id, 'requestId': requestId, 'includeVideos': _includeVideos},
+        {
+          'id': id,
+          'requestId': requestId,
+          'includeVideos': _options.includeVideos,
+        },
       );
       _ensureActive();
       final size = (inspected?['size'] as num?)?.toInt() ?? -1;
@@ -201,11 +204,11 @@ extension _MobilePhotoBackupTransfer on _MobilePhotoBackupState {
         chunkDigests: chunkDigests,
       );
     } finally {
-      if (_activePrepareRequestId == requestId) {
-        _activePrepareRequestId = null;
+      if (_prepare.activeRequestId == requestId) {
+        _prepare.activeRequestId = null;
       }
-      if (_cancelledPrepareRequestId == requestId) {
-        _cancelledPrepareRequestId = null;
+      if (_prepare.cancelledRequestId == requestId) {
+        _prepare.cancelledRequestId = null;
       }
     }
   }
@@ -218,13 +221,13 @@ extension _MobilePhotoBackupTransfer on _MobilePhotoBackupState {
   }) async {
     _ensureActive();
     final requestId = _newPrepareRequestId();
-    _activePrepareRequestId = requestId;
-    _cancelledPrepareRequestId = null;
+    _prepare.activeRequestId = requestId;
+    _prepare.cancelledRequestId = null;
     try {
       final bytes = await _photosChannel.invokeMethod<Uint8List>('readChunk', {
         'id': id,
         'requestId': requestId,
-        'includeVideos': _includeVideos,
+        'includeVideos': _options.includeVideos,
         'offset': offset,
         'length': length,
         'expectedSize': inspection.size,
@@ -237,11 +240,11 @@ extension _MobilePhotoBackupTransfer on _MobilePhotoBackupState {
       }
       return bytes;
     } finally {
-      if (_activePrepareRequestId == requestId) {
-        _activePrepareRequestId = null;
+      if (_prepare.activeRequestId == requestId) {
+        _prepare.activeRequestId = null;
       }
-      if (_cancelledPrepareRequestId == requestId) {
-        _cancelledPrepareRequestId = null;
+      if (_prepare.cancelledRequestId == requestId) {
+        _prepare.cancelledRequestId = null;
       }
     }
   }
@@ -277,7 +280,7 @@ extension _MobilePhotoBackupTransfer on _MobilePhotoBackupState {
     if (offset < 0 || offset > size) throw StateError('无效的续传偏移量。');
     while (offset < size) {
       _ensureActive();
-      if (_wifiOnly) {
+      if (_options.wifiOnly) {
         final isWifi = await _photosChannel.invokeMethod<bool>('isWifi');
         _ensureActive();
         if (isWifi != true) throw StateError('Wi-Fi 已断开，当前上传已暂停。');
@@ -336,13 +339,13 @@ extension _MobilePhotoBackupTransfer on _MobilePhotoBackupState {
     String destination,
     String key,
     String digest,
-    List<String> chunkSHA256s,
+    List<String> chunkDigests,
   ) => _uploadFromChunkProvider(
     size: size,
     destination: destination,
     key: key,
     digest: digest,
-    chunkSHA256s: chunkSHA256s,
+    chunkSHA256s: chunkDigests,
     openChunk: (offset, length) async =>
         source.openRead(offset, offset + length),
   );

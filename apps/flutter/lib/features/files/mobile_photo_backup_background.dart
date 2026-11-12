@@ -15,36 +15,36 @@ extension _MobilePhotoBackupBackground on _MobilePhotoBackupState {
           ),
           const SizedBox(height: 4),
           Text(
-            '最近进度或结果：$_backgroundResult',
+            '最近进度或结果：${_background.result}',
             style: theme.textTheme.bodySmall?.copyWith(
               color: colors.onSurfaceVariant,
             ),
           ),
-          if (_backgroundLastCompletedAt case final completed?)
+          if (_background.lastCompletedAt case final completed?)
             Text(
               '上次扫描至相册末尾 ${_backupLocalTime(completed)}',
               style: theme.textTheme.bodySmall,
             ),
-          if (_personalDestination && _backgroundExpiresAt != null)
+          if (_personalDestination && _background.expiresAt != null)
             Text(
-              '授权有效至 ${_backupLocalTime(_backgroundExpiresAt!)}',
+              '授权有效至 ${_backupLocalTime(_background.expiresAt!)}',
               style: theme.textTheme.bodySmall,
             ),
           if (_personalDestination)
             TextButton(
-              onPressed: _busy || _backgroundBusy
+              onPressed: _progress.busy || _background.busy
                   ? null
                   : () => unawaited(_configureBackground(true)),
-              child: Text(_backgroundEnabled ? '续授权' : '授权后台备份'),
+              child: Text(_background.enabled ? '续授权' : '授权后台备份'),
             ),
-          if (_backgroundActionMessage != null) ...[
+          if (_background.actionMessage != null) ...[
             const SizedBox(height: 4),
             Text(
-              _backgroundActionMessage!,
+              _background.actionMessage!,
               style: theme.textTheme.bodySmall?.copyWith(color: colors.error),
             ),
           ],
-          if (_backgroundEnabled && !_backgroundSessionMatches) ...[
+          if (_background.enabled && !_background.sessionMatches) ...[
             const SizedBox(height: 4),
             Text(
               '当前登录会话与后台备份授权不一致；如需继续，请关闭后重新开启后台备份。',
@@ -57,7 +57,7 @@ extension _MobilePhotoBackupBackground on _MobilePhotoBackupState {
   }
 
   Future<void> _readBackgroundStatus() async {
-    final generation = ++_backgroundStatusGeneration;
+    final generation = ++_background.statusGeneration;
     try {
       final result = await _backgroundChannel.invokeMapMethod<String, dynamic>(
         'status',
@@ -69,33 +69,33 @@ extension _MobilePhotoBackupBackground on _MobilePhotoBackupState {
     } catch (_) {
       if (_isCurrentBackgroundStatusRead(generation)) {
         _updateState(() {
-          _backgroundResult = '无法读取系统后台任务状态';
-          _backgroundWorkState = 'unknown';
+          _background.result = '无法读取系统后台任务状态';
+          _background.workState = 'unknown';
         });
       }
     }
   }
 
   bool _isCurrentBackgroundStatusRead(int generation) =>
-      mounted && !_backgroundBusy && generation == _backgroundStatusGeneration;
+      mounted && !_background.busy && generation == _background.statusGeneration;
 
   void _beginBackgroundWrite() {
-    _backgroundStatusGeneration++;
-    _updateState(() => _backgroundBusy = true);
+    _background.statusGeneration++;
+    _updateState(() => _background.busy = true);
   }
 
   void _finishBackgroundWrite() {
-    _backgroundStatusGeneration++;
-    if (mounted) _updateState(() => _backgroundBusy = false);
+    _background.statusGeneration++;
+    if (mounted) _updateState(() => _background.busy = false);
   }
 
   void _applyBackgroundStatus(Map<String, dynamic>? result) {
-    _backgroundEnabled = result?['enabled'] == true;
-    _backgroundSessionMatches = result?['sessionMatches'] == true;
-    _backgroundExpiresAt = _backupTime(result?['expiresAt']);
-    _backgroundLastCompletedAt = _backupTime(result?['lastCompletedAt']);
-    _backgroundResult = result?['last']?.toString() ?? '尚未执行';
-    _backgroundWorkState = result?['workState']?.toString() ?? 'unknown';
+    _background.enabled = result?['enabled'] == true;
+    _background.sessionMatches = result?['sessionMatches'] == true;
+    _background.expiresAt = _backupTime(result?['expiresAt']);
+    _background.lastCompletedAt = _backupTime(result?['lastCompletedAt']);
+    _background.result = result?['last']?.toString() ?? '尚未执行';
+    _background.workState = result?['workState']?.toString() ?? 'unknown';
   }
 
   DateTime? _backupTime(Object? value) {
@@ -111,7 +111,7 @@ extension _MobilePhotoBackupBackground on _MobilePhotoBackupState {
         '${locale.formatTimeOfDay(TimeOfDay.fromDateTime(value))}';
   }
 
-  String get _backgroundWorkLabel => switch (_backgroundWorkState) {
+  String get _backgroundWorkLabel => switch (_background.workState) {
     'enqueued' => '已排队，等待 Wi-Fi、电量和系统调度条件',
     'running' => '正在备份照片',
     'blocked' => '等待前序后台任务完成',
@@ -122,12 +122,15 @@ extension _MobilePhotoBackupBackground on _MobilePhotoBackupState {
   };
 
   Future<void> _requestBackgroundCheck() async {
-    if (_busy || _backgroundBusy || !_backgroundEnabled || _deviceId.isEmpty) {
+    if (_progress.busy ||
+        _background.busy ||
+        !_background.enabled ||
+        _options.deviceId.isEmpty) {
       return;
     }
     _beginBackgroundWrite();
     _updateState(() {
-      _backgroundActionMessage = null;
+      _background.actionMessage = null;
     });
     try {
       final result = await _backgroundChannel.invokeMapMethod<String, dynamic>(
@@ -140,12 +143,12 @@ extension _MobilePhotoBackupBackground on _MobilePhotoBackupState {
       if (!mounted) return;
       _updateState(() {
         _applyBackgroundStatus(result);
-        _backgroundActionMessage = '已提交后台检查；系统会在 Wi-Fi、电量等条件允许时执行，已有任务会继续沿用。';
+        _background.actionMessage = '已提交后台检查；系统会在 Wi-Fi、电量等条件允许时执行，已有任务会继续沿用。';
       });
     } catch (_) {
       if (mounted) {
         _updateState(() {
-          _backgroundActionMessage = '无法安排后台检查：请确认仍登录当前账号且系统后台备份已开启。';
+          _background.actionMessage = '无法安排后台检查：请确认仍登录当前账号且系统后台备份已开启。';
         });
       }
     } finally {
@@ -154,15 +157,15 @@ extension _MobilePhotoBackupBackground on _MobilePhotoBackupState {
   }
 
   Future<void> _syncBackgroundOptions() async {
-    if (!_isAndroid || !_backgroundEnabled || _backgroundBusy) return;
+    if (!_isAndroid || !_background.enabled || _background.busy) return;
     try {
       final result = await _backgroundChannel.invokeMapMethod<String, dynamic>(
         'updateOptions',
         {
           'server': widget.api.uri('/api/v2/me/storage').origin,
           'cookie': widget.api.mediaHeaders[HttpHeaders.cookieHeader] ?? '',
-          'albumScope': _albumScope,
-          'organizeByYearMonth': _organizeByYearMonth,
+          'albumScope': _options.albumScope,
+          'organizeByYearMonth': _options.organizeByYearMonth,
         },
       );
       if (mounted && result != null) {
@@ -174,7 +177,7 @@ extension _MobilePhotoBackupBackground on _MobilePhotoBackupState {
   }
 
   Future<void> _configureBackground(bool enabled) async {
-    if (_backgroundBusy || _deviceId.isEmpty) return;
+    if (_background.busy || _options.deviceId.isEmpty) return;
     LightIsleRoot? destinationRoot;
     if (enabled) {
       destinationRoot = widget.api.selectedRoot;
@@ -183,7 +186,7 @@ extension _MobilePhotoBackupBackground on _MobilePhotoBackupState {
           !destinationRoot.online) {
         if (mounted) {
           _updateState(
-            () => _backgroundActionMessage =
+            () => _background.actionMessage =
                 '请在存储设置中为照片分配在线硬盘，再从图库打开个人照片备份。后台任务只支持安全的 v2 专属照片目录。',
           );
         }
@@ -223,7 +226,7 @@ extension _MobilePhotoBackupBackground on _MobilePhotoBackupState {
       } catch (_) {
         if (mounted) {
           _updateState(
-            () => _backgroundActionMessage =
+            () => _background.actionMessage =
                 '照片硬盘连接或账号存储绑定无法验证。请回到图库刷新硬盘状态后重试；后台备份未开启。',
           );
         }
@@ -234,7 +237,7 @@ extension _MobilePhotoBackupBackground on _MobilePhotoBackupState {
         return;
       }
       if (!await _permission(includeVideos: false)) {
-        if (mounted) _updateState(() => _backgroundResult = '需要完整相册读取权限。');
+        if (mounted) _updateState(() => _background.result = '需要完整相册读取权限。');
         return;
       }
       if (!mounted) return;
@@ -274,12 +277,12 @@ extension _MobilePhotoBackupBackground on _MobilePhotoBackupState {
                     widget.api.mediaHeaders[HttpHeaders.cookieHeader] ?? '',
                 'certificateFingerprint':
                     widget.api.certificateFingerprint ?? '',
-                'deviceId': _deviceId,
+                'deviceId': _options.deviceId,
                 'rootID': destinationRoot!.id,
                 'rootGeneration': destinationRoot.generation,
                 'photosPath': widget.baseDirectory,
-                'albumScope': _albumScope,
-                'organizeByYearMonth': _organizeByYearMonth,
+                'albumScope': _options.albumScope,
+                'organizeByYearMonth': _options.organizeByYearMonth,
               },
             )
           : await _backgroundChannel.invokeMapMethod<String, dynamic>(
@@ -293,12 +296,12 @@ extension _MobilePhotoBackupBackground on _MobilePhotoBackupState {
       if (!mounted) return;
       _updateState(() {
         _applyBackgroundStatus(result);
-        _backgroundActionMessage = null;
+        _background.actionMessage = null;
       });
     } catch (_) {
       if (mounted) {
         _updateState(
-          () => _backgroundResult = '后台配置失败：请确认登录状态、NAS 地址和证书指纹；原有前台备份仍可正常使用。',
+          () => _background.result = '后台配置失败：请确认登录状态、NAS 地址和证书指纹；原有前台备份仍可正常使用。',
         );
       }
     } finally {

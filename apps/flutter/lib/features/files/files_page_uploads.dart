@@ -9,23 +9,25 @@ extension _FilesPageUploads on _FilesPageState {
               (job) =>
                   job.status == FileUploadStatus.complete &&
                   job.rootIdentity == widget.api.selectedRoot?.identity &&
-                  (job.actualDestination.startsWith('$_path/') || _path == '.'),
+                  (job.actualDestination.startsWith('${_dir.path}/') ||
+                      _dir.path == '.'),
             )
             .toSet() ??
         <FileUploadJob>{};
-    final hasNew = finished.difference(_observedCompletedUploads).isNotEmpty;
-    _observedCompletedUploads
+    final hasNew = finished
+        .difference(_transfers.observedCompletedUploads)
+        .isNotEmpty;
+    _transfers.observedCompletedUploads
       ..clear()
       ..addAll(finished);
     _updateState(() {});
-    // Newly committed files appear without making the user manually refresh.
-    if (hasNew && !widget.uploadOnly && !_loading) {
+    if (hasNew && !widget.uploadOnly && !_dir.loading) {
       unawaited(_refreshCurrentView());
     }
   }
 
   Future<void> _chooseUploadSource() async {
-    if (!_canWrite || _uploadBusy) return;
+    if (!_dir.canWrite || _transfers.uploadBusy) return;
     final type = await showModalBottomSheet<FileType>(
       context: context,
       useSafeArea: true,
@@ -65,7 +67,7 @@ extension _FilesPageUploads on _FilesPageState {
       isAdmin: widget.isAdmin,
       accountName: widget.accountName,
       taskCenter: widget.taskCenter,
-      directory: _path,
+      directory: _dir.path,
       type: type,
       title: type == FileType.media ? '上传照片与视频' : '上传文件',
     );
@@ -73,36 +75,35 @@ extension _FilesPageUploads on _FilesPageState {
   }
 
   Future<void> _pickUploads({FileType type = FileType.any}) async {
-    if (!_canWrite || _uploadBusy) return;
-    _refreshState(() => _uploadBusy = true);
+    if (!_dir.canWrite || _transfers.uploadBusy) return;
+    _refreshState(() => _transfers.uploadBusy = true);
     List<PlatformFile> files;
     try {
       files = await FilePicker.pickFiles(
         dialogTitle: '选择要上传的文件',
         type: type,
         darwinOptions: const DarwinOptions(
-          // Prefer current/original representations; never request compression.
           assetRepresentationMode: DarwinAssetRepresentationMode.current,
         ),
       );
     } catch (error) {
       _refreshState(() {
-        _uploadBusy = false;
-        _error = '无法打开文件选择器：${_friendlyError(error)}';
+        _transfers.uploadBusy = false;
+        _dir.error = '无法打开文件选择器：${_friendlyError(error)}';
       });
       return;
     }
     if (!mounted) return;
     if (files.isEmpty) {
-      _refreshState(() => _uploadBusy = false);
+      _refreshState(() => _transfers.uploadBusy = false);
       return;
     }
-    final destinationDirectory = _path;
+    final destinationDirectory = _dir.path;
     final jobs = <FileUploadJob>[];
     for (final file in files) {
       final issue = validateFileName(file.name);
       if (issue != null) {
-        _refreshState(() => _error = '“${file.name}”无法上传：$issue');
+        _refreshState(() => _dir.error = '“${file.name}”无法上传：$issue');
         continue;
       }
       jobs.add(
@@ -114,29 +115,29 @@ extension _FilesPageUploads on _FilesPageState {
       );
     }
     if (jobs.isEmpty) {
-      _refreshState(() => _uploadBusy = false);
+      _refreshState(() => _transfers.uploadBusy = false);
       return;
     }
     if (widget.taskCenter != null) {
-      _refreshState(() => _error = null);
+      _refreshState(() => _dir.error = null);
       await widget.taskCenter!.enqueue(
         jobs.map((job) => job.file).toList(),
         directory: destinationDirectory,
         root: widget.api.selectedRoot,
-        autoRename: _uploadAutoRename,
+        autoRename: _prefsState.uploadAutoRename,
       );
-      _refreshState(() => _uploadBusy = false);
+      _refreshState(() => _transfers.uploadBusy = false);
       return;
     }
     _refreshState(() {
-      _uploadJobs.addAll(jobs);
-      _error = null;
+      _transfers.uploadJobs.addAll(jobs);
+      _dir.error = null;
     });
     for (final job in jobs) {
       if (!mounted || job.cancelRequested) continue;
       await _runUpload(job);
     }
-    _refreshState(() => _uploadBusy = false);
+    _refreshState(() => _transfers.uploadBusy = false);
     if (mounted) await _refreshCurrentView();
   }
 
@@ -159,7 +160,7 @@ extension _FilesPageUploads on _FilesPageState {
   }
 
   void _cancelUploads() {
-    for (final job in _uploadJobs) {
+    for (final job in _transfers.uploadJobs) {
       if (job.status == FileUploadStatus.uploading ||
           job.status == FileUploadStatus.paused ||
           job.status == FileUploadStatus.checking) {
@@ -169,21 +170,22 @@ extension _FilesPageUploads on _FilesPageState {
   }
 
   Future<void> _retryUpload(FileUploadJob job) async {
-    if (_uploadBusy) return;
+    if (_transfers.uploadBusy) return;
     _refreshState(() {
-      _uploadBusy = true;
+      _transfers.uploadBusy = true;
       job.prepareRetry();
     });
     await _runUpload(job);
-    _refreshState(() => _uploadBusy = false);
+    _refreshState(() => _transfers.uploadBusy = false);
   }
 
-  bool get _hasActiveUploads => _uploadJobs.any(
+  bool get _hasActiveUploads => _transfers.uploadJobs.any(
     (job) =>
         job.status == FileUploadStatus.checking ||
         job.status == FileUploadStatus.uploading ||
         job.status == FileUploadStatus.paused,
   );
+
   Widget _uploadView(BuildContext context) => PopScope(
     canPop: widget.taskCenter != null || !_hasActiveUploads,
     onPopInvokedWithResult: (didPop, result) async {
@@ -200,7 +202,7 @@ extension _FilesPageUploads on _FilesPageState {
       );
       if (!leave || !mounted) return;
       _cancelUploads();
-      _updateState(() => _uploadBusy = false);
+      _updateState(() => _transfers.uploadBusy = false);
       if (context.mounted) Navigator.of(context).pop();
     },
     child: ListView(
@@ -213,7 +215,7 @@ extension _FilesPageUploads on _FilesPageState {
               Text('保存位置', style: Theme.of(context).textTheme.labelLarge),
               const SizedBox(height: 6),
               Text(
-                '${widget.api.selectedRoot?.name ?? _rootName} / ${_path == '.' ? '共享目录' : _path}',
+                '${widget.api.selectedRoot?.name ?? _dir.rootName} / ${_dir.path == '.' ? '共享目录' : _dir.path}',
               ),
               const SizedBox(height: 12),
               Text(
@@ -223,12 +225,12 @@ extension _FilesPageUploads on _FilesPageState {
               ),
               const SizedBox(height: 16),
               FilledButton.icon(
-                onPressed: _loading || _uploadBusy || !_canWrite
+                onPressed: _dir.loading || _transfers.uploadBusy || !_dir.canWrite
                     ? null
                     : () => _pickUploads(type: widget.initialUploadType),
                 icon: const Icon(Icons.add_rounded),
                 label: Text(
-                  (widget.taskCenter?.jobs ?? _uploadJobs).isEmpty
+                  (widget.taskCenter?.jobs ?? _transfers.uploadJobs).isEmpty
                       ? '选择要上传的内容'
                       : '继续添加',
                 ),
@@ -238,15 +240,16 @@ extension _FilesPageUploads on _FilesPageState {
                 contentPadding: EdgeInsets.zero,
                 title: const Text('同名自动改名'),
                 subtitle: const Text('保留原文件和新文件'),
-                value: _uploadAutoRename,
-                onChanged: _uploadBusy ? null : _setUploadAutoRename,
+                value: _prefsState.uploadAutoRename,
+                onChanged: _transfers.uploadBusy ? null : _setUploadAutoRename,
               ),
             ],
           ),
         ),
-        if (_loading) const LinearProgressIndicator(),
-        if (_error != null) Notice(_error!, error: true, onRetry: _loadFiles),
-        if (!_loading && !_canWrite && _error == null)
+        if (_dir.loading) const LinearProgressIndicator(),
+        if (_dir.error != null)
+          Notice(_dir.error!, error: true, onRetry: _loadFiles),
+        if (!_dir.loading && !_dir.canWrite && _dir.error == null)
           const Notice('此位置没有上传权限，请联系管理员开放写入权限。'),
         if (widget.taskCenter != null)
           Padding(
@@ -262,7 +265,7 @@ extension _FilesPageUploads on _FilesPageState {
               ),
             ),
           ),
-        if ((widget.taskCenter?.jobs ?? _uploadJobs).isNotEmpty) ...[
+        if ((widget.taskCenter?.jobs ?? _transfers.uploadJobs).isNotEmpty) ...[
           const SizedBox(height: 16),
           _buildUploads(context),
         ],
@@ -272,8 +275,8 @@ extension _FilesPageUploads on _FilesPageState {
   );
 
   Widget _buildUploads(BuildContext context) => FileUploadQueueView(
-    jobs: widget.taskCenter?.jobs ?? _uploadJobs,
-    retryBusy: _uploadBusy,
+    jobs: widget.taskCenter?.jobs ?? _transfers.uploadJobs,
+    retryBusy: _transfers.uploadBusy,
     onPause: (job) => widget.taskCenter == null
         ? _togglePause(job)
         : widget.taskCenter!.togglePause(job),
@@ -287,7 +290,7 @@ extension _FilesPageUploads on _FilesPageState {
         ? _discardUpload(job)
         : widget.taskCenter!.cancel(job),
     onClear: (job) => widget.taskCenter == null
-        ? _refreshState(() => _uploadJobs.remove(job))
+        ? _refreshState(() => _transfers.uploadJobs.remove(job))
         : widget.taskCenter!.clearFinished(),
   );
 }

@@ -100,7 +100,9 @@ class PlatformDesktopDirectoryAccess extends DesktopDirectoryAccess {
             await _channel.invokeMethod<bool>('stopAccess', <String, Object?>{
               'accessId': accessId,
             });
-          } catch (_) {}
+          } catch (error) {
+            debugPrint('PlatformDesktopDirectoryAccess.stopAccess failed: $error');
+          }
         },
       );
     }

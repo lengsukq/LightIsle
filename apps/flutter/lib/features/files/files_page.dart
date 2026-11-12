@@ -29,6 +29,7 @@ import 'file_batch_operations.dart';
 import 'file_media_playlist.dart';
 import 'file_text_preview_dialog.dart';
 import 'file_upload_queue_view.dart';
+import 'files_page_state_models.dart';
 export 'file_models.dart' show FileEntry, TrashEntry;
 import 'file_pdf_preview.dart';
 import 'file_upload_stream.dart';
@@ -153,49 +154,14 @@ class FilesPage extends StatefulWidget {
 class _FilesPageState extends State<FilesPage> {
   void _updateState(VoidCallback action) => setState(action);
 
-  final TextEditingController _searchController = TextEditingController();
-  late String _path;
-  late String _rootIdentity;
-  String _rootName = '共享文件';
-  List<FileEntry> _entries = [];
-  final Set<String> _failedThumbnails = <String>{};
-  final Set<String> _selectedPaths = <String>{};
-  String _nextCursor = '';
-  String _fileSort = 'name';
-  String _fileSortDirection = 'asc';
-  String _fileView = 'list';
-  bool _uploadAutoRename = false;
-  int _preferencesGeneration = 0;
-  Future<void> _preferenceWrites = Future<void>.value();
-  bool _canWrite = false;
-  bool _loading = false;
-  bool _showingTrash = false;
-  bool _searching = false;
-  String? _preSearchPath;
-  bool _searchTruncated = false;
-  bool _trashLoading = false;
-  String _searchTerm = '';
-  String _searchKind = '';
-  String? _error;
-  String? _directoryDiagnostic;
-  List<TrashEntry> _trashEntries = [];
-  int _loadGeneration = 0;
-  bool _uploadBusy = false;
-  final List<FileUploadJob> _uploadJobs = [];
-  final Set<FileUploadJob> _observedCompletedUploads = {};
-  final Map<String, double> _downloadProgress = {};
-  final Set<String> _downloading = {};
-  String? _downloadMessage;
+  late final FilesDirectoryState _dir;
+  final FilesSearchAndTrashState _filter = FilesSearchAndTrashState();
+  final FilesDisplayPrefsState _prefsState = FilesDisplayPrefsState();
+  final FilesSelectionAndTransferState _transfers =
+      FilesSelectionAndTransferState();
   bool _disposed = false;
-  bool _selecting = false;
-  bool _batchBusy = false;
-  bool _batchStopRequested = false;
-  FileBatchProgress? _batchProgress;
-  String? _batchActionLabel;
-  ({String action, String destination, List<String> failedPaths})?
-  _lastFailedBatchRetry;
-
   late FileUploadService _uploadService;
+
   FileBrowserRepository get _browserRepository =>
       FileBrowserRepository(widget.api);
   FileBatchOperations get _batchOperations => FileBatchOperations(widget.api);
@@ -203,7 +169,7 @@ class _FilesPageState extends State<FilesPage> {
   FileUploadService _newUploadService() => FileUploadService(
     api: widget.api,
     accountName: widget.accountName,
-    allowAutoRename: () => _uploadAutoRename,
+    allowAutoRename: () => _prefsState.uploadAutoRename,
     onChanged: () => _refreshState(() {}),
     onUploaded: widget.onUploaded,
     formatError: _friendlyError,
@@ -212,10 +178,12 @@ class _FilesPageState extends State<FilesPage> {
   @override
   void initState() {
     super.initState();
+    _dir = FilesDirectoryState(
+      path: widget.initialPath,
+      rootIdentity: widget.api.selectedRoot?.identity ?? 'default',
+    );
     _uploadService = _newUploadService();
     widget.taskCenter?.addListener(_onTaskCenterChange);
-    _path = widget.initialPath;
-    _rootIdentity = widget.api.selectedRoot?.identity ?? 'default';
     unawaited(_initialize());
   }
 
@@ -231,40 +199,14 @@ class _FilesPageState extends State<FilesPage> {
         oldWidget.isAdmin != widget.isAdmin ||
         oldWidget.accountName != widget.accountName ||
         oldWidget.initialPath != widget.initialPath ||
-        _rootIdentity != newRootIdentity) {
-      // Invalidate outstanding requests before awaiting local preferences.
-      // Never render the prior account/root's files under a new identity.
-      _loadGeneration++;
-      _preferencesGeneration++;
-      _rootIdentity = newRootIdentity;
+        _dir.rootIdentity != newRootIdentity) {
+      _prefsState.preferencesGeneration++;
       _cancelUploads();
       _uploadService = _newUploadService();
-      // didUpdateWidget is followed by build, so direct state reset is safe.
-      {
-        _path = widget.initialPath;
-        _rootName = '共享文件';
-        _entries = [];
-        _selectedPaths.clear();
-        _failedThumbnails.clear();
-        _selecting = false;
-        _showingTrash = false;
-        _searching = false;
-        _searchKind = '';
-        _preSearchPath = null;
-        _searchController.clear();
-        _canWrite = false;
-        _nextCursor = '';
-        _error = null;
-        _directoryDiagnostic = null;
-        _lastFailedBatchRetry = null;
-        _batchProgress = null;
-        _batchStopRequested = false;
-        _loading = true;
-        _fileView = 'list';
-        _fileSort = 'name';
-        _fileSortDirection = 'asc';
-        _uploadAutoRename = false;
-      }
+      _dir.resetForIdentity(widget.initialPath, newRootIdentity);
+      _filter.reset();
+      _transfers.resetForRootChange();
+      _prefsState.resetDefaults();
       unawaited(_initialize());
     }
   }
@@ -272,8 +214,8 @@ class _FilesPageState extends State<FilesPage> {
   @override
   void dispose() {
     _disposed = true;
-    _preferencesGeneration++;
-    _searchController.dispose();
+    _prefsState.preferencesGeneration++;
+    _filter.dispose();
     widget.taskCenter?.removeListener(_onTaskCenterChange);
     if (widget.taskCenter == null) _cancelUploads();
     super.dispose();
@@ -283,34 +225,115 @@ class _FilesPageState extends State<FilesPage> {
     if (mounted && !_disposed) setState(action);
   }
 
+  void _handlePopInvoked(bool didPop, Object? result) {
+    if (didPop || _dir.loading) return;
+    if (_transfers.selecting) {
+      _refreshState(_transfers.clearSelection);
+    } else if (_filter.showingTrash) {
+      _toggleTrash();
+    } else if (_filter.searching) {
+      _loadFiles(target: _filter.preSearchPath ?? widget.initialPath);
+    } else {
+      final segments = _pathSegments();
+      if (segments.length > 1) {
+        _loadFiles(target: segments[segments.length - 2].$2);
+      }
+    }
+  }
+
+  Widget _buildReadOnlyBanner(ColorScheme colors, {required bool compact}) {
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Material(
+        color: colors.secondaryContainer,
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            children: [
+              Icon(
+                Icons.lock_outline,
+                size: 16,
+                color: colors.onSecondaryContainer,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  compact
+                      ? '当前目录为只读 · 可浏览、下载或复制。'
+                      : '当前目录为只读。你可以浏览、预览、下载或复制到有写权限的目录。',
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    color: colors.onSecondaryContainer,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBatchProgressBanner(ColorScheme colors) {
+    final progress = _transfers.batchProgress!;
+    return Padding(
+      padding: const EdgeInsets.only(top: 6),
+      child: Material(
+        color: colors.primaryContainer,
+        borderRadius: BorderRadius.circular(10),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '正在批量${_transfers.batchActionLabel ?? '处理'} (${progress.index}/${progress.total}) · ${progress.currentName}',
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                        color: colors.onPrimaryContainer,
+                      ),
+                    ),
+                  ),
+                  TextButton(
+                    onPressed: _transfers.batchStopRequested
+                        ? null
+                        : () => _refreshState(
+                            () => _transfers.batchStopRequested = true,
+                          ),
+                    child: Text(
+                      _transfers.batchStopRequested ? '正在停止…' : '停止后续项',
+                    ),
+                  ),
+                ],
+              ),
+              LinearProgressIndicator(
+                value: progress.total > 0
+                    ? (progress.index / progress.total).clamp(0.0, 1.0)
+                    : null,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (widget.uploadOnly) return _uploadView(context);
     final colors = Theme.of(context).colorScheme;
     return PopScope(
       canPop:
-          _path == widget.initialPath &&
-          !_showingTrash &&
-          !_searching &&
-          !_selecting,
-      onPopInvokedWithResult: (didPop, result) {
-        if (didPop || _loading) return;
-        if (_selecting) {
-          _refreshState(() {
-            _selecting = false;
-            _selectedPaths.clear();
-          });
-        } else if (_showingTrash) {
-          _toggleTrash();
-        } else if (_searching) {
-          _loadFiles(target: _preSearchPath ?? widget.initialPath);
-        } else {
-          final segments = _pathSegments();
-          if (segments.length > 1) {
-            _loadFiles(target: segments[segments.length - 2].$2);
-          }
-        }
-      },
+          _dir.path == widget.initialPath &&
+          !_filter.showingTrash &&
+          !_filter.searching &&
+          !_transfers.selecting,
+      onPopInvokedWithResult: _handlePopInvoked,
       child: LayoutBuilder(
         builder: (context, constraints) {
           final compact = constraints.maxWidth < IsleLayout.compactPageWidth;
@@ -329,119 +352,41 @@ class _FilesPageState extends State<FilesPage> {
                   compact,
                   constraints.maxWidth - inset * 2,
                 ),
-                if (_searching) ...[
+                if (_filter.searching) ...[
                   const SizedBox(height: 6),
                   Text(
-                    '共享目录搜索“$_searchTerm” · 仅搜索当前账号可访问的名称。',
+                    '共享目录搜索“${_filter.searchTerm}” · 仅搜索当前账号可访问的名称。',
                     style: Theme.of(context).textTheme.bodySmall,
                   ),
                 ],
-                // A failed directory read is not evidence of read-only
-                // permissions. Do not show the contradictory blue notice
-                // alongside the real error.
-                if (!_showingTrash && !_canWrite && !_loading && _error == null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: Material(
-                      color: colors.secondaryContainer,
-                      borderRadius: BorderRadius.circular(10),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
-                        ),
-                        child: Row(
-                          children: [
-                            Icon(
-                              Icons.lock_outline,
-                              size: 16,
-                              color: colors.onSecondaryContainer,
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                compact
-                                    ? '当前目录为只读 · 可浏览、下载或复制。'
-                                    : '当前目录为只读。你可以浏览、预览、下载或复制到有写权限的目录。',
-                                style: TextStyle(
-                                  fontSize: 12.5,
-                                  color: colors.onSecondaryContainer,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                if (_batchBusy && _batchProgress != null)
-                  Padding(
-                    padding: const EdgeInsets.only(top: 6),
-                    child: Material(
-                      color: colors.primaryContainer,
-                      borderRadius: BorderRadius.circular(10),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 12,
-                          vertical: 8,
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              children: [
-                                Expanded(
-                                  child: Text(
-                                    '正在批量${_batchActionLabel ?? '处理'} (${_batchProgress!.index}/${_batchProgress!.total}) · ${_batchProgress!.currentName}',
-                                    style: TextStyle(
-                                      fontSize: 12.5,
-                                      fontWeight: FontWeight.w600,
-                                      color: colors.onPrimaryContainer,
-                                    ),
-                                  ),
-                                ),
-                                TextButton(
-                                  onPressed: _batchStopRequested
-                                      ? null
-                                      : () => _refreshState(
-                                          () => _batchStopRequested = true,
-                                        ),
-                                  child: Text(
-                                    _batchStopRequested ? '正在停止…' : '停止后续项',
-                                  ),
-                                ),
-                              ],
-                            ),
-                            LinearProgressIndicator(
-                              value: _batchProgress!.total > 0
-                                  ? (_batchProgress!.index /
-                                            _batchProgress!.total)
-                                        .clamp(0.0, 1.0)
-                                  : null,
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                if (_error != null)
+                if (!_filter.showingTrash &&
+                    !_dir.canWrite &&
+                    !_dir.loading &&
+                    _dir.error == null)
+                  _buildReadOnlyBanner(colors, compact: compact),
+                if (_transfers.batchBusy && _transfers.batchProgress != null)
+                  _buildBatchProgressBanner(colors),
+                if (_dir.error != null)
                   Notice(
-                    _error!,
+                    _dir.error!,
                     error: true,
-                    diagnostic: _error!.startsWith('读取目录失败：')
-                        ? _directoryDiagnostic
+                    diagnostic: _dir.error!.startsWith('读取目录失败：')
+                        ? _dir.directoryDiagnostic
                         : null,
-                    retryLabel: _lastFailedBatchRetry != null ? '仅重试失败项' : '重试',
-                    onRetry: _lastFailedBatchRetry != null
+                    retryLabel: _transfers.lastFailedBatchRetry != null
+                        ? '仅重试失败项'
+                        : '重试',
+                    onRetry: _transfers.lastFailedBatchRetry != null
                         ? _retryFailedBatchTransfer
-                        : _showingTrash
+                        : _filter.showingTrash
                         ? _loadTrash
-                        : _searching
+                        : _filter.searching
                         ? _searchFiles
                         : () => _loadFiles(),
                   ),
-                if (_downloadMessage != null) _downloadNotice(context),
-                if ((widget.taskCenter?.jobs ?? _uploadJobs).isNotEmpty) ...[
+                if (_transfers.downloadMessage != null) _downloadNotice(context),
+                if ((widget.taskCenter?.jobs ?? _transfers.uploadJobs)
+                    .isNotEmpty) ...[
                   const SizedBox(height: 8),
                   _buildUploads(context),
                 ],

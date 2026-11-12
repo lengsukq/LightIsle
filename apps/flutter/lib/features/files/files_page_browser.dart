@@ -4,155 +4,153 @@ extension _FilesPageBrowserOperations on _FilesPageState {
   bool _browserRequestCurrent(int generation, String rootIdentity) =>
       mounted &&
       !_disposed &&
-      generation == _loadGeneration &&
-      _rootIdentity == rootIdentity &&
+      generation == _dir.loadGeneration &&
+      _dir.rootIdentity == rootIdentity &&
       (widget.api.selectedRoot?.identity ?? 'default') == rootIdentity;
+
   Future<void> _loadFiles({
     String? target,
     bool more = false,
     bool keepSearch = false,
   }) async {
-    final generation = ++_loadGeneration;
-    final rootIdentity = _rootIdentity;
-    final directory = target ?? _path;
+    final generation = ++_dir.loadGeneration;
+    final rootIdentity = _dir.rootIdentity;
+    final directory = target ?? _dir.path;
     _refreshState(() {
-      _loading = true;
-      _error = null;
-      _directoryDiagnostic = null;
+      _dir.loading = true;
+      _dir.error = null;
+      _dir.directoryDiagnostic = null;
     });
 
     try {
       final response = await _browserRepository.list(
         directory: directory,
         limit: _pageSize,
-        cursor: more ? _nextCursor : '',
-        sort: _fileSort,
-        direction: _fileSortDirection,
+        cursor: more ? _dir.nextCursor : '',
+        sort: _prefsState.fileSort,
+        direction: _prefsState.fileSortDirection,
       );
       if (!_browserRequestCurrent(generation, rootIdentity)) return;
       _refreshState(() {
-        _rootName = response.rootName;
-        _directoryDiagnostic = null;
-        _path = directory;
-        _canWrite = response.canWrite || widget.isAdmin;
-        _entries = more ? [..._entries, ...response.entries] : response.entries;
-        if (!more) _selectedPaths.clear();
-        _nextCursor = response.nextCursor;
-        _searchTruncated = false;
-        _showingTrash = false;
+        _dir.rootName = response.rootName;
+        _dir.directoryDiagnostic = null;
+        _dir.path = directory;
+        _dir.canWrite = response.canWrite || widget.isAdmin;
+        _dir.entries = more
+            ? [..._dir.entries, ...response.entries]
+            : response.entries;
+        if (!more) _transfers.selectedPaths.clear();
+        _dir.nextCursor = response.nextCursor;
+        _filter.searchTruncated = false;
+        _filter.showingTrash = false;
         if (!keepSearch) {
-          _searching = false;
-          _searchKind = '';
-          _preSearchPath = null;
-          _searchTerm = '';
-          _searchController.clear();
+          _filter.clearSearchState();
         }
       });
     } catch (error) {
       if (_browserRequestCurrent(generation, rootIdentity)) {
         _refreshState(() {
-          _error = '读取目录失败：${_friendlyError(error)}';
-          _directoryDiagnostic = errorDiagnosticLabel(error);
-          // Do not retain stale write rights when the root is unavailable.
-          _canWrite = false;
+          _dir.error = '读取目录失败：${_friendlyError(error)}';
+          _dir.directoryDiagnostic = errorDiagnosticLabel(error);
+          _dir.canWrite = false;
         });
       }
     } finally {
       if (_browserRequestCurrent(generation, rootIdentity)) {
-        _refreshState(() => _loading = false);
+        _refreshState(() => _dir.loading = false);
       }
     }
   }
 
   Future<void> _searchFiles() async {
-    final term = _searchController.text.trim();
+    final term = _filter.searchController.text.trim();
     if (term.runes.length < 2) {
-      _refreshState(() => _error = '请输入至少两个字符再搜索。');
+      _refreshState(() => _dir.error = '请输入至少两个字符再搜索。');
       return;
     }
-    final generation = ++_loadGeneration;
-    final rootIdentity = _rootIdentity;
-    if (!_searching && !_showingTrash) {
-      _preSearchPath = _path;
+    final generation = ++_dir.loadGeneration;
+    final rootIdentity = _dir.rootIdentity;
+    if (!_filter.searching && !_filter.showingTrash) {
+      _filter.preSearchPath = _dir.path;
     }
     _refreshState(() {
-      _loading = true;
-      _error = null;
-      _searching = true;
-      _searchTerm = term;
-      _showingTrash = false;
-      _entries = [];
-      _selectedPaths.clear();
-      _nextCursor = '';
-      _searchTruncated = false;
+      _dir.loading = true;
+      _dir.error = null;
+      _filter.searching = true;
+      _filter.searchTerm = term;
+      _filter.showingTrash = false;
+      _dir.entries = [];
+      _transfers.selectedPaths.clear();
+      _dir.nextCursor = '';
+      _filter.searchTruncated = false;
     });
     try {
       final response = await _browserRepository.search(
         initialPath: widget.initialPath,
         term: term,
         limit: _pageSize,
-        kind: _searchKind,
+        kind: _filter.searchKind,
       );
       if (!_browserRequestCurrent(generation, rootIdentity)) return;
       _refreshState(() {
-        _path = widget.initialPath;
-        _selectedPaths.clear();
-        _canWrite = response.canWrite || widget.isAdmin;
-        _entries = response.entries;
-        _nextCursor = '';
-        _searchTruncated = response.truncated;
+        _dir.path = widget.initialPath;
+        _transfers.selectedPaths.clear();
+        _dir.canWrite = response.canWrite || widget.isAdmin;
+        _dir.entries = response.entries;
+        _dir.nextCursor = '';
+        _filter.searchTruncated = response.truncated;
       });
     } catch (error) {
       if (_browserRequestCurrent(generation, rootIdentity)) {
-        _refreshState(() => _error = '搜索失败：${_friendlyError(error)}');
+        _refreshState(() => _dir.error = '搜索失败：${_friendlyError(error)}');
       }
     } finally {
       if (_browserRequestCurrent(generation, rootIdentity)) {
-        _refreshState(() => _loading = false);
+        _refreshState(() => _dir.loading = false);
       }
     }
   }
 
   Future<void> _loadTrash() async {
-    final generation = ++_loadGeneration;
-    final rootIdentity = _rootIdentity;
+    final generation = ++_dir.loadGeneration;
+    final rootIdentity = _dir.rootIdentity;
     _refreshState(() {
-      _trashLoading = true;
-      _error = null;
-      _showingTrash = true;
-      _searching = false;
-      _preSearchPath = null;
-      _selectedPaths.clear();
+      _filter.trashLoading = true;
+      _dir.error = null;
+      _filter.showingTrash = true;
+      _filter.searching = false;
+      _filter.preSearchPath = null;
+      _transfers.selectedPaths.clear();
     });
     try {
       final response = await _browserRepository.trash();
       if (!_browserRequestCurrent(generation, rootIdentity)) return;
-      _refreshState(() => _trashEntries = response);
+      _refreshState(() => _filter.trashEntries = response);
     } catch (error) {
       if (_browserRequestCurrent(generation, rootIdentity)) {
-        _refreshState(() => _error = '读取回收站失败：${_friendlyError(error)}');
+        _refreshState(() => _dir.error = '读取回收站失败：${_friendlyError(error)}');
       }
     } finally {
       if (_browserRequestCurrent(generation, rootIdentity)) {
-        _refreshState(() => _trashLoading = false);
+        _refreshState(() => _filter.trashLoading = false);
       }
     }
   }
 
   Future<void> _toggleTrash() async {
-    if (_showingTrash) {
-      await _loadFiles(target: _path);
+    if (_filter.showingTrash) {
+      await _loadFiles(target: _dir.path);
     } else {
       await _loadTrash();
     }
   }
 
   Future<void> _createFolder() async {
-    if (!_canWrite) return;
+    if (!_dir.canWrite) return;
     final name = await _askFolderName();
     if (name == null) return;
-    final path = _joinRelative(_path, name);
-    _refreshState(() => _error = null);
+    final path = _joinRelative(_dir.path, name);
+    _refreshState(() => _dir.error = null);
     try {
       await widget.api.send(
         'POST',
@@ -161,7 +159,7 @@ extension _FilesPageBrowserOperations on _FilesPageState {
       );
       await _refreshCurrentView();
     } catch (error) {
-      _refreshState(() => _error = '新建文件夹失败：${_friendlyError(error)}');
+      _refreshState(() => _dir.error = '新建文件夹失败：${_friendlyError(error)}');
     }
   }
 
@@ -228,10 +226,10 @@ extension _FilesPageBrowserOperations on _FilesPageState {
     );
     if (selection == null || !mounted) return;
     if (item.isFolder && selection.path.startsWith('${item.path}/')) {
-      _refreshState(() => _error = '不能将文件夹移动或复制到自己的子目录中。');
+      _refreshState(() => _dir.error = '不能将文件夹移动或复制到自己的子目录中。');
       return;
     }
-    _refreshState(() => _error = null);
+    _refreshState(() => _dir.error = null);
     try {
       final result = await widget.api.send(
         'POST',
@@ -252,7 +250,7 @@ extension _FilesPageBrowserOperations on _FilesPageState {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text(message)));
     } catch (error) {
-      _refreshState(() => _error = '文件操作失败：${_friendlyError(error)}');
+      _refreshState(() => _dir.error = '文件操作失败：${_friendlyError(error)}');
     }
   }
 
@@ -281,7 +279,7 @@ extension _FilesPageBrowserOperations on _FilesPageState {
       );
       if (mounted) await _refreshCurrentView();
     } catch (error) {
-      _refreshState(() => _error = '重命名失败：${_friendlyError(error)}');
+      _refreshState(() => _dir.error = '重命名失败：${_friendlyError(error)}');
     }
   }
 
@@ -294,7 +292,7 @@ extension _FilesPageBrowserOperations on _FilesPageState {
       action: '移入回收站',
     );
     if (!confirmed) return;
-    _refreshState(() => _error = null);
+    _refreshState(() => _dir.error = null);
     try {
       await widget.api.send(
         'DELETE',
@@ -303,7 +301,7 @@ extension _FilesPageBrowserOperations on _FilesPageState {
       );
       await _refreshCurrentView();
     } catch (error) {
-      _refreshState(() => _error = '未能确认移入回收站的结果：${_friendlyError(error)}');
+      _refreshState(() => _dir.error = '未能确认移入回收站的结果：${_friendlyError(error)}');
     }
   }
 
@@ -323,25 +321,25 @@ extension _FilesPageBrowserOperations on _FilesPageState {
       );
       await _loadTrash();
     } catch (error) {
-      _refreshState(() => _error = '未能确认恢复结果：${_friendlyError(error)}');
+      _refreshState(() => _dir.error = '未能确认恢复结果：${_friendlyError(error)}');
     }
   }
 
   Future<void> _refreshCurrentView() async {
-    if (_showingTrash) {
+    if (_filter.showingTrash) {
       await _loadTrash();
-    } else if (_searching) {
+    } else if (_filter.searching) {
       await _searchFiles();
     } else {
-      await _loadFiles(target: _path);
+      await _loadFiles(target: _dir.path);
     }
   }
 
   Future<void> _extractZip(FileEntry item) async {
-    if (!_canWriteItem(item) || _loading || _batchBusy) return;
+    if (!_canWriteItem(item) || _dir.loading || _transfers.batchBusy) return;
     _refreshState(() {
-      _loading = true;
-      _error = null;
+      _dir.loading = true;
+      _dir.error = null;
     });
     try {
       final result = await widget.api.send(
@@ -357,8 +355,8 @@ extension _FilesPageBrowserOperations on _FilesPageState {
           .showSnackBar(SnackBar(content: Text('已解压到：$target')));
     } catch (error) {
       _refreshState(() {
-        _loading = false;
-        _error = '解压失败：${_friendlyError(error)}';
+        _dir.loading = false;
+        _dir.error = '解压失败：${_friendlyError(error)}';
       });
     }
   }
@@ -380,7 +378,7 @@ extension _FilesPageBrowserOperations on _FilesPageState {
       );
       await _loadTrash();
     } catch (error) {
-      _refreshState(() => _error = '未能确认永久删除结果：${_friendlyError(error)}');
+      _refreshState(() => _dir.error = '未能确认永久删除结果：${_friendlyError(error)}');
     }
   }
 }

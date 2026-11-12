@@ -2,7 +2,7 @@ part of 'mobile_photo_backup_page.dart';
 
 extension _MobilePhotoBackupFailures on _MobilePhotoBackupState {
   String _photoFailureStorageKey() =>
-      '$_scopedStatePrefix.failures.${_includeVideos ? "videos" : "photos"}';
+      '$_scopedStatePrefix.failures.${_options.includeVideos ? "videos" : "photos"}';
 
   String _photoFailureAssetKey(
     String id,
@@ -13,7 +13,7 @@ extension _MobilePhotoBackupFailures on _MobilePhotoBackupState {
   ) => sha256
       .convert(
         utf8.encode(
-          '$id|$modified|$listedSize|$generation|$storeVersionID|$_includeVideos',
+          '$id|$modified|$listedSize|$generation|$storeVersionID|${_options.includeVideos}',
         ),
       )
       .toString();

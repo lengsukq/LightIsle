@@ -5,11 +5,11 @@ extension _FilesPageFileWidgets on _FilesPageState {
     final colors = Theme.of(context).colorScheme;
     final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
     final gridHeightExtra = (textScale - 1).clamp(0.0, 3.0) * 45;
-    final title = _showingTrash
+    final title = _filter.showingTrash
         ? '回收站'
-        : _searching
+        : _filter.searching
         ? '搜索结果'
-        : '$_rootName · ${_path == '.' ? '全部文件' : _path}';
+        : '${_dir.rootName} · ${_dir.path == '.' ? '全部文件' : _dir.path}';
     return IsleSurface(
       padding: EdgeInsets.zero,
       radius: IsleRadius.card,
@@ -25,57 +25,61 @@ extension _FilesPageFileWidgets on _FilesPageState {
               children: [
                 Expanded(
                   child: Text(
-                    compact && !_showingTrash && !_searching
-                        ? '文件 · ${_entries.length} 项'
+                    compact && !_filter.showingTrash && !_filter.searching
+                        ? '文件 · ${_dir.entries.length} 项'
                         : title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: Theme.of(context).textTheme.titleSmall
-                        ?.copyWith(fontWeight: FontWeight.w700),
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
-                if (!compact && !_showingTrash && _entries.isNotEmpty)
+                if (!compact && !_filter.showingTrash && _dir.entries.isNotEmpty)
                   Text(
-                    '${_entries.length} 项',
-                    style: Theme.of(context).textTheme.bodySmall
-                        ?.copyWith(color: colors.onSurfaceVariant),
+                    '${_dir.entries.length} 项',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: colors.onSurfaceVariant,
+                    ),
                   ),
-                if (!_showingTrash) _fileViewToggle(),
-                if (!_showingTrash && !_searching) _fileSortMenu(),
+                if (!_filter.showingTrash) _fileViewToggle(),
+                if (!_filter.showingTrash && !_filter.searching)
+                  _fileSortMenu(),
               ],
             ),
           ),
           IsleAnimatedExpand(
-            expanded: !_showingTrash && _selecting,
+            expanded: !_filter.showingTrash && _transfers.selecting,
             child: _selectionToolbar(context, compact),
           ),
-          if (_searching && !_showingTrash) _buildSearchKindFilterBar(context),
+          if (_filter.searching && !_filter.showingTrash)
+            _buildSearchKindFilterBar(context),
           const Divider(height: 1),
-          if (_loading)
+          if (_dir.loading)
             const LinearProgressIndicator(minHeight: 2)
-          else if (_showingTrash && _trashLoading)
+          else if (_filter.showingTrash && _filter.trashLoading)
             const LinearProgressIndicator(minHeight: 2)
-          else if (_showingTrash)
-            _trashEntries.isEmpty
+          else if (_filter.showingTrash)
+            _filter.trashEntries.isEmpty
                 ? _emptyState(context, '回收站是空的。', Icons.delete_outline)
                 : Column(
-                    children: _trashEntries
+                    children: _filter.trashEntries
                         .map((entry) => _trashTile(context, entry, compact))
                         .toList(),
                   )
-          else if (_entries.isEmpty)
+          else if (_dir.entries.isEmpty)
             _emptyState(
               context,
-              _searching ? '没有找到匹配的文件或文件夹。' : '此文件夹目前是空的。',
+              _filter.searching ? '没有找到匹配的文件或文件夹。' : '此文件夹目前是空的。',
               Icons.folder_open_outlined,
-              showCreateActions: !_searching && _canWrite,
+              showCreateActions: !_filter.searching && _dir.canWrite,
             )
           else
             Column(
               children: [
                 IsleModeSwitcher(
-                  modeKey: _fileView,
-                  child: _fileView == 'grid'
+                  modeKey: _prefsState.fileView,
+                  child: _prefsState.fileView == 'grid'
                       ? Padding(
                           padding: EdgeInsets.all(compact ? 8 : 14),
                           child: GridView.builder(
@@ -94,20 +98,20 @@ extension _FilesPageFileWidgets on _FilesPageState {
                                   crossAxisSpacing: compact ? 8 : 10,
                                   mainAxisSpacing: compact ? 8 : 10,
                                 ),
-                            itemCount: _entries.length,
+                            itemCount: _dir.entries.length,
                             itemBuilder: (context, index) =>
-                                _fileCard(context, _entries[index]),
+                                _fileCard(context, _dir.entries[index]),
                           ),
                         )
                       : Column(
-                          children: _entries
+                          children: _dir.entries
                               .map(
                                 (entry) => _fileTile(context, entry, compact),
                               )
                               .toList(),
                         ),
                 ),
-                if (_searchTruncated)
+                if (_filter.searchTruncated)
                   Padding(
                     padding: const EdgeInsets.all(12),
                     child: Text(
@@ -115,11 +119,13 @@ extension _FilesPageFileWidgets on _FilesPageState {
                       style: TextStyle(color: colors.onSurfaceVariant),
                     ),
                   ),
-                if (_nextCursor.isNotEmpty)
+                if (_dir.nextCursor.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.all(12),
                     child: OutlinedButton.icon(
-                      onPressed: _loading ? null : () => _loadFiles(more: true),
+                      onPressed: _dir.loading
+                          ? null
+                          : () => _loadFiles(more: true),
                       icon: const Icon(Icons.expand_more),
                       label: const Text('加载更多文件'),
                     ),
@@ -150,13 +156,13 @@ extension _FilesPageFileWidgets on _FilesPageState {
               padding: const EdgeInsets.only(right: 6),
               child: ChoiceChip(
                 label: Text(entry.$2, style: const TextStyle(fontSize: 12)),
-                selected: _searchKind == entry.$1,
+                selected: _filter.searchKind == entry.$1,
                 visualDensity: VisualDensity.compact,
-                onSelected: _loading
+                onSelected: _dir.loading
                     ? null
                     : (selected) {
-                        if (!selected && _searchKind == entry.$1) return;
-                        _refreshState(() => _searchKind = entry.$1);
+                        if (!selected && _filter.searchKind == entry.$1) return;
+                        _refreshState(() => _filter.searchKind = entry.$1);
                         unawaited(_searchFiles());
                       },
               ),
@@ -173,12 +179,9 @@ extension _FilesPageFileWidgets on _FilesPageState {
 
   bool _thumbnailEligible(String name) => _thumbnailExtensions.hasMatch(name);
 
-  /// Server-rendered 512px JPEG for image/video files; falls back to the
-  /// extension badge when the pipeline cannot serve one (unsupported source,
-  /// oversized file, FFmpeg-less server for exotic containers).
   Widget _fileThumbnail(FileEntry item) {
     final key = '${item.path}@${item.modified}';
-    if (_failedThumbnails.contains(key)) return _buildFileBadgeIcon(item);
+    if (_dir.failedThumbnails.contains(key)) return _buildFileBadgeIcon(item);
     return ClipRRect(
       borderRadius: BorderRadius.circular(11),
       child: SizedBox(
@@ -191,7 +194,7 @@ extension _FilesPageFileWidgets on _FilesPageState {
           maxBytes: 4 * 1024 * 1024,
           fit: BoxFit.cover,
           errorBuilder: (_, _, _) {
-            _failedThumbnails.add(key);
+            _dir.failedThumbnails.add(key);
             return _buildFileBadgeIcon(item);
           },
         ),
@@ -274,8 +277,8 @@ extension _FilesPageFileWidgets on _FilesPageState {
 
   void _openOrSelectFile(FileEntry item) {
     HapticFeedback.selectionClick();
-    if (_selecting) {
-      _toggleSelected(item, !_selectedPaths.contains(item.path));
+    if (_transfers.selecting) {
+      _toggleSelected(item, !_transfers.selectedPaths.contains(item.path));
     } else if (item.isFolder) {
       unawaited(_loadFiles(target: item.path));
     } else {
@@ -284,8 +287,8 @@ extension _FilesPageFileWidgets on _FilesPageState {
   }
 
   void _startSelectingFile(FileEntry item) {
-    _refreshState(() => _selecting = true);
-    _toggleSelected(item, !_selectedPaths.contains(item.path));
+    _refreshState(() => _transfers.selecting = true);
+    _toggleSelected(item, !_transfers.selectedPaths.contains(item.path));
   }
 
   Widget _fileCardCover(BuildContext context, FileEntry item) {
@@ -300,7 +303,7 @@ extension _FilesPageFileWidgets on _FilesPageState {
     }
     final thumbnailKey = '${item.path}@${item.modified}';
     if (!_thumbnailEligible(item.name) ||
-        _failedThumbnails.contains(thumbnailKey)) {
+        _dir.failedThumbnails.contains(thumbnailKey)) {
       return ColoredBox(
         color: colors.surfaceContainerHighest,
         child: Center(child: _buildFileBadgeIcon(item)),
@@ -313,7 +316,7 @@ extension _FilesPageFileWidgets on _FilesPageState {
       maxBytes: 4 * 1024 * 1024,
       fit: BoxFit.cover,
       errorBuilder: (_, _, _) {
-        _failedThumbnails.add(thumbnailKey);
+        _dir.failedThumbnails.add(thumbnailKey);
         return Center(child: _buildFileBadgeIcon(item));
       },
     );
@@ -324,7 +327,7 @@ extension _FilesPageFileWidgets on _FilesPageState {
     final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
     final detailHeight = 72 + (textScale - 1).clamp(0.0, 3.0) * 32;
     final writable = _canWriteItem(item);
-    final selected = _selectedPaths.contains(item.path);
+    final selected = _transfers.selectedPaths.contains(item.path);
     return Card(
       key: ValueKey('file-card-${item.path}'),
       margin: EdgeInsets.zero,
@@ -339,7 +342,7 @@ extension _FilesPageFileWidgets on _FilesPageState {
       ),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
-        onTap: _loading ? null : () => _openOrSelectFile(item),
+        onTap: _dir.loading ? null : () => _openOrSelectFile(item),
         onLongPress: () => _startSelectingFile(item),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -349,7 +352,7 @@ extension _FilesPageFileWidgets on _FilesPageState {
                 fit: StackFit.expand,
                 children: [
                   _fileCardCover(context, item),
-                  if (_selecting)
+                  if (_transfers.selecting)
                     Positioned(
                       top: 2,
                       left: 2,
@@ -358,13 +361,13 @@ extension _FilesPageFileWidgets on _FilesPageState {
                         onChanged: (value) => _toggleSelected(item, value),
                       ),
                     ),
-                  if (_downloading.contains(item.path))
+                  if (_transfers.downloading.contains(item.path))
                     Positioned(
                       bottom: 0,
                       left: 0,
                       right: 0,
                       child: LinearProgressIndicator(
-                        value: _downloadProgress[item.path],
+                        value: _transfers.downloadProgress[item.path],
                       ),
                     ),
                 ],
@@ -413,7 +416,7 @@ extension _FilesPageFileWidgets on _FilesPageState {
   Widget _fileTile(BuildContext context, FileEntry item, bool compact) {
     final colors = Theme.of(context).colorScheme;
     final writable = _canWriteItem(item);
-    final selected = _selectedPaths.contains(item.path);
+    final selected = _transfers.selectedPaths.contains(item.path);
     final modified = item.modified == null
         ? '修改时间未知'
         : _formatDate(item.modified!);
@@ -433,7 +436,7 @@ extension _FilesPageFileWidgets on _FilesPageState {
           leading: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (_selecting)
+              if (_transfers.selecting)
                 Semantics(
                   label: '选择 ${item.name}',
                   child: Checkbox(
@@ -455,19 +458,21 @@ extension _FilesPageFileWidgets on _FilesPageState {
             style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
           ),
           subtitle: Text(
-            '${item.isFolder ? '文件夹' : formatBytes(item.size)} · $modified${_searching ? ' · ${item.path}' : ''}',
+            '${item.isFolder ? '文件夹' : formatBytes(item.size)} · $modified${_filter.searching ? ' · ${item.path}' : ''}',
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: TextStyle(fontSize: 11.5, color: colors.onSurfaceVariant),
           ),
           onLongPress: () => _startSelectingFile(item),
-          onTap: _loading ? null : () => _openOrSelectFile(item),
+          onTap: _dir.loading ? null : () => _openOrSelectFile(item),
           trailing: _fileActionsMenu(item, writable),
         ),
-        if (_downloading.contains(item.path))
+        if (_transfers.downloading.contains(item.path))
           Padding(
             padding: const EdgeInsets.only(left: 70, right: 20, bottom: 8),
-            child: LinearProgressIndicator(value: _downloadProgress[item.path]),
+            child: LinearProgressIndicator(
+              value: _transfers.downloadProgress[item.path],
+            ),
           ),
         const Divider(height: 1, indent: 16, endIndent: 16),
       ],
@@ -509,7 +514,7 @@ extension _FilesPageFileWidgets on _FilesPageState {
       }
     },
     itemBuilder: (context) => [
-      if (_searching)
+      if (_filter.searching)
         isleActionMenuItem(
           value: 'openContainingFolder',
           icon: Icons.folder_open_outlined,
@@ -574,6 +579,7 @@ extension _FilesPageFileWidgets on _FilesPageState {
         ),
     ],
   );
+
   Widget _trashTile(
     BuildContext context,
     TrashEntry item,
@@ -641,6 +647,7 @@ extension _FilesPageFileWidgets on _FilesPageState {
       const Divider(height: 1, indent: 16, endIndent: 16),
     ],
   );
+
   Widget _downloadNotice(BuildContext context) => Padding(
     padding: const EdgeInsets.only(top: 8),
     child: Material(
@@ -653,12 +660,12 @@ extension _FilesPageFileWidgets on _FilesPageState {
           children: [
             const Icon(Icons.download_done_outlined),
             const SizedBox(width: 10),
-            Expanded(child: SelectableText(_downloadMessage!)),
-            if (_downloadMessage!.startsWith('已下载到：'))
+            Expanded(child: SelectableText(_transfers.downloadMessage!)),
+            if (_transfers.downloadMessage!.startsWith('已下载到：'))
               IconButton(
                 tooltip: '复制下载路径',
                 onPressed: () => _copyPathToClipboard(
-                  _downloadMessage!.substring('已下载到：'.length),
+                  _transfers.downloadMessage!.substring('已下载到：'.length),
                 ),
                 icon: const Icon(Icons.copy),
               ),
@@ -667,6 +674,7 @@ extension _FilesPageFileWidgets on _FilesPageState {
       ),
     ),
   );
+
   Widget _emptyState(
     BuildContext context,
     String text,
@@ -713,14 +721,14 @@ extension _FilesPageFileWidgets on _FilesPageState {
                   label: '上传文件到此目录',
                   icon: Icons.add_rounded,
                   variant: IslePillVariant.primary,
-                  onPressed: _loading || _uploadBusy
+                  onPressed: _dir.loading || _transfers.uploadBusy
                       ? null
                       : _chooseUploadSource,
                 ),
                 IslePillButton(
                   label: '在此新建文件夹',
                   icon: Icons.create_new_folder_outlined,
-                  onPressed: _loading ? null : _createFolder,
+                  onPressed: _dir.loading ? null : _createFolder,
                 ),
               ],
             ),

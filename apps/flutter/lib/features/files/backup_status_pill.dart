@@ -92,7 +92,9 @@ Future<MobileBackupStatusSnapshot> readMobilePhotoBackupSnapshot({
         tooltip: '最近一轮相册原片已核验完成，点击查看设置或检查新照片',
       );
     }
-  } catch (_) {}
+  } catch (error) {
+    debugPrint('PhotoBackupStatusPill: snapshot read fallback: $error');
+  }
   return const MobileBackupStatusSnapshot(
     kind: MobileBackupBadgeKind.idle,
     label: '相册备份',

@@ -2,11 +2,11 @@ part of 'files_page.dart';
 
 extension _FilesPageFileActions on _FilesPageState {
   Future<void> _openExternal(FileEntry item) async {
-    if (_downloading.contains(item.path)) return;
+    if (_transfers.downloading.contains(item.path)) return;
     _refreshState(() {
-      _downloading.add(item.path);
-      _downloadProgress[item.path] = 0;
-      _downloadMessage = null;
+      _transfers.downloading.add(item.path);
+      _transfers.downloadProgress[item.path] = 0;
+      _transfers.downloadMessage = null;
     });
     try {
       final message = await ExternalFileOpener.open(
@@ -15,18 +15,18 @@ extension _FilesPageFileActions on _FilesPageState {
         name: item.name,
         size: item.size,
         onProgress: (value) =>
-            _refreshState(() => _downloadProgress[item.path] = value),
+            _refreshState(() => _transfers.downloadProgress[item.path] = value),
       );
-      _refreshState(() => _downloadMessage = message);
+      _refreshState(() => _transfers.downloadMessage = message);
     } catch (error) {
       _refreshState(
-        () => _downloadMessage =
+        () => _transfers.downloadMessage =
             '无法通过其他应用打开：${userFacingError(error)}。可以改用“下载”保存原文件。',
       );
     } finally {
       _refreshState(() {
-        _downloading.remove(item.path);
-        _downloadProgress.remove(item.path);
+        _transfers.downloading.remove(item.path);
+        _transfers.downloadProgress.remove(item.path);
       });
     }
   }
@@ -34,7 +34,7 @@ extension _FilesPageFileActions on _FilesPageState {
   Future<void> _preview(FileEntry item) async {
     final kind = classifyFilePreview(item.name);
     if (kind == FilePreviewKind.image || kind == FilePreviewKind.video) {
-      final playlist = FileMediaPlaylist.fromDirectory(_entries, item);
+      final playlist = FileMediaPlaylist.fromDirectory(_dir.entries, item);
       await Navigator.of(context).push<void>(
         MaterialPageRoute(
           builder: (_) => PhotoGalleryViewer(
@@ -65,12 +65,14 @@ extension _FilesPageFileActions on _FilesPageState {
       return;
     }
     if (kind == FilePreviewKind.external) {
-      _refreshState(() => _error = '该文件暂不支持在线预览，请通过右侧更多菜单保存文件或使用其他应用打开。');
+      _refreshState(
+        () => _dir.error = '该文件暂不支持在线预览，请通过右侧更多菜单保存文件或使用其他应用打开。',
+      );
       return;
     }
-    final generation = _loadGeneration;
-    final rootIdentity = _rootIdentity;
-    final directory = _path;
+    final generation = _dir.loadGeneration;
+    final rootIdentity = _dir.rootIdentity;
+    final directory = _dir.path;
     String? decodedText;
     String? failure;
     try {
@@ -85,10 +87,8 @@ extension _FilesPageFileActions on _FilesPageState {
           ? '无法识别文本编码，原文件未更改。可尝试其他编辑器。'
           : _friendlyError(error);
     }
-    // A slow preview must never present an old disk's file after navigating
-    // or switching the selected physical root.
     if (!_browserRequestCurrent(generation, rootIdentity) ||
-        directory != _path) {
+        directory != _dir.path) {
       return;
     }
     if (!mounted) return;
@@ -120,13 +120,13 @@ extension _FilesPageFileActions on _FilesPageState {
   }
 
   Future<void> _download(FileEntry item) async {
-    if (_downloading.contains(item.path)) return;
+    if (_transfers.downloading.contains(item.path)) return;
     final fileName = item.isFolder
         ? '${item.name}.zip'
         : item.name.split('/').last.split('\\').last;
     final nameIssue = validateFileName(fileName);
     if (nameIssue != null) {
-      _refreshState(() => _downloadMessage = '无法保存此文件：$nameIssue');
+      _refreshState(() => _transfers.downloadMessage = '无法保存此文件：$nameIssue');
       return;
     }
 
@@ -157,7 +157,7 @@ extension _FilesPageFileActions on _FilesPageState {
       }
     } catch (error) {
       _refreshState(
-        () => _downloadMessage = '无法准备下载位置：${_friendlyError(error)}',
+        () => _transfers.downloadMessage = '无法准备下载位置：${_friendlyError(error)}',
       );
       return;
     }
@@ -167,9 +167,9 @@ extension _FilesPageFileActions on _FilesPageState {
     }
 
     _refreshState(() {
-      _downloading.add(item.path);
-      _downloadProgress[item.path] = 0;
-      _downloadMessage = null;
+      _transfers.downloading.add(item.path);
+      _transfers.downloadProgress[item.path] = 0;
+      _transfers.downloadMessage = null;
     });
     try {
       await widget.api.download(
@@ -179,7 +179,7 @@ extension _FilesPageFileActions on _FilesPageState {
         onProgress: (received, total) {
           if (total > 0) {
             _refreshState(
-              () => _downloadProgress[item.path] = (received / total)
+              () => _transfers.downloadProgress[item.path] = (received / total)
                   .clamp(0, 1)
                   .toDouble(),
             );
@@ -193,28 +193,28 @@ extension _FilesPageFileActions on _FilesPageState {
           {'path': destination, 'name': fileName},
         );
         _refreshState(() {
-          _downloadMessage = exportResult == null
+          _transfers.downloadMessage = exportResult == null
               ? '已取消导出，临时文件已清理。'
               : exportResult == 'shared'
               ? '已完成系统分享或保存。'
               : '已保存到所选位置：$exportResult';
-          _downloadProgress.remove(item.path);
+          _transfers.downloadProgress.remove(item.path);
         });
       } else {
         _refreshState(() {
-          _downloadMessage = '已下载到：$destination';
-          _downloadProgress.remove(item.path);
+          _transfers.downloadMessage = '已下载到：$destination';
+          _transfers.downloadProgress.remove(item.path);
         });
       }
     } catch (error) {
       _refreshState(() {
-        _downloadMessage =
+        _transfers.downloadMessage =
             '下载或导出失败：${_friendlyDownloadError(error, item.isFolder)}';
-        _downloadProgress.remove(item.path);
+        _transfers.downloadProgress.remove(item.path);
       });
     } finally {
       await _removeTemporaryDirectory(temporaryDirectory);
-      _refreshState(() => _downloading.remove(item.path));
+      _refreshState(() => _transfers.downloading.remove(item.path));
     }
   }
 
