@@ -159,6 +159,15 @@ extension AppModel {
             // READY and CONFIGURED are separate IPC lines; either may arrive
             // first, so both paths attempt the idempotent default activation.
             enablePreferredLANIfReady()
+            if tunnelSelectedID == nil {
+                tunnelSelectedID = TunnelPersistencePolicy.selectedTunnelID()
+            }
+            // Query local supervisor states before outbound API token validation
+            // so tunnelState and frpState are populated immediately.
+            refreshTunnel()
+            refreshFRP()
+            refreshSMBState()
+            refreshTrashRetention()
             // The fresh Core knows nothing about the tunnel API token; the
             // Keychain copy is re-validated once so the UI stays usable.
             if TunnelSecretVault.load() != nil {
@@ -170,13 +179,6 @@ extension AppModel {
             loadMapSecretAndResend()
             // Outbound notification channels follow the identical lifecycle.
             loadNotifySecretAndResend()
-            refreshTrashRetention()
-            if tunnelSelectedID == nil {
-                tunnelSelectedID = TunnelPersistencePolicy.selectedTunnelID()
-            }
-            refreshTunnel()
-            refreshFRP()
-            refreshSMBState()
             rootManagement.onDefaultChanged = { [weak self] root in
                 self?.applyRegisteredDefault(root)
             }
@@ -266,6 +268,16 @@ extension AppModel {
         // the saved Keychain token; retaining the old configured flag would
         // suppress the resend and make tunnel management silently unusable.
         tunnelAPITokenConfigured = false
+        tmdbCoreAcknowledged = false
+        tmdbTokenConfigured = false
+        tmdbTokenBusy = false
+        mapCoreAcknowledged = false
+        mapKeyConfigured = false
+        mapKeyBusy = false
+        notifyCoreAcknowledged = false
+        notifyConfigured = false
+        notifyBusy = false
+        notifyStats = nil
         tunnelAccounts = []
         tunnelZones = []
         tunnelList = []

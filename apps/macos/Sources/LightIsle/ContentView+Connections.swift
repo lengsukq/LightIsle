@@ -634,7 +634,11 @@ extension ContentView {
                             Text("PID \(pid)").font(.caption2).foregroundStyle(IsleTheme.secondaryText)
                         }
                         Toggle("启用 FRP 穿透", isOn: Binding(
-                            get: { model.prefersFRPEnabled || model.frpState?.status == "running" || model.frpState?.status == "restarting" },
+                            get: {
+                                model.frpState?.status == "running" ||
+                                model.frpState?.status == "restarting" ||
+                                (model.prefersFRPEnabled && !model.frpAutoRestoreAttempted && model.frpState == nil)
+                            },
                             set: { model.setFRPEnabled($0) }
                         ))
                         .labelsHidden()

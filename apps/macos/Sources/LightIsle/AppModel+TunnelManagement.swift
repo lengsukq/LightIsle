@@ -89,11 +89,20 @@ extension AppModel {
     }
 
     func autoRestoreFRPIfReady(_ current: FRPState) {
+        var effectiveProxyCount = current.proxyCount ?? 0
+        if effectiveProxyCount == 0,
+           !current.configPath.isEmpty,
+           let doc = try? FRPConfigFile.load(path: current.configPath),
+           !doc.draft.serverAddress.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           !doc.draft.serverAddress.contains("REPLACE_WITH_"),
+           !doc.draft.token.contains("REPLACE_WITH_") {
+            effectiveProxyCount = doc.draft.proxies.count + doc.draft.advancedProxyCount
+        }
         guard FRPPersistencePolicy.shouldAutoStart(
             coreOnline: state == .online,
             installed: current.installed,
             status: current.status,
-            proxyCount: current.proxyCount,
+            proxyCount: effectiveProxyCount,
             alreadyAttemptedInSession: frpAutoRestoreAttempted
         ) else { return }
         frpAutoRestoreAttempted = true
@@ -268,6 +277,15 @@ extension AppModel {
             }
             if !list.isEmpty && tunnelList.isEmpty {
                 requestTunnelList()
+            }
+            if let firstAccount = list.first?.id,
+               TunnelPersistencePolicy.selectedAccountID() == nil,
+               let rememberedTunnel = TunnelPersistencePolicy.selectedTunnelID() {
+                TunnelPersistencePolicy.rememberSelectedTunnel(
+                    accountID: firstAccount,
+                    tunnelID: rememberedTunnel,
+                    tunnelName: TunnelPersistencePolicy.selectedTunnelName()
+                )
             }
             autoRestoreTunnelIfReady()
         }
