@@ -4,6 +4,7 @@ import '../../core/authenticated_media_image.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/media_image_memory_cache.dart';
+import 'cinema_tv_focus.dart';
 import 'media_models.dart';
 import 'media_ui.dart';
 
@@ -74,32 +75,36 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
   Widget build(BuildContext context) {
     final film = widget.film;
     final surface = Theme.of(context).colorScheme;
-    return Semantics(
-      button: true,
-      selected: widget.selected,
-      label: widget.selecting ? '选择：${film.title}' : '播放：${film.title}',
-      child: MouseRegion(
-        onEnter: (_) => setState(() => _hovered = true),
-        onExit: (_) => setState(() => _hovered = false),
-        child: AnimatedScale(
-          scale: (_hovered || _pressed) && !widget.selecting ? 1.03 : 1.0,
-          duration: IsleMotion.fast,
-          curve: IsleMotion.spring,
-          child: Material(
-            color: widget.selected
-                ? surface.primaryContainer.withValues(alpha: .32)
-                : Colors.transparent,
-            child: InkWell(
-              onTap: widget.selecting ? widget.onToggle : widget.onOpen,
-              onLongPress: widget.onToggle,
-              onHighlightChanged: (value) => setState(() => _pressed = value),
-              borderRadius: IsleRadius.brControl,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _buildPosterFrame(context),
-                  _buildTileCaptionRow(context),
-                ],
+    return CinemaTvFocusable(
+      onActivate: widget.selecting ? widget.onToggle : widget.onOpen,
+      onLongActivate: widget.onToggle,
+      child: Semantics(
+        button: true,
+        selected: widget.selected,
+        label: widget.selecting ? '选择：${film.title}' : '播放：${film.title}',
+        child: MouseRegion(
+          onEnter: (_) => setState(() => _hovered = true),
+          onExit: (_) => setState(() => _hovered = false),
+          child: AnimatedScale(
+            scale: (_hovered || _pressed) && !widget.selecting ? 1.03 : 1.0,
+            duration: IsleMotion.fast,
+            curve: IsleMotion.spring,
+            child: Material(
+              color: widget.selected
+                  ? surface.primaryContainer.withValues(alpha: .32)
+                  : Colors.transparent,
+              child: InkWell(
+                onTap: widget.selecting ? widget.onToggle : widget.onOpen,
+                onLongPress: widget.onToggle,
+                onHighlightChanged: (value) => setState(() => _pressed = value),
+                borderRadius: IsleRadius.brControl,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _buildPosterFrame(context),
+                    _buildTileCaptionRow(context),
+                  ],
+                ),
               ),
             ),
           ),
@@ -204,7 +209,7 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
             child: Text(
               film.isSeries
                   ? 'S${film.season} · E${film.episode}'
-                  : '${film.year == 0 ? '电影' : film.year}',
+                  : '${film.year == 0 ? (film.isStrm ? 'STRM' : '电影') : film.year}',
               style: textTheme.labelSmall?.copyWith(
                 color: Colors.white,
                 fontWeight: FontWeight.w600,
@@ -353,7 +358,7 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
                 ),
                 const SizedBox(height: 1),
                 Text(
-                  '${film.isSeries ? '剧集' : '电影'} · ${formatMediaSeconds(durationSec)}$folderSuffix',
+                  '${film.isSeries ? '剧集' : '电影'}${film.isStrm ? ' · STRM 直链' : ''} · ${formatMediaSeconds(durationSec)}$folderSuffix',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: textTheme.bodySmall?.copyWith(

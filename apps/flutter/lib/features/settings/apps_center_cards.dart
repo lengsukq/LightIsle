@@ -126,6 +126,78 @@ extension _AppsCenterCards on _AppsCenterPageState {
     );
   }
 
+  Widget _buildOfficialTemplatesCard(BuildContext context) {
+    final theme = Theme.of(context), colors = theme.colorScheme;
+    return IsleSurface(
+      radius: IsleRadius.card,
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.auto_awesome_rounded, size: 20, color: colors.primary),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '官方精选家庭轻应用模板（0 MB 静态即装即用）',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 10,
+            runSpacing: 10,
+            children: [
+              for (final tpl in _templates)
+                Container(
+                  width: 245,
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: colors.surfaceContainerHighest.withValues(alpha: 0.36),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        tpl['name']?.toString() ?? '',
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        tpl['description']?.toString() ?? '',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colors.onSurfaceVariant,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      FilledButton.tonal(
+                        onPressed: _busy || tpl['installed'] == true
+                            ? null
+                            : () => _installOfficialTemplate(tpl),
+                        child: Text(
+                          tpl['installed'] == true ? '已安装' : '一键安装',
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildAdminMcpCard(BuildContext context) {
     final theme = Theme.of(context), colors = theme.colorScheme;
     return IsleSurface(

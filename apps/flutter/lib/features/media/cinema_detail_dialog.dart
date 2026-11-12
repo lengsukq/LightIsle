@@ -33,6 +33,7 @@ part 'cinema_detail_player_state.dart';
 part 'cinema_detail_metadata.dart';
 part 'cinema_detail_player_view.dart';
 part 'cinema_detail_player_controls.dart';
+part 'cinema_detail_player_menus.dart';
 part 'cinema_detail_player_sheets.dart';
 
 class CinemaDetailDialog extends StatefulWidget {

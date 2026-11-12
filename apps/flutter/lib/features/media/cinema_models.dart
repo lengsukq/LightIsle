@@ -31,6 +31,7 @@ class CinemaFilm {
     this.metadataSource = '',
     this.scrapeState = '',
     this.posterURL = '',
+    this.isStrm = false,
   });
 
   final int id;
@@ -64,6 +65,7 @@ class CinemaFilm {
   final String metadataSource;
   final String scrapeState;
   final String posterURL;
+  final bool isStrm;
 
   bool get isSeries => kind.toLowerCase() == 'series';
   bool get canAttemptPlayback => browserPlayback != 'download-only' && playable;
@@ -110,6 +112,7 @@ class CinemaFilm {
       metadataSource: _asString(json['metadataSource']),
       scrapeState: _asString(json['scrapeState']),
       posterURL: _asString(json['posterURL']),
+      isStrm: _asBool(json['isStrm']),
     );
   }
 
@@ -143,6 +146,7 @@ class CinemaFilm {
     metadataSource: metadataSource,
     scrapeState: scrapeState,
     posterURL: posterURL,
+    isStrm: isStrm,
   );
 
   CinemaFilm withProgress({
@@ -179,6 +183,7 @@ class CinemaFilm {
     metadataSource: metadataSource,
     scrapeState: scrapeState,
     posterURL: posterURL,
+    isStrm: isStrm,
   );
 }
 

@@ -409,6 +409,12 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
         checked: _scope.mediaType == 'photo',
       ),
       isleActionMenuItem(
+        value: 'live',
+        icon: Icons.motion_photos_on_outlined,
+        label: '实况照片 (Live)',
+        checked: _scope.mediaType == 'live',
+      ),
+      isleActionMenuItem(
         value: 'video',
         icon: Icons.videocam_outlined,
         label: '仅视频',

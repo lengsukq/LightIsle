@@ -321,7 +321,7 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
       Padding(
         padding: const EdgeInsets.only(bottom: 8),
         child: Text(
-          '列表仅显示会话编号、创建及到期时间。当前会话可在设置中退出登录。',
+          '展示已登录终端型号、客户端 IP 与最近活跃时间，支持单设备远程下线。',
           style: Theme.of(context).textTheme.bodySmall
               ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
         ),
@@ -374,22 +374,30 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
                         ),
                       ),
                       title: Text(
-                        isCurrent ? '当前会话' : '其他会话',
+                        (session['deviceLabel']?.toString().trim().isNotEmpty ?? false)
+                            ? session['deviceLabel'].toString().trim()
+                            : (isCurrent ? '当前设备' : '远程登录设备'),
                         style: Theme.of(context).textTheme.titleSmall
                             ?.copyWith(fontWeight: FontWeight.w700),
                       ),
                       subtitle: Text(
-                        '创建：${accountTime(session['createdAt'])}\n'
-                        '到期：${accountTime(session['expiresAt'])}',
+                        [
+                          if ((session['clientIp']?.toString().trim().isNotEmpty ?? false))
+                            'IP：${session['clientIp']}',
+                          '登录：${accountTime(session['createdAt'])}',
+                          if (session['lastSeenAt'] is num && (session['lastSeenAt'] as num) > 0)
+                            '最近活跃：${accountTime(session['lastSeenAt'])}',
+                          '到期：${accountTime(session['expiresAt'])}',
+                        ].join('\n'),
                         style: TextStyle(
-                          fontSize: 13,
+                          fontSize: 12.5,
                           height: 1.45,
                           color: colors.onSurfaceVariant,
                         ),
                       ),
                       trailing: isCurrent
                           ? const IsleBadgePill(
-                              label: '活跃',
+                              label: '本机当前',
                               color: Color(0xff10b981),
                               icon: Icons.fiber_manual_record,
                             )
@@ -398,7 +406,7 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
                               onPressed: _busy || _loading
                                   ? null
                                   : () => _revoke(session['id'] as String),
-                              child: const Text('撤销此会话'),
+                              child: const Text('远程下线'),
                             )
                           : null,
                     ),

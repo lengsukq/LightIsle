@@ -87,6 +87,7 @@ class PhotoAsset {
     this.fNumber = 0,
     this.exposureSeconds = 0,
     this.focalLength = 0,
+    this.liveVideoAssetId = 0,
   });
 
   final int id;
@@ -118,8 +119,10 @@ class PhotoAsset {
   final double fNumber;
   final double exposureSeconds;
   final double focalLength;
+  final int liveVideoAssetId;
 
   bool get isVideo => type.toLowerCase() == 'video';
+  bool get isLivePhoto => !isVideo && liveVideoAssetId > 0;
 
   /// Display aspect ratio corrected for EXIF orientation (5-8 rotate 90° or 270°).
   double? get displayAspectRatio {
@@ -173,6 +176,7 @@ class PhotoAsset {
       fNumber: _asDouble(json['fNumber']),
       exposureSeconds: _asDouble(json['exposureSeconds']),
       focalLength: _asDouble(json['focalLength']),
+      liveVideoAssetId: _asInt(json['liveVideoAssetId']),
     );
   }
 
@@ -206,6 +210,7 @@ class PhotoAsset {
     fNumber: fNumber,
     exposureSeconds: exposureSeconds,
     focalLength: focalLength,
+    liveVideoAssetId: liveVideoAssetId,
   );
 
   PhotoAsset withPersonalFavorite(bool value) => PhotoAsset(
@@ -238,6 +243,7 @@ class PhotoAsset {
     fNumber: fNumber,
     exposureSeconds: exposureSeconds,
     focalLength: focalLength,
+    liveVideoAssetId: liveVideoAssetId,
   );
 }
 

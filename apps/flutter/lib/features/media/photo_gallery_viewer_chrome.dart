@@ -176,6 +176,33 @@ extension _PhotoGalleryViewerChrome on _PhotoGalleryViewerState {
             ),
           ),
           const SizedBox(width: 8),
+          if (_hasLiveMotion && !asset.isVideo) ...[
+            DecoratedBox(
+              decoration: _toolbarDecoration,
+              child: TextButton.icon(
+                style: TextButton.styleFrom(
+                  foregroundColor: _livePlaying
+                      ? const Color(0xFFFFD568)
+                      : Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
+                  minimumSize: const Size(0, 40),
+                ),
+                onPressed: () {
+                  _stopSlideshow();
+                  _updateState(() => _livePlaying = !_livePlaying);
+                },
+                icon: const Icon(Icons.motion_photos_on_rounded, size: 17),
+                label: Text(
+                  _livePlaying ? '实况播放中' : 'LIVE',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ),
+            const SizedBox(width: 6),
+          ],
           DecoratedBox(
             decoration: _toolbarDecoration,
             child: Row(
@@ -325,7 +352,7 @@ extension _PhotoGalleryViewerChrome on _PhotoGalleryViewerState {
                               value: 'offline',
                               child: Text('离线保存照片原件'),
                             ),
-                          if (_liveMotion != null)
+                          if (_hasLiveMotion)
                             PopupMenuItem(
                               value: 'live',
                               child: Text(

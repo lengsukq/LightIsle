@@ -66,6 +66,23 @@ class _DavPageState extends State<DavPage> {
   String _mountUrl(LightIsleRoot root) =>
       '${widget.api.uri('/').origin}/dav-roots/${Uri.encodeComponent(root.id)}/${root.generation}/';
 
+  String _buildTvClientGuide(LightIsleRoot root) {
+    final parsed = Uri.parse(_mountUrl(root));
+    final isHttps = parsed.scheme == 'https';
+    final port = parsed.hasPort ? parsed.port : (isHttps ? 443 : 80);
+    return [
+      '【轻屿 · Apple TV / Infuse / VidHub WebDAV 大屏配置】',
+      '存储盘：${root.name}',
+      '协议：${isHttps ? 'WebDAV (HTTPS)' : 'WebDAV (HTTP)'}',
+      '地址：${parsed.host}',
+      '端口：$port',
+      '路径：${parsed.path}',
+      '完整 URL：$parsed',
+      '用户名：（当前轻屿登录用户名）',
+      '密码：（使用下方生成的 WebDAV 独立访问密码）',
+    ].join('\n');
+  }
+
   @override
   void initState() {
     super.initState();
@@ -392,7 +409,20 @@ class _DavPageState extends State<DavPage> {
                 title: root.name,
                 subtitle: root.online ? _mountUrl(root) : '离线 · 请接回原盘',
                 trailing: root.online
-                    ? const Icon(Icons.copy_rounded, size: 16)
+                    ? TextButton.icon(
+                        onPressed: () {
+                          Clipboard.setData(
+                            ClipboardData(text: _buildTvClientGuide(root)),
+                          );
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                              content: Text('已复制 Infuse / VidHub 大屏接入参数'),
+                            ),
+                          );
+                        },
+                        icon: const Icon(Icons.tv_rounded, size: 15),
+                        label: const Text('Infuse 参数'),
+                      )
                     : null,
                 onTap: root.online
                     ? () {

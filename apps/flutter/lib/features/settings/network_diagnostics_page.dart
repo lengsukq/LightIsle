@@ -8,6 +8,7 @@ import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/widgets.dart';
 import 'network_diagnostics_controller.dart';
+import 'tailscale_status_card.dart';
 
 part 'network_diagnostics_painters.dart';
 
@@ -666,6 +667,8 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
         maxWidth: 880,
         children: [
           _hero(_test),
+          const SizedBox(height: 14),
+          TailscaleStatusCard(api: widget.api),
           const SizedBox(height: 18),
           Row(
             children: [

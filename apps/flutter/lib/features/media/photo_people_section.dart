@@ -8,6 +8,7 @@ import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 import 'photo_ai_models.dart';
+import 'photo_person_shares_card.dart';
 
 /// Per-user family & baby face clustering view powered by offline macOS Vision.
 /// Tapping a person returns that [PersonSummary] so the caller filters the
@@ -378,6 +379,8 @@ class _PhotoPeoplePageState extends State<PhotoPeoplePage> {
                     ),
                 ],
               ),
+            const SizedBox(height: 18),
+            PhotoPersonSharesCard(api: widget.api, persons: _persons),
           ],
         ),
       ),

@@ -48,6 +48,7 @@ class AppsCenterPage extends StatefulWidget {
 
 class _AppsCenterPageState extends State<AppsCenterPage> {
   List<Map<String, dynamic>> _apps = const [];
+  List<Map<String, dynamic>> _templates = const [];
   List<Map<String, dynamic>> _members = const [];
   Set<String> _configuredChannels = const {};
   bool _isAdmin = false, _mcpEnabled = false, _busy = false;
@@ -74,6 +75,7 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
     final channelsRaw = res['configuredChannels'];
     setState(() {
       if (res['apps'] is List) _apps = objectList(res['apps']);
+      if (res['templates'] is List) _templates = objectList(res['templates']);
       if (res['members'] is List) _members = objectList(res['members']);
       if (channelsRaw is List) {
         _configuredChannels = {
@@ -311,6 +313,21 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
     });
   }
 
+  Future<void> _installOfficialTemplate(Map<String, dynamic> tpl) async {
+    final id = tpl['id']?.toString() ?? '';
+    final name = tpl['name']?.toString() ?? id;
+    if (id.isEmpty || _busy) return;
+    await _runBusy('安装模板失败', () async {
+      final res = await widget.api.send(
+        'POST',
+        '/api/v2/apps/templates/${Uri.encodeComponent(id)}/install',
+      );
+      if (!mounted) return;
+      _applySnapshot(res);
+      setState(() => _notice = '已一键安装官方精选轻应用「$name」（纯静态 · 0 MB）。');
+    });
+  }
+
   Future<void> _applySheetResult(
     Future<Map<String, dynamic>?> sheetFuture,
     String successNotice,
@@ -391,6 +408,8 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
             _buildEmbeddedWorkbench(context, activeWorkbench)
           else ...[
             if (_isAdmin) _buildAdminMcpCard(context),
+            if (_isAdmin && _templates.isNotEmpty)
+              _buildOfficialTemplatesCard(context),
             if (!_isAdmin)
               const IsleIntroCard(
                 icon: Icons.apps_rounded,

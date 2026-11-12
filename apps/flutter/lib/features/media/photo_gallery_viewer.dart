@@ -94,6 +94,7 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
 
   PhotoAsset get _current => _items[_index];
   PhotoAsset? get _liveMotion => livePhotoMotionFor(_current, _items);
+  bool get _hasLiveMotion => _current.isLivePhoto || _liveMotion != null;
 
   void _updateState(VoidCallback fn) => setState(fn);
 
@@ -590,14 +591,19 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
             // A Live Photo plays the companion MOV over its own still frame,
             // then returns to that still. It never navigates to a second
             // gallery item or changes the active photo index/favourites.
-            if (_livePlaying && _liveMotion != null && !asset.isVideo)
+            if (_livePlaying && _hasLiveMotion && !asset.isVideo)
               Positioned.fill(
                 child: ColoredBox(
                   color: Colors.black,
                   child: PhotoMediaVideo(
-                    key: ValueKey('live-motion-${_liveMotion!.id}'),
+                    key: ValueKey(
+                      'live-motion-${_liveMotion?.id ?? asset.liveVideoAssetId}',
+                    ),
                     api: widget.api,
-                    asset: _liveMotion!,
+                    asset: _liveMotion ?? asset,
+                    streamPathOverride: asset.isLivePhoto
+                        ? '/api/v2/photos/${asset.id}/live-video'
+                        : null,
                     active: true,
                     autoPlay: true,
                     liveMode: true,

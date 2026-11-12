@@ -501,7 +501,30 @@ extension _PhotosPageLibrary on _PhotosPageState {
                 child: _buildAssetThumbnailSurface(context, asset),
               ),
               if (_selection.selecting)
-                _buildTileSelectionBadge(context, isSelected: isSelected),
+                _buildTileSelectionBadge(context, isSelected: isSelected)
+              else if (asset.isLivePhoto)
+                Positioned(
+                  top: 5,
+                  left: 5,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.58),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                      child: Text(
+                        'LIVE',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 9.5,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: 0.4,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
               if (asset.isVideo) _buildTileVideoBadge(asset),
               if (asset.favorite || asset.personalFavorite)
                 _buildTileFavoriteBadges(asset),

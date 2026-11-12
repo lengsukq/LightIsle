@@ -332,6 +332,7 @@ class PhotoMediaVideo extends StatefulWidget {
     required this.active,
     this.autoPlay = false,
     this.liveMode = false,
+    this.streamPathOverride,
     this.onCompleted,
   });
   final LightIsleApi api;
@@ -339,6 +340,7 @@ class PhotoMediaVideo extends StatefulWidget {
   final bool active;
   final bool autoPlay;
   final bool liveMode;
+  final String? streamPathOverride;
   final VoidCallback? onCompleted;
 
   @override
@@ -419,10 +421,12 @@ class PhotoMediaVideoState extends State<PhotoMediaVideo>
     _preparing = true;
     final generation = ++_generation;
     try {
-      final uri = await widget.api.mediaUri(
-        '/api/v2/files/preview',
-        query: {'path': widget.asset.path},
-      );
+      final uri = widget.streamPathOverride != null
+          ? await widget.api.mediaUri(widget.streamPathOverride!)
+          : await widget.api.mediaUri(
+              '/api/v2/files/preview',
+              query: {'path': widget.asset.path},
+            );
       if (!mounted || !widget.active || generation != _generation) return;
       final player = VideoPlayerController.networkUrl(
         uri,

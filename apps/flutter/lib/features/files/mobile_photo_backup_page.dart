@@ -19,6 +19,7 @@ part 'mobile_photo_backup_options.dart';
 part 'mobile_photo_backup_background.dart';
 part 'mobile_photo_backup_failures.dart';
 part 'mobile_photo_backup_transfer.dart';
+part 'mobile_photo_backup_pagination.dart';
 part 'mobile_photo_backup_run.dart';
 
 const _photosChannel = MethodChannel('lightisle/photos');

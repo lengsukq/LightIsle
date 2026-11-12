@@ -113,6 +113,7 @@ extension _PhotosPageNavigation on _PhotosPageState {
         _refreshPrivateAlbums();
       case 'all':
       case 'photo':
+      case 'live':
       case 'video':
         _updateState(() => _scope.mediaType = value == 'all' ? '' : value);
         _loadAssets(reset: true);
@@ -322,6 +323,8 @@ extension _PhotosPageNavigation on _PhotosPageState {
                 ? '那年今天'
                 : _scope.mediaType == 'photo'
                 ? '仅照片'
+                : _scope.mediaType == 'live'
+                ? '实况照片'
                 : '仅视频',
           ),
           onDeleted: () {
@@ -448,6 +451,17 @@ extension _PhotosPageNavigation on _PhotosPageState {
             icon: Icons.favorite_rounded,
             gradient: const [Color(0xFFE11D48), Color(0xFFDB2777)],
             onTap: () => _selectView(favorites: true),
+          ),
+          (
+            keyId: 'memoryLivePhotos',
+            title: '实况瞬间',
+            subtitle: '有声动态 Live 照片精选',
+            icon: Icons.motion_photos_on_rounded,
+            gradient: const [Color(0xFFF59E0B), Color(0xFFEC4899)],
+            onTap: () {
+              _updateState(() => _scope.mediaType = 'live');
+              _loadAssets(reset: true);
+            },
           ),
           (
             keyId: 'memoryVideos',
