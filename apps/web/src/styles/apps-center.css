@@ -170,10 +170,14 @@
 .apps-form-section {
   display: grid;
   gap: 10px;
-  padding: 12px;
+  padding: 14px 16px;
   border-radius: 14px;
   border: 1px solid var(--fluid-card-border, var(--stroke-subtle));
   background: var(--fluid-card-item-fill, var(--surface-base));
+}
+.apps-radio-group + .apps-member-checklist,
+.apps-form-section + .apps-form-section {
+  margin-top: 12px;
 }
 .apps-radio-option,
 .apps-check-item {

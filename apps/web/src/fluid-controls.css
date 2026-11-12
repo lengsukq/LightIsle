@@ -14,6 +14,32 @@
     background var(--motion-fast) ease,
     color var(--motion-fast) ease;
 }
+.refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 5px 13px;
+  border-radius: 9999px;
+  border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-fill);
+  color: var(--text-primary);
+  font-size: 12.5px;
+  font-weight: 550;
+  box-shadow: var(--fluid-item-card-shadow);
+  transition:
+    transform var(--motion-fast) var(--motion-spring),
+    box-shadow var(--motion-fast) ease,
+    background var(--motion-fast) ease,
+    color var(--motion-fast) ease;
+}
+.refresh:hover:not(:disabled) {
+  background: var(--fluid-card-hover);
+  color: var(--accent-primary);
+  transform: translateY(-1px);
+  box-shadow: var(--fluid-item-hover-shadow);
+}
 .account-action:hover, .file-actions > button:hover, .create-folder-form button:hover,
 .preview-toolbar button:hover, .gallery-modal-actions button:hover,
 .dialog-buttons button:hover, .album-tabs button:hover, .cinema-tabs button:hover, .circle-action:hover {

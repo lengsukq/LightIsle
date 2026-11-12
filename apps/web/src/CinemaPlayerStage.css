@@ -156,28 +156,107 @@
   cursor: pointer;
 }
 .cinema-player-dock {
+  --dock-x: 0px;
+  --dock-y: 0px;
   position: absolute;
   left: 50%;
   bottom: max(16px, env(safe-area-inset-bottom));
-  transform: translateX(-50%);
+  transform: translate3d(calc(-50% + var(--dock-x)), var(--dock-y), 0);
   width: min(calc(100% - 32px), 920px);
-  padding: 10px 16px 12px;
+  padding: 6px 16px 11px;
   border-radius: 16px;
-  background: rgba(14, 18, 26, 0.82);
+  background: rgba(14, 18, 26, 0.78);
   border: 1px solid rgba(255, 255, 255, 0.14);
   -webkit-backdrop-filter: blur(24px) saturate(160%);
   backdrop-filter: blur(24px) saturate(160%);
   box-shadow: 0 16px 40px rgba(0, 0, 0, 0.62);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
   z-index: 6;
-  transition: opacity 0.24s ease, transform 0.24s ease;
+  cursor: grab;
+  transition: opacity 0.22s ease, transform 0.22s ease, background 0.18s ease;
 }
+.cinema-player-dock:hover {
+  background: rgba(14, 18, 26, 0.86);
+}
+.cinema-player-dock--dragging {
+  cursor: grabbing;
+  transition: opacity 0.22s ease;
+  border-color: rgba(255, 255, 255, 0.28);
+}
+.cinema-dock-hidden .cinema-player-dock,
 .cinema-cursor-hidden .cinema-player-dock {
   opacity: 0;
   pointer-events: none;
-  transform: translateX(-50%) translateY(8px);
+  transform: translate3d(calc(-50% + var(--dock-x)), calc(var(--dock-y) + 8px), 0);
+}
+.cinema-dock-lifted-cues video::cue {
+  line-height: 1.35;
+}
+.cinema-dock-lifted-cues video::-webkit-media-text-track-display {
+  transform: translateY(-76px);
+  transition: transform 0.2s ease;
+}
+.cinema-dock-grip-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  position: relative;
+  min-height: 12px;
+  margin-bottom: -2px;
+  color: rgba(255, 255, 255, 0.38);
+  cursor: grab;
+}
+.cinema-dock-grip-row:hover {
+  color: rgba(255, 255, 255, 0.72);
+}
+.cinema-dock-grip-bar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.cinema-dock-reset-btn {
+  position: absolute;
+  right: 0;
+  top: -1px;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.86);
+  border-radius: 999px;
+  padding: 1px 8px;
+  font-size: 10.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.cinema-dock-reset-btn:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+.cinema-dock-restore-pill {
+  position: absolute;
+  right: 18px;
+  bottom: max(14px, env(safe-area-inset-bottom));
+  height: 30px;
+  padding: 0 11px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(14, 18, 26, 0.62);
+  color: rgba(255, 255, 255, 0.88);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
+  font-size: 11.5px;
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  z-index: 7;
+  transition: background 0.15s ease, transform 0.15s ease;
+}
+.cinema-dock-restore-pill:hover {
+  background: rgba(14, 18, 26, 0.88);
+  transform: translateY(-1px);
 }
 .cinema-unified-seek {
   position: relative;

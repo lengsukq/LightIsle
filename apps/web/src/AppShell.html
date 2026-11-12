@@ -65,17 +65,8 @@
         <div class="side-section">
           <span class="side-label" v-show="sidebarExpanded">生活空间</span>
           <div class="side-nav side-group-card">
-            <button
-              v-for="item in items.filter(i => i.group === 'space' && (i.key !== 'computer' || showComputerFilesNav))"
-              :key="item.key"
-              :class="{ chosen: active === item.key }"
-              :title="!sidebarExpanded ? item.title : undefined"
-              @click="active = item.key"
-              type="button"
-            >
-              <span :class="['nav-squircle', item.color]">
-                <component :is="item.icon" :size="14" :stroke-width="2.1" />
-              </span>
+            <button v-for="item in items.filter(i => i.group === 'space' && (i.key !== 'computer' || showComputerFilesNav))" :key="item.key" :class="{ chosen: active === item.key }" :title="!sidebarExpanded ? item.title : undefined" @click="active = item.key" type="button">
+              <span :class="['nav-squircle', item.color]"><component :is="item.icon" :size="14" :stroke-width="2.1" /></span>
               <span class="nav-item-label" v-show="sidebarExpanded">{{ item.title }}</span>
               <ChevronRight v-show="sidebarExpanded" :size="13" class="nav-chevron" />
             </button>
@@ -85,17 +76,8 @@
         <div class="side-section">
           <span class="side-label" v-show="sidebarExpanded">{{user.role==='admin'?'系统管理':'个人设置'}}</span>
           <div class="side-nav side-group-card">
-            <button
-              v-for="item in items.filter(i => i.group === 'system' && (i.key !== 'automation' || isAdminDashboard))"
-              :key="item.key"
-              :class="{ chosen: active === item.key }"
-              :title="!sidebarExpanded ? item.title : undefined"
-              @click="active = item.key"
-              type="button"
-            >
-              <span :class="['nav-squircle', item.color]">
-                <component :is="item.icon" :size="14" :stroke-width="2.1" />
-              </span>
+            <button v-for="item in items.filter(i => i.group === 'system' && (i.key !== 'automation' || isAdminDashboard))" :key="item.key" :class="{ chosen: active === item.key }" :title="!sidebarExpanded ? item.title : undefined" @click="active = item.key" type="button">
+              <span :class="['nav-squircle', item.color]"><component :is="item.icon" :size="14" :stroke-width="2.1" /></span>
               <span class="nav-item-label" v-show="sidebarExpanded">{{ item.title }}</span>
               <ChevronRight v-show="sidebarExpanded" :size="13" class="nav-chevron" />
             </button>
@@ -104,9 +86,7 @@
       </nav>
 
       <div class="sidebar-bottom">
-        <span class="host-status-squircle" :class="{ off: !!error }">
-          <span class="dot" :class="{ off: !!error }"></span>
-        </span>
+        <span class="host-status-squircle" :class="{ off: !!error }"><span class="dot" :class="{ off: !!error }"></span></span>
         <div class="host-status-text" v-show="sidebarExpanded">
           <small>宿主状态</small>
           <span>{{ error ? "服务已断开" : "已登录 · " + user.username }}</span>
@@ -115,22 +95,8 @@
     </aside>
 
     <main class="main">
-      <IsleBanner
-        v-if="shareOutcomeWarning"
-        type="warning"
-        closable
-        style="margin: 12px 24px 0"
-        message="离开图库前的分享请求可能已创建链接。请回到原硬盘的文件管理分享列表，检查并撤销不需要的链接。"
-        @close="shareOutcomeWarning=false"
-      />
-      <IsleBanner
-        v-if="photoBatchOutcomeWarning"
-        type="warning"
-        closable
-        style="margin: 12px 24px 0"
-        message="离开图库前的复制或移动可能已完成部分项目。请回到原硬盘，检查原目录和目标相册后再重试。"
-        @close="photoBatchOutcomeWarning=false"
-      />
+      <IsleBanner v-if="shareOutcomeWarning" type="warning" closable style="margin: 12px 24px 0" message="离开图库前的分享请求可能已创建链接。请回到原硬盘的文件管理分享列表，检查并撤销不需要的链接。" @close="shareOutcomeWarning=false" />
+      <IsleBanner v-if="photoBatchOutcomeWarning" type="warning" closable style="margin: 12px 24px 0" message="离开图库前的复制或移动可能已完成部分项目。请回到原硬盘，检查原目录和目标相册后再重试。" @close="photoBatchOutcomeWarning=false" />
       <header class="topbar glass">
         <div class="breadcrumb">
           <img src="/brand-icon.svg" alt="轻屿 Logo" class="breadcrumb-logo" />
@@ -141,26 +107,10 @@
         <div class="top-actions">
           <div v-if="multiRootMode" class="root-context-control topbar-root-control">
             <span class="root-context-label">共享目录</span>
-            <AppleSelect
-              :model-value="rootSelectionValue"
-              :options="rootSelectionOptions"
-              :disabled="rootSwitching"
-              size="sm"
-              aria-label="选择共享目录"
-              @change="handleRootChange"
-            />
+            <AppleSelect :model-value="rootSelectionValue" :options="rootSelectionOptions" :disabled="rootSwitching" size="sm" aria-label="选择共享目录" @change="handleRootChange" />
           </div>
-          <span class="status-pill">
-            <span class="dot" :class="{ off: !!error }"></span>
-            {{ error ? "连接中断" : "轻屿在线" }}
-          </span>
-          <button
-            class="atmosphere-capsule"
-            type="button"
-            @click="cycleAtmosphere"
-            :aria-label="'切换色彩氛围，当前：' + (atmospheres.find(a => a.id === atmosphere)?.name ?? '七彩极光')"
-            :title="'切换色彩氛围（当前：' + (atmospheres.find(a => a.id === atmosphere)?.name ?? '七彩极光') + '）'"
-          >
+          <span class="status-pill"><span class="dot" :class="{ off: !!error }"></span>{{ error ? "连接中断" : "轻屿在线" }}</span>
+          <button class="atmosphere-capsule" type="button" @click="cycleAtmosphere" :aria-label="'切换色彩氛围，当前：' + (atmospheres.find(a => a.id === atmosphere)?.name ?? '七彩极光')" :title="'切换色彩氛围（当前：' + (atmospheres.find(a => a.id === atmosphere)?.name ?? '七彩极光') + '）'">
             <span class="atmosphere-icon">{{ atmospheres.find(a => a.id === atmosphere)?.icon }}</span>
             <span class="atmosphere-text">{{ atmospheres.find(a => a.id === atmosphere)?.name }}</span>
           </button>
@@ -168,63 +118,28 @@
             <Sun v-if="theme === 'dark'" :size="17" /><Moon v-else :size="17" />
           </button>
           <div class="user-capsule">
-            <button
-              type="button"
-              class="user-capsule-profile"
-              title="前往偏好设置"
-              @click="active = 'settings'; settingsGroup = 'account'"
-            >
+            <button type="button" class="user-capsule-profile" title="前往偏好设置" @click="active = 'settings'; settingsGroup = 'account'">
               <span class="user-avatar">{{ (user.username || 'U').charAt(0).toUpperCase() }}</span>
               <div class="user-meta">
                 <span class="user-name">{{ user.username }}</span>
                 <span class="user-role">{{ user.role === "admin" ? "管理员" : "成员" }}</span>
               </div>
             </button>
-            <button class="logout-btn" type="button" @click="logout" title="退出空间">
-              <LogOut :size="14" />
-            </button>
+            <button class="logout-btn" type="button" @click="logout" title="退出空间"><LogOut :size="14" /></button>
           </div>
         </div>
       </header>
 
-      <IsleBanner
-        v-if="rootDiscoveryNoticeVisible"
-        type="warning"
-        style="margin: 12px 24px 0"
-        :message="rootDiscoveryError"
-      >
+      <IsleBanner v-if="rootDiscoveryNoticeVisible" type="warning" style="margin: 12px 24px 0" :message="rootDiscoveryError">
         <template #action>
-          <IsleButton variant="tonal" size="sm" :loading="rootDiscoveryLoading" @click="refreshRootDiscovery">
-            {{ rootDiscoveryLoading ? "正在检查…" : "重试" }}
-          </IsleButton>
+          <IsleButton variant="tonal" size="sm" :loading="rootDiscoveryLoading" @click="refreshRootDiscovery">{{ rootDiscoveryLoading ? "正在检查…" : "重试" }}</IsleButton>
         </template>
       </IsleBanner>
-      <IsleBanner
-        v-if="rootSwitching"
-        type="info"
-        style="margin: 12px 24px 0"
-        message="正在安全切换共享目录…"
-      />
+      <IsleBanner v-if="rootSwitching" type="info" style="margin: 12px 24px 0" message="正在安全切换共享目录…" />
 
       <Transition name="ios-fade" mode="out-in">
         <div v-if="!rootSwitching">
-          <OverviewPage
-            v-show="active === 'overview'"
-            :identity="overviewIdentity"
-            :search="overviewSearch"
-            :telemetry="overviewTelemetry"
-            :personal-space="overviewPersonalSpace"
-            :pending="overviewPending"
-            @update:query="fileSearch = $event"
-            @update:spotlight="searchViaSpotlight = $event"
-            @update:expanded="showHardwareSpecs = $event"
-            @search="runFileSearch"
-            @return-to-files="loadFiles()"
-            @refresh="update"
-            @navigate="active = $event"
-            @open-account-settings="active = 'settings'; settingsGroup = 'account'"
-            @open-pending="active = 'settings'; settingsGroup = 'ops'"
-          />
+          <OverviewPage v-show="active === 'overview'" :identity="overviewIdentity" :search="overviewSearch" :telemetry="overviewTelemetry" :personal-space="overviewPersonalSpace" :pending="overviewPending" @update:query="fileSearch = $event" @update:spotlight="searchViaSpotlight = $event" @update:expanded="showHardwareSpecs = $event" @search="runFileSearch" @return-to-files="loadFiles()" @refresh="update" @navigate="active = $event" @open-account-settings="active = 'settings'; settingsGroup = 'account'" @open-pending="active = 'settings'; settingsGroup = 'ops'" />
           <ComputerFilesView v-if="active === 'computer'" :admin="user.role === 'admin'" />
           <div v-if="personalRouteError&&['files','photos','cinema'].includes(active)&&!manualRootSection" class="content">
             <section class="content-empty root-state-card root-state-offline" role="alert">
@@ -420,204 +335,246 @@
           <div v-if="active === 'automation' && user.role === 'admin'" class="content">
             <AutomationView :active="active === 'automation'"/>
           </div>
-          <div v-if="active === 'settings'" class="content">
-            <div class="section-heading"><div><h2>设置</h2><p>管理账号、文件分享和存储。</p></div><button class="refresh" @click="logout">退出登录</button></div>
+          <div v-if="active === 'settings'" class="content settings-page">
+            <div class="section-heading">
+              <div><h2>偏好设置</h2><p>管理账号安全、WebDAV 挂载、文件分享、缓存与存储服务。</p></div>
+              <IsleButton variant="glass" size="sm" @click="logout"><template #icon><LogOut :size="14" /></template>退出登录</IsleButton>
+            </div>
             <nav class="settings-nav" aria-label="设置分类">
               <button v-for="group in settingsGroups" :key="group.key" type="button"
                 :class="{active:settingsGroup===group.key}" @click="settingsGroup=group.key">{{group.label}}</button>
             </nav>
-            <CacheManagementPanel v-if="settingsGroup==='cache'" :is-admin="user.role==='admin'" :active="active==='settings'" style="margin-bottom:20px" />
-            <BetaDiagnosticReport v-if="settingsGroup==='account'" />
-            <template v-if="settingsGroup==='files'">
-            <DavAccess :admin="user.role==='admin'" /></template>
-            <template v-if="settingsGroup==='storage'">
-            <UserStoragePanel v-if="user.role==='admin'" mode="roots" :admin="true" style="margin-bottom:20px" />
-            <DiskManagement v-if="user.role==='admin'" />
-            <SmbManagement v-if="user.role==='admin'" style="margin-top:20px" /></template>
-            <section v-if="settingsGroup==='files'" class="account-panel" style="margin-bottom:20px">
-              <div class="account-heading"><h3>我的文件分享</h3><button type="button" class="refresh" :disabled="sharesLoading||!rootFeatureContextReady" @click="loadMyShares">{{sharesLoading?"加载中…":"查看 / 刷新"}}</button></div>
-              <p v-if="!rootFeatureContextReady" class="footnote">请先选择一个可访问的共享目录，再管理该目录中的分享。</p>
-              <p>分享链接最长 7 天有效，可随时撤销；仅在创建时展示一次。</p>
-              <div v-for="share in activeShares" :key="share.id" class="account-row">
-                <div>
-                  <strong>{{share.path}}<span v-if="share.kind==='dir'" class="share-flag">文件夹 ZIP</span><span v-if="share.hasPassword" class="share-flag">密码保护</span><span v-if="(share.maxDownloads??0)>0" class="share-flag">限 {{share.maxDownloads}} 次下载<template v-if="(share.downloadCount??0)>0">（已用 {{share.downloadCount}}）</template></span></strong>
-                  <small>创建：{{new Date(share.createdAt*1000).toLocaleString()}} · 到期：{{new Date(share.expiresAt*1000).toLocaleString()}}</small>
-                </div>
-                <button type="button" class="account-action" @click="revokeFileShare(share)">撤销链接</button>
-              </div>
-              <p v-if="sharesLoaded&&!activeShares.length" class="footnote">当前没有有效的分享链接，可在文件页选择「创建分享链接」。</p>
-              <p v-if="sharesError" class="form-error" role="alert">{{sharesError}}</p>
-            </section>
-            <OpsTaskCenter v-if="settingsGroup==='ops' && user.role==='admin'"
-              :shared-roots="sharedRoots" :root-discovery-error="rootDiscoveryError"
-              :root-feature-context-ready="rootFeatureContextReady" :tasks="tasks" :task-error="taskError"
-              :task-history="taskHistory" :task-history-error="taskHistoryError"
-              :task-history-loading="taskHistoryLoading" :task-history-next-cursor="taskHistoryNextCursor"
-              :root-view-key="rootViewKey" :selected-root-id="selectedRootID"
-              :selected-root-generation="selectedRootGeneration" :multi-root-mode="multiRootMode"
-              :admin-pending-media-open="adminPendingMediaOpen" :pending-uploads-open="pendingUploadsOpen"
-              :refresh-task-center="refreshTaskCenter" :task-control="taskControl" :start-media-task="startMediaTask"
-              :reload-task-history="reloadTaskHistory" :toggle-pending-media="togglePendingMedia"
-              :toggle-pending-uploads="togglePendingUploads" />
-            <template v-if="settingsGroup==='storage'">
-              <details v-if="user.role==='admin'&&rootFeatureContextReady" class="apple-disclosure-card" @toggle="toggleAdvanced('uploads',$event)">
-                <summary>
-                  <div class="disclosure-title">
-                    <UploadCloud :size="15" class="disclosure-icon" />
-                    <span>高级排障：未完成上传与暂存规则</span>
-                  </div>
-                  <ChevronRight :size="14" class="disclosure-chevron" />
-                </summary>
-                <div class="disclosure-body">
-                  <UploadMaintenance v-if="advancedUploadsOpen" :key="rootViewKey" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
-                  <div v-if="advancedUploadsOpen" style="margin-top:20px;border-top:1px solid var(--stroke-subtle);padding-top:16px">
-                    <div class="account-heading"><h4>上传暂存自动清理规则</h4></div>
-                    <UploadCleanupRules />
-                  </div>
-                </div>
-              </details>
-            </template>
-            <template v-if="settingsGroup==='ops'&&user.role==='admin'">
-              <AlertsView v-if="rootFeatureContextReady" :key="rootViewKey" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
-              <details class="apple-disclosure-card" @toggle="toggleAdvanced('diagnostics',$event)">
-                <summary>
-                  <div class="disclosure-title">
-                    <Activity :size="15" class="disclosure-icon" />
-                    <span>系统诊断与安全日志</span>
-                  </div>
-                  <ChevronRight :size="14" class="disclosure-chevron" />
-                </summary>
-                <div class="disclosure-body">
-                  <template v-if="advancedDiagnosticsOpen">
-                    <OpsDiagnostics />
-                    <AuditLogView />
-                    <div style="margin-top:20px;border-top:1px solid var(--stroke-subtle);padding-top:16px">
-                      <div class="account-heading"><h4>成员容量预占记录</h4></div>
-                      <PendingReservations :roots="sharedRoots" :roots-known="rootDiscoveryState==='multi'&&!rootDiscoveryError" @open-storage="settingsGroup='account'" />
-                    </div>
+
+            <div class="settings-stack">
+              <CacheManagementPanel v-if="settingsGroup==='cache'" :is-admin="user.role==='admin'" :active="active==='settings'" />
+              <BetaDiagnosticReport v-if="settingsGroup==='account'" />
+
+              <template v-if="settingsGroup==='files'">
+                <DavAccess :admin="user.role==='admin'" />
+                <IsleCard title="我的文件分享" subtitle="分享链接最长 7 天有效，可随时撤销；完整链接仅在创建时展示一次。">
+                  <template #icon><Folder :size="18" /></template>
+                  <template #actions>
+                    <IsleButton variant="glass" size="sm" :loading="sharesLoading" :disabled="!rootFeatureContextReady" @click="loadMyShares">
+                      <template #icon><RefreshCcw :size="14" /></template>{{sharesLoading?"加载中…":"查看 / 刷新"}}
+                    </IsleButton>
                   </template>
-                </div>
-              </details>
-            </template>
-            <section v-if="settingsGroup==='account'" class="account-panel" style="margin-bottom:20px">
-              <details v-if="rootFeatureContextReady" class="apple-disclosure-card" @toggle="togglePendingMedia(false,$event)">
-                <summary>
-                  <div class="disclosure-title">
-                    <Images :size="15" class="disclosure-icon" />
-                    <span>检查我的缺失媒体</span>
+                  <p v-if="!rootFeatureContextReady" class="footnote">请先选择一个可访问的共享目录，再管理该目录中的分享。</p>
+                  <IsleEmpty v-else-if="sharesLoaded&&!activeShares.length" compact :icon="Folder" title="暂无有效的分享链接" description="可在「私人文件」页选择文件或文件夹后点击「创建分享链接」。" />
+                  <IsleEmpty v-else-if="!sharesLoaded&&!sharesLoading" compact :icon="Folder" title="点击右上角「查看 / 刷新」加载分享记录" description="仅显示当前共享目录下的有效外链。" />
+                  <div v-for="share in activeShares" :key="share.id" class="account-row">
+                    <div>
+                      <strong class="settings-row-title">
+                        <span>{{share.path}}</span>
+                        <IsleBadge v-if="share.kind==='dir'" variant="accent" size="sm">文件夹 ZIP</IsleBadge>
+                        <IsleBadge v-if="share.hasPassword" variant="warning" size="sm">密码保护</IsleBadge>
+                        <IsleBadge v-if="(share.maxDownloads??0)>0" variant="neutral" size="sm">限 {{share.maxDownloads}} 次下载<template v-if="(share.downloadCount??0)>0">（已用 {{share.downloadCount}}）</template></IsleBadge>
+                      </strong>
+                      <small>创建：{{new Date(share.createdAt*1000).toLocaleString()}} · 到期：{{new Date(share.expiresAt*1000).toLocaleString()}}</small>
+                    </div>
+                    <IsleButton variant="danger" size="sm" @click="revokeFileShare(share)">撤销链接</IsleButton>
                   </div>
-                  <ChevronRight :size="14" class="disclosure-chevron" />
-                </summary>
-                <div class="disclosure-body">
-                  <PendingMedia v-if="pendingMediaOpen" :key="rootViewKey" :root-id="selectedRootID" :root-generation="selectedRootGeneration" :admin="user.role==='admin'" />
+                  <IsleBanner v-if="sharesError" type="error" compact role="alert" :message="sharesError" />
+                </IsleCard>
+              </template>
+
+              <template v-if="settingsGroup==='storage'">
+                <UserStoragePanel v-if="user.role==='admin'" mode="roots" :admin="true" />
+                <DiskManagement v-if="user.role==='admin'" />
+                <SmbManagement v-if="user.role==='admin'" />
+                <details v-if="user.role==='admin'&&rootFeatureContextReady" class="apple-disclosure-card" @toggle="toggleAdvanced('uploads',$event)">
+                  <summary>
+                    <div class="disclosure-title"><UploadCloud :size="15" class="disclosure-icon" /><span>高级排障：未完成上传与暂存规则</span></div>
+                    <ChevronRight :size="14" class="disclosure-chevron" />
+                  </summary>
+                  <div class="disclosure-body">
+                    <UploadMaintenance v-if="advancedUploadsOpen" :key="rootViewKey" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
+                    <div v-if="advancedUploadsOpen" style="margin-top:20px;border-top:1px solid var(--stroke-subtle);padding-top:16px">
+                      <div class="account-heading"><h4>上传暂存自动清理规则</h4></div>
+                      <UploadCleanupRules />
+                    </div>
+                  </div>
+                </details>
+              </template>
+
+              <OpsTaskCenter v-if="settingsGroup==='ops' && user.role==='admin'"
+                :shared-roots="sharedRoots" :root-discovery-error="rootDiscoveryError"
+                :root-feature-context-ready="rootFeatureContextReady" :tasks="tasks" :task-error="taskError"
+                :task-history="taskHistory" :task-history-error="taskHistoryError"
+                :task-history-loading="taskHistoryLoading" :task-history-next-cursor="taskHistoryNextCursor"
+                :root-view-key="rootViewKey" :selected-root-id="selectedRootID"
+                :selected-root-generation="selectedRootGeneration" :multi-root-mode="multiRootMode"
+                :admin-pending-media-open="adminPendingMediaOpen" :pending-uploads-open="pendingUploadsOpen"
+                :refresh-task-center="refreshTaskCenter" :task-control="taskControl" :start-media-task="startMediaTask"
+                :reload-task-history="reloadTaskHistory" :toggle-pending-media="togglePendingMedia"
+                :toggle-pending-uploads="togglePendingUploads" />
+
+              <template v-if="settingsGroup==='ops'&&user.role==='admin'">
+                <AlertsView v-if="rootFeatureContextReady" :key="rootViewKey" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
+                <details class="apple-disclosure-card" @toggle="toggleAdvanced('diagnostics',$event)">
+                  <summary>
+                    <div class="disclosure-title"><Activity :size="15" class="disclosure-icon" /><span>系统诊断与安全日志</span></div>
+                    <ChevronRight :size="14" class="disclosure-chevron" />
+                  </summary>
+                  <div class="disclosure-body">
+                    <template v-if="advancedDiagnosticsOpen">
+                      <OpsDiagnostics />
+                      <AuditLogView />
+                      <div style="margin-top:20px;border-top:1px solid var(--stroke-subtle);padding-top:16px">
+                        <div class="account-heading"><h4>成员容量预占记录</h4></div>
+                        <PendingReservations :roots="sharedRoots" :roots-known="rootDiscoveryState==='multi'&&!rootDiscoveryError" @open-storage="settingsGroup='account'" />
+                      </div>
+                    </template>
+                  </div>
+                </details>
+              </template>
+
+              <IsleCard v-if="settingsGroup==='account'" title="缺失媒体记录核对" subtitle="当照片或影片文件被移动或重命名时，在此找回并重新关联原有的收藏、相册和观看进度。">
+                <template #icon><Images :size="18" /></template>
+                <details v-if="rootFeatureContextReady" class="apple-disclosure-card" style="margin-top:0" @toggle="togglePendingMedia(false,$event)">
+                  <summary>
+                    <div class="disclosure-title"><Images :size="15" class="disclosure-icon" /><span>展开检查我的缺失媒体</span></div>
+                    <ChevronRight :size="14" class="disclosure-chevron" />
+                  </summary>
+                  <div class="disclosure-body">
+                    <PendingMedia v-if="pendingMediaOpen" :key="rootViewKey" :root-id="selectedRootID" :root-generation="selectedRootGeneration" :admin="user.role==='admin'" />
+                  </div>
+                </details>
+                <p v-else class="footnote" style="margin:0">选择硬盘后可检查自己的缺失媒体。</p>
+              </IsleCard>
+
+              <IsleCard v-if="settingsGroup==='account'" title="登录会话" subtitle="管理有效登录会话（仅记录登录与到期时间，不记录设备名与位置）。">
+                <template #icon><ShieldCheck :size="18" /></template>
+                <template #actions>
+                  <IsleButton variant="glass" size="sm" :loading="sessionsLoading" @click="loadLoginSessions">
+                    <template #icon><RefreshCcw :size="14" /></template>{{sessionsLoading?"处理中…":"查看 / 刷新"}}
+                  </IsleButton>
+                </template>
+                <IsleEmpty v-if="!sessionsLoaded&&!sessionsLoading" compact :icon="ShieldCheck" title="点击右上角「查看 / 刷新」读取有效会话" description="可查看当前有效登录时间，或一键撤销其他设备会话。" />
+                <div v-if="sessionsLoaded&&loginSessions.length>1" class="account-row">
+                  <div><strong>退出其他设备</strong><small>只保留当前设备的会话</small></div>
+                  <IsleButton variant="danger" size="sm" :disabled="sessionsLoading" @click="revokeLoginSession('others')">全部退出</IsleButton>
                 </div>
-              </details>
-              <p v-else class="footnote">选择硬盘后可检查自己的缺失媒体。</p>
-            </section>
-            <section v-if="settingsGroup==='account'" class="account-panel" style="margin-bottom:20px">
-              <div class="account-heading">
-                <h3>登录会话</h3>
-                <button type="button" class="refresh" :disabled="sessionsLoading" @click="loadLoginSessions">{{sessionsLoading?"处理中…":"查看 / 刷新"}}</button>
-              </div>
-              <p>管理有效登录会话（仅记录时间，不记录设备名与位置）。</p>
-              <div v-if="sessionsLoaded&&loginSessions.length>1" class="account-row">
-                <div><strong>退出其他设备</strong><small>只保留当前设备的会话</small></div>
-                <button type="button" class="account-action" :disabled="sessionsLoading" @click="revokeLoginSession('others')">全部退出</button>
-              </div>
-              <div v-for="session in loginSessions" :key="session.id" class="account-row">
-                <div>
-                  <strong>{{session.current?"当前设备":"其他登录会话"}}</strong>
-                  <small>登录时间：{{new Date(session.createdAt*1000).toLocaleString()}} · 到期：{{new Date(session.expiresAt*1000).toLocaleString()}}</small>
+                <div v-for="session in loginSessions" :key="session.id" class="account-row">
+                  <div>
+                    <strong class="settings-row-title">
+                      <span>{{session.current?"当前设备":"其他登录会话"}}</span>
+                      <IsleBadge :variant="session.current?'online':'neutral'" size="sm" :dot="session.current">{{session.current?"当前会话":"其他设备"}}</IsleBadge>
+                    </strong>
+                    <small>登录时间：{{new Date(session.createdAt*1000).toLocaleString()}} · 到期：{{new Date(session.expiresAt*1000).toLocaleString()}}</small>
+                  </div>
+                  <IsleButton :variant="session.current?'glass':'danger'" size="sm" :disabled="sessionsLoading" @click="revokeLoginSession(session)">{{session.current?"退出本机":"撤销会话"}}</IsleButton>
                 </div>
-                <button type="button" class="account-action" :disabled="sessionsLoading" @click="revokeLoginSession(session)">{{session.current?"退出本机":"撤销会话"}}</button>
-              </div>
-              <p v-if="sessionsLoaded&&!loginSessions.length" class="footnote">没有可显示的有效会话。</p>
-              <p v-if="sessionsTruncated" class="footnote">仅显示最近 100 条会话，可选择退出其他所有设备。</p>
-              <p v-if="sessionsError" role="alert" class="form-error">{{sessionsError}}</p>
-              <p v-if="sessionsMessage" role="status" class="footnote">{{sessionsMessage}}</p>
-            </section>
-            <AgentConnections v-if="settingsGroup==='account'" :key="user.username" />
-            <section v-if="settingsGroup==='account'" class="account-panel" style="margin-bottom:20px">
-              <h3>修改我的密码</h3>
-              <p>修改密码后会退出所有设备，请用新密码重新登录。</p>
-              <form class="account-form" @submit.prevent="changeOwnPassword">
-                <label>当前密码<input v-model="currentPassword" type="password" autocomplete="current-password" required /></label>
-                <label>新密码<input v-model="nextPassword" type="password" autocomplete="new-password" minlength="12" maxlength="256" required /></label>
-                <label>确认新密码<input v-model="repeatPassword" type="password" autocomplete="new-password" minlength="12" maxlength="256" required /></label>
-                <button type="submit" class="auth-submit" :disabled="passwordBusy">{{passwordBusy?"正在修改…":"更新密码并退出所有设备"}}</button>
-              </form>
-              <p v-if="passwordError" class="form-error" role="alert">{{passwordError}}</p>
-            </section>
-            <div v-if="settingsGroup==='account'&&user.role === 'admin'" class="account-manager" style="margin-bottom:20px">
-              <section class="account-panel">
-                <div class="account-heading"><h3>成员账号与权限管理</h3><button type="button" class="refresh" @click="loadAccounts">刷新</button></div>
-                <p class="footnote">在此创建家庭成员账号、启停成员、重置密码，并配置共享目录与本机电脑文件访问授权。</p>
-                <form class="account-form" style="margin-bottom:14px" @submit.prevent="createMemberAccount">
-                  <label>新成员用户名<input v-model.trim="newUsername" minlength="3" maxlength="32" autocomplete="off" placeholder="3–32 位字母/数字/下划线" required /></label>
-                  <label>初始密码<input v-model="newPassword" type="password" minlength="12" maxlength="256" autocomplete="new-password" placeholder="至少 12 位初始密码" required /></label>
-                  <button type="submit" class="auth-submit" :disabled="creatingUser">{{ creatingUser ? "正在创建…" : "新增家庭成员" }}</button>
+                <IsleEmpty v-if="sessionsLoaded&&!loginSessions.length" compact description="没有可显示的有效会话。" />
+                <p v-if="sessionsTruncated" class="footnote">仅显示最近 100 条会话，可选择退出其他所有设备。</p>
+                <IsleBanner v-if="sessionsError" type="error" compact role="alert" :message="sessionsError" />
+                <IsleBanner v-if="sessionsMessage" type="info" compact role="status" :message="sessionsMessage" />
+              </IsleCard>
+
+              <AgentConnections v-if="settingsGroup==='account'" :key="user.username" />
+
+              <IsleCard v-if="settingsGroup==='account'" title="修改我的密码" subtitle="修改密码后会退出所有已登录设备，请使用新密码重新登录。">
+                <template #icon><ShieldCheck :size="18" /></template>
+                <form class="account-form settings-form-subcard" @submit.prevent="changeOwnPassword">
+                  <div class="settings-form-grid-3">
+                    <label>当前密码<input v-model="currentPassword" type="password" autocomplete="current-password" placeholder="输入当前登录密码" required /></label>
+                    <label>新密码<input v-model="nextPassword" type="password" autocomplete="new-password" minlength="12" maxlength="256" placeholder="至少 12 位新密码" required /></label>
+                    <label>确认新密码<input v-model="repeatPassword" type="password" autocomplete="new-password" minlength="12" maxlength="256" placeholder="再次输入新密码" required /></label>
+                  </div>
+                  <div class="settings-form-actions">
+                    <IsleButton type="submit" variant="primary" size="md" :loading="passwordBusy">{{passwordBusy?"正在修改…":"更新密码并退出所有设备"}}</IsleButton>
+                  </div>
                 </form>
-                <p v-if="createUserError||userError||memberActionError" role="alert" class="form-error">{{ createUserError || userError || memberActionError }}</p>
-                <p v-if="createUserNotice||memberActionNotice" role="status" class="footnote">{{ createUserNotice || memberActionNotice }}</p>
-                <div v-for="account in accounts" :key="account.id" class="account-row">
-                  <div><strong>{{ account.username }}</strong><small>{{ account.role === "admin" ? "管理员 · 默认无限配额" : "普通用户" }} · {{ account.enabled ? "已启用" : "已停用" }}</small></div>
-                  <div v-if="account.role === 'member'" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-                    <button type="button" class="account-action" :disabled="multiRootMode&&!selectedRootID" @click="editGrants(account)">共享目录权限</button>
-                    <button type="button" class="account-action" @click="editComputerGrants(account)">电脑文件权限</button>
-                    <button type="button" class="account-action" @click="openResetMemberPassword(account)">重置密码</button>
-                    <button type="button" class="account-action" :disabled="memberActionBusy" @click="toggleMemberEnabled(account)">{{ account.enabled ? "停用账号" : "启用账号" }}</button>
+                <IsleBanner v-if="passwordError" type="error" compact role="alert" :message="passwordError" style="margin-top:10px" />
+              </IsleCard>
+
+              <IsleCard v-if="settingsGroup==='account'&&user.role === 'admin'" title="成员账号与权限管理" subtitle="在此创建家庭成员账号、启停成员、重置密码，并配置共享目录与本机电脑文件访问授权。">
+                <template #icon><Monitor :size="18" /></template>
+                <template #actions>
+                  <IsleButton variant="glass" size="sm" @click="loadAccounts"><template #icon><RefreshCcw :size="14" /></template>刷新</IsleButton>
+                </template>
+                <form class="account-form settings-form-subcard" style="margin-bottom:14px" @submit.prevent="createMemberAccount">
+                  <div class="settings-form-grid-2">
+                    <label>新成员用户名<input v-model.trim="newUsername" minlength="3" maxlength="32" autocomplete="off" placeholder="3–32 位字母/数字/下划线" required /></label>
+                    <label>初始密码<input v-model="newPassword" type="password" minlength="12" maxlength="256" autocomplete="new-password" placeholder="至少 12 位初始密码" required /></label>
                   </div>
-                  <span v-else class="protected-account">管理员</span>
+                  <div class="settings-form-actions">
+                    <IsleButton type="submit" variant="primary" size="md" :loading="creatingUser">{{ creatingUser ? "正在创建…" : "新增家庭成员" }}</IsleButton>
+                  </div>
+                </form>
+                <IsleBanner v-if="createUserError||userError||memberActionError" type="error" compact role="alert" :message="createUserError || userError || memberActionError" style="margin-bottom:10px" />
+                <IsleBanner v-if="createUserNotice||memberActionNotice" type="success" compact role="status" :message="createUserNotice || memberActionNotice" style="margin-bottom:10px" />
+                <div v-for="account in accounts" :key="account.id" class="account-row">
+                  <div>
+                    <strong class="settings-row-title">
+                      <span>{{ account.username }}</span>
+                      <IsleBadge :variant="account.role === 'admin' ? 'accent' : 'neutral'" size="sm">{{ account.role === "admin" ? "管理员 · 默认无限配额" : "家庭成员" }}</IsleBadge>
+                      <IsleBadge :variant="account.enabled ? 'online' : 'offline'" size="sm" dot>{{ account.enabled ? "已启用" : "已停用" }}</IsleBadge>
+                    </strong>
+                  </div>
+                  <div v-if="account.role === 'member'" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+                    <IsleButton variant="tonal" size="sm" :disabled="multiRootMode&&!selectedRootID" @click="editGrants(account)">共享目录权限</IsleButton>
+                    <IsleButton variant="tonal" size="sm" @click="editComputerGrants(account)">电脑文件权限</IsleButton>
+                    <IsleButton variant="glass" size="sm" @click="openResetMemberPassword(account)">重置密码</IsleButton>
+                    <IsleButton :variant="account.enabled ? 'danger' : 'tonal'" size="sm" :disabled="memberActionBusy" @click="toggleMemberEnabled(account)">{{ account.enabled ? "停用账号" : "启用账号" }}</IsleButton>
+                  </div>
                 </div>
                 <div v-if="resetTargetUser" class="grant-details-drawer">
-                  <div class="account-heading"><h3>重置密码 · {{ resetTargetUser.username }}</h3><button type="button" class="account-action" @click="closeResetMemberPassword">关闭</button></div>
+                  <div class="account-heading"><h3>重置密码 · {{ resetTargetUser.username }}</h3><IsleButton variant="glass" size="sm" @click="closeResetMemberPassword">关闭</IsleButton></div>
                   <p>重置后该成员的已有登录会话将立即失效。</p>
                   <form class="account-form" @submit.prevent="submitResetMemberPassword">
-                    <label>新密码<input v-model="resetMemberNewPassword" type="password" minlength="12" maxlength="256" autocomplete="new-password" placeholder="至少 12 位" required /></label>
-                    <label>确认新密码<input v-model="resetMemberRepeatPassword" type="password" minlength="12" maxlength="256" autocomplete="new-password" placeholder="再次输入新密码" required /></label>
-                    <button type="submit" class="auth-submit" :disabled="resetMemberBusy">{{ resetMemberBusy ? "正在重置…" : "确认重置密码" }}</button>
+                    <div class="settings-form-grid-2">
+                      <label>新密码<input v-model="resetMemberNewPassword" type="password" minlength="12" maxlength="256" autocomplete="new-password" placeholder="至少 12 位" required /></label>
+                      <label>确认新密码<input v-model="resetMemberRepeatPassword" type="password" minlength="12" maxlength="256" autocomplete="new-password" placeholder="再次输入新密码" required /></label>
+                    </div>
+                    <div class="settings-form-actions"><IsleButton type="submit" variant="primary" size="sm" :loading="resetMemberBusy">{{ resetMemberBusy ? "正在重置…" : "确认重置密码" }}</IsleButton></div>
                   </form>
-                  <p v-if="resetMemberError" role="alert" class="form-error">{{ resetMemberError }}</p>
+                  <IsleBanner v-if="resetMemberError" type="error" compact role="alert" :message="resetMemberError" />
                 </div>
                 <div v-if="grantUser" class="grant-details-drawer">
-                  <div class="account-heading"><h3>{{ grantUser.username }} · 共享文件夹授权</h3><button type="button" class="account-action" @click="grantUser=null">关闭</button></div>
+                  <div class="account-heading"><h3>{{ grantUser.username }} · 共享文件夹授权</h3><IsleButton variant="glass" size="sm" @click="grantUser=null">关闭</IsleButton></div>
                   <p>当前管理{{multiRootMode?`“${selectedRoot?.name??"当前共享目录"}”`:"共享目录"}}的访问授权（输入相对路径，例如 <code>Family</code> 或 <code>.</code>）。</p>
                   <form class="account-form" style="margin-bottom:12px" @submit.prevent="saveGrant">
                     <label>共享文件夹相对路径<input v-model.trim="grantPathInput" placeholder="例如 Family 或 Photos/Shared（留空或 . 代表根目录）" /></label>
                     <label style="display:flex;align-items:center;gap:8px;flex-direction:row"><input v-model="grantCanWrite" type="checkbox" style="width:auto" /><span>允许读写（勾选为读写，不勾选为只读）</span></label>
-                    <button type="submit" class="auth-submit" :disabled="grantBusy">{{ grantBusy ? "正在保存…" : "添加 / 更新目录授权" }}</button>
+                    <div class="settings-form-actions"><IsleButton type="submit" variant="primary" size="sm" :loading="grantBusy">{{ grantBusy ? "正在保存…" : "添加 / 更新目录授权" }}</IsleButton></div>
                   </form>
                   <div v-if="!grants.length" class="footnote">尚未配置共享目录授权。</div>
                   <div v-for="g in grants" :key="g.path" class="account-row">
-                    <div><strong>{{ g.path }}</strong><small>{{ g.canWrite?'可读写':'只读' }}</small></div>
+                    <div><strong class="settings-row-title"><span>{{ g.path }}</span><IsleBadge :variant="g.canWrite?'online':'neutral'" size="sm">{{ g.canWrite?'可读写':'只读' }}</IsleBadge></strong></div>
                     <div style="display:flex;align-items:center;gap:8px">
-                      <button type="button" class="account-action" :disabled="grantBusy" @click="toggleGrantWrite(g)">{{ g.canWrite ? "改为只读" : "改为读写" }}</button>
-                      <button type="button" class="account-action" :disabled="grantBusy" @click="removeGrant(g.path)">移除授权</button>
+                      <IsleButton variant="glass" size="sm" :disabled="grantBusy" @click="toggleGrantWrite(g)">{{ g.canWrite ? "改为只读" : "改为读写" }}</IsleButton>
+                      <IsleButton variant="danger" size="sm" :disabled="grantBusy" @click="removeGrant(g.path)">移除授权</IsleButton>
                     </div>
                   </div>
-                  <p v-if="grantNotice" role="status" class="footnote">{{ grantNotice }}</p>
-                  <p v-if="grantError" role="alert" class="form-error">{{ grantError }}</p>
+                  <IsleBanner v-if="grantNotice" type="success" compact role="status" :message="grantNotice" />
+                  <IsleBanner v-if="grantError" type="error" compact role="alert" :message="grantError" />
                 </div>
                 <div v-if="computerGrantUser" class="grant-details-drawer">
-                  <div class="account-heading"><h3>{{ computerGrantUser.username }} · 电脑文件只读权限</h3><div style="display:flex;align-items:center;gap:8px"><button type="button" class="account-action" @click="active='computer'">去「电脑文件」浏览选目录</button><button type="button" class="account-action" @click="computerGrantUser=null">关闭</button></div></div>
+                  <div class="account-heading"><h3>{{ computerGrantUser.username }} · 电脑文件只读权限</h3><div style="display:flex;align-items:center;gap:8px"><IsleButton variant="tonal" size="sm" @click="active='computer'">去「电脑文件」浏览选目录</IsleButton><IsleButton variant="glass" size="sm" @click="computerGrantUser=null">关闭</IsleButton></div></div>
                   <p>需先在 Mac App「设置 → 安全」开启「允许访问电脑文件」；此处配置该成员的只读范围。</p>
                   <div class="account-form" style="margin-bottom:12px">
                     <label>授权范围<AppleSelect v-model="computerGrantMode" :options="computerGrantModeOptions" :disabled="computerGrantBusy || !computerGrantReady" block aria-label="电脑文件授权范围" /></label>
                     <div v-if="computerGrantMode==='folders'" style="display:grid;gap:8px">
-                      <div style="display:flex;gap:8px;flex-wrap:wrap"><input v-model.trim="computerGrantFolderInput" placeholder="输入 Mac 上的绝对路径，如 /Users/Shared" style="flex:1;min-width:200px" @keydown.enter.prevent="addComputerGrantFolder" /><button type="button" class="account-action" @click="addComputerGrantFolder">添加路径</button></div>
+                      <div style="display:flex;gap:8px;flex-wrap:wrap"><input v-model.trim="computerGrantFolderInput" placeholder="输入 Mac 上的绝对路径，如 /Users/Shared" style="flex:1;min-width:200px" @keydown.enter.prevent="addComputerGrantFolder" /><IsleButton variant="tonal" size="sm" @click="addComputerGrantFolder">添加路径</IsleButton></div>
                       <div v-if="!computerGrantFolders.length" class="footnote">尚未添加任何文件夹路径。</div>
-                      <div v-for="folder in computerGrantFolders" :key="folder" class="account-row"><code>{{ folder }}</code><button type="button" class="account-action" @click="removeComputerGrantFolder(folder)">移除</button></div>
+                      <div v-for="folder in computerGrantFolders" :key="folder" class="account-row"><code>{{ folder }}</code><IsleButton variant="danger" size="sm" @click="removeComputerGrantFolder(folder)">移除</IsleButton></div>
                     </div>
-                    <button type="button" class="auth-submit" :disabled="computerGrantBusy || !computerGrantReady" @click="saveComputerGrants">{{ computerGrantBusy ? "处理中…" : "保存电脑文件权限" }}</button>
-                    <button v-if="!computerGrantReady && !computerGrantBusy" type="button" class="account-action" @click="editComputerGrants(computerGrantUser)">重新读取权限</button>
+                    <div class="settings-form-actions">
+                      <IsleButton variant="primary" size="sm" :loading="computerGrantBusy" :disabled="computerGrantBusy || !computerGrantReady" @click="saveComputerGrants">{{ computerGrantBusy ? "处理中…" : "保存电脑文件权限" }}</IsleButton>
+                      <IsleButton v-if="!computerGrantReady && !computerGrantBusy" variant="glass" size="sm" @click="editComputerGrants(computerGrantUser)">重新读取权限</IsleButton>
+                    </div>
                   </div>
-                  <p v-if="computerGrantNotice" role="status" class="footnote">{{ computerGrantNotice }}</p>
-                  <p v-if="computerGrantError" role="alert" class="form-error">{{ computerGrantError }}</p>
+                  <IsleBanner v-if="computerGrantNotice" type="success" compact role="status" :message="computerGrantNotice" />
+                  <IsleBanner v-if="computerGrantError" type="error" compact role="alert" :message="computerGrantError" />
                 </div>
-              </section>
+              </IsleCard>
+
+              <UserStoragePanel v-if="settingsGroup==='account'" mode="users" :key="accounts.map(a=>a.id).join('-')" :admin="user.role==='admin'" />
+              <IsleCard v-if="settingsGroup==='account'&&user.role!=='admin'" title="当前用户" :subtitle="user.username + '（普通用户）'">
+                <template #icon><ShieldCheck :size="18" /></template>
+                <p style="margin:0;font-size:13px;color:var(--text-secondary)">家庭成员账号与目录配额由管理员统一创建和维护。</p>
+              </IsleCard>
             </div>
-            <UserStoragePanel v-if="settingsGroup==='account'" mode="users" :key="accounts.map(a=>a.id).join('-')" :admin="user.role==='admin'" />
-            <div v-if="settingsGroup==='account'&&user.role!=='admin'" class="account-panel"><h3>当前用户</h3><p>{{ user.username }}（普通用户）</p><p>账号由管理员统一创建和维护。</p></div>
           </div>
         </div>
       </Transition>
