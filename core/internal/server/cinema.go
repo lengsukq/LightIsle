@@ -429,6 +429,21 @@ func (a *API) cinemaStream(w http.ResponseWriter, r *http.Request) {
 	if !a.allowMediaAsset(w, r, requested.Path, false, "film_not_found") {
 		return
 	}
+	if cinema.IsStrmPath(requested.Path) {
+		targetURL, _, strmErr := a.cinema.ReadStrmTarget(id, user)
+		if strmErr != nil {
+			if errors.Is(strmErr, cinema.ErrForbiddenStrmURL) {
+				jsonReply(w, http.StatusForbidden, map[string]string{"error": "forbidden_strm_url"})
+				return
+			}
+			jsonReply(w, http.StatusUnprocessableEntity, map[string]string{"error": "invalid_strm_url"})
+			return
+		}
+		w.Header().Set("Referrer-Policy", "no-referrer")
+		w.Header().Set("Cache-Control", "private, no-store")
+		http.Redirect(w, r, targetURL, http.StatusTemporaryRedirect)
+		return
+	}
 	file, info, film, err := a.cinema.Read(id, user)
 	if err != nil {
 		cinemaError(w, err)
@@ -466,7 +481,7 @@ func (a *API) cinemaPoster(w http.ResponseWriter, r *http.Request) {
 	if !a.allowMediaAsset(w, r, requested.Path, false, "film_not_found") {
 		return
 	}
-	if requested.ProbeStatus == "unsupported" {
+	if cinema.IsStrmPath(requested.Path) || requested.ProbeStatus == "unsupported" {
 		jsonReply(w, http.StatusUnsupportedMediaType, map[string]string{"error": "poster_unsupported"})
 		return
 	}

@@ -106,7 +106,9 @@ func appendPhotoFilterSQL(userID int64, filter PhotoFilter, query *string, args 
 	if !validSearchMode(filter.SearchMode) {
 		return errors.New("invalid_filter")
 	}
-	if filter.Kind != "" {
+	if filter.Kind == "live" {
+		*query += " AND a.live_video_asset_id>0"
+	} else if filter.Kind != "" {
 		*query += " AND a.type=?"
 		*args = append(*args, filter.Kind)
 	}
@@ -201,18 +203,39 @@ func buildSmartQuerySQL(userID int64, rawTerm, mode string) (string, []any) {
 }
 
 func buildOCRQuerySQL(rawTerm, norm string) (string, []any) {
-	words := strings.Fields(strings.ToLower(strings.TrimSpace(rawTerm)))
+	trimmed := strings.TrimSpace(rawTerm)
+	words := strings.Fields(strings.ToLower(trimmed))
+	queryTokens := extractOCRQueryTokens(trimmed)
 	if len(words) <= 1 {
+		if len(queryTokens) > 0 {
+			clauses := make([]string, 0, len(queryTokens)+1)
+			args := make([]any, 0, len(queryTokens)+2)
+			for _, qt := range queryTokens {
+				clauses = append(clauses, `EXISTS(SELECT 1 FROM asset_search_tokens t WHERE t.token=? AND t.source='ocr' AND t.asset_id=a.id)`)
+				args = append(args, qt)
+			}
+			clauses = append(clauses, `EXISTS(SELECT 1 FROM asset_ocr ao WHERE ao.asset_id=a.id AND ao.raw_text LIKE ? ESCAPE '\')`)
+			args = append(args, likePattern(trimmed))
+			if norm != "" {
+				return `(EXISTS(SELECT 1 FROM asset_search_tokens t0 WHERE t0.token=? AND t0.source='ocr' AND t0.asset_id=a.id) OR (` + strings.Join(clauses, " AND ") + `))`,
+					append([]any{norm}, args...)
+			}
+			return "(" + strings.Join(clauses, " AND ") + ")", args
+		}
 		if norm != "" {
-			return `(EXISTS(SELECT 1 FROM asset_search_tokens t WHERE t.asset_id=a.id AND t.source='ocr' AND t.token=?)
+			return `(EXISTS(SELECT 1 FROM asset_search_tokens t WHERE t.token=? AND t.source='ocr' AND t.asset_id=a.id)
 				OR EXISTS(SELECT 1 FROM asset_ocr ao WHERE ao.asset_id=a.id AND ao.raw_text LIKE ? ESCAPE '\'))`,
-				[]any{norm, likePattern(rawTerm)}
+				[]any{norm, likePattern(trimmed)}
 		}
 		return `EXISTS(SELECT 1 FROM asset_ocr ao WHERE ao.asset_id=a.id AND ao.raw_text LIKE ? ESCAPE '\')`,
-			[]any{likePattern(rawTerm)}
+			[]any{likePattern(trimmed)}
 	}
-	clauses := make([]string, 0, len(words))
-	args := make([]any, 0, len(words))
+	clauses := make([]string, 0, len(queryTokens)+len(words))
+	args := make([]any, 0, len(queryTokens)+len(words))
+	for _, qt := range queryTokens {
+		clauses = append(clauses, `EXISTS(SELECT 1 FROM asset_search_tokens t WHERE t.token=? AND t.source='ocr' AND t.asset_id=a.id)`)
+		args = append(args, qt)
+	}
 	for _, w := range words {
 		clauses = append(clauses, `EXISTS(SELECT 1 FROM asset_ocr ao WHERE ao.asset_id=a.id AND ao.raw_text LIKE ? ESCAPE '\')`)
 		args = append(args, likePattern(w))
@@ -270,23 +293,24 @@ func (l *Library) AssetAIDetailScoped(userID, assetID int64, roots []string) (As
 		return AssetAIDetail{}, err
 	}
 	checkArgs := append([]any{share, assetID}, scopedArgs...)
+	rdb := l.readDB()
 	var exists int
-	if err := l.db.QueryRow(`SELECT 1 FROM assets a WHERE a.share=? AND a.id=? AND a.missing_path=''`+fragment, checkArgs...).Scan(&exists); err != nil {
+	if err := rdb.QueryRow(`SELECT 1 FROM assets a WHERE a.share=? AND a.id=? AND a.missing_path=''`+fragment, checkArgs...).Scan(&exists); err != nil {
 		return AssetAIDetail{}, err
 	}
 
 	detail := AssetAIDetail{AssetID: assetID, Status: "pending"}
 	var status string
-	if err := l.db.QueryRow(`SELECT status FROM ai_index_state WHERE asset_id=?`, assetID).Scan(&status); err == nil {
+	if err := rdb.QueryRow(`SELECT status FROM ai_index_state WHERE asset_id=?`, assetID).Scan(&status); err == nil {
 		detail.Indexed = status == "ok" || status == "unsupported"
 		detail.Status = status
 	}
 	var ocrText string
-	if err := l.db.QueryRow(`SELECT raw_text FROM asset_ocr WHERE asset_id=?`, assetID).Scan(&ocrText); err == nil {
+	if err := rdb.QueryRow(`SELECT raw_text FROM asset_ocr WHERE asset_id=?`, assetID).Scan(&ocrText); err == nil {
 		detail.OCRText = ocrText
 	}
 
-	tagRows, err := l.db.Query(`SELECT label FROM asset_scene_tags WHERE asset_id=? ORDER BY confidence DESC LIMIT 8`, assetID)
+	tagRows, err := rdb.Query(`SELECT label FROM asset_scene_tags WHERE asset_id=? ORDER BY confidence DESC LIMIT 8`, assetID)
 	if err == nil {
 		seenDisplay := map[string]bool{}
 		for tagRows.Next() {
@@ -302,7 +326,7 @@ func (l *Library) AssetAIDetailScoped(userID, assetID int64, roots []string) (As
 		tagRows.Close()
 	}
 
-	faceRows, err := l.db.Query(`
+	faceRows, err := rdb.Query(`
 		SELECT af.id, COALESCE(p.id, 0), COALESCE(p.name, ''), af.box_x, af.box_y, af.box_w, af.box_h
 		FROM asset_faces af
 		LEFT JOIN person_face_links pfl ON pfl.face_id=af.id AND pfl.user_id=?

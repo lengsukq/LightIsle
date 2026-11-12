@@ -171,10 +171,12 @@ func token(r *http.Request) string {
 }
 func (a *API) requireLogin(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if a.auth == nil || !a.auth.Session(token(r)) {
+		tok := token(r)
+		if a.auth == nil || !a.auth.Session(tok) {
 			jsonReply(w, http.StatusUnauthorized, map[string]string{"error": "authentication_required"})
 			return
 		}
+		a.auth.TouchSession(tok)
 		next(w, r)
 	}
 }
@@ -251,7 +253,7 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, 429, map[string]string{"error": "too_many_attempts"})
 		return
 	}
-	session, err := a.auth.Login(c.Username, c.Password)
+	session, err := a.auth.LoginWithMetadata(c.Username, c.Password, a.limiter.host(r.RemoteAddr), r.UserAgent())
 	switch {
 	case err == nil:
 	case errors.Is(err, auth.ErrInvalid):

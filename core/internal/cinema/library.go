@@ -64,6 +64,7 @@ type Film struct {
 	// UpdatedAt is the last progress write (unix seconds) and orders the
 	// per-user watch history; zero for films never played.
 	UpdatedAt int64 `json:"updatedAt,omitempty"`
+	IsStrm    bool  `json:"isStrm,omitempty"`
 }
 
 // ForgetLegacyShare deletes the chosen disconnected share's film rows;
@@ -100,6 +101,7 @@ type Status struct {
 type Library struct {
 	journal       *tasks.Journal
 	db            *sql.DB
+	rdb           *sql.DB
 	files         *files.Manager
 	shareScope    string
 	worker        mediaWorker
@@ -218,9 +220,14 @@ func open(dataDir string, store *files.Manager, databaseName, shareScope string,
 		sum := sha256.Sum256([]byte(shareScope))
 		cacheSlug = hex.EncodeToString(sum[:8])
 	}
+	rdb, err := openReadOnlyCinemaPool(dataDir, databaseName)
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
 	transcoder := NewTranscoder(filepath.Join(dataDir, "transcode-cache", cacheSlug), tools)
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Library{db: db, files: store, shareScope: shareScope, transcoder: transcoder, ctx: ctx, cancel: cancel}, nil
+	return &Library{db: db, rdb: rdb, files: store, shareScope: shareScope, transcoder: transcoder, ctx: ctx, cancel: cancel}, nil
 }
 
 // InUse includes retained HLS sessions between segment requests, even when
@@ -238,7 +245,7 @@ func (l *Library) Close() error {
 	l.cancel()
 	l.wg.Wait()
 	l.transcoder.Close()
-	return l.db.Close()
+	return l.closeDatabases()
 }
 
 // CancelScan stops whichever background job is running — the library scan or
@@ -269,7 +276,7 @@ func (l *Library) shareState() (key, physicalPath string, err error) {
 }
 func FileMime(p string) string {
 	switch strings.ToLower(filepath.Ext(p)) {
-	case ".mp4", ".m4v":
+	case ".mp4", ".m4v", ".strm":
 		return "video/mp4"
 	case ".webm":
 		return "video/webm"
@@ -282,10 +289,18 @@ func isFilm(name string) bool {
 		return false
 	}
 	switch strings.ToLower(filepath.Ext(name)) {
-	case ".mp4", ".m4v", ".webm", ".mov", ".mkv", ".avi", ".ts":
+	case ".mp4", ".m4v", ".webm", ".mov", ".mkv", ".avi", ".ts", ".strm":
 		return true
 	}
 	return false
+}
+func decorateLoadedFilm(f *Film, completed int) {
+	f.Completed = completed != 0
+	f.IsStrm = IsStrmPath(f.Path)
+	f.BrowserPlayback = normalizedPlayback(f.Path, f.BrowserPlayback)
+	f.Mime = filmMime(f.Path, f.ProbeStatus, f.BrowserPlayback, f.Container)
+	f.Playable = f.BrowserPlayback != "download-only"
+	f.PosterURL = tmdbPosterURL(f.PosterURL)
 }
 
 func (l *Library) Status() Status { l.mu.Lock(); defer l.mu.Unlock(); return l.status }
@@ -463,17 +478,13 @@ func (l *Library) Get(id, userID int64) (Film, error) {
 	}
 	var f Film
 	var completed int
-	err = l.db.QueryRow(`SELECT f.id,f.title,f.path,f.kind,f.series,f.season,f.episode,f.year,f.size,f.modified,
+	err = l.readDB().QueryRow(`SELECT f.id,f.title,f.path,f.kind,f.series,f.season,f.episode,f.year,f.size,f.modified,
  COALESCE(p.position,0),COALESCE(p.duration,0),COALESCE(p.completed,0),COALESCE(p.updated_at,0),f.probe_status,f.browser_playback,f.container,f.video_codec,f.audio_codec,f.duration_seconds,f.width,f.height,f.captured_at,f.overview,f.rating,f.metadata_source,f.poster_path,f.title_source,f.year_source,f.scrape_state
  FROM films f LEFT JOIN watch_progress p ON p.film_id=f.id AND p.user_id=?
  WHERE f.share=? AND f.id=? AND f.missing_path=''`, userID, share, id).
 		Scan(&f.ID, &f.Title, &f.Path, &f.Kind, &f.Series, &f.Season, &f.Episode, &f.Year, &f.Size, &f.Modified, &f.Position, &f.Duration, &completed, &f.UpdatedAt,
 			&f.ProbeStatus, &f.BrowserPlayback, &f.Container, &f.VideoCodec, &f.AudioCodec, &f.MediaDuration, &f.Width, &f.Height, &f.CapturedAt, &f.Overview, &f.Rating, &f.MetadataSource, &f.PosterURL, &f.TitleSource, &f.YearSource, &f.ScrapeState)
-	f.PosterURL = tmdbPosterURL(f.PosterURL)
-	f.Completed = completed != 0
-	f.BrowserPlayback = normalizedPlayback(f.Path, f.BrowserPlayback)
-	f.Mime = filmMime(f.Path, f.ProbeStatus, f.BrowserPlayback, f.Container)
-	f.Playable = f.BrowserPlayback != "download-only"
+	decorateLoadedFilm(&f, completed)
 	return f, err
 }
 func (l *Library) List(userID int64, kind, query string, limit, offset int) ([]Film, int, error) {
@@ -525,7 +536,7 @@ func (l *Library) ListScoped(userID int64, kind, query string, limit, offset int
 		q += " ORDER BY f.title COLLATE NOCASE, f.season, f.episode, f.id LIMIT ? OFFSET ?"
 	}
 	args = append(args, limit+1, offset)
-	rows, err := l.db.Query(q, args...)
+	rows, err := l.readDB().Query(q, args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -538,11 +549,7 @@ func (l *Library) ListScoped(userID int64, kind, query string, limit, offset int
 			&f.ProbeStatus, &f.BrowserPlayback, &f.Container, &f.VideoCodec, &f.AudioCodec, &f.MediaDuration, &f.Width, &f.Height, &f.CapturedAt, &f.Overview, &f.Rating, &f.MetadataSource, &f.PosterURL, &f.TitleSource, &f.YearSource, &f.ScrapeState); err != nil {
 			return nil, 0, err
 		}
-		f.Completed = complete != 0
-		f.BrowserPlayback = normalizedPlayback(f.Path, f.BrowserPlayback)
-		f.Mime = filmMime(f.Path, f.ProbeStatus, f.BrowserPlayback, f.Container)
-		f.Playable = f.BrowserPlayback != "download-only"
-		f.PosterURL = tmdbPosterURL(f.PosterURL)
+		decorateLoadedFilm(&f, complete)
 		result = append(result, f)
 	}
 	if err := rows.Err(); err != nil {
@@ -587,7 +594,7 @@ func (l *Library) ListDirectoryScoped(userID int64, dir string, limit, offset in
 	args = append(args, scopedArgs...)
 	q += " ORDER BY CASE WHEN f.season>0 OR f.episode>0 THEN 0 ELSE 1 END, f.season, f.episode, f.path COLLATE NOCASE, f.id LIMIT ? OFFSET ?"
 	args = append(args, limit+1, offset)
-	rows, err := l.db.Query(q, args...)
+	rows, err := l.readDB().Query(q, args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -600,11 +607,7 @@ func (l *Library) ListDirectoryScoped(userID int64, dir string, limit, offset in
 			&f.ProbeStatus, &f.BrowserPlayback, &f.Container, &f.VideoCodec, &f.AudioCodec, &f.MediaDuration, &f.Width, &f.Height, &f.CapturedAt, &f.Overview, &f.Rating, &f.MetadataSource, &f.PosterURL, &f.TitleSource, &f.YearSource, &f.ScrapeState); err != nil {
 			return nil, 0, err
 		}
-		f.Completed = complete != 0
-		f.BrowserPlayback = normalizedPlayback(f.Path, f.BrowserPlayback)
-		f.Mime = filmMime(f.Path, f.ProbeStatus, f.BrowserPlayback, f.Container)
-		f.Playable = f.BrowserPlayback != "download-only"
-		f.PosterURL = tmdbPosterURL(f.PosterURL)
+		decorateLoadedFilm(&f, complete)
 		result = append(result, f)
 	}
 	if err := rows.Err(); err != nil {
@@ -698,7 +701,7 @@ func (l *Library) History(userID int64, limit, offset int, roots []string) ([]Fi
 	args = append(args, scopedArgs...)
 	q += " ORDER BY p.updated_at DESC, f.id LIMIT ? OFFSET ?"
 	args = append(args, limit+1, offset)
-	rows, err := l.db.Query(q, args...)
+	rows, err := l.readDB().Query(q, args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -711,11 +714,7 @@ func (l *Library) History(userID int64, limit, offset int, roots []string) ([]Fi
 			&f.ProbeStatus, &f.BrowserPlayback, &f.Container, &f.VideoCodec, &f.AudioCodec, &f.MediaDuration, &f.Width, &f.Height, &f.CapturedAt, &f.Overview, &f.Rating, &f.MetadataSource, &f.PosterURL, &f.TitleSource, &f.YearSource); err != nil {
 			return nil, 0, err
 		}
-		f.Completed = complete != 0
-		f.BrowserPlayback = normalizedPlayback(f.Path, f.BrowserPlayback)
-		f.Mime = filmMime(f.Path, f.ProbeStatus, f.BrowserPlayback, f.Container)
-		f.Playable = f.BrowserPlayback != "download-only"
-		f.PosterURL = tmdbPosterURL(f.PosterURL)
+		decorateLoadedFilm(&f, complete)
 		result = append(result, f)
 	}
 	if err := rows.Err(); err != nil {
@@ -727,44 +726,4 @@ func (l *Library) History(userID int64, limit, offset int, roots []string) ([]Fi
 		next = offset + limit
 	}
 	return result, next, nil
-}
-
-// ClearHistory deletes only the caller's own progress rows; other members'
-// history is untouched.
-func (l *Library) ClearHistory(userID int64) (int64, error) {
-	if userID <= 0 {
-		return 0, ErrInvalid
-	}
-	result, err := l.db.Exec("DELETE FROM watch_progress WHERE user_id=?", userID)
-	if err != nil {
-		return 0, err
-	}
-	return result.RowsAffected()
-}
-
-// MarkWatched flips the completed flag for one film. Marking watched keeps
-// the stored position and duration; marking unwatched also resets the
-// position so "continue watching" stops offering it.
-func (l *Library) MarkWatched(userID, filmID int64, completed bool) error {
-	if userID <= 0 {
-		return ErrInvalid
-	}
-	current, err := l.Get(filmID, userID)
-	if err != nil {
-		return err
-	}
-	position, duration := 0.0, 0.0
-	if completed {
-		position, duration = current.Position, current.Duration
-	}
-	complete := 0
-	if completed {
-		complete = 1
-	}
-	_, err = l.db.Exec(`INSERT INTO watch_progress(user_id,film_id,position,duration,completed,updated_at)
-	VALUES(?,?,?,?,?,?)
-	ON CONFLICT(user_id,film_id) DO UPDATE SET position=excluded.position,
-	duration=excluded.duration,completed=excluded.completed,updated_at=excluded.updated_at`,
-		userID, filmID, position, duration, complete, time.Now().Unix())
-	return err
 }

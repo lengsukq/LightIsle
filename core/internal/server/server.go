@@ -50,11 +50,12 @@ type API struct {
 	duplicateScans *duplicateScanStore
 	// afterLogin lets tests pause login between session issuance and identity
 	// lookup to exercise the verified-but-unusable-session path.
-	afterLogin  func()
-	rootID      string
-	rootLease   *roots.Lease
-	rootRuntime *rootRuntime
-	rootServer  *RootServer
+	afterLogin        func()
+	tailscaleBoundURL func() (string, bool)
+	rootID            string
+	rootLease         *roots.Lease
+	rootRuntime       *rootRuntime
+	rootServer        *RootServer
 }
 
 func publicShareFormPost(r *http.Request) bool {
@@ -93,6 +94,11 @@ func NewWithRetention(webRoot string, store *auth.Store, fileStore files.Access,
 // NewWithDownloads wires the optional aria2-backed download center; a nil
 // manager keeps those endpoints honestly unavailable.
 func NewWithDownloads(webRoot string, store *auth.Store, fileStore files.Access, photos *gallery.Library, films *cinema.Library, journal *tasks.Journal, retention *tasks.RetentionStore, downloadCenter *downloads.Manager, backupServices ...*backup.Service) http.Handler {
+	h, _ := newWithDownloadsAndAPI(webRoot, store, fileStore, photos, films, journal, retention, downloadCenter, backupServices...)
+	return h
+}
+
+func newWithDownloadsAndAPI(webRoot string, store *auth.Store, fileStore files.Access, photos *gallery.Library, films *cinema.Library, journal *tasks.Journal, retention *tasks.RetentionStore, downloadCenter *downloads.Manager, backupServices ...*backup.Service) (http.Handler, *API) {
 	a := &API{collector: &system.Collector{}, webRoot: webRoot, auth: store, files: fileStore, gallery: photos, cinema: films, limiter: newLoginLimiter(), downloads: downloadCenter}
 	a.journal = journal
 	a.retention = retention
@@ -169,6 +175,7 @@ func NewWithDownloads(webRoot string, store *auth.Store, fileStore files.Access,
 	mux.HandleFunc("GET /api/v2/admin/disks/{id}/smart", a.requireAdmin(a.diskSmart))
 	mux.HandleFunc("GET /api/v2/admin/disks/{id}/smart/history", a.requireAdmin(a.diskSmartHistory))
 	mux.HandleFunc("POST /api/v2/admin/disks/actions", a.requireAdmin(a.diskAction))
+	mux.HandleFunc("GET /api/v2/admin/tailscale", a.requireAdmin(a.adminTailscaleStatus))
 	mux.HandleFunc("GET /api/v2/admin/smb", a.requireAdmin(a.smbStatus))
 	mux.HandleFunc("POST /api/v2/admin/smb/service", a.requireAdmin(a.smbSetService))
 	mux.HandleFunc("POST /api/v2/admin/smb/shares", a.requireAdmin(a.smbAddShare))
@@ -220,6 +227,19 @@ func NewWithDownloads(webRoot string, store *auth.Store, fileStore files.Access,
 	mux.HandleFunc("GET /api/v2/photos/geo", a.requireMedia(a.galleryGeo))
 	mux.HandleFunc("POST /api/v2/photos/scan", a.requireAdmin(a.galleryScan))
 	mux.HandleFunc("POST /api/v2/photos/ai/pause", a.requireAdmin(a.galleryAIPause))
+	mux.HandleFunc("GET /api/v2/photos/memories", a.requireMedia(a.galleryMemories))
+	mux.HandleFunc("GET /api/v2/photos/{id}/live-video", a.requireMedia(a.galleryLiveVideo))
+	mux.HandleFunc("HEAD /api/v2/photos/{id}/live-video", a.requireMedia(a.galleryLiveVideo))
+	mux.HandleFunc("GET /api/v2/photos/person-shares", a.requireMedia(a.galleryPersonSharesList))
+	mux.HandleFunc("POST /api/v2/photos/person-shares", a.requireMedia(a.galleryPersonShareCreate))
+	mux.HandleFunc("DELETE /api/v2/photos/person-shares/{shareID}", a.requireMedia(a.galleryPersonShareDelete))
+	mux.HandleFunc("GET /api/v2/photos/person-shares/{shareID}/assets", a.requireMedia(a.galleryPersonShareAssets))
+	mux.HandleFunc("GET /api/v2/photos/person-shares/{shareID}/assets/{assetID}/thumbnail", a.requireMedia(a.galleryPersonShareThumbnail))
+	mux.HandleFunc("HEAD /api/v2/photos/person-shares/{shareID}/assets/{assetID}/thumbnail", a.requireMedia(a.galleryPersonShareThumbnail))
+	mux.HandleFunc("GET /api/v2/photos/person-shares/{shareID}/assets/{assetID}/content", a.requireMedia(a.galleryPersonShareContent))
+	mux.HandleFunc("HEAD /api/v2/photos/person-shares/{shareID}/assets/{assetID}/content", a.requireMedia(a.galleryPersonShareContent))
+	mux.HandleFunc("GET /api/v2/photos/person-shares/{shareID}/assets/{assetID}/live-video", a.requireMedia(a.galleryPersonShareLiveVideo))
+	mux.HandleFunc("HEAD /api/v2/photos/person-shares/{shareID}/assets/{assetID}/live-video", a.requireMedia(a.galleryPersonShareLiveVideo))
 	mux.HandleFunc("GET /api/v2/photos/{id}/ai", a.requireMedia(a.galleryAssetAI))
 	mux.HandleFunc("GET /api/v2/photos/persons", a.requireMedia(a.galleryPersons))
 	mux.HandleFunc("PATCH /api/v2/photos/persons/{id}", a.requireMedia(a.galleryUpdatePerson))
@@ -259,6 +279,7 @@ func NewWithDownloads(webRoot string, store *auth.Store, fileStore files.Access,
 	mux.HandleFunc("HEAD /api/v2/cinema/{id}/poster", a.requireMedia(a.cinemaPoster))
 	mux.HandleFunc("GET /api/v2/cinema/{id}/stream", a.requireMedia(a.cinemaStream))
 	mux.HandleFunc("HEAD /api/v2/cinema/{id}/stream", a.requireMedia(a.cinemaStream))
+	mux.HandleFunc("GET /api/v2/cinema/{id}/strm-target", a.requireMedia(a.cinemaStrmTarget))
 	mux.HandleFunc("GET /api/v2/cinema/{id}/subtitles", a.requireMedia(a.cinemaSubtitle))
 	mux.HandleFunc("GET /api/v2/cinema/{id}/progress", a.requireMedia(a.cinemaProgress))
 	mux.HandleFunc("PUT /api/v2/cinema/{id}/progress", a.requireMedia(a.cinemaSaveProgress))
@@ -294,7 +315,7 @@ func NewWithDownloads(webRoot string, store *auth.Store, fileStore files.Access,
 	mux.HandleFunc("POST /api/v2/dav/credentials/{id}/rotate", a.requireLogin(a.davCredentialRotate))
 	mux.HandleFunc("DELETE /api/v2/dav/credentials/{id}", a.requireLogin(a.davCredentialDelete))
 	mux.HandleFunc("/", a.static)
-	return securityHeaders(a.auditMiddleware(legacyRootTransitionGate(fileStore, mux)))
+	return securityHeaders(a.auditMiddleware(legacyRootTransitionGate(fileStore, mux))), a
 }
 
 type legacyRequestGateProvider interface {
@@ -314,6 +335,7 @@ func legacyRootTransitionGate(fileStore files.Access, next http.Handler) http.Ha
 		// native root switch holds its write lock before trying this gate, so
 		// taking both here would invert lock order and could deadlock.
 		if path == "/api/v2/admin/disks/actions" ||
+			path == "/api/v2/admin/tailscale" ||
 			path == "/api/v2/admin/smb" || strings.HasPrefix(path, "/api/v2/admin/smb/") ||
 			strings.HasPrefix(path, "/api/v2/network-test/") ||
 			path == "/api/v2/roots" || strings.HasPrefix(path, "/api/v2/roots/") ||
@@ -382,9 +404,19 @@ func securityHeaders(next http.Handler) http.Handler {
 				}
 				return
 			}
+			if !isStreamingUploadPath(r.URL.Path) {
+				_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(30 * time.Second))
+			}
 		}
 		next.ServeHTTP(w, r)
 	})
+}
+
+func isStreamingUploadPath(p string) bool {
+	return strings.HasPrefix(p, "/apps/") ||
+		strings.Contains(p, "/files/content") ||
+		strings.Contains(p, "/uploads") ||
+		strings.HasPrefix(p, "/api/v2/network-test/upload")
 }
 
 func jsonReply(w http.ResponseWriter, status int, v any) {

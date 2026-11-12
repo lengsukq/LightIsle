@@ -194,14 +194,18 @@ type rootRuntime struct {
 
 type RootServer struct {
 	handler  http.Handler
+	baseAPI  *API
+	rootAPI  *API
 	accounts *auth.Store
 	registry *roots.Registry
 	factory  RootServicesFactory
 	options  RootServerOptions
 
-	mu             sync.Mutex
-	closed         bool
-	duplicateScans *duplicateScanStore
+	mu                sync.Mutex
+	closed            bool
+	upsAutoPausedAI   bool
+	tailscaleBoundURL func() (string, bool)
+	duplicateScans    *duplicateScanStore
 	// Native Keychain sends this secret over the local IPC pipe; it never
 	// enters the registry JSON or an HTTP response.
 	tmdbToken          string
@@ -236,10 +240,10 @@ func NewWithRoots(
 	if len(options) > 0 {
 		option = options[0]
 	}
-	base := NewWithDownloads(webRoot, store, fileStore, photos, films, journal, option.TrashRetention, option.DownloadCenter, option.LegacyBackup)
+	base, baseAPI := newWithDownloadsAndAPI(webRoot, store, fileStore, photos, films, journal, option.TrashRetention, option.DownloadCenter, option.LegacyBackup)
 	rootAPI := &API{collector: nil, webRoot: webRoot, auth: store, files: fileStore, gallery: photos, cinema: films, journal: journal,
 		limiter: newLoginLimiter(), shareGrants: newShareGrantStore(), duplicateScans: newDuplicateScanStore(), retention: option.TrashRetention, downloads: option.DownloadCenter}
-	s := &RootServer{registry: registry, factory: factory, accounts: store, options: option, duplicateScans: rootAPI.duplicateScans, runtimes: map[string]*rootRuntime{}, initializing: map[string]chan struct{}{}, sweepStop: make(chan struct{})}
+	s := &RootServer{baseAPI: baseAPI, rootAPI: rootAPI, registry: registry, factory: factory, accounts: store, options: option, duplicateScans: rootAPI.duplicateScans, runtimes: map[string]*rootRuntime{}, initializing: map[string]chan struct{}{}, sweepStop: make(chan struct{})}
 	rootAPI.rootServer = s
 	rootMux := http.NewServeMux()
 	registerComputerFiles(rootMux, rootAPI)

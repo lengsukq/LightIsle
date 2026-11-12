@@ -185,6 +185,10 @@ func Open(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("init upload cleanup settings: %w", err)
 	}
+	if err := ensureSessionMetadataColumns(db); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("migrate session metadata: %w", err)
+	}
 	if err := ensureRootShareGeneration(db); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate root shares: %w", err)
@@ -201,7 +205,15 @@ func Open(path string) (*Store, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("migrate per-root storage quotas: %w", err)
 	}
-	return &Store{db: db}, nil
+	rdb, err := sql.Open("sqlite3", "file:"+path+"?mode=ro&_query_only=1&_busy_timeout=5000&_cache_size=-512")
+	if err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("init read SQLite: %w", err)
+	}
+	rdb.SetMaxOpenConns(4)
+	st := &Store{db: db, rdb: rdb, dataDir: filepath.Dir(path)}
+	st.accessEpoch.Store(1)
+	return st, nil
 }
 
 // ensureSharePolicyColumns adds optional share protection to existing

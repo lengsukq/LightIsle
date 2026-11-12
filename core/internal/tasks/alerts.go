@@ -25,6 +25,8 @@ var allowedAlerts = map[string]struct{ severity, message string }{
 	"tunnel_disconnected":  {"warning", "Cloudflare Tunnel 意外断开；Core 会按退避自动重启，请到 Mac 应用查看隧道状态。"},
 	"trash_cleanup_failed": {"warning", "回收站自动清理未全部完成；部分条目将在下一轮重试，请检查共享盘可用状态。"},
 	"download_failed":      {"warning", "最近有下载任务未成功；请到下载中心查看失败原因，确认后可重试。"},
+	"ups_on_battery":       {"warning", "检测到主机已切换至 UPS / 电池供电，已自动暂停后台 AI 索引以保护外置磁盘供电稳定。"},
+	"ups_low_battery":      {"critical", "UPS / 电池剩余电量过低（≤25%），已暂停后台重负载任务并刷写数据库检查点，请尽快准备安全停机。"},
 }
 
 // AlertDefinition exposes the fixed severity and message for a known alert
@@ -122,4 +124,15 @@ func (j *Journal) AcknowledgeAlert(code string) error {
 		return errors.New("alert_not_active")
 	}
 	return nil
+}
+
+// CheckpointPassive flushes WAL frames to the underlying database file without
+// blocking readers during a UPS power-outage transition.
+func (j *Journal) CheckpointPassive() {
+	if j == nil || j.db == nil {
+		return
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	_, _ = j.db.Exec("PRAGMA wal_checkpoint(PASSIVE)")
 }

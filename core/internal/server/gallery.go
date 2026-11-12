@@ -117,6 +117,9 @@ func galleryError(w http.ResponseWriter, err error) {
 	case errors.Is(err, gallery.ErrCannotMergeSame):
 		code = "cannot_merge_same_person"
 		status = 400
+	case errors.Is(err, gallery.ErrInvalidPersonShare):
+		code = "invalid_person_share"
+		status = 400
 	case errors.Is(err, sql.ErrNoRows):
 		code = "not_found"
 		status = 404
@@ -242,7 +245,7 @@ func (a *API) galleryList(w http.ResponseWriter, r *http.Request) {
 func galleryListFilter(w http.ResponseWriter, q url.Values) (gallery.PhotoFilter, bool) {
 	var filter gallery.PhotoFilter
 	if kind := q.Get("type"); kind != "" {
-		if kind != "photo" && kind != "video" {
+		if kind != "photo" && kind != "video" && kind != "live" {
 			jsonReply(w, 400, map[string]string{"error": "invalid_type"})
 			return filter, false
 		}

@@ -12,6 +12,8 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/notify"
 	"github.com/lengsukq/lightisle/core/internal/roots"
+	"github.com/lengsukq/lightisle/core/internal/server"
+	"github.com/lengsukq/lightisle/core/internal/system"
 	"github.com/lengsukq/lightisle/core/internal/tasks"
 )
 
@@ -69,9 +71,10 @@ func alertDispatcher(hub *notify.Hub) func(code string) {
 
 // Alerts always probe the registered default physical root, never the retired
 // path-only single-share configuration. Missing/offline roots remain alarms.
-func monitorAlerts(ctx context.Context, storage *roots.Registry, journal *tasks.Journal, thresholds *tasks.ThresholdStore, accounts *auth.Store, onActivated func(string)) {
-	ticker := time.NewTicker(60 * time.Second)
+func monitorAlerts(ctx context.Context, storage *roots.Registry, rootServer *server.RootServer, journal *tasks.Journal, thresholds *tasks.ThresholdStore, accounts *auth.Store, onActivated func(string)) {
+	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
+	var upsGuard upsGuardState
 	update := func() {
 		// Piggyback on the alert loop: expired sessions and share links
 		// otherwise accumulate until someone logs out or shares again.
@@ -80,7 +83,10 @@ func monitorAlerts(ctx context.Context, storage *roots.Registry, journal *tasks.
 				slog.Warn("cannot prune expired sessions and shares", "error", err)
 			}
 		}
+		pwr := system.CollectPowerStatus()
 		if journal == nil {
+			 scratch := map[string]bool{}
+			upsGuard.evaluate(pwr, rootServer, accounts, nil, scratch)
 			return
 		}
 		path, online := "", false
@@ -97,6 +103,7 @@ func monitorAlerts(ctx context.Context, storage *roots.Registry, journal *tasks.
 			return
 		}
 		desired := storageAlertObservations(path, online, syscall.Statfs, thresholds.Get())
+		upsGuard.evaluate(pwr, rootServer, accounts, journal, desired)
 		for _, s := range states {
 			fail := !s.Running && s.LastError != ""
 			switch s.Kind {

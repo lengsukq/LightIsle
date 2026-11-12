@@ -9,6 +9,7 @@ import (
 	"errors"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -25,7 +26,10 @@ var (
 )
 
 type Store struct {
-	db *sql.DB
+	db          *sql.DB
+	rdb         *sql.DB
+	dataDir     string
+	accessEpoch atomic.Uint64
 	// afterVerify lets tests pause Login between the credential read and the
 	// session insert to exercise concurrent credential changes.
 	afterVerify func()
@@ -37,6 +41,36 @@ type Store struct {
 	// afterRootGrantAuthorization lets tests exercise target disable/session
 	// revocation between the early check and the transactional grant insert.
 	afterRootGrantAuthorization func()
+}
+
+func (s *Store) readDB() *sql.DB {
+	if s == nil {
+		return nil
+	}
+	if s.rdb != nil {
+		return s.rdb
+	}
+	return s.db
+}
+
+func (s *Store) DataDir() string {
+	if s == nil {
+		return ""
+	}
+	return s.dataDir
+}
+
+func (s *Store) AccessEpoch() uint64 {
+	if s == nil {
+		return 0
+	}
+	return s.accessEpoch.Load()
+}
+
+func (s *Store) bumpAccessEpoch() {
+	if s != nil {
+		s.accessEpoch.Add(1)
+	}
 }
 
 // VerifyAdminSessionPassword is an action-scoped step-up: possession of a
@@ -133,7 +167,11 @@ func (s *Store) ResetMemberPassword(actorToken string, id int64, newPassword str
 	if _, err := tx.Exec("DELETE FROM sessions WHERE user_id=?", id); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.bumpAccessEpoch()
+	return nil
 }
 
 // ChangePassword requires the existing password and the caller's current
@@ -188,7 +226,11 @@ func (s *Store) ChangePassword(session, oldPassword, newPassword string) error {
 	if _, err := tx.Exec("DELETE FROM sessions WHERE user_id=?", user.ID); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.bumpAccessEpoch()
+	return nil
 }
 
 type User struct {
@@ -249,6 +291,7 @@ func (s *Store) ResetFirstAdminPassword(password string) (string, error) {
 	if err := tx.Commit(); err != nil {
 		return "", err
 	}
+	s.bumpAccessEpoch()
 	return username, nil
 }
 
@@ -260,10 +303,20 @@ const (
 	maxAccountSessions = 100
 )
 
-func (s *Store) Close() error { return s.db.Close() }
+func (s *Store) Close() error {
+	var rErr error
+	if s.rdb != nil {
+		rErr = s.rdb.Close()
+	}
+	wErr := s.db.Close()
+	if wErr != nil {
+		return wErr
+	}
+	return rErr
+}
 func (s *Store) FirstAdminUsername() (string, error) {
 	var username string
-	err := s.db.QueryRow("SELECT username FROM users WHERE role=? ORDER BY id LIMIT 1", RoleAdmin).Scan(&username)
+	err := s.readDB().QueryRow("SELECT username FROM users WHERE role=? ORDER BY id LIMIT 1", RoleAdmin).Scan(&username)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", ErrNotFound
 	}
@@ -271,7 +324,7 @@ func (s *Store) FirstAdminUsername() (string, error) {
 }
 func (s *Store) Configured() (bool, error) {
 	var count int
-	err := s.db.QueryRow("SELECT COUNT(*) FROM users").Scan(&count)
+	err := s.readDB().QueryRow("SELECT COUNT(*) FROM users").Scan(&count)
 	return count > 0, err
 }
 func Validate(username, password string) bool {
@@ -378,7 +431,7 @@ func (s *Store) createUser(username, password, role string, authorizeTx func(*sq
 func (s *Store) GetUser(id int64) (User, error) {
 	var u User
 	var enabled int
-	err := s.db.QueryRow("SELECT id,username,role,enabled,created_at FROM users WHERE id=?", id).
+	err := s.readDB().QueryRow("SELECT id,username,role,enabled,created_at FROM users WHERE id=?", id).
 		Scan(&u.ID, &u.Username, &u.Role, &enabled, &u.CreatedAt)
 	u.Enabled = enabled == 1
 	if err == sql.ErrNoRows {
@@ -396,7 +449,7 @@ func (s *Store) ListUsers(actorToken string) ([]User, error) {
 }
 
 func (s *Store) listUsers() ([]User, error) {
-	rows, err := s.db.Query("SELECT id,username,role,enabled,created_at FROM users ORDER BY id")
+	rows, err := s.readDB().Query("SELECT id,username,role,enabled,created_at FROM users ORDER BY id")
 	if err != nil {
 		return nil, err
 	}
@@ -462,7 +515,11 @@ func (s *Store) SetEnabled(actorToken string, id int64, enabled bool) error {
 			return err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.bumpAccessEpoch()
+	return nil
 }
 func (s *Store) verifyCredentials(username, password string) (int64, []byte, []byte, error) {
 	var id int64
@@ -499,6 +556,10 @@ func (s *Store) VerifyAdministrator(username, password string) bool {
 }
 
 func (s *Store) Login(username, password string) (string, error) {
+	return s.LoginWithMetadata(username, password, "", "")
+}
+
+func (s *Store) LoginWithMetadata(username, password, clientIP, userAgent string) (string, error) {
 	id, salt, expected, err := s.verifyCredentials(username, password)
 	if err != nil {
 		return "", err
@@ -513,6 +574,12 @@ func (s *Store) Login(username, password string) (string, error) {
 	token := base64.RawURLEncoding.EncodeToString(bytes)
 	digest := sha256.Sum256([]byte(token))
 	now := time.Now().Unix()
+	cleanIP := sanitizeSessionField(clientIP, 64)
+	cleanUA := sanitizeSessionField(userAgent, 240)
+	deviceLabel := ""
+	if cleanUA != "" {
+		deviceLabel = SummarizeDeviceLabel(cleanUA)
+	}
 	// The session insert only succeeds while the credentials that were just
 	// verified are still current, so a concurrent password reset or disable
 	// cannot leave behind a usable session created from the stale read.
@@ -521,9 +588,9 @@ func (s *Store) Login(username, password string) (string, error) {
 		return "", err
 	}
 	defer tx.Rollback()
-	result, err := tx.Exec(`INSERT INTO sessions(id,user_id,expires_at,created_at)
-		SELECT ?,id,?,? FROM users WHERE id=? AND salt=? AND password_hash=? AND enabled=1`,
-		digest[:], now+int64(SessionLifetime.Seconds()), now, id, salt, expected)
+	result, err := tx.Exec(`INSERT INTO sessions(id,user_id,expires_at,created_at,client_ip,user_agent,device_label,last_seen_at)
+		SELECT ?,id,?,?,?,?,?,? FROM users WHERE id=? AND salt=? AND password_hash=? AND enabled=1`,
+		digest[:], now+int64(SessionLifetime.Seconds()), now, cleanIP, cleanUA, deviceLabel, now, id, salt, expected)
 	if err != nil {
 		return "", err
 	}
@@ -550,19 +617,25 @@ func (s *Store) Login(username, password string) (string, error) {
 	}
 	return token, nil
 }
-func (s *Store) Identity(token string) (User, bool) {
-	if len(token) < 30 || len(token) > 128 {
-		return User{}, false
+func (s *Store) IdentityWithExpiry(token string) (User, int64, bool) {
+	if s == nil || len(token) < 30 || len(token) > 128 {
+		return User{}, 0, false
 	}
 	digest := sha256.Sum256([]byte(token))
 	var u User
 	var enabled int
-	err := s.db.QueryRow(`SELECT u.id,u.username,u.role,u.enabled,u.created_at
+	var expiresAt int64
+	err := s.readDB().QueryRow(`SELECT u.id,u.username,u.role,u.enabled,u.created_at,s.expires_at
 		FROM sessions s JOIN users u ON u.id=s.user_id
 		WHERE s.id=? AND s.expires_at>?`, digest[:], time.Now().Unix()).
-		Scan(&u.ID, &u.Username, &u.Role, &enabled, &u.CreatedAt)
+		Scan(&u.ID, &u.Username, &u.Role, &enabled, &u.CreatedAt, &expiresAt)
 	u.Enabled = enabled == 1
-	return u, err == nil && u.Enabled
+	return u, expiresAt, err == nil && u.Enabled
+}
+
+func (s *Store) Identity(token string) (User, bool) {
+	u, _, ok := s.IdentityWithExpiry(token)
+	return u, ok
 }
 func (s *Store) Session(token string) bool { _, ok := s.Identity(token); return ok }
 func (s *Store) Username(token string) string {
@@ -578,5 +651,8 @@ func (s *Store) Logout(token string) error {
 	}
 	digest := sha256.Sum256([]byte(token))
 	_, err := s.db.Exec("DELETE FROM sessions WHERE id=?", digest[:])
+	if err == nil {
+		s.bumpAccessEpoch()
+	}
 	return err
 }

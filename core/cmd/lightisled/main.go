@@ -120,6 +120,7 @@ func main() {
 		exitWithDiagnostics(exitCriticalData)
 	}
 	importInitialLegacyRootIfNeeded(rootRegistry, dataDir)
+	retireUnreferencedRootSQLiteOnStartup(dataDir, rootRegistry.List())
 
 	if *port < 0 || *port > 65535 {
 		slog.Error("invalid port")
@@ -221,7 +222,7 @@ func main() {
 		cancel()
 		monitors.Wait()
 	}()
-	monitors.Go(func() { monitorAlerts(ctx, rootRegistry, taskJournal, alertThresholds, accountStore, dispatchAlert) })
+	monitors.Go(func() { monitorAlerts(ctx, rootRegistry, rootServer, taskJournal, alertThresholds, accountStore, dispatchAlert) })
 	if taskJournal != nil {
 		monitors.Go(func() { monitorMetricHistory(ctx, taskJournal) })
 	}
@@ -229,6 +230,12 @@ func main() {
 	startUploadSweeper(ctx, rootRegistry, rootServer, accountStore)
 
 	var remote atomic.Pointer[server.Remote]
+	rootServer.SetTailscaleURLProvider(func() (string, bool) {
+		if r := remote.Load(); r != nil {
+			return r.TailscaleURL, strings.HasPrefix(r.URL, "https://")
+		}
+		return "", false
+	})
 	appsManager.SetEndpointProvider(func() (string, string) {
 		localBase := "http://" + listener.Addr().String()
 		if r := remote.Load(); r != nil {
@@ -237,7 +244,7 @@ func main() {
 		return localBase, ""
 	})
 
-	rootCommands := newDaemonRootControl(rootRegistry, accountStore, rootServer, taskJournal, backupService, backupSchedule)
+	rootCommands := newDaemonRootControl(dataDir, rootRegistry, accountStore, rootServer, taskJournal, backupService, backupSchedule)
 	defer rootCommands.Close()
 
 	control := make(chan string, ipcControlBufferSize)
@@ -474,6 +481,7 @@ func openOptionalDownloadCenter(
 }
 
 func newDaemonRootControl(
+	dataDir string,
 	rootRegistry *roots.Registry,
 	accountStore *auth.Store,
 	rootServer *server.RootServer,
@@ -482,6 +490,7 @@ func newDaemonRootControl(
 	backupSchedule *backup.Scheduler,
 ) *rootControl {
 	return &rootControl{
+		dataDir:             dataDir,
 		output:              ipcStdout,
 		registry:            rootRegistry,
 		accounts:            accountStore,

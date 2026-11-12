@@ -49,10 +49,11 @@ type Asset struct {
 	CameraMake      string   `json:"cameraMake,omitempty"`
 	CameraModel     string   `json:"cameraModel,omitempty"`
 	LensModel       string   `json:"lensModel,omitempty"`
-	ISO             int      `json:"iso,omitempty"`
-	FNumber         float64  `json:"fNumber,omitempty"`
-	ExposureSeconds float64  `json:"exposureSeconds,omitempty"`
-	FocalLength     float64  `json:"focalLength,omitempty"`
+	ISO              int      `json:"iso,omitempty"`
+	FNumber          float64  `json:"fNumber,omitempty"`
+	ExposureSeconds  float64  `json:"exposureSeconds,omitempty"`
+	FocalLength      float64  `json:"focalLength,omitempty"`
+	LiveVideoAssetID int64    `json:"liveVideoAssetId,omitempty"`
 }
 
 // ForgetLegacyShare removes only an explicitly selected legacy share's
@@ -111,6 +112,7 @@ type Status struct {
 type Library struct {
 	journal         *tasks.Journal
 	db              *sql.DB
+	rdb             *sql.DB
 	storage         *files.Manager
 	worker          mediaWorker
 	aiWorker        aiBatchAnalyzer
@@ -233,7 +235,15 @@ func openWithOptions(dir string, store *files.Manager, options Options, database
 		db.Close()
 		return nil, err
 	}
+	if err := ensureLivePhotoColumns(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	if err := ensureGalleryAISchema(db); err != nil {
+		db.Close()
+		return nil, err
+	}
+	if err := ensurePersonSharesTable(db); err != nil {
 		db.Close()
 		return nil, err
 	}
@@ -256,13 +266,19 @@ func openWithOptions(dir string, store *files.Manager, options Options, database
 		db.Close()
 		return nil, err
 	}
+	rdb, err := sql.Open("sqlite3", "file:"+filepath.Join(dir, databaseName)+"?mode=ro&_query_only=1&_busy_timeout=5000&_cache_size=-1024")
+	if err != nil {
+		db.Close()
+		return nil, err
+	}
+	rdb.SetMaxOpenConns(4)
 	cacheDir := filepath.Join(dir, cacheName)
 	if options.CacheDir != "" {
 		cacheDir = options.CacheDir
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	library := &Library{
-		db: db, storage: store, cache: cacheDir,
+		db: db, rdb: rdb, storage: store, cache: cacheDir,
 		shareScope: shareScope,
 		cacheLimit: options.ThumbnailCacheBytes, cacheEntries: map[[32]byte]thumbnailCacheEntry{},
 		workerTemp: map[string]struct{}{}, faceCache: map[string][]byte{},
@@ -270,6 +286,7 @@ func openWithOptions(dir string, store *files.Manager, options Options, database
 	}
 	if err := library.openThumbnailCache(); err != nil {
 		cancel()
+		rdb.Close()
 		db.Close()
 		return nil, err
 	}
@@ -290,7 +307,23 @@ func validRootID(id string) bool {
 	}
 	return true
 }
-func (l *Library) Close() error { l.cancel(); l.wg.Wait(); return l.db.Close() }
+func (l *Library) readDB() *sql.DB {
+	if l != nil && l.rdb != nil {
+		return l.rdb
+	}
+	if l != nil {
+		return l.db
+	}
+	return nil
+}
+func (l *Library) Close() error {
+	l.cancel()
+	l.wg.Wait()
+	if l.rdb != nil {
+		_ = l.rdb.Close()
+	}
+	return l.db.Close()
+}
 func (l *Library) CancelScan() bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -481,6 +514,7 @@ func (l *Library) scan(job context.Context, dirs []string) {
 		status.LastError = err.Error()
 		return
 	}
+	_ = l.reconcileLivePhotoPairs(job, share)
 	l.pruneStaleThumbnails(share)
 	l.TriggerAIIndex()
 }
@@ -526,16 +560,19 @@ func (l *Library) ListScopedForUserFiltered(userID, cursor int64, limit int, alb
 	if limit < 1 || limit > 120 {
 		return nil, 0, errors.New("invalid_limit")
 	}
-	if filter.Kind != "" && filter.Kind != "photo" && filter.Kind != "video" {
+	if filter.Kind != "" && filter.Kind != "photo" && filter.Kind != "video" && filter.Kind != "live" {
 		return nil, 0, errors.New("invalid_filter")
 	}
 	if len(filter.IDs) > 120 {
 		return nil, 0, errors.New("invalid_filter")
 	}
-	query := `SELECT a.id,a.path,a.type,a.size,a.modified,a.taken_at,a.favorite,a.probe_status,a.browser_playback,a.mime,a.container,a.video_codec,a.audio_codec,a.duration_seconds,a.width,a.height,a.orientation,a.captured_at,a.gps_lat,a.gps_lon,a.camera_make,a.camera_model,a.exif_json,
+	query := `SELECT a.id,a.path,a.type,a.size,a.modified,a.taken_at,a.favorite,a.probe_status,a.browser_playback,a.mime,a.container,a.video_codec,a.audio_codec,a.duration_seconds,a.width,a.height,a.orientation,a.captured_at,a.gps_lat,a.gps_lon,a.camera_make,a.camera_model,a.exif_json,a.live_video_asset_id,
 	 EXISTS(SELECT 1 FROM personal_favorites pf WHERE pf.user_id=? AND pf.asset_id=a.id) FROM assets a
 	 WHERE a.share=? AND a.missing_path=''`
 	args := []any{userID, share}
+	if len(filter.IDs) == 0 && filter.Kind != "video" {
+		query += " AND a.is_live_companion=0"
+	}
 	if albumID > 0 {
 		query += " AND EXISTS(SELECT 1 FROM album_items ai WHERE ai.asset_id=a.id AND ai.album_id=?)"
 		args = append(args, albumID)
@@ -545,7 +582,7 @@ func (l *Library) ListScopedForUserFiltered(userID, cursor int64, limit int, alb
 			return nil, 0, sql.ErrNoRows
 		}
 		var exists int
-		if err := l.db.QueryRow("SELECT 1 FROM private_albums WHERE share=? AND user_id=? AND id=?", share, userID, privateAlbumID).Scan(&exists); err != nil {
+		if err := l.readDB().QueryRow("SELECT 1 FROM private_albums WHERE share=? AND user_id=? AND id=?", share, userID, privateAlbumID).Scan(&exists); err != nil {
 			return nil, 0, err
 		}
 		query += " AND EXISTS(SELECT 1 FROM private_album_items pai JOIN private_albums pa ON pa.id=pai.album_id WHERE pai.asset_id=a.id AND pa.id=? AND pa.user_id=? AND pa.share=a.share)"
@@ -572,7 +609,7 @@ func (l *Library) ListScopedForUserFiltered(userID, cursor int64, limit int, alb
 	args = append(args, scopedArgs...)
 	query += " ORDER BY a.taken_at DESC,a.id DESC LIMIT ? OFFSET ?"
 	args = append(args, limit+1, cursor)
-	rows, err := l.db.Query(query, args...)
+	rows, err := l.readDB().Query(query, args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -584,7 +621,7 @@ func (l *Library) ListScopedForUserFiltered(userID, cursor int64, limit int, alb
 		var personalFavorite int
 		var latitude, longitude sql.NullFloat64
 		var cameraMake, cameraModel, exifJSON string
-		if err := rows.Scan(&a.ID, &a.Path, &a.Type, &a.Size, &a.Modified, &a.TakenAt, &favorite, &a.ProbeStatus, &a.BrowserPlayback, &a.MIME, &a.Container, &a.VideoCodec, &a.AudioCodec, &a.DurationSeconds, &a.Width, &a.Height, &a.Orientation, &a.CapturedAt, &latitude, &longitude, &cameraMake, &cameraModel, &exifJSON, &personalFavorite); err != nil {
+		if err := rows.Scan(&a.ID, &a.Path, &a.Type, &a.Size, &a.Modified, &a.TakenAt, &favorite, &a.ProbeStatus, &a.BrowserPlayback, &a.MIME, &a.Container, &a.VideoCodec, &a.AudioCodec, &a.DurationSeconds, &a.Width, &a.Height, &a.Orientation, &a.CapturedAt, &latitude, &longitude, &cameraMake, &cameraModel, &exifJSON, &a.LiveVideoAssetID, &personalFavorite); err != nil {
 			return nil, 0, err
 		}
 		applyCaptureColumns(&a, latitude, longitude, cameraMake, cameraModel, exifJSON)
@@ -612,8 +649,8 @@ func (l *Library) Asset(id int64) (Asset, error) {
 	var favorite int
 	var latitude, longitude sql.NullFloat64
 	var cameraMake, cameraModel, exifJSON string
-	err = l.db.QueryRow("SELECT id,path,type,size,modified,file_identity,taken_at,favorite,probe_status,browser_playback,mime,container,video_codec,audio_codec,duration_seconds,width,height,orientation,captured_at,gps_lat,gps_lon,camera_make,camera_model,exif_json FROM assets WHERE share=? AND id=? AND missing_path=''", share, id).
-		Scan(&a.ID, &a.Path, &a.Type, &a.Size, &a.Modified, &a.FileIdentity, &a.TakenAt, &favorite, &a.ProbeStatus, &a.BrowserPlayback, &a.MIME, &a.Container, &a.VideoCodec, &a.AudioCodec, &a.DurationSeconds, &a.Width, &a.Height, &a.Orientation, &a.CapturedAt, &latitude, &longitude, &cameraMake, &cameraModel, &exifJSON)
+	err = l.readDB().QueryRow("SELECT id,path,type,size,modified,file_identity,taken_at,favorite,probe_status,browser_playback,mime,container,video_codec,audio_codec,duration_seconds,width,height,orientation,captured_at,gps_lat,gps_lon,camera_make,camera_model,exif_json,live_video_asset_id FROM assets WHERE share=? AND id=? AND missing_path=''", share, id).
+		Scan(&a.ID, &a.Path, &a.Type, &a.Size, &a.Modified, &a.FileIdentity, &a.TakenAt, &favorite, &a.ProbeStatus, &a.BrowserPlayback, &a.MIME, &a.Container, &a.VideoCodec, &a.AudioCodec, &a.DurationSeconds, &a.Width, &a.Height, &a.Orientation, &a.CapturedAt, &latitude, &longitude, &cameraMake, &cameraModel, &exifJSON, &a.LiveVideoAssetID)
 	if err == nil {
 		applyCaptureColumns(&a, latitude, longitude, cameraMake, cameraModel, exifJSON)
 	}
@@ -670,7 +707,7 @@ func (l *Library) CountScoped(roots []string) (int, error) {
 		return 0, err
 	}
 	parameters := append([]any{share}, args...)
-	err = l.db.QueryRow("SELECT COUNT(*) FROM assets a WHERE a.share=? AND a.missing_path=''"+fragment, parameters...).Scan(&count)
+	err = l.readDB().QueryRow("SELECT COUNT(*) FROM assets a WHERE a.share=? AND a.missing_path=''"+fragment, parameters...).Scan(&count)
 	return count, err
 }
 func cacheID(share, path string, modified int64, size int64) string {

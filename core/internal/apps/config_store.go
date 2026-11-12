@@ -75,7 +75,7 @@ func uniqueSortedStrings(items []string) []string {
 }
 
 func markAppPendingInConfigLocked(cfgPath, appID string) error {
-	if !ValidPluginID(appID) || appID == "network-pulse" {
+	if !ValidPluginID(appID) || isOfficialTemplateID(appID) {
 		return nil
 	}
 	cfg, err := readSystemConfigFile(cfgPath)

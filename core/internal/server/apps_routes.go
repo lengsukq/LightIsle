@@ -38,6 +38,8 @@ func registerAppsManagementRoutes(
 
 func (h *appsManagementHandler) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v2/apps", h.api.requireLogin(h.handleListApps))
+	mux.HandleFunc("GET /api/v2/apps/templates", h.api.requireLogin(h.handleListTemplates))
+	mux.HandleFunc("POST /api/v2/apps/templates/{id}/install", h.api.requireAdmin(h.handleInstallTemplate))
 
 	reload := h.api.requireAdmin(h.handleReloadApps)
 	mux.HandleFunc("POST /api/v2/apps/refresh", reload)
@@ -82,6 +84,24 @@ func (h *appsManagementHandler) handleListApps(w http.ResponseWriter, r *http.Re
 		return
 	}
 	replyAppsList(w, h.appsMgr, h.store, user)
+}
+
+func (h *appsManagementHandler) handleListTemplates(w http.ResponseWriter, _ *http.Request) {
+	jsonReply(w, http.StatusOK, map[string]any{"templates": h.appsMgr.ListTemplates()})
+}
+
+func (h *appsManagementHandler) handleInstallTemplate(w http.ResponseWriter, r *http.Request) {
+	user, _ := h.resolveSession(r)
+	app, err := h.appsMgr.InstallTemplate(r.PathValue("id"))
+	if err != nil {
+		appsErrorReply(w, err)
+		return
+	}
+	jsonReply(w, http.StatusCreated, map[string]any{
+		"app":       app,
+		"apps":      h.appsMgr.ListForUser(user.ID, user.Role),
+		"templates": h.appsMgr.ListTemplates(),
+	})
 }
 
 func (h *appsManagementHandler) handleReloadApps(w http.ResponseWriter, r *http.Request) {

@@ -295,6 +295,7 @@ type Snapshot struct {
 	DiskIO         []DiskIOStat `json:"diskIo"`
 	CorePID        int          `json:"corePid"`
 	CoreRSSBytes   *uint64      `json:"coreRssBytes"`
+	Power          *PowerStatus `json:"power,omitempty"`
 }
 
 type Collector struct {
@@ -424,6 +425,9 @@ func (c *Collector) Collect() (Snapshot, error) {
 	}
 	if rss := uint64(C.lightisle_core_resident()); rss > 0 {
 		result.CoreRSSBytes = &rss
+	}
+	if pwr := CollectPowerStatus(); pwr.Available {
+		result.Power = &pwr
 	}
 	var rx, tx C.uint64_t
 	C.lightisle_network(&rx, &tx)

@@ -80,6 +80,22 @@ func (a *API) gallerySelectedArchive(w http.ResponseWriter, r *http.Request) {
 		}
 		plan = append(plan, archiveItem{path: asset.Path, name: fmt.Sprintf("%02d_%s", index+1, path.Base(asset.Path)),
 			size: asset.Size, modified: time.Unix(0, asset.Modified), identity: asset.FileIdentity})
+		if asset.LiveVideoAssetID > 0 {
+			if _, comp, compErr := a.gallery.LiveVideoCompanion(asset.ID); compErr == nil &&
+				comp.Size >= 0 && comp.Size <= remaining && a.canAccess(token(r), comp.Path, false, false) {
+				if cf, cInfo, rErr := a.files.Read(comp.Path); rErr == nil {
+					_ = cf.Close()
+					if comp.FileIdentity != "" && files.MediaFileIdentity(cInfo) == comp.FileIdentity &&
+						cInfo.Size() == comp.Size && cInfo.ModTime().UnixNano() == comp.Modified {
+						remaining -= comp.Size
+						plan = append(plan, archiveItem{
+							path: comp.Path, name: fmt.Sprintf("%02d_%s", index+1, path.Base(comp.Path)),
+							size: comp.Size, modified: time.Unix(0, comp.Modified), identity: comp.FileIdentity,
+						})
+					}
+				}
+			}
+		}
 	}
 	if a.rootID != "" && (a.rootLease == nil || !a.rootLease.Valid(r.Context())) {
 		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "root_unavailable"})

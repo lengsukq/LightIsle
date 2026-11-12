@@ -350,7 +350,7 @@ func (m *Manager) reloadInternal(fromMCP bool) error {
 		}
 
 		prevRec, existedBefore := prevApps[name]
-		isActivated := name == "network-pulse" || slices.Contains(sysCfg.ActivatedApps, name)
+		isActivated := isOfficialTemplateID(name) || slices.Contains(sysCfg.ActivatedApps, name)
 		isPending := slices.Contains(sysCfg.PendingApps, name) || (existedBefore && prevRec.pendingActivation)
 		if fromMCP && !isActivated && (!existedBefore || isPending) {
 			isPending = true

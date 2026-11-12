@@ -78,6 +78,28 @@ func ensureProbeColumns(db *sql.DB) error {
 func (l *Library) SetMediaWorker(worker mediaWorker) { l.worker = worker }
 
 func (l *Library) probeFilm(ctx context.Context, filmPath, name string, size, modified int64) filmProbe {
+	if IsStrmPath(name) {
+		source, _, err := l.files.Read(filmPath)
+		if err != nil {
+			return failedFilmProbe()
+		}
+		defer source.Close()
+		before, err := source.Stat()
+		if err != nil || !before.Mode().IsRegular() || before.Size() != size || before.ModTime().UnixNano() != modified {
+			return failedFilmProbe()
+		}
+		targetURL, err := ReadAndValidateStrmURL(source)
+		after, statErr := source.Stat()
+		if err != nil || statErr != nil || after.Size() != before.Size() || !after.ModTime().Equal(before.ModTime()) {
+			return failedFilmProbe()
+		}
+		return filmProbe{
+			ProbeStatus:     "ready",
+			BrowserPlayback: "verified-direct",
+			Container:       "strm",
+			VideoCodec:      StrmHostSummary(targetURL),
+		}
+	}
 	if l.worker == nil {
 		return unavailableFilmProbe(name)
 	}
