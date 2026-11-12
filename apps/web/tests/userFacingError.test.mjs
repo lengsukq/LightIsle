@@ -55,6 +55,34 @@ test("all SMB management and App Center activation codes translate cleanly", () 
   assert.doesNotMatch(describeUserFacingError(new Error("app_running")), /排查标识：/);
 });
 
+test("all WebDAV mount, write, and credential error codes translate cleanly", () => {
+  const davCodes = [
+    "invalid_dav_request",
+    "dav_credential_limit_reached",
+    "dav_credential_failed",
+    "dav_credential_not_found",
+    "dav_unauthorized",
+    "dav_remount_required",
+    "dav_mount_not_found",
+    "dav_replace_unsupported_save_as",
+    "dav_invalid_destination",
+    "dav_copy_unavailable",
+    "dav_destination_exists",
+    "dav_source_destination_overlap",
+    "dav_cross_owner_move",
+    "dav_busy",
+    "dav_upload_too_large",
+    "dav_metadata_too_large",
+    "dav_invalid_metadata",
+    "dav_access_denied",
+  ];
+  for (const code of davCodes) {
+    const msg = describeUserFacingError(new Error(code));
+    assert.doesNotMatch(msg, /排查标识：/, `Expected explicit label for ${code}`);
+    assert.ok(msg.length > 6, `Expected descriptive message for ${code}`);
+  }
+});
+
 test("unknown codes remain diagnosable, not just a raw identifier", () => {
   const description = describeUserFacingError(new Error("unexpected_domain_code"));
   assert.match(description, /刷新确认状态/);

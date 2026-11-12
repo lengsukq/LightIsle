@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import { ArrowDownToLine, Link2, Pause, Play, RefreshCw, RotateCcw, Trash2 } from "lucide-vue-next";
 import { requestConfirm } from "./useConfirmDialog.ts";
 import { apiRequest } from "./apiClient.ts";
+import IsleCard from "./IsleCard.vue";
 import IsleButton from "./IsleButton.vue";
 import IsleBanner from "./IsleBanner.vue";
 import IsleBadge from "./IsleBadge.vue";
@@ -110,14 +111,15 @@ onUnmounted(()=>{disposed=true;poller.dispose();syncPollTimer(false)});
 </script>
 
 <template>
- <section class="account-panel" aria-label="下载中心">
-  <div class="account-heading"><h3><ArrowDownToLine :size="18" aria-hidden="true"/> 任务与新建下载</h3>
-    <IsleButton variant="glass" size="sm" :disabled="loading" @click="load">{{loading?"加载中…":"刷新"}}</IsleButton></div>
+ <IsleCard aria-label="下载中心" title="任务与新建下载" subtitle="支持链接与磁力任务，完成后自动保存至所选目录，不覆盖同名文件。">
+  <template #icon><ArrowDownToLine :size="18" aria-hidden="true"/></template>
+  <template #actions>
+    <IsleButton variant="glass" size="sm" :loading="loading" @click="load">{{loading?"加载中…":"刷新"}}</IsleButton>
+  </template>
   <p v-if="loading&&!hasSnapshot" class="footnote" role="status">正在读取下载中心…</p>
-  <p v-if="hasSnapshot&&!status.available" class="footnote" role="note">暂时无法新建下载：{{status.reason==="aria2_not_installed"?"请先在 Mac 的「外部依赖」中安装下载组件":"下载服务未就绪，请稍后重试"}}。以前下载的文件不会删除。</p>
-  <p v-if="hasSnapshot&&status.networkAllowed===false" class="footnote">新建或继续网络下载需要管理员权限，已有任务和已下载的文件仍可管理。</p>
-  <p v-if="hasSnapshot&&status.available&&status.networkAllowed!==false" class="footnote">完成后自动保存至所选目录，不覆盖同名文件。</p>
-  <form v-if="status.available&&status.networkAllowed!==false" class="account-form download-form" @submit.prevent="create">
+  <IsleBanner v-if="hasSnapshot&&!status.available" type="warning" compact role="note" :message="'暂时无法新建下载：'+(status.reason==='aria2_not_installed'?'请先在 Mac 的「外部依赖」中安装下载组件':'下载服务未就绪，请稍后重试')+'。以前下载的文件不会删除。'" />
+  <IsleBanner v-if="hasSnapshot&&status.networkAllowed===false" type="info" compact message="新建或继续网络下载需要管理员权限，已有任务和已下载的文件仍可管理。" />
+  <form v-if="status.available&&status.networkAllowed!==false" class="account-form settings-form-subcard download-form" @submit.prevent="create">
    <label>下载链接
     <input v-model="newURL" type="text" placeholder="https://example.com/file.iso 或 magnet:?xt=urn:btih:…" required />
    </label>
@@ -159,10 +161,12 @@ onUnmounted(()=>{disposed=true;poller.dispose();syncPollTimer(false)});
     <small v-if="task.status==='failed'&&describeError(task)" class="form-error">{{describeError(task)}}</small>
     <small v-if="task.partialPublish">部分文件已保存，任务尚未全部完成；重试会核对已有文件。</small>
     <small v-if="task.recoveryRequired" class="form-error">已有文件与记录不一致，请先在 Mac 核对；不会自动覆盖。</small>
-    <details v-if="task.publishedFiles?.length">
-     <summary>文件处理记录（{{task.publishedFilesTotal??task.publishedFiles.length}} 项）</summary>
-     <ul><li v-for="file in task.publishedFiles" :key="file.target">{{file.target}} · {{file.status==='published'?'已保存':file.status==='recovery_required'?'需要核对':'等待核对'}} · {{bytes(file.size)}}</li></ul>
-     <small v-if="task.publishedFilesTruncated">这里只显示前 {{task.publishedFiles.length}} 项；其余处理记录仍由服务端保留。</small>
+    <details v-if="task.publishedFiles?.length" class="apple-disclosure-card">
+     <summary><div class="disclosure-title"><span>文件处理记录（{{task.publishedFilesTotal??task.publishedFiles.length}} 项）</span></div></summary>
+     <div class="disclosure-body">
+      <ul><li v-for="file in task.publishedFiles" :key="file.target">{{file.target}} · {{file.status==='published'?'已保存':file.status==='recovery_required'?'需要核对':'等待核对'}} · {{bytes(file.size)}}</li></ul>
+      <small v-if="task.publishedFilesTruncated">这里只显示前 {{task.publishedFiles.length}} 项；其余处理记录仍由服务端保留。</small>
+     </div>
     </details>
    </div>
    <div class="task-empty-actions">
@@ -174,7 +178,7 @@ onUnmounted(()=>{disposed=true;poller.dispose();syncPollTimer(false)});
    </div>
   </div>
   <p v-if="activeTasks.length>0" class="footnote">{{activeTasks.length}} 个任务进行中。</p>
- </section>
+ </IsleCard>
 </template>
 
 <style scoped>

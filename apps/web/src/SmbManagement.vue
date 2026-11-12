@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from "vue";
 import { requestConfirm } from "./useConfirmDialog.ts";
 import { Server, RefreshCcw, Copy, Plus, Trash2, AlertTriangle, ShieldCheck } from "lucide-vue-next";
 import AppleSelect from "./AppleSelect.vue";
+import IsleCard from "./IsleCard.vue";
 import IsleButton from "./IsleButton.vue";
 import IsleBadge from "./IsleBadge.vue";
 import IsleBanner from "./IsleBanner.vue";
@@ -60,10 +61,10 @@ const newSealed = ref(false);
 
 const onlineRoots = computed(() => (status.value?.candidateRoots ?? []).filter((r) => r.online));
 const rootOptions = computed(() =>
-  onlineRoots.value.map((r) => ({ value: r.rootId, label: r.name, hint: r.path }))
+  onlineRoots.value.map((r) => ({ value: r.rootId, label: r.name, hint: r.path })),
 );
 const currentRoot = computed(() =>
-  onlineRoots.value.find((r) => r.rootId === selectedRootID.value) ?? onlineRoots.value[0]
+  onlineRoots.value.find((r) => r.rootId === selectedRootID.value) ?? onlineRoots.value[0],
 );
 const subpathOptions = computed(() => {
   const base = [{ value: "", label: "整块存储根目录（含全部子目录）" }];
@@ -149,7 +150,7 @@ async function addShare() {
 
 async function updateShare(
   share: SharePoint,
-  patch: Partial<Pick<SharePoint, "shared" | "readOnly" | "guestAccess" | "sealed">>
+  patch: Partial<Pick<SharePoint, "shared" | "readOnly" | "guestAccess" | "sealed">>,
 ) {
   if (busy.value || !status.value?.remoteManageReady) return;
   busy.value = true;
@@ -194,9 +195,7 @@ async function removeShare(share: SharePoint) {
   try {
     status.value = await apiRequest<SMBStatus>(
       "/api/v2/admin/smb/shares/" + encodeURIComponent(share.recordName),
-      {
-        method: "DELETE",
-      },
+      { method: "DELETE" },
     );
     notice.value = `已移除「${share.smbName}」共享。`;
   } catch (e) {
@@ -223,201 +222,331 @@ onMounted(() => {
 </script>
 
 <template>
-  <section class="account-panel smb-panel" style="margin-bottom:20px">
-    <div class="account-heading">
-      <div>
-        <h3><Server :size="18" /> Mac 文件共享 (SMB)</h3>
-        <p>由 macOS 原生 smbd 广播局域网共享，访达、Windows 与 Infuse 可直接发现。</p>
-      </div>
-      <IsleButton variant="ghost" size="sm" :loading="loading" :disabled="busy" @click="refresh">
-        <template #icon><RefreshCcw :size="14" /></template> 刷新
+  <IsleCard
+    class="smb-panel"
+    title="Mac 文件共享 (SMB)"
+    subtitle="由 macOS 原生 smbd 广播局域网共享，访达、Windows 与 Infuse 可直接发现。"
+  >
+    <template #icon><Server :size="18" /></template>
+    <template #actions>
+      <IsleButton variant="glass" size="sm" :loading="loading" :disabled="busy" @click="refresh">
+        <template #icon><RefreshCcw :size="14" /></template>
+        刷新
       </IsleButton>
-    </div>
+    </template>
 
-    <IsleBanner v-if="status && !status.remoteManageReady" type="warning" compact role="status">
-      尚未开启免密管理授权。请先在 Mac 管理端「网络与连接 → Mac 文件共享」开启一次授权。
-    </IsleBanner>
+    <div class="smb-body">
+      <IsleBanner v-if="status && !status.remoteManageReady" type="warning" compact role="status">
+        尚未开启免密管理授权。请先在 Mac 管理端「网络与连接 → Mac 文件共享」开启一次授权。
+      </IsleBanner>
 
-    <div v-if="status" class="smb-service-bar">
-      <div class="smb-service-info">
-        <strong>
-          SMB 服务状态：
-          <IsleBadge :variant="status.serviceEnabled ? 'online' : 'offline'" dot size="sm">
-            {{ !status.serviceEnabled ? "未开启" : status.listeningState === "listening" ? "已开启 · 已发现监听" : "已开启 · 监听待确认" }}
-          </IsleBadge>
-        </strong>
-        <small v-if="status.computerName">局域网搜索名：{{ status.computerName }}</small>
-      </div>
-      <div class="smb-service-actions">
-        <IsleButton
-          :variant="status.serviceEnabled ? 'ghost' : 'primary'"
-          size="sm"
-          :disabled="busy || !status.remoteManageReady"
-          @click="toggleService(!status.serviceEnabled)"
-        >
-          {{ status.serviceEnabled ? "关闭 SMB 共享" : "开启 SMB 共享" }}
-        </IsleButton>
-      </div>
-    </div>
-
-    <div v-if="status && (status.bonjourUrl || status.lanUrl)" class="smb-addresses">
-      <div v-if="status.bonjourUrl" class="smb-addr-pill">
-        <code>{{ status.bonjourUrl }}</code>
-        <IsleButton variant="ghost" size="sm" @click="copyText(status.bonjourUrl, '主机地址')">
-          <template #icon><Copy :size="13" /></template> 复制
-        </IsleButton>
-      </div>
-      <div v-if="status.lanUrl" class="smb-addr-pill">
-        <code>{{ status.lanUrl }}</code>
-        <IsleButton variant="ghost" size="sm" @click="copyText(status.lanUrl, 'IP 地址')">
-          <template #icon><Copy :size="13" /></template> 复制
-        </IsleButton>
-      </div>
-    </div>
-
-    <IsleBanner v-if="error" type="error" compact role="alert">{{ error }}</IsleBanner>
-    <IsleBanner v-if="notice" type="info" compact role="status">{{ notice }}</IsleBanner>
-
-    <div v-if="status" class="smb-add-box">
-      <strong>新增 NAS 共享文件夹</strong>
-      <div v-if="!onlineRoots.length" class="footnote">暂无在线的 NAS 存储盘，请先在 Mac 管理端登记并连接硬盘。</div>
-      <template v-else>
-        <div class="smb-add-row">
-          <AppleSelect
-            :model-value="selectedRootID"
-            :options="rootOptions"
-            aria-label="选择 NAS 存储盘"
-            :disabled="busy || !status.remoteManageReady"
-            @update:model-value="(v: string) => { selectedRootID = v; selectedSubpath = ''; }"
-          />
-          <AppleSelect
-            :model-value="selectedSubpath"
-            :options="subpathOptions"
-            aria-label="选择共享目录范围"
-            :disabled="busy || !status.remoteManageReady"
-            @update:model-value="(v: string) => { selectedSubpath = v; }"
-          />
-          <input
-            v-model="customSMBName"
-            maxlength="64"
-            placeholder="自定义共享名称（留空则用文件夹名）"
-            :disabled="busy || !status.remoteManageReady"
-          />
+      <div v-if="status" class="smb-service-bar">
+        <div class="smb-service-info">
+          <strong>
+            SMB 服务状态：
+            <IsleBadge :variant="status.serviceEnabled ? 'online' : 'offline'" dot size="sm">
+              {{ !status.serviceEnabled ? "未开启" : status.listeningState === "listening" ? "已开启 · 已发现监听" : "已开启 · 监听待确认" }}
+            </IsleBadge>
+          </strong>
+          <small v-if="status.computerName">局域网搜索名：{{ status.computerName }}</small>
         </div>
-        <p v-if="selectionExposesPersonal" class="smb-personal-warn">
-          <AlertTriangle :size="14" />
-          注意：共享整块存储根或 Users 目录会使局域网 SMB 用户直接访问成员私人目录，且通过 SMB 写入的文件不计入轻屿配额账本。
-        </p>
-        <div class="smb-add-flags">
-          <label><input v-model="newReadOnly" type="checkbox" :disabled="busy || !status.remoteManageReady" /> 仅只读</label>
-          <label><input v-model="newGuestAccess" type="checkbox" :disabled="busy || !status.remoteManageReady" /> 允许访客访问</label>
-          <label><input v-model="newSealed" type="checkbox" :disabled="busy || !status.remoteManageReady" /> SMB3 传输加密</label>
-          <IsleButton variant="primary" size="sm" :disabled="busy || !status.remoteManageReady" @click="addShare">
-            <template #icon><Plus :size="14" /></template> 添加到 SMB 共享
-          </IsleButton>
-        </div>
-      </template>
-    </div>
-
-    <div v-if="status" class="smb-shares-list">
-      <strong>已共享文件夹 ({{ status.shares.length }})</strong>
-      <IsleEmpty v-if="!status.shares.length && !loading" compact description="当前没有配置任何 SMB 共享文件夹。" />
-      <div v-for="share in status.shares" :key="share.recordName" class="smb-share-item">
-        <div class="smb-share-header">
-          <div>
-            <strong>
-              {{ share.smbName }}
-              <IsleBadge v-if="share.rootName" variant="neutral" size="sm">NAS · {{ share.rootName }}</IsleBadge>
-              <IsleBadge v-if="!share.pathExists" variant="warning" size="sm">路径离线</IsleBadge>
-            </strong>
-            <small>{{ share.path }}</small>
-            <p v-if="share.exposesPersonalDirs" class="smb-personal-warn">
-              <AlertTriangle :size="13" /> 包含 Users 私人目录：SMB 使用 Mac 账号或访客权限，不受轻屿成员隔离与配额账本限制。
-            </p>
-          </div>
+        <div class="smb-service-actions">
           <IsleButton
-            variant="danger"
+            :variant="status.serviceEnabled ? 'glass' : 'primary'"
             size="sm"
             :disabled="busy || !status.remoteManageReady"
-            @click="removeShare(share)"
+            @click="toggleService(!status.serviceEnabled)"
           >
-            <template #icon><Trash2 :size="13" /></template> 移除共享
+            {{ status.serviceEnabled ? "关闭 SMB 共享" : "开启 SMB 共享" }}
           </IsleButton>
         </div>
-        <div class="smb-share-toggles">
-          <label>
-            <input
-              type="checkbox"
-              :checked="share.shared"
+      </div>
+
+      <div v-if="status && (status.bonjourUrl || status.lanUrl)" class="smb-addresses">
+        <div v-if="status.bonjourUrl" class="smb-addr-pill">
+          <code>{{ status.bonjourUrl }}</code>
+          <IsleButton variant="tonal" size="sm" @click="copyText(status.bonjourUrl, '主机地址')">
+            <template #icon><Copy :size="13" /></template>
+            复制
+          </IsleButton>
+        </div>
+        <div v-if="status.lanUrl" class="smb-addr-pill">
+          <code>{{ status.lanUrl }}</code>
+          <IsleButton variant="tonal" size="sm" @click="copyText(status.lanUrl, 'IP 地址')">
+            <template #icon><Copy :size="13" /></template>
+            复制
+          </IsleButton>
+        </div>
+      </div>
+
+      <IsleBanner v-if="error" type="error" compact role="alert">{{ error }}</IsleBanner>
+      <IsleBanner v-if="notice" type="info" compact role="status">{{ notice }}</IsleBanner>
+
+      <div v-if="status" class="smb-add-box">
+        <strong>新增 NAS 共享文件夹</strong>
+        <div v-if="!onlineRoots.length" class="footnote">暂无在线的 NAS 存储盘，请先在 Mac 管理端登记并连接硬盘。</div>
+        <template v-else>
+          <div class="smb-add-row">
+            <AppleSelect
+              :model-value="selectedRootID"
+              :options="rootOptions"
+              aria-label="选择 NAS 存储盘"
               :disabled="busy || !status.remoteManageReady"
-              @change="updateShare(share, { shared: ($event.target as HTMLInputElement).checked })"
+              @update:model-value="(v: string) => { selectedRootID = v; selectedSubpath = ''; }"
             />
-            启用共享
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              :checked="share.readOnly"
+            <AppleSelect
+              :model-value="selectedSubpath"
+              :options="subpathOptions"
+              aria-label="选择共享目录范围"
               :disabled="busy || !status.remoteManageReady"
-              @change="updateShare(share, { readOnly: ($event.target as HTMLInputElement).checked })"
+              @update:model-value="(v: string) => { selectedSubpath = v; }"
             />
-            仅只读
-          </label>
-          <label>
             <input
-              type="checkbox"
-              :checked="share.guestAccess"
+              v-model="customSMBName"
+              maxlength="64"
+              placeholder="自定义共享名称（留空则用文件夹名）"
               :disabled="busy || !status.remoteManageReady"
-              @change="updateShare(share, { guestAccess: ($event.target as HTMLInputElement).checked })"
             />
-            允许访客
-          </label>
-          <label>
-            <input
-              type="checkbox"
-              :checked="share.sealed"
+          </div>
+          <p v-if="selectionExposesPersonal" class="smb-personal-warn">
+            <AlertTriangle :size="14" />
+            注意：共享整块存储根或 Users 目录会使局域网 SMB 用户直接访问成员私人目录，且通过 SMB 写入的文件不计入轻屿配额账本。
+          </p>
+          <div class="smb-add-flags">
+            <label><input v-model="newReadOnly" type="checkbox" :disabled="busy || !status.remoteManageReady" /> 仅只读</label>
+            <label><input v-model="newGuestAccess" type="checkbox" :disabled="busy || !status.remoteManageReady" /> 允许访客访问</label>
+            <label><input v-model="newSealed" type="checkbox" :disabled="busy || !status.remoteManageReady" /> SMB3 传输加密</label>
+            <IsleButton variant="primary" size="sm" :disabled="busy || !status.remoteManageReady" @click="addShare">
+              <template #icon><Plus :size="14" /></template>
+              添加到 SMB 共享
+            </IsleButton>
+          </div>
+        </template>
+      </div>
+
+      <div v-if="status" class="smb-shares-list">
+        <strong>已共享文件夹 ({{ status.shares.length }})</strong>
+        <IsleEmpty v-if="!status.shares.length && !loading" compact description="当前没有配置任何 SMB 共享文件夹。" />
+        <div v-for="share in status.shares" :key="share.recordName" class="smb-share-item">
+          <div class="smb-share-header">
+            <div>
+              <strong class="smb-share-title">
+                <span>{{ share.smbName }}</span>
+                <IsleBadge v-if="share.rootName" variant="neutral" size="sm">NAS · {{ share.rootName }}</IsleBadge>
+                <IsleBadge v-if="!share.pathExists" variant="warning" size="sm">路径离线</IsleBadge>
+              </strong>
+              <small>{{ share.path }}</small>
+              <p v-if="share.exposesPersonalDirs" class="smb-personal-warn">
+                <AlertTriangle :size="13" /> 包含 Users 私人目录：SMB 使用 Mac 账号或访客权限，不受轻屿成员隔离与配额账本限制。
+              </p>
+            </div>
+            <IsleButton
+              variant="danger"
+              size="sm"
               :disabled="busy || !status.remoteManageReady"
-              @change="updateShare(share, { sealed: ($event.target as HTMLInputElement).checked })"
-            />
-            SMB3 加密
-          </label>
+              @click="removeShare(share)"
+            >
+              <template #icon><Trash2 :size="13" /></template>
+              移除共享
+            </IsleButton>
+          </div>
+          <div class="smb-share-toggles">
+            <label>
+              <input
+                type="checkbox"
+                :checked="share.shared"
+                :disabled="busy || !status.remoteManageReady"
+                @change="updateShare(share, { shared: ($event.target as HTMLInputElement).checked })"
+              />
+              启用共享
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                :checked="share.readOnly"
+                :disabled="busy || !status.remoteManageReady"
+                @change="updateShare(share, { readOnly: ($event.target as HTMLInputElement).checked })"
+              />
+              仅只读
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                :checked="share.guestAccess"
+                :disabled="busy || !status.remoteManageReady"
+                @change="updateShare(share, { guestAccess: ($event.target as HTMLInputElement).checked })"
+              />
+              允许访客
+            </label>
+            <label>
+              <input
+                type="checkbox"
+                :checked="share.sealed"
+                :disabled="busy || !status.remoteManageReady"
+                @change="updateShare(share, { sealed: ($event.target as HTMLInputElement).checked })"
+              />
+              SMB3 加密
+            </label>
+          </div>
         </div>
       </div>
     </div>
 
-    <p class="footnote">
-      <ShieldCheck :size="13" /> 移除共享仅取消登记，不删除硬盘文件。首次使用系统账号密码连接需在 macOS「文件共享 → Windows 文件共享」中勾选该账号。
-    </p>
-  </section>
+    <template #footer>
+      <div class="smb-footer-note">
+        <ShieldCheck :size="15" />
+        <span>移除共享仅取消登记，不删除硬盘文件。首次使用系统账号密码连接需在 macOS「文件共享 → Windows 文件共享」中勾选该账号。</span>
+      </div>
+    </template>
+  </IsleCard>
 </template>
 
 <style scoped>
-.smb-panel{display:grid;gap:14px}
-.smb-panel .account-heading h3{display:flex;align-items:center;gap:9px;margin:0}
-.smb-panel .account-heading p{margin:6px 0 0;font-size:12px;color:var(--text-secondary)}
-.smb-elevation-banner{display:flex;align-items:center;gap:10px;padding:11px 14px;border-radius:12px;background:color-mix(in srgb,#f59e0b 12%,transparent);border:1px solid color-mix(in srgb,#f59e0b 35%,transparent);font-size:12px;color:var(--text-primary)}
-.smb-service-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:12px 0;border-bottom:1px solid var(--stroke-subtle);flex-wrap:wrap}
-.smb-service-info strong{display:block;font-size:13px}
-.smb-service-info small{font-size:11px;color:var(--text-secondary)}
-.smb-badge-on{color:#16a34a;font-weight:700}
-.smb-badge-off{color:var(--text-secondary)}
-.smb-addresses{display:flex;gap:10px;flex-wrap:wrap}
-.smb-addr-pill{display:inline-flex;align-items:center;gap:8px;padding:5px 10px;border-radius:8px;border:1px solid var(--stroke-subtle);background:var(--surface-base);font-size:12px;max-width:100%}
-.smb-addr-pill code{font-family:ui-monospace,monospace;overflow-wrap:anywhere}
-.smb-addr-pill button{display:inline-flex;align-items:center;gap:4px;border:none;background:transparent;color:var(--accent-primary);font-size:12px;font-weight:600;cursor:pointer}
-.smb-add-box{display:grid;gap:10px;padding:14px;border-radius:var(--radius-sm);border:1px solid var(--stroke-subtle);background:var(--surface-base)}
-.smb-add-row{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,180px),1fr));gap:10px;align-items:center}
-.smb-add-row input{border:1px solid var(--stroke-subtle);border-radius:9px;padding:8px 12px;background:var(--surface-raised);color:var(--text-primary);font-size:13px}
-.smb-add-flags{display:flex;align-items:center;gap:14px;flex-wrap:wrap;font-size:12px}
-.smb-add-flags label,.smb-share-toggles label{display:inline-flex;align-items:center;gap:6px;cursor:pointer}
-.smb-add-btn{margin-left:auto;display:inline-flex;align-items:center;gap:6px;border:none;border-radius:9px;padding:7px 14px;background:var(--accent-primary);color:#fff;font-size:12px;font-weight:650;cursor:pointer}
-.smb-add-btn:disabled{opacity:.5;cursor:not-allowed}
-.smb-shares-list{display:grid;gap:2px;margin-top:6px}
-.smb-share-item{display:grid;gap:10px;padding:12px 0;border-bottom:1px solid var(--stroke-subtle)}
-.smb-share-item:last-child{border-bottom:none}
-.smb-share-header{display:flex;align-items:flex-start;justify-content:space-between;gap:10px;flex-wrap:wrap}
-.smb-share-header strong{display:block;font-size:13px}
-.smb-share-header small{font-family:ui-monospace,monospace;font-size:11px;color:var(--text-secondary);overflow-wrap:anywhere}
-.smb-share-toggles{display:flex;align-items:center;gap:16px;flex-wrap:wrap;font-size:12px;color:var(--text-secondary)}
-.smb-personal-warn{display:flex;align-items:center;gap:6px;margin:4px 0 0;font-size:11px;color:#d97706}
+.smb-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.smb-service-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--fluid-card-item-fill);
+  border: 1px solid var(--fluid-card-border);
+  flex-wrap: wrap;
+}
+.smb-service-info strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13.5px;
+}
+.smb-service-info small {
+  display: block;
+  margin-top: 3px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+}
+.smb-addresses {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.smb-addr-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-item-fill);
+  font-size: 12px;
+  max-width: 100%;
+}
+.smb-addr-pill code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  overflow-wrap: anywhere;
+}
+.smb-add-box {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 16px;
+  border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-item-fill);
+}
+.smb-add-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
+  gap: 10px;
+  align-items: center;
+}
+.smb-add-row input {
+  border: 1px solid var(--fluid-card-border);
+  border-radius: 10px;
+  padding: 9px 12px;
+  background: var(--fluid-card-item-bottom);
+  color: var(--text-primary);
+  font-size: 13px;
+}
+.smb-add-flags {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+}
+.smb-add-flags label,
+.smb-share-toggles label {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+}
+.smb-shares-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+}
+.smb-share-item {
+  display: grid;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-item-fill);
+}
+.smb-share-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.smb-share-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 13.5px;
+}
+.smb-share-header small {
+  display: block;
+  margin-top: 3px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 11px;
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.smb-share-toggles {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.smb-personal-warn {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0 0;
+  font-size: 11.5px;
+  color: #d97706;
+}
+.smb-footer-note {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.smb-footer-note svg {
+  flex-shrink: 0;
+  color: var(--accent-primary);
+}
 </style>

@@ -147,18 +147,22 @@ onUnmounted(()=>{disposed=true;generation++;controller.abort()});
         {{ loading ? '正在加载…' : '加载更多上传' }}
       </IsleButton>
     </div>
-    <details class="upload-unknown-details" @toggle="toggleUnknown">
-      <summary>检查无法识别的上传暂存文件</summary>
-      <p>位于 <code>.lightisle-parts</code> 的未识别文件不会自动清理，请在 Mac 访达（⌘⇧. 显示隐藏文件）核对处理。</p>
-      <IsleBanner v-if="unknownError" type="error" compact role="alert">{{ unknownError }}</IsleBanner>
-      <p v-else-if="unknownLoading && !unknownLoaded">正在检查…</p>
-      <IsleEmpty v-else-if="unknownLoaded && !unknownItems.length" compact description="当前未发现无法识别的条目。" />
-      <div v-for="item in unknownItems" :key="item.nameBytes||item.name" class="account-row upload-detail">
-        <span>.lightisle-parts/{{item.name}}</span><small v-if="item.nameBytes">文件名字节（Base64URL）：{{item.nameBytes}}</small>
-      </div>
-      <div style="display: flex; gap: 8px; margin-top: 8px;">
-        <IsleButton v-if="unknownNext" variant="ghost" size="sm" :loading="unknownLoading" @click="loadUnknown(true)">加载更多</IsleButton>
-        <IsleButton variant="ghost" size="sm" :loading="unknownLoading" @click="loadUnknown()">重新检查</IsleButton>
+    <details class="upload-unknown-details apple-disclosure-card" @toggle="toggleUnknown">
+      <summary>
+        <div class="disclosure-title"><span>检查无法识别的上传暂存文件</span></div>
+      </summary>
+      <div class="disclosure-body">
+        <p style="margin-top:0">位于 <code>.lightisle-parts</code> 的未识别文件不会自动清理，请在 Mac 访达（⌘⇧. 显示隐藏文件）核对处理。</p>
+        <IsleBanner v-if="unknownError" type="error" compact role="alert">{{ unknownError }}</IsleBanner>
+        <p v-else-if="unknownLoading && !unknownLoaded" class="footnote">正在检查…</p>
+        <IsleEmpty v-else-if="unknownLoaded && !unknownItems.length" compact description="当前未发现无法识别的条目。" />
+        <div v-for="item in unknownItems" :key="item.nameBytes||item.name" class="account-row upload-detail">
+          <span>.lightisle-parts/{{item.name}}</span><small v-if="item.nameBytes">文件名字节（Base64URL）：{{item.nameBytes}}</small>
+        </div>
+        <div style="display: flex; gap: 8px; margin-top: 8px;">
+          <IsleButton v-if="unknownNext" variant="ghost" size="sm" :loading="unknownLoading" @click="loadUnknown(true)">加载更多</IsleButton>
+          <IsleButton variant="ghost" size="sm" :loading="unknownLoading" @click="loadUnknown()">重新检查</IsleButton>
+        </div>
       </div>
     </details>
     <div class="upload-cleanup-controls">

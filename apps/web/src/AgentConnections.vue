@@ -1,7 +1,13 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
+import { Bot, Copy, Plus, RefreshCw, Trash2 } from "lucide-vue-next";
 import { apiRequest } from "./apiClient.ts";
 import { describeUserFacingError } from "./userFacingError.ts";
+import IsleCard from "./IsleCard.vue";
+import IsleButton from "./IsleButton.vue";
+import IsleBadge from "./IsleBadge.vue";
+import IsleBanner from "./IsleBanner.vue";
+import IsleEmpty from "./IsleEmpty.vue";
 
 interface Connection {
   id: string;
@@ -91,51 +97,201 @@ onMounted(() => void run(load));
 </script>
 
 <template>
-  <section class="account-panel agent-connections" aria-label="Agent 接入">
-    <div class="account-heading">
-      <h3>Agent 接入</h3>
-      <button type="button" class="refresh" :disabled="busy" @click="run(load)">刷新</button>
-    </div>
-    <p>每个连接继承当前账号的目录授权与角色权限（管理员可管理系统配置与成员配额，全部调用实时写入操作审计；磁盘格式化、删除存储根与物理粉碎文件已隔离禁止）。令牌有效期 30 天，可随时撤销。</p>
-    <p v-if="state && !state.enabled" class="footnote">请让管理员在应用中心开启 MCP 服务。</p>
-    <p v-else-if="state && !state.lanEnabled" class="footnote">当前只允许在运行轻屿的 Mac 上连接。其他设备需要管理员开启局域网 MCP。</p>
-    <form v-if="state?.enabled" class="agent-form" @submit.prevent="create">
-      <label>
-        <span>连接名称</span>
-        <input v-model.trim="label" type="text" placeholder="例如 Codex" maxlength="60" required :disabled="busy || !!token" />
-      </label>
-      <label class="agent-write">
-        <input v-model="canWrite" type="checkbox" :disabled="busy || !!token" />
-        <span>允许修改配置和执行操作</span>
-      </label>
-      <button type="submit" class="account-action" :disabled="busy || !!token || !label">创建连接</button>
-    </form>
-    <div v-if="config" class="agent-config">
-      <label for="agent-connection-config">接入配置仅显示这一次。请将它保存到 Agent 的 MCP 配置中。</label>
-      <textarea id="agent-connection-config" ref="setupText" :value="config" rows="6" readonly spellcheck="false" />
-      <div class="agent-actions">
-        <button type="button" class="account-action" @click="copyConfig">复制接入配置</button>
-        <button type="button" class="refresh" @click="token = ''">完成</button>
+  <IsleCard
+    class="agent-connections"
+    aria-label="Agent 接入"
+    title="Agent 接入 (MCP)"
+    subtitle="每个连接继承当前账号的目录授权与角色权限（全部调用实时写入操作审计；磁盘格式化、删除存储根与物理粉碎文件已隔离禁止）。令牌有效期 30 天，可随时撤销。"
+  >
+    <template #icon><Bot :size="18" /></template>
+    <template #actions>
+      <IsleButton variant="glass" size="sm" :loading="busy" @click="run(load)">
+        <template #icon><RefreshCw :size="14" /></template>
+        刷新
+      </IsleButton>
+    </template>
+
+    <div class="agent-body">
+      <IsleBanner
+        v-if="state && !state.enabled"
+        type="info"
+        compact
+        message="请先让管理员在「应用中心」开启 MCP 服务。"
+      />
+      <IsleBanner
+        v-else-if="state && !state.lanEnabled"
+        type="info"
+        compact
+        message="当前仅允许在运行轻屿的 Mac 本机连接；局域网其他设备需管理员开启局域网 MCP。"
+      />
+
+      <form v-if="state?.enabled" class="account-form agent-form" @submit.prevent="create">
+        <div class="agent-form-grid">
+          <label class="agent-name-field">
+            <span>连接名称</span>
+            <input
+              v-model.trim="label"
+              type="text"
+              placeholder="例如：Claude Desktop / Cursor / Codex"
+              maxlength="60"
+              required
+              :disabled="busy || !!token"
+            />
+          </label>
+          <label class="agent-toggle-field">
+            <span>允许修改配置和执行操作（关闭则为只读）</span>
+            <input v-model="canWrite" type="checkbox" :disabled="busy || !!token" />
+          </label>
+        </div>
+        <div class="agent-submit-row">
+          <IsleButton type="submit" variant="primary" size="md" :loading="busy" :disabled="busy || !!token || !label">
+            <template #icon><Plus :size="15" /></template>
+            创建连接令牌
+          </IsleButton>
+        </div>
+      </form>
+
+      <div v-if="config" class="agent-config-card">
+        <label class="agent-config-label" for="agent-connection-config">
+          接入配置（仅显示这一次，请立即复制到 Agent 的 MCP 配置文件中）
+        </label>
+        <textarea
+          id="agent-connection-config"
+          ref="setupText"
+          class="agent-config-textarea"
+          :value="config"
+          rows="6"
+          readonly
+          spellcheck="false"
+        />
+        <div class="agent-actions">
+          <IsleButton variant="primary" size="sm" @click="copyConfig">
+            <template #icon><Copy :size="14" /></template>
+            复制接入配置
+          </IsleButton>
+          <IsleButton variant="glass" size="sm" @click="token = ''">我已保存，关闭</IsleButton>
+        </div>
+      </div>
+
+      <IsleBanner v-if="error" type="error" compact role="alert" :message="error" />
+      <IsleBanner v-if="status" type="success" compact role="status" :message="status" />
+
+      <IsleEmpty
+        v-if="state && !state.connections.length && !config"
+        compact
+        :icon="Bot"
+        title="暂无已授权的 Agent 连接"
+        description="创建连接令牌后，可在支持 MCP 协议的客户端中安全访问你的空间。"
+      />
+
+      <div v-if="state?.connections.length" class="agent-list">
+        <div v-for="connection in state.connections" :key="connection.id" class="account-row">
+          <div class="agent-conn-meta">
+            <div class="agent-conn-title">
+              <strong>{{ connection.label }}</strong>
+              <IsleBadge :variant="connection.canWrite ? 'warning' : 'neutral'" size="sm">
+                {{ connection.canWrite ? "允许操作" : "只读权限" }}
+              </IsleBadge>
+            </div>
+            <small>
+              到期日：{{ new Date(connection.expiresAt * 1000).toLocaleDateString() }} · 连接 ID：<code>{{ connection.id.slice(0, 12) }}</code>
+            </small>
+          </div>
+          <IsleButton variant="danger" size="sm" :disabled="busy" @click="revoke(connection)">
+            <template #icon><Trash2 :size="14" /></template>
+            撤销
+          </IsleButton>
+        </div>
       </div>
     </div>
-    <div v-for="connection in state?.connections" :key="connection.id" class="account-row">
-      <div>
-        <strong>{{ connection.label }}</strong>
-        <small>{{ connection.canWrite ? "允许操作" : "只读" }} · {{ new Date(connection.expiresAt * 1000).toLocaleDateString() }}到期</small>
-        <small>连接 ID {{ connection.id.slice(0, 12) }}</small>
-      </div>
-      <button type="button" class="account-action" :disabled="busy" @click="revoke(connection)">撤销</button>
-    </div>
-    <p v-if="error" role="alert" class="form-error">{{ error }}</p>
-    <p v-if="status" role="status" class="footnote">{{ status }}</p>
-  </section>
+  </IsleCard>
 </template>
 
 <style scoped>
-.agent-connections { margin-bottom: 20px; }
-.agent-form, .agent-config { display: grid; gap: 10px; margin: 12px 0; }
-.agent-form > label:first-child { display: grid; gap: 4px; }
-.agent-form > button { justify-self: start; }
-.agent-write, .agent-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-.agent-config textarea { width: 100%; resize: vertical; font-family: ui-monospace, monospace; }
+.agent-body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.agent-form {
+  padding: 16px;
+  border-radius: 16px;
+  background: var(--fluid-card-item-fill);
+  border: 1px solid var(--fluid-card-border);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.agent-form-grid {
+  display: grid;
+  grid-template-columns: minmax(220px, 1.2fr) minmax(240px, 1fr);
+  gap: 14px;
+  align-items: end;
+}
+@media (max-width: 720px) {
+  .agent-form-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.agent-toggle-field {
+  min-height: 44px;
+  box-sizing: border-box;
+}
+.agent-submit-row {
+  display: flex;
+  justify-content: flex-start;
+}
+.agent-config-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 16px;
+  border-radius: 14px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 35%, transparent);
+  background: color-mix(in srgb, var(--accent-primary) 7%, transparent);
+}
+.agent-config-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+.agent-config-textarea {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-fill);
+  color: var(--text-primary);
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.agent-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.agent-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.agent-list .account-row {
+  margin: 0;
+}
+.agent-conn-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+.agent-conn-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
 </style>

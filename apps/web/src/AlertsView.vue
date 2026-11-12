@@ -1,113 +1,156 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from "vue";
 import { AlertTriangle, CheckCircle2, RefreshCw } from "lucide-vue-next";
+import IsleCard from "./IsleCard.vue";
 import IsleButton from "./IsleButton.vue";
 import IsleBadge from "./IsleBadge.vue";
 import IsleBanner from "./IsleBanner.vue";
 import IsleEmpty from "./IsleEmpty.vue";
 import { createLatestRequestGate } from "./latestRequestGate.ts";
 import { rootApiPath } from "./rootApi.ts";
-import {describeUserFacingError} from "./userFacingError.ts";
-import {apiErrorFromResponse} from "./apiFailure.ts";
-type Alert={code:string;severity:"warning"|"critical";message:string;active:boolean;acknowledged:boolean;firstSeen:number;lastSeen:number};
-const props=defineProps<{rootId?:string;rootGeneration?:number}>();
-const alerts=ref<Alert[]>([]);
-const loading=ref(false),error=ref(""),history=ref(false),busy=ref("");
-let timer:number|undefined,disposed=false;
-const alertRequests=createLatestRequestGate();
-function apiPath(path:string){return rootApiPath(props.rootId,path)}
-async function load(force=false){
- if(disposed||loading.value&&!force)return;
- const request=alertRequests.begin();
- const rootID=props.rootId,rootGeneration=props.rootGeneration??0;
- loading.value=true;error.value="";
- try{
-  const headers=new Headers();if(rootID)headers.set("X-LightIsle-Root-Generation",String(rootGeneration));
-  const response=await fetch(apiPath("/api/v2/alerts")+(history.value?"?history=1":""),{credentials:"same-origin",cache:"no-store",signal:request.signal,headers});
-  if(!response.ok){
-   const failure=await response.json().catch(()=>({})) as {error?:string};
-   if(rootID&&response.status===409&&failure.error==="root_generation_changed")window.dispatchEvent(new Event("lightisle-root-generation-changed"));
-   throw apiErrorFromResponse(response,failure);
+import { describeUserFacingError } from "./userFacingError.ts";
+import { apiErrorFromResponse } from "./apiFailure.ts";
+
+type Alert = { code: string; severity: "warning" | "critical"; message: string; active: boolean; acknowledged: boolean; firstSeen: number; lastSeen: number };
+const props = defineProps<{ rootId?: string; rootGeneration?: number }>();
+const alerts = ref<Alert[]>([]);
+const loading = ref(false), error = ref(""), history = ref(false), busy = ref("");
+let timer: number | undefined, disposed = false;
+const alertRequests = createLatestRequestGate();
+
+function apiPath(path: string) { return rootApiPath(props.rootId, path); }
+
+async function load(force = false) {
+  if (disposed || loading.value && !force) return;
+  const request = alertRequests.begin();
+  const rootID = props.rootId, rootGeneration = props.rootGeneration ?? 0;
+  loading.value = true; error.value = "";
+  try {
+    const headers = new Headers();
+    if (rootID) headers.set("X-LightIsle-Root-Generation", String(rootGeneration));
+    const response = await fetch(apiPath("/api/v2/alerts") + (history.value ? "?history=1" : ""), { credentials: "same-origin", cache: "no-store", signal: request.signal, headers });
+    if (!response.ok) {
+      const failure = await response.json().catch(() => ({})) as { error?: string };
+      if (rootID && response.status === 409 && failure.error === "root_generation_changed") window.dispatchEvent(new Event("lightisle-root-generation-changed"));
+      throw apiErrorFromResponse(response, failure);
+    }
+    const result = await response.json() as { alerts: Alert[] };
+    if (!disposed && request.isCurrent() && rootID === props.rootId && rootGeneration === (props.rootGeneration ?? 0)) alerts.value = result.alerts;
+  } catch (e) {
+    if (!disposed && request.isCurrent() && !(e instanceof Error && e.name === "AbortError")) error.value = "无法获取异常通知：" + describeUserFacingError(e);
+  } finally {
+    if (request.isCurrent()) loading.value = false;
   }
-  const result=await response.json() as {alerts:Alert[]};
-  if(!disposed&&request.isCurrent()&&rootID===props.rootId&&rootGeneration===(props.rootGeneration??0))alerts.value=result.alerts;
- }catch(e){if(!disposed&&request.isCurrent()&&!(e instanceof Error&&e.name==="AbortError"))error.value="无法获取异常通知："+describeUserFacingError(e)}
- finally{if(request.isCurrent())loading.value=false}
 }
-async function acknowledge(alert:Alert){
- if(busy.value||disposed)return;
- const rootID=props.rootId,rootGeneration=props.rootGeneration??0;
- busy.value=alert.code;
- try{
-  const headers=new Headers({"X-LightIsle-Request":"1"});if(rootID)headers.set("X-LightIsle-Root-Generation",String(rootGeneration));
-  const response=await fetch(apiPath("/api/v2/alerts/"+encodeURIComponent(alert.code)+"/acknowledge"),{
-   method:"POST",credentials:"same-origin",headers,
-  });
-  if(!response.ok){
-   const failure=await response.json().catch(()=>({})) as {error?:string};
-   if(rootID&&response.status===409&&failure.error==="root_generation_changed")window.dispatchEvent(new Event("lightisle-root-generation-changed"));
-   throw apiErrorFromResponse(response,failure);
+
+async function acknowledge(alert: Alert) {
+  if (busy.value || disposed) return;
+  const rootID = props.rootId, rootGeneration = props.rootGeneration ?? 0;
+  busy.value = alert.code;
+  try {
+    const headers = new Headers({ "X-LightIsle-Request": "1" });
+    if (rootID) headers.set("X-LightIsle-Root-Generation", String(rootGeneration));
+    const response = await fetch(apiPath("/api/v2/alerts/" + encodeURIComponent(alert.code) + "/acknowledge"), {
+      method: "POST", credentials: "same-origin", headers,
+    });
+    if (!response.ok) {
+      const failure = await response.json().catch(() => ({})) as { error?: string };
+      if (rootID && response.status === 409 && failure.error === "root_generation_changed") window.dispatchEvent(new Event("lightisle-root-generation-changed"));
+      throw apiErrorFromResponse(response, failure);
+    }
+    if (rootID !== props.rootId || rootGeneration !== (props.rootGeneration ?? 0) || disposed) return;
+    await load(true);
+  } catch (e) {
+    if (!disposed) error.value = "确认通知失败：" + describeUserFacingError(e);
+  } finally {
+    if (!disposed) busy.value = "";
   }
-  if(rootID!==props.rootId||rootGeneration!==(props.rootGeneration??0)||disposed)return;
-  await load(true);
- }catch(e){if(!disposed)error.value="确认通知失败："+describeUserFacingError(e)}
- finally{if(!disposed)busy.value=""}
 }
-function toggleHistory(){history.value=!history.value;void load(true)}
-onMounted(()=>{disposed=false;void load();timer=window.setInterval(()=>void load(),60000)});
-onUnmounted(()=>{disposed=true;if(timer)clearInterval(timer);alertRequests.cancel()});
+
+function toggleHistory() { history.value = !history.value; void load(true); }
+onMounted(() => { disposed = false; void load(); timer = window.setInterval(() => void load(), 60000); });
+onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); alertRequests.cancel(); });
 </script>
 
 <template>
-  <section class="account-panel alert-center" aria-label="存储和任务异常通知">
-    <div class="account-heading">
-      <h3><AlertTriangle :size="18" aria-hidden="true"/> 存储与任务通知</h3>
+  <IsleCard
+    class="alert-center"
+    aria-label="存储和任务异常通知"
+    title="存储与任务通知"
+    subtitle="监测存储离线、空间不足、备份与媒体扫描异常；确认知晓不会掩盖实际故障。"
+  >
+    <template #icon><AlertTriangle :size="18" aria-hidden="true" /></template>
+    <template #actions>
       <div class="alert-actions">
-        <IsleButton variant="ghost" size="sm" @click="toggleHistory">
+        <IsleButton variant="glass" size="sm" @click="toggleHistory">
           {{ history ? "仅看未恢复" : "查看历史" }}
         </IsleButton>
-        <IsleButton variant="ghost" size="sm" :loading="loading" @click="load()">
-          <template #icon><RefreshCw :size="14" /></template> 刷新
+        <IsleButton variant="glass" size="sm" :loading="loading" @click="load()">
+          <template #icon><RefreshCw :size="14" /></template>
+          刷新
+        </IsleButton>
+      </div>
+    </template>
+
+    <div class="alert-body">
+      <IsleBanner v-if="error" type="error" compact role="alert">{{ error }}</IsleBanner>
+      <IsleEmpty v-if="!alerts.length && !loading && !error" compact :description="'目前没有' + (history ? '历史' : '未恢复的') + '异常记录。'" />
+      <div v-for="alert in alerts" :key="alert.code" class="account-row alert-item">
+        <div>
+          <strong>
+            <IsleBadge
+              :variant="alert.severity === 'critical' ? 'danger' : alert.active ? 'warning' : 'online'"
+              size="sm"
+            >
+              {{ alert.severity === 'critical' ? '严重' : alert.active ? '警告' : '恢复' }}
+            </IsleBadge>
+            <AlertTriangle v-if="alert.active && !alert.acknowledged" :size="15" aria-hidden="true" />
+            <CheckCircle2 v-else :size="15" aria-hidden="true" />
+            {{ alert.message }}
+          </strong>
+          <small>{{ alert.active ? alert.acknowledged ? "已确认，异常仍存在" : "待确认" : "已恢复" }} · 发现于 {{ new Date(alert.firstSeen * 1000).toLocaleString("zh-CN") }}</small>
+        </div>
+        <IsleButton
+          v-if="alert.active && !alert.acknowledged"
+          variant="tonal"
+          size="sm"
+          :loading="busy === alert.code"
+          :disabled="!!busy"
+          @click="acknowledge(alert)"
+        >
+          确认已知晓
         </IsleButton>
       </div>
     </div>
-    <p>监测存储离线、空间不足、备份与媒体扫描异常；确认知晓不会掩盖实际故障。</p>
-    <IsleBanner v-if="error" type="error" compact role="alert">{{ error }}</IsleBanner>
-    <IsleEmpty v-if="!alerts.length && !loading && !error" compact :description="'目前没有' + (history ? '历史' : '未恢复的') + '异常记录。'" />
-    <div v-for="alert in alerts" :key="alert.code" class="account-row alert-item">
-      <div>
-        <strong>
-          <IsleBadge
-            :variant="alert.severity === 'critical' ? 'danger' : alert.active ? 'warning' : 'online'"
-            size="sm"
-          >
-            {{ alert.severity === 'critical' ? '严重' : alert.active ? '警告' : '恢复' }}
-          </IsleBadge>
-          <AlertTriangle v-if="alert.active && !alert.acknowledged" :size="15" aria-hidden="true"/>
-          <CheckCircle2 v-else :size="15" aria-hidden="true"/>
-          {{ alert.message }}
-        </strong>
-        <small>{{ alert.active ? alert.acknowledged ? "已确认，异常仍存在" : "待确认" : "已恢复" }} · 发现于 {{ new Date(alert.firstSeen * 1000).toLocaleString("zh-CN") }}</small>
-      </div>
-      <IsleButton
-        v-if="alert.active && !alert.acknowledged"
-        variant="tonal"
-        size="sm"
-        :loading="busy === alert.code"
-        :disabled="!!busy"
-        @click="acknowledge(alert)"
-      >
-        确认已知晓
-      </IsleButton>
-    </div>
-  </section>
+  </IsleCard>
 </template>
 
 <style scoped>
-.alert-center{margin-bottom:20px}
-.alert-center .account-heading h3{display:flex;align-items:center;gap:8px}
-.alert-center p{color:var(--text-secondary);font-size:12px;line-height:1.5}
-.alert-item strong{display:flex;align-items:center;gap:6px;font-size:13px;flex-wrap:wrap}
-.alert-item small{display:block;margin-top:6px;color:var(--text-secondary);font-size:11px}
-.alert-actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.alert-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.alert-body .account-row {
+  margin: 0;
+}
+.alert-item strong {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  flex-wrap: wrap;
+}
+.alert-item small {
+  display: block;
+  margin-top: 6px;
+  color: var(--text-secondary);
+  font-size: 11px;
+}
+.alert-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
 </style>
