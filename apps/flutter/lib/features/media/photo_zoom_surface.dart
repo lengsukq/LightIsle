@@ -16,6 +16,7 @@ class PhotoZoomSurface extends StatefulWidget {
     this.onZoomChanged,
     this.onDragProgressChanged,
     this.active = true,
+    this.resetZoomNonce = 0,
     this.allowHorizontalPageSwipe = false,
     this.onSwipeDown,
     this.onSwipeUp,
@@ -27,6 +28,7 @@ class PhotoZoomSurface extends StatefulWidget {
   final ValueChanged<bool>? onZoomChanged;
   final ValueChanged<double>? onDragProgressChanged;
   final bool active;
+  final int resetZoomNonce;
 
   /// Shares horizontal drags with the gallery while preserving pan at zoom.
   final bool allowHorizontalPageSwipe;
@@ -234,6 +236,18 @@ class _PhotoZoomSurfaceState extends State<PhotoZoomSurface> {
       _zoomed = false;
       _resetDrag();
       _controller.reset();
+    } else if (oldWidget.resetZoomNonce != widget.resetZoomNonce && _zoomed) {
+      _singleTapTimer?.cancel();
+      _singleTapTimer = null;
+      _resetDrag();
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _controller.updateMultiple(scale: 1.0, position: Offset.zero);
+        if (_zoomed) {
+          _zoomed = false;
+          widget.onZoomChanged?.call(false);
+        }
+      });
     }
   }
 

@@ -1,3 +1,5 @@
+export 'cinema_subtitle_parser.dart';
+
 part 'cinema_models.dart';
 
 typedef MediaJson = Map<String, dynamic>;

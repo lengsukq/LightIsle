@@ -278,7 +278,7 @@ void main() {
   );
 
   testWidgets(
-    'createPublicFileShare and showExternalPlayerLaunchDialog hit /api/v2/file-shares with hours instead of /api/v2/shares',
+    'createPublicFileShare and showCinemaExternalPlayerDialog hit /api/v2/file-shares with hours instead of /api/v2/shares',
     (tester) async {
       final api = _NoFfmpegCinemaApi();
       addTearDown(api.close);
@@ -309,7 +309,7 @@ void main() {
           home: Builder(
             builder: (context) => Scaffold(
               body: ElevatedButton(
-                onPressed: () => showExternalPlayerLaunchDialog(
+                onPressed: () => showCinemaExternalPlayerDialog(
                   context,
                   api: api,
                   film: film,

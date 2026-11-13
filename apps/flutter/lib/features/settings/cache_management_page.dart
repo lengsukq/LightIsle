@@ -63,7 +63,9 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
           offlinePhotoBytes += item.size;
         }
       } catch (error) {
-        debugPrint('CacheManagementPage: offline photo stats unavailable: $error');
+        debugPrint(
+          'CacheManagementPage: offline photo stats unavailable: $error',
+        );
       }
       try {
         final videos = await OfflineVideoStore(
@@ -75,7 +77,9 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
           offlineVideoBytes += item.size;
         }
       } catch (error) {
-        debugPrint('CacheManagementPage: offline video stats unavailable: $error');
+        debugPrint(
+          'CacheManagementPage: offline video stats unavailable: $error',
+        );
       }
     }
 
@@ -90,7 +94,9 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
     try {
       serverStatus = await widget.api.get('/api/v2/cache/status');
     } catch (error) {
-      debugPrint('CacheManagementPage: server cache status unavailable: $error');
+      debugPrint(
+        'CacheManagementPage: server cache status unavailable: $error',
+      );
     }
 
     if (!mounted) return;
@@ -228,82 +234,32 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
             ],
           ),
           const SizedBox(height: 14),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(999),
-            child: SizedBox(
-              height: 10,
-              child: totalAll <= 0
-                  ? ColoredBox(
-                      color: scheme.surfaceContainerHighest,
-                      child: const SizedBox.expand(),
-                    )
-                  : Row(
-                      children: [
-                        for (final cat in IsleCacheCategory.values)
-                          if ((report.categories[cat]?.effectiveBytes ?? 0) > 0)
-                            Expanded(
-                              flex:
-                                  ((report.categories[cat]!.effectiveBytes *
-                                              1000) ~/
-                                          totalAll)
-                                      .clamp(15, 1000),
-                              child: ColoredBox(color: _categoryColor(cat)),
-                            ),
-                        if (report.totalOfflineBytes > 0)
-                          Expanded(
-                            flex:
-                                ((report.totalOfflineBytes * 1000) ~/ totalAll)
-                                    .clamp(15, 1000),
-                            child: const ColoredBox(color: Color(0xFF64748B)),
-                          ),
-                      ],
-                    ),
-            ),
-          ),
-          const SizedBox(height: 12),
-          Wrap(
-            spacing: 14,
-            runSpacing: 6,
-            children: [
+          IsleSegmentedBar(
+            height: 10,
+            showPercentInLegend: true,
+            legendGap: 10,
+            legendSpacing: 14,
+            legendRunSpacing: 6,
+            segments: [
               for (final cat in IsleCacheCategory.values)
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 8,
-                      height: 8,
-                      decoration: BoxDecoration(
-                        color: _categoryColor(cat),
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 5),
-                    Text(
-                      '${cat.label} ${formatBytes(report.categories[cat]?.effectiveBytes ?? 0)}',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ],
+                IsleChartSegment(
+                  label: cat.label,
+                  value: (report.categories[cat]?.effectiveBytes ?? 0)
+                      .toDouble(),
+                  color: _categoryColor(cat),
+                  detail: formatBytes(
+                    report.categories[cat]?.effectiveBytes ?? 0,
+                  ),
                 ),
               if (report.totalOfflineBytes > 0)
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Container(
-                      width: 8,
-                      height: 8,
-                      decoration: const BoxDecoration(
-                        color: Color(0xFF64748B),
-                        shape: BoxShape.circle,
-                      ),
-                    ),
-                    const SizedBox(width: 5),
-                    Text(
-                      '离线原件 ${formatBytes(report.totalOfflineBytes)}',
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                  ],
+                IsleChartSegment(
+                  label: '离线原件',
+                  value: report.totalOfflineBytes.toDouble(),
+                  color: const Color(0xFF64748B),
+                  detail: formatBytes(report.totalOfflineBytes),
                 ),
             ],
+            semanticsLabel: '本机缓存分类占用，总计 ${formatBytes(totalAll)}',
           ),
         ],
       ),
@@ -488,7 +444,7 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
                   ? null
                   : () async {
                       await Navigator.of(context).push(
-                        MaterialPageRoute<void>(
+                        buildIslePageRoute<void>(
                           builder: (_) => OfflinePhotosPage(
                             api: widget.api,
                             accountId: widget.accountId,
@@ -517,7 +473,7 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
                   ? null
                   : () async {
                       await Navigator.of(context).push(
-                        MaterialPageRoute<void>(
+                        buildIslePageRoute<void>(
                           builder: (_) => OfflineVideosPage(
                             api: widget.api,
                             accountName: widget.accountId,
@@ -549,6 +505,12 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
     final tileBytes = (tiles['usedBytes'] as num?)?.toInt() ?? 0;
     final tileMax = (tiles['maxBytes'] as num?)?.toInt() ?? 0;
     final tileCount = (tiles['entryCount'] as num?)?.toInt() ?? 0;
+    final totalServerMax = thumbMax + tileMax;
+    final serverUsedTotal = thumbBytes + tileBytes;
+    final serverBudgetLeft = (totalServerMax - serverUsedTotal).clamp(
+      0,
+      1 << 60,
+    );
 
     return IsleSurface(
       child: Column(
@@ -565,13 +527,55 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
             style: Theme.of(context).textTheme.bodySmall
                 ?.copyWith(color: scheme.onSurfaceVariant),
           ),
+          if (serverUsedTotal > 0 || totalServerMax > 0) ...[
+            const SizedBox(height: 12),
+            IsleSegmentedBar(
+              height: 8,
+              showPercentInLegend: serverUsedTotal > 0,
+              legendGap: 6,
+              legendSpacing: 12,
+              legendRunSpacing: 4,
+              segments: [
+                IsleChartSegment(
+                  label: '缩略图与海报',
+                  value: thumbBytes.toDouble(),
+                  color: const Color(0xFF007AFF),
+                  detail: formatBytes(thumbBytes),
+                ),
+                IsleChartSegment(
+                  label: '地图瓦片代理',
+                  value: tileBytes.toDouble(),
+                  color: const Color(0xFF10B981),
+                  detail: formatBytes(tileBytes),
+                ),
+                if (serverBudgetLeft > 0)
+                  IsleChartSegment(
+                    label: '剩余配额',
+                    value: serverBudgetLeft.toDouble(),
+                    color: scheme.surfaceContainerHighest,
+                    detail: formatBytes(serverBudgetLeft),
+                  ),
+              ],
+            ),
+          ],
           const SizedBox(height: 10),
           ListTile(
             contentPadding: EdgeInsets.zero,
-            leading: const Icon(
-              Icons.burst_mode_rounded,
-              color: Color(0xFF007AFF),
-            ),
+            leading: thumbMax > 0
+                ? IsleDonutGauge(
+                    fraction: (thumbBytes / thumbMax).clamp(0.0, 1.0),
+                    color: const Color(0xFF007AFF),
+                    size: 36,
+                    strokeWidth: 4,
+                    centerText:
+                        '${((thumbBytes / thumbMax).clamp(0.0, 1.0) * 100).round()}%',
+                    centerStyle: Theme.of(context).textTheme.labelSmall
+                        ?.copyWith(fontSize: 9, fontWeight: FontWeight.w700),
+                  )
+                : const Icon(
+                    Icons.burst_mode_rounded,
+                    color: Color(0xFF007AFF),
+                  ),
             title: const Text('服务端缩略图与海报磁盘缓存'),
             subtitle: Text(
               '已用 ${formatBytes(thumbBytes)}${thumbMax > 0 ? ' / 上限 ${formatBytes(thumbMax)}' : ''} · $thumbCount 项',
@@ -591,7 +595,18 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
           const Divider(height: 8),
           ListTile(
             contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.public_rounded, color: Color(0xFF10B981)),
+            leading: tileMax > 0
+                ? IsleDonutGauge(
+                    fraction: (tileBytes / tileMax).clamp(0.0, 1.0),
+                    color: const Color(0xFF10B981),
+                    size: 36,
+                    strokeWidth: 4,
+                    centerText:
+                        '${((tileBytes / tileMax).clamp(0.0, 1.0) * 100).round()}%',
+                    centerStyle: Theme.of(context).textTheme.labelSmall
+                        ?.copyWith(fontSize: 9, fontWeight: FontWeight.w700),
+                  )
+                : const Icon(Icons.public_rounded, color: Color(0xFF10B981)),
             title: const Text('服务端天地图瓦片代理缓存'),
             subtitle: Text(
               '已用 ${formatBytes(tileBytes)}${tileMax > 0 ? ' / 上限 ${formatBytes(tileMax)}' : ''} · $tileCount 张瓦片',

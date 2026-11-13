@@ -45,10 +45,11 @@ class _PhotoPersonSharesCardState extends State<PhotoPersonSharesCard> {
   @override
   void didUpdateWidget(covariant PhotoPersonSharesCard oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.persons.length != widget.persons.length &&
-        _selectedPersonId == null &&
-        widget.persons.isNotEmpty) {
-      _selectedPersonId = widget.persons.first.id;
+    final validIds = {for (final p in widget.persons) p.id};
+    if (!validIds.contains(_selectedPersonId)) {
+      _selectedPersonId = widget.persons.isNotEmpty
+          ? widget.persons.first.id
+          : null;
     }
   }
 
@@ -68,15 +69,30 @@ class _PhotoPersonSharesCardState extends State<PhotoPersonSharesCard> {
       if (!mounted) return;
       final shares = objectList(res['shares']);
       final members = objectList(res['members']);
+      final validPersons = {for (final p in widget.persons) p.id};
+      final validMemberIds = <int>{};
+      final dedupedMembers = <Map<String, dynamic>>[];
+      for (final m in members) {
+        final rawId = m['id'];
+        if (rawId is num) {
+          final id = rawId.toInt();
+          if (id > 0 && validMemberIds.add(id)) {
+            dedupedMembers.add(m);
+          }
+        }
+      }
       setState(() {
         _shares = shares;
-        _members = members;
-        if (_selectedPersonId == null && widget.persons.isNotEmpty) {
-          _selectedPersonId = widget.persons.first.id;
+        _members = dedupedMembers;
+        if (!validPersons.contains(_selectedPersonId)) {
+          _selectedPersonId = widget.persons.isNotEmpty
+              ? widget.persons.first.id
+              : null;
         }
-        if (_selectedMemberId == null && members.isNotEmpty) {
-          final rawId = members.first['id'];
-          _selectedMemberId = rawId is num ? rawId.toInt() : null;
+        if (!validMemberIds.contains(_selectedMemberId)) {
+          _selectedMemberId = dedupedMembers.isNotEmpty
+              ? (dedupedMembers.first['id'] as num).toInt()
+              : null;
         }
         _loading = false;
       });
@@ -167,6 +183,17 @@ class _PhotoPersonSharesCardState extends State<PhotoPersonSharesCard> {
     final outgoing = _shares
         .where((s) => s['direction'] == 'outgoing')
         .toList(growable: false);
+    final personIds = {for (final p in widget.persons) p.id};
+    final activePersonId = personIds.contains(_selectedPersonId)
+        ? _selectedPersonId
+        : (widget.persons.isNotEmpty ? widget.persons.first.id : null);
+    final memberIds = {
+      for (final m in _members)
+        if (m['id'] is num) (m['id'] as num).toInt(),
+    };
+    final activeMemberId = memberIds.contains(_selectedMemberId)
+        ? _selectedMemberId
+        : (memberIds.isNotEmpty ? memberIds.first : null);
 
     return IsleSurface(
       radius: IsleRadius.card,
@@ -181,9 +208,8 @@ class _PhotoPersonSharesCardState extends State<PhotoPersonSharesCard> {
               Expanded(
                 child: Text(
                   '宝宝 / 家人自动只读共享视图',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+                  style: Theme.of(context).textTheme.titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w700),
                 ),
               ),
               IconButton(
@@ -203,10 +229,7 @@ class _PhotoPersonSharesCardState extends State<PhotoPersonSharesCard> {
             const SizedBox(height: 8),
             Notice(_error!, error: true),
           ],
-          if (_notice != null) ...[
-            const SizedBox(height: 8),
-            Notice(_notice!),
-          ],
+          if (_notice != null) ...[const SizedBox(height: 8), Notice(_notice!)],
           if (widget.persons.isNotEmpty && _members.isNotEmpty) ...[
             const SizedBox(height: 12),
             Wrap(
@@ -216,49 +239,55 @@ class _PhotoPersonSharesCardState extends State<PhotoPersonSharesCard> {
               children: [
                 SizedBox(
                   width: 190,
-                  child: DropdownButtonFormField<int>(
-                    initialValue: _selectedPersonId,
-                    isExpanded: true,
-                    decoration: const InputDecoration(
-                      labelText: '选择人物',
-                      isDense: true,
-                      border: OutlineInputBorder(),
-                    ),
-                    items: [
-                      for (final p in widget.persons)
-                        DropdownMenuItem(
-                          value: p.id,
-                          child: Text(
-                            '${p.displayName} (${p.photoCount})',
-                            overflow: TextOverflow.ellipsis,
+                  child: KeyedSubtree(
+                    key: ValueKey('personSharePerson_$activePersonId'),
+                    child: DropdownButtonFormField<int>(
+                      initialValue: activePersonId,
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        labelText: '选择人物',
+                        isDense: true,
+                        border: OutlineInputBorder(),
+                      ),
+                      items: [
+                        for (final p in widget.persons)
+                          DropdownMenuItem(
+                            value: p.id,
+                            child: Text(
+                              '${p.displayName} (${p.photoCount})',
+                              overflow: TextOverflow.ellipsis,
+                            ),
                           ),
-                        ),
-                    ],
-                    onChanged: (v) => setState(() => _selectedPersonId = v),
+                      ],
+                      onChanged: (v) => setState(() => _selectedPersonId = v),
+                    ),
                   ),
                 ),
                 SizedBox(
                   width: 165,
-                  child: DropdownButtonFormField<int>(
-                    initialValue: _selectedMemberId,
-                    isExpanded: true,
-                    decoration: const InputDecoration(
-                      labelText: '共享给成员',
-                      isDense: true,
-                      border: OutlineInputBorder(),
-                    ),
-                    items: [
-                      for (final m in _members)
-                        if (m['id'] is num)
-                          DropdownMenuItem(
-                            value: (m['id'] as num).toInt(),
-                            child: Text(
-                              m['username']?.toString() ?? '',
-                              overflow: TextOverflow.ellipsis,
+                  child: KeyedSubtree(
+                    key: ValueKey('personShareMember_$activeMemberId'),
+                    child: DropdownButtonFormField<int>(
+                      initialValue: activeMemberId,
+                      isExpanded: true,
+                      decoration: const InputDecoration(
+                        labelText: '共享给成员',
+                        isDense: true,
+                        border: OutlineInputBorder(),
+                      ),
+                      items: [
+                        for (final m in _members)
+                          if (m['id'] is num)
+                            DropdownMenuItem(
+                              value: (m['id'] as num).toInt(),
+                              child: Text(
+                                m['username']?.toString() ?? '',
+                                overflow: TextOverflow.ellipsis,
+                              ),
                             ),
-                          ),
-                    ],
-                    onChanged: (v) => setState(() => _selectedMemberId = v),
+                      ],
+                      onChanged: (v) => setState(() => _selectedMemberId = v),
+                    ),
                   ),
                 ),
                 SizedBox(
@@ -281,6 +310,13 @@ class _PhotoPersonSharesCardState extends State<PhotoPersonSharesCard> {
                 ),
               ],
             ),
+          ],
+          if (_loading && _shares.isEmpty) ...[
+            const SizedBox(height: 12),
+            const IsleLoadingState(compact: true, label: '正在加载人物共享…'),
+          ] else if (_loading) ...[
+            const SizedBox(height: 8),
+            const LinearProgressIndicator(),
           ],
           if (incoming.isNotEmpty) ...[
             const SizedBox(height: 14),
@@ -405,12 +441,12 @@ class _SharedPersonAssetsSheetState extends State<_SharedPersonAssetsSheet> {
                 Expanded(
                   child: Text(
                     widget.title,
-                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
-                    ),
+                    style: Theme.of(context).textTheme.titleMedium
+                        ?.copyWith(fontWeight: FontWeight.w700),
                   ),
                 ),
                 IconButton(
+                  tooltip: '关闭人物照片预览',
                   onPressed: () => Navigator.pop(context),
                   icon: const Icon(Icons.close_rounded),
                 ),
@@ -422,9 +458,7 @@ class _SharedPersonAssetsSheetState extends State<_SharedPersonAssetsSheet> {
             else if (_error != null)
               Notice(_error!, error: true, onRetry: _load)
             else if (_assets.isEmpty)
-              const Expanded(
-                child: Center(child: Text('当前时间范围内暂无已识别照片。')),
-              )
+              const Expanded(child: Center(child: Text('当前时间范围内暂无已识别照片。')))
             else
               Expanded(
                 child: GridView.builder(

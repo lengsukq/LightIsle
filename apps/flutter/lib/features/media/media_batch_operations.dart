@@ -3,11 +3,6 @@ import '../files/file_export_service.dart';
 
 typedef MediaBatchItem = ({String path, String name, int size});
 typedef MediaShareItem = ({String path, String label});
-typedef SaveMediaOriginal = Future<String> Function({
-  required String path,
-  required String name,
-  required String directory,
-});
 
 /// Result of a sequential batch. A change of account/root stops new actions;
 /// already completed operations are explicitly counted rather than hidden.
@@ -141,7 +136,12 @@ class MediaBatchOperations {
     required List<MediaBatchItem> items,
     required String directory,
     required bool Function() stillCurrent,
-    SaveMediaOriginal? saveOriginal,
+    Future<String> Function({
+      required String path,
+      required String name,
+      required String directory,
+    })?
+    saveOriginal,
   }) async {
     if (directory.isEmpty ||
         items.isEmpty ||

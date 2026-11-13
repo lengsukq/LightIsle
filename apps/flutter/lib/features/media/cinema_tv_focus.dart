@@ -52,6 +52,34 @@ class _CinemaTvFocusableState extends State<CinemaTvFocusable> {
   @override
   Widget build(BuildContext context) {
     final primary = Theme.of(context).colorScheme.primary;
+    final reducedMotion = IsleMotion.reducedMotion(context);
+    final boxShadow = _focused
+        ? [
+            BoxShadow(
+              color: primary.withValues(alpha: 0.42),
+              blurRadius: 16,
+              spreadRadius: 1.5,
+            ),
+          ]
+        : const <BoxShadow>[];
+
+    final childCard = RepaintBoundary(
+      child: AnimatedContainer(
+        duration: reducedMotion ? Duration.zero : IsleMotion.fast,
+        decoration: BoxDecoration(
+          borderRadius: widget.borderRadius,
+          boxShadow: boxShadow,
+        ),
+        foregroundDecoration: _focused
+            ? BoxDecoration(
+                borderRadius: widget.borderRadius,
+                border: Border.all(color: primary, width: 2.6),
+              )
+            : null,
+        child: widget.child,
+      ),
+    );
+
     return Focus(
       onFocusChange: (hasFocus) {
         if (_focused == hasFocus) return;
@@ -59,40 +87,20 @@ class _CinemaTvFocusableState extends State<CinemaTvFocusable> {
         if (hasFocus) {
           Scrollable.ensureVisible(
             context,
-            alignmentPolicy:
-                ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
-            duration: IsleMotion.fast,
+            alignmentPolicy: ScrollPositionAlignmentPolicy.keepVisibleAtEnd,
+            duration: reducedMotion ? Duration.zero : IsleMotion.fast,
           );
         }
       },
       onKeyEvent: _handleKeyEvent,
-      child: AnimatedScale(
-        scale: _focused ? 1.045 : 1.0,
-        duration: IsleMotion.fast,
-        curve: IsleMotion.spring,
-        child: AnimatedContainer(
-          duration: IsleMotion.fast,
-          decoration: BoxDecoration(
-            borderRadius: widget.borderRadius,
-            boxShadow: _focused
-                ? [
-                    BoxShadow(
-                      color: primary.withValues(alpha: 0.42),
-                      blurRadius: 16,
-                      spreadRadius: 1.5,
-                    ),
-                  ]
-                : const [],
-          ),
-          foregroundDecoration: _focused
-              ? BoxDecoration(
-                  borderRadius: widget.borderRadius,
-                  border: Border.all(color: primary, width: 2.6),
-                )
-              : null,
-          child: widget.child,
-        ),
-      ),
+      child: reducedMotion
+          ? childCard
+          : AnimatedScale(
+              scale: _focused ? 1.045 : 1.0,
+              duration: IsleMotion.fast,
+              curve: IsleMotion.spring,
+              child: childCard,
+            ),
     );
   }
 }

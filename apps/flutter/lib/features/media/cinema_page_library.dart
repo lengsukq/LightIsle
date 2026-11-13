@@ -46,24 +46,21 @@ extension _CinemaPageLibrary on _CinemaPageState {
     }
     final generation = ++_catalog.listGeneration;
     final cursor = reset ? 0 : _catalog.nextCursor;
-    _updateState(() {
-      if (reset) {
-        _catalog.films.clear();
-        _catalog.nextCursor = 0;
-        _catalog.loadError = null;
-        _catalog.loading = true;
-        _selection.selectedFilmIds.clear();
-      } else {
-        _catalog.loadingMore = true;
-      }
-    });
     final query = <String, String>{
       'limit': '${_CinemaPageState._pageSize}',
       'cursor': '$cursor',
     };
     if (_catalog.mode != 'all') query['kind'] = _catalog.mode;
-    if (_catalog.query.trim().isNotEmpty) query['query'] = _catalog.query.trim();
+    if (_catalog.watched != 'all') query['watched'] = _catalog.watched;
+    if (_catalog.sort != 'recent') query['sort'] = _catalog.sort;
+    if (_catalog.query.trim().isNotEmpty) {
+      query['query'] = _catalog.query.trim();
+    }
     final cacheKey = Uri(queryParameters: query).query;
+    final scopeKey =
+        '${identityHashCode(widget.api)}:${widget.api.selectedRoot?.identity ?? ''}:$cacheKey';
+
+    MediaPageResult<CinemaFilm>? cachedPage;
     if (reset) {
       final cached = IsleDataCache.instance.getJsonMap(
         widget.api,
@@ -71,20 +68,40 @@ extension _CinemaPageLibrary on _CinemaPageState {
         cacheKey,
       );
       if (cached != null) {
-        final cachedPage = MediaPageResult.parse<CinemaFilm>(
+        cachedPage = MediaPageResult.parse<CinemaFilm>(
           cached,
           itemsKey: 'films',
           fromJson: CinemaFilm.fromJson,
         );
-        _updateState(() {
+      }
+    }
+
+    _updateState(() {
+      if (reset) {
+        if (cachedPage != null) {
           _catalog.films
             ..clear()
             ..addAll(cachedPage.items);
           _catalog.nextCursor = cachedPage.nextCursor;
+          _catalog.activeScopeKey = scopeKey;
+          _catalog.loadError = null;
           _catalog.loading = false;
-        });
+        } else {
+          final sameScope =
+              _catalog.activeScopeKey == scopeKey && _catalog.films.isNotEmpty;
+          if (!sameScope) {
+            _catalog.films.clear();
+            _catalog.nextCursor = 0;
+            _selection.selectedFilmIds.clear();
+          }
+          _catalog.activeScopeKey = scopeKey;
+          _catalog.loadError = null;
+          _catalog.loading = true;
+        }
+      } else {
+        _catalog.loadingMore = true;
       }
-    }
+    });
     try {
       final response = await widget.api.get('/api/v2/cinema', query: query);
       if (!mounted || generation != _catalog.listGeneration) return;
@@ -186,12 +203,36 @@ extension _CinemaPageLibrary on _CinemaPageState {
     _loadFilms(reset: true);
   }
 
+  void _changeWatched(String watched) {
+    if (_catalog.watched == watched) return;
+    _updateState(() => _catalog.watched = watched);
+    if (_subpages.showSeries) {
+      unawaited(_loadSeries());
+    } else {
+      unawaited(_loadFilms(reset: true));
+    }
+  }
+
+  void _changeSort(String sort) {
+    if (_catalog.sort == sort) return;
+    _updateState(() => _catalog.sort = sort);
+    if (_subpages.showSeries) {
+      unawaited(_loadSeries());
+    } else {
+      unawaited(_loadFilms(reset: true));
+    }
+  }
+
   void _searchChanged(String value) {
     _catalog.searchTimer?.cancel();
-    _catalog.searchTimer = Timer(const Duration(milliseconds: 350), () {
+    _catalog.searchTimer = Timer(const Duration(milliseconds: 260), () {
       if (!mounted) return;
       _updateState(() => _catalog.query = value.trim());
-      _loadFilms(reset: true);
+      if (_subpages.showSeries) {
+        unawaited(_loadSeries());
+      } else {
+        unawaited(_loadFilms(reset: true));
+      }
     });
   }
 
@@ -228,13 +269,60 @@ extension _CinemaPageLibrary on _CinemaPageState {
     _updateState(() {
       final index = _catalog.films.indexWhere((film) => film.id == updated.id);
       if (index >= 0) {
-        if (_catalog.mode == 'continue' && !updated.canResume) {
+        final hideFromContinue =
+            _catalog.mode == 'continue' && !updated.canResume;
+        final hideFromWatchedFilter =
+            (_catalog.watched == 'unwatched' && updated.completed) ||
+            (_catalog.watched == 'watched' && !updated.completed);
+        if (hideFromContinue || hideFromWatchedFilter) {
           _catalog.films.removeAt(index);
         } else {
           _catalog.films[index] = updated;
         }
       }
+      final resumeIdx = _catalog.resumeShelf.indexWhere(
+        (film) => film.id == updated.id,
+      );
+      if (updated.canResume) {
+        if (resumeIdx >= 0) {
+          _catalog.resumeShelf[resumeIdx] = updated;
+        } else if (_catalog.shelvesLoaded) {
+          _catalog.resumeShelf.insert(0, updated);
+        }
+      } else if (resumeIdx >= 0) {
+        _catalog.resumeShelf.removeAt(resumeIdx);
+      }
+      final recentIdx = _catalog.recentShelf.indexWhere(
+        (film) => film.id == updated.id,
+      );
+      if (recentIdx >= 0) _catalog.recentShelf[recentIdx] = updated;
+      final historyIdx = _subpages.history.indexWhere(
+        (film) => film.id == updated.id,
+      );
+      if (historyIdx >= 0) _subpages.history[historyIdx] = updated;
     });
+  }
+
+  Future<void> _clearFilmProgress(CinemaFilm film) async {
+    try {
+      final updated = await CinemaMetadataRepository(widget.api)
+          .clearProgress(film);
+      if (!mounted) return;
+      _updateProgress(updated);
+      _updateState(() {
+        _catalog.actionMessage = '已将“${film.title}”移出继续观看，原文件保留不变。';
+        _catalog.actionIsError = false;
+      });
+      if (_subpages.isRootView) {
+        unawaited(_loadShelves());
+      }
+    } catch (error) {
+      if (!mounted) return;
+      _updateState(() {
+        _catalog.actionMessage = mediaErrorLabel(error);
+        _catalog.actionIsError = true;
+      });
+    }
   }
 
   List<CinemaFilm> _candidatePlaylist([
@@ -279,7 +367,7 @@ extension _CinemaPageLibrary on _CinemaPageState {
         playerOnly: true,
       );
       next = await Navigator.of(context).push<CinemaFilm>(
-        MaterialPageRoute(fullscreenDialog: true, builder: (_) => detail()),
+        buildIslePageRoute(fullscreenDialog: true, builder: (_) => detail()),
       );
     }
     if (mounted) {
@@ -294,14 +382,17 @@ extension _CinemaPageLibrary on _CinemaPageState {
   Future<void> _openFilmDetails(CinemaFilm film) async {
     HapticFeedback.selectionClick();
     await Navigator.of(context).push<void>(
-      MaterialPageRoute(
+      buildIslePageRoute(
         builder: (_) => CinemaFilmOverview(
           api: widget.api,
           film: film,
           isAdmin: widget.isAdmin,
           memoryCache: _posterCache,
           onRename: _renameFilm,
-          onUpdated: _updateProgress,
+          onUpdated: (updated) {
+            _updateProgress(updated);
+            if (_subpages.isRootView) unawaited(_loadShelves());
+          },
           onPlay: () => _openFilmPlayer(film),
         ),
       ),

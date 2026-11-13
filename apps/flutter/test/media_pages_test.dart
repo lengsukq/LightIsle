@@ -104,30 +104,31 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('album overview hides legacy shared and private cards when empty', (
-    tester,
-  ) async {
-    final api = _MediaApi();
-    addTearDown(api.close);
-    api.firstPhotos.complete(<String, dynamic>{
-      'assets': <Object>[],
-      'nextCursor': 0,
-    });
-    await tester.pumpWidget(
-      MaterialApp(
-        theme: buildIsleTheme(Brightness.light),
-        home: Scaffold(body: PhotosPage(api: api, isAdmin: true)),
-      ),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('相册'));
-    await tester.pumpAndSettle();
+  testWidgets(
+    'album overview hides legacy shared and private cards when empty',
+    (tester) async {
+      final api = _MediaApi();
+      addTearDown(api.close);
+      api.firstPhotos.complete(<String, dynamic>{
+        'assets': <Object>[],
+        'nextCursor': 0,
+      });
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildIsleTheme(Brightness.light),
+          home: Scaffold(body: PhotosPage(api: api, isAdmin: true)),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('相册'));
+      await tester.pumpAndSettle();
 
-    expect(find.byKey(const ValueKey('privateAlbumSection')), findsNothing);
-    expect(find.byKey(const ValueKey('sharedAlbumSection')), findsNothing);
-    expect(find.text('文件夹相册'), findsWidgets);
-    expect(tester.takeException(), isNull);
-  });
+      expect(find.byKey(const ValueKey('privateAlbumSection')), findsNothing);
+      expect(find.byKey(const ValueKey('sharedAlbumSection')), findsNothing);
+      expect(find.text('文件夹相册'), findsWidgets);
+      expect(tester.takeException(), isNull);
+    },
+  );
 
   test('photo timeline month parsing rejects invalid entries and sorts newest first', () {
     final months = PhotoTimelineMonth.parse([

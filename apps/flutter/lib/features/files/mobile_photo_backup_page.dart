@@ -201,13 +201,36 @@ class _MobilePhotoBackupState extends State<MobilePhotoBackupPage>
           ),
           if (_progress.checked > 0) ...[
             const SizedBox(height: 8),
-            Text(
-              '已检查 ${_progress.checked} · 新增 ${_progress.uploaded} · 跳过 ${_progress.skipped}',
-              style: TextStyle(
-                fontWeight: FontWeight.w600,
-                fontSize: 13,
-                color: colors.primary,
-              ),
+            Row(
+              children: [
+                IsleDonutGauge(
+                  fraction:
+                      ((_progress.uploaded + _progress.skipped) /
+                              _progress.checked)
+                          .clamp(0.0, 1.0),
+                  color: colors.primary,
+                  size: 32,
+                  strokeWidth: 3.5,
+                  centerText:
+                      '${(((_progress.uploaded + _progress.skipped) / _progress.checked).clamp(0.0, 1.0) * 100).round()}%',
+                  centerStyle: Theme.of(context).textTheme.labelSmall?.copyWith(
+                    fontSize: 8.5,
+                    fontWeight: FontWeight.w700,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    '已检查 ${_progress.checked} · 新增 ${_progress.uploaded} · 跳过 ${_progress.skipped}',
+                    style: TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                      color: colors.primary,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
           if (_progress.busy) ...[
@@ -232,8 +255,9 @@ class _MobilePhotoBackupState extends State<MobilePhotoBackupPage>
                 ),
                 onPressed: _progress.busy
                     ? null
-                    : () =>
-                          unawaited(_run(older: _progress.pageCursor.isNotEmpty)),
+                    : () => unawaited(
+                        _run(older: _progress.pageCursor.isNotEmpty),
+                      ),
               ),
               if (_isAndroid &&
                   _background.enabled &&

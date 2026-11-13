@@ -25,17 +25,23 @@ extension _AppsCenterStorageCard on _AppsCenterPageState {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            crossAxisAlignment: WrapCrossAlignment.center,
             children: [
-              Icon(Icons.storage_rounded, size: 20, color: colors.primary),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  '应用数据存储位置',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
+              Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.storage_rounded, size: 20, color: colors.primary),
+                  const SizedBox(width: 8),
+                  Text(
+                    '应用数据存储位置',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
-                ),
+                ],
               ),
               IsleStatusBadge(
                 label: '已配置 ${locations.length}/$maxLocations（1 内置盘 + 1 其他盘）',
@@ -257,115 +263,31 @@ extension _AppsCenterStorageCard on _AppsCenterPageState {
     String initialName = '',
     List<Map<String, dynamic>> volumes = const [],
   }) async {
-    final pathCtl = TextEditingController(
-      text: initialPath.isNotEmpty
-          ? initialPath
-          : (kind == 'external' && volumes.isNotEmpty
-                ? (volumes.first['suggestedPath']?.toString() ?? '')
-                : ''),
-    );
-    final nameCtl = TextEditingController(
-      text: initialName.isNotEmpty
-          ? initialName
-          : (kind == 'external' && volumes.isNotEmpty
-                ? (volumes.first['name']?.toString() ?? '')
-                : ''),
-    );
-    var setDefault = false;
-
-    final confirmed = await showDialog<bool>(
+    final result = await showDialog<_AppStoragePathDialogResult>(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDialogState) => AlertDialog(
-          title: Text(
-            kind == 'external'
-                ? (action == 'add' ? '添加其他盘应用存储位置' : '更换其他盘位置')
-                : '修改 Mac 内置盘应用目录',
-          ),
-          content: SizedBox(
-            width: 440,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (kind == 'external' && volumes.isNotEmpty) ...[
-                  const Text('已连接磁盘卷（点击快速填入）：', style: TextStyle(fontSize: 12)),
-                  const SizedBox(height: 6),
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
-                    children: [
-                      for (final vol in volumes)
-                        ActionChip(
-                          label: Text(vol['name']?.toString() ?? ''),
-                          onPressed: vol['readOnly'] == true
-                              ? null
-                              : () {
-                                  pathCtl.text =
-                                      vol['suggestedPath']?.toString() ?? '';
-                                  if (nameCtl.text.trim().isEmpty) {
-                                    nameCtl.text =
-                                        vol['name']?.toString() ?? '';
-                                  }
-                                },
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                ],
-                TextField(
-                  key: const ValueKey('appStoragePathField'),
-                  controller: pathCtl,
-                  decoration: InputDecoration(
-                    labelText: 'Mac 本机目录路径',
-                    hintText: kind == 'external'
-                        ? '/Volumes/MyDisk/LightIsleApps'
-                        : '/Users/name/LightIsleApps',
-                    border: const OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                TextField(
-                  controller: nameCtl,
-                  decoration: InputDecoration(
-                    labelText: '显示名称（可选）',
-                    hintText: kind == 'external' ? '外置扩展盘' : 'Mac 内置盘',
-                    border: const OutlineInputBorder(),
-                  ),
-                ),
-                const SizedBox(height: 6),
-                CheckboxListTile(
-                  contentPadding: EdgeInsets.zero,
-                  value: setDefault,
-                  onChanged: (v) => setDialogState(() => setDefault = v == true),
-                  title: const Text('同时设为默认安装位置'),
-                ),
-              ],
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(ctx).pop(false),
-              child: const Text('取消'),
-            ),
-            FilledButton(
-              key: const ValueKey('confirmAppStorageDialogButton'),
-              onPressed: () => Navigator.of(ctx).pop(true),
-              child: const Text('保存并生效'),
-            ),
-          ],
-        ),
+      builder: (_) => _AppStoragePathDialog(
+        kind: kind,
+        action: action,
+        initialPath: initialPath.isNotEmpty
+            ? initialPath
+            : (kind == 'external' && volumes.isNotEmpty
+                  ? (volumes.first['suggestedPath']?.toString() ?? '')
+                  : ''),
+        initialName: initialName.isNotEmpty
+            ? initialName
+            : (kind == 'external' && volumes.isNotEmpty
+                  ? (volumes.first['name']?.toString() ?? '')
+                  : ''),
+        volumes: volumes,
       ),
     );
-    if (confirmed != true || !mounted) return;
-    final trimmedPath = pathCtl.text.trim();
-    if (trimmedPath.isEmpty) return;
+    if (result == null || !mounted) return;
     await _mutateAppStorage({
       'action': action,
       'kind': kind,
-      'path': trimmedPath,
-      if (nameCtl.text.trim().isNotEmpty) 'name': nameCtl.text.trim(),
-      'setDefault': setDefault,
+      'path': result.path,
+      if (result.name.isNotEmpty) 'name': result.name,
+      'setDefault': result.setDefault,
     });
   }
 
@@ -379,5 +301,160 @@ extension _AppsCenterStorageCard on _AppsCenterPageState {
       idx++;
     }
     return '${idx <= 1 || val >= 100 ? val.round() : val.toStringAsFixed(1)} ${units[idx]}';
+  }
+}
+
+class _AppStoragePathDialogResult {
+  const _AppStoragePathDialogResult({
+    required this.path,
+    required this.name,
+    required this.setDefault,
+  });
+
+  final String path;
+  final String name;
+  final bool setDefault;
+}
+
+class _AppStoragePathDialog extends StatefulWidget {
+  const _AppStoragePathDialog({
+    required this.kind,
+    required this.action,
+    required this.initialPath,
+    required this.initialName,
+    required this.volumes,
+  });
+
+  final String kind;
+  final String action;
+  final String initialPath;
+  final String initialName;
+  final List<Map<String, dynamic>> volumes;
+
+  @override
+  State<_AppStoragePathDialog> createState() => _AppStoragePathDialogState();
+}
+
+class _AppStoragePathDialogState extends State<_AppStoragePathDialog> {
+  late final TextEditingController _pathCtl = TextEditingController(
+    text: widget.initialPath,
+  );
+  late final TextEditingController _nameCtl = TextEditingController(
+    text: widget.initialName,
+  );
+  bool _setDefault = false;
+  String? _pathError;
+
+  @override
+  void dispose() {
+    _pathCtl.dispose();
+    _nameCtl.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final trimmedPath = _pathCtl.text.trim();
+    if (trimmedPath.isEmpty) {
+      setState(() => _pathError = '请填写 Mac 本机目录路径');
+      return;
+    }
+    Navigator.of(context).pop(
+      _AppStoragePathDialogResult(
+        path: trimmedPath,
+        name: _nameCtl.text.trim(),
+        setDefault: _setDefault,
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(
+        widget.kind == 'external'
+            ? (widget.action == 'add' ? '添加其他盘应用存储位置' : '更换其他盘位置')
+            : '修改 Mac 内置盘应用目录',
+      ),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 440),
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              if (widget.kind == 'external' && widget.volumes.isNotEmpty) ...[
+                const Text('已连接磁盘卷（点击快速填入）：', style: TextStyle(fontSize: 12)),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (final vol in widget.volumes)
+                      ActionChip(
+                        label: Text(vol['name']?.toString() ?? ''),
+                        onPressed: vol['readOnly'] == true
+                            ? null
+                            : () {
+                                _pathCtl.text =
+                                    vol['suggestedPath']?.toString() ?? '';
+                                if (_nameCtl.text.trim().isEmpty) {
+                                  _nameCtl.text = vol['name']?.toString() ?? '';
+                                }
+                                if (_pathError != null) {
+                                  setState(() => _pathError = null);
+                                }
+                              },
+                      ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+              ],
+              TextField(
+                key: const ValueKey('appStoragePathField'),
+                controller: _pathCtl,
+                onChanged: (_) {
+                  if (_pathError != null) setState(() => _pathError = null);
+                },
+                decoration: InputDecoration(
+                  labelText: 'Mac 本机目录路径',
+                  hintText: widget.kind == 'external'
+                      ? '/Volumes/MyDisk/LightIsleApps'
+                      : '/Users/name/LightIsleApps',
+                  errorText: _pathError,
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _nameCtl,
+                decoration: InputDecoration(
+                  labelText: '显示名称（可选）',
+                  hintText: widget.kind == 'external' ? '外置扩展盘' : 'Mac 内置盘',
+                  border: const OutlineInputBorder(),
+                ),
+              ),
+              const SizedBox(height: 6),
+              CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                value: _setDefault,
+                onChanged: (v) => setState(() => _setDefault = v == true),
+                title: const Text('同时设为默认安装位置'),
+              ),
+            ],
+          ),
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          key: const ValueKey('confirmAppStorageDialogButton'),
+          onPressed: _submit,
+          child: const Text('保存并生效'),
+        ),
+      ],
+    );
   }
 }

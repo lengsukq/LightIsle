@@ -20,7 +20,7 @@ extension _ClientShellChrome on _ClientShellState {
               key: const ValueKey('globalUploadTaskCenter'),
               borderRadius: IsleRadius.brPill,
               onTap: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(
+                buildIslePageRoute<void>(
                   builder: (_) => UploadTaskCenterPage(center: _uploadCenter),
                 ),
               ),
@@ -126,24 +126,27 @@ extension _ClientShellChrome on _ClientShellState {
       return _buildRouteErrorView();
     }
     final filesRoute = _routeForCategory('files');
-    _dashboardFilesWidget ??= KeyedSubtree(
-      key: ValueKey(
-        'root:${widget.api.selectedRoot?.identity ?? 'default'}:files:${_fileEntryOverride ?? ''}',
-      ),
-      child: FilesPage(
-        api: widget.api,
-        taskCenter: _uploadCenter,
-        isAdmin: _admin,
-        accountName: widget.identity['username']?.toString() ?? '',
-        initialPath:
-            _fileEntryOverride ??
-            (filesRoute.kind == PersonalRouteKind.personal &&
-                    _manualRootSection != 0
-                ? filesRoute.path!
-                : '.'),
-        showPhotoBackup: false,
-      ),
+    final resolvedInitialPath =
+        _fileEntryOverride ??
+        (filesRoute.kind == PersonalRouteKind.personal &&
+                _manualRootSection != 0
+            ? filesRoute.path!
+            : '.');
+    final expectedKey = ValueKey<String>(
+      'root:${widget.api.selectedRoot?.identity ?? 'default'}:files:$resolvedInitialPath',
     );
+    if (_dashboardFilesWidget?.key != expectedKey) {
+      _dashboardFilesWidget = KeyedSubtree(
+        key: expectedKey,
+        child: FilesPage(
+          api: widget.api,
+          taskCenter: _uploadCenter,
+          isAdmin: _admin,
+          accountName: widget.identity['username']?.toString() ?? '',
+          initialPath: resolvedInitialPath,
+        ),
+      );
+    }
     final scheme = Theme.of(context).colorScheme;
     final dark = Theme.of(context).brightness == Brightness.dark;
     return Column(
@@ -169,7 +172,6 @@ extension _ClientShellChrome on _ClientShellState {
                 compact: true,
                 onPressed: () => _updateState(() {
                   _showingDashboardFiles = false;
-                  _dashboardFilesWidget = null;
                   _fileEntryOverride = null;
                 }),
               ),
@@ -312,91 +314,94 @@ extension _ClientShellChrome on _ClientShellState {
     final compact = availableWidth < 720 || textScale > 1.45;
     return PreferredSize(
       preferredSize: const Size.fromHeight(52),
-      child: IsleGlassBackdrop(
-        blur: IsleGlass.sigmaRegular,
-        child: Container(
-          key: const ValueKey('macUnifiedToolbar'),
-          height: 52,
-          decoration: BoxDecoration(
-            color: IsleLayout.opaqueNavigation(context)
-                ? scheme.surface
-                : IsleGlass.regularTint(dark, scheme.surface),
-            border: Border(
-              bottom: BorderSide(
-                color: IsleGlass.rimBorderColor(dark),
-                width: 0.6,
+      child: RepaintBoundary(
+        child: IsleGlassBackdrop(
+          blur: IsleGlass.sigmaRegular,
+          child: Container(
+            key: const ValueKey('macUnifiedToolbar'),
+            height: 52,
+            decoration: BoxDecoration(
+              color: IsleLayout.opaqueNavigation(context)
+                  ? scheme.surface
+                  : IsleGlass.regularTint(dark, scheme.surface),
+              border: Border(
+                bottom: BorderSide(
+                  color: IsleGlass.rimBorderColor(dark),
+                  width: 0.6,
+                ),
               ),
             ),
-          ),
-          child: Row(
-            children: [
-              const SizedBox(
-                width: 91,
-                key: ValueKey('macTrafficLightClearance'),
-              ),
-              if (canExtendRail)
-                IconButton(
-                  key: const ValueKey('macSidebarToggle'),
-                  tooltip: extendedRail ? '收起侧栏' : '展开侧栏',
-                  onPressed: () =>
-                      _updateState(() => _railExpanded = !_railExpanded),
-                  visualDensity: VisualDensity.compact,
-                  iconSize: 20,
-                  style: IconButton.styleFrom(
-                    foregroundColor: scheme.onSurfaceVariant,
-                    hoverColor: scheme.onSurface.withValues(alpha: 0.06),
-                  ),
-                  icon: Icon(
-                    extendedRail
-                        ? Icons.view_sidebar_rounded
-                        : Icons.view_sidebar_outlined,
-                  ),
+            child: Row(
+              children: [
+                const SizedBox(
+                  width: 91,
+                  key: ValueKey('macTrafficLightClearance'),
                 ),
-              if (canExtendRail) const SizedBox(width: 4),
-              const IsleBrandMark(size: 20),
-              const SizedBox(width: 8),
-              Expanded(
-                child: GestureDetector(
-                  behavior: HitTestBehavior.opaque,
-                  onPanStart: (_) => unawaited(
-                    const MethodChannel('lightisle/native-video')
-                        .invokeMethod<void>('startWindowDrag')
-                        .catchError((_) {}),
+                if (canExtendRail)
+                  IconButton(
+                    key: const ValueKey('macSidebarToggle'),
+                    tooltip: extendedRail ? '收起侧栏' : '展开侧栏',
+                    onPressed: () =>
+                        _updateState(() => _railExpanded = !_railExpanded),
+                    visualDensity: VisualDensity.compact,
+                    iconSize: 20,
+                    style: IconButton.styleFrom(
+                      foregroundColor: scheme.onSurfaceVariant,
+                      hoverColor: scheme.onSurface.withValues(alpha: 0.06),
+                    ),
+                    icon: Icon(
+                      extendedRail
+                          ? Icons.view_sidebar_rounded
+                          : Icons.view_sidebar_outlined,
+                    ),
                   ),
-                  onDoubleTap: () => unawaited(
-                    const MethodChannel('lightisle/native-video')
-                        .invokeMethod<void>('doubleClickTitlebar')
-                        .catchError((_) {}),
-                  ),
-                  child: SizedBox(
-                    height: 52,
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        compact
-                            ? _ClientShellState._labels[_index]
-                            : '轻屿  /  ${_ClientShellState._labels[_index]}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                          fontWeight: FontWeight.w600,
-                          color: scheme.onSurface.withValues(alpha: 0.88),
+                if (canExtendRail) const SizedBox(width: 4),
+                const IsleBrandMark(size: 20),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: GestureDetector(
+                    behavior: HitTestBehavior.opaque,
+                    onPanStart: (_) => unawaited(
+                      const MethodChannel('lightisle/native-video')
+                          .invokeMethod<void>('startWindowDrag')
+                          .catchError((_) {}),
+                    ),
+                    onDoubleTap: () => unawaited(
+                      const MethodChannel('lightisle/native-video')
+                          .invokeMethod<void>('doubleClickTitlebar')
+                          .catchError((_) {}),
+                    ),
+                    child: SizedBox(
+                      height: 52,
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          compact
+                              ? _ClientShellState._labels[_index]
+                              : '轻屿  /  ${_ClientShellState._labels[_index]}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: Theme.of(context).textTheme.labelLarge
+                              ?.copyWith(
+                                fontWeight: FontWeight.w600,
+                                color: scheme.onSurface.withValues(alpha: 0.88),
+                              ),
                         ),
                       ),
                     ),
                   ),
                 ),
-              ),
-              _rootPicker(
-                unified: true,
-                showName: !compact && availableWidth >= 820,
-              ),
-              const SizedBox(width: 6),
-              _taskButton(unified: true),
-              const SizedBox(width: 6),
-              _accountButton(unified: true),
-              const SizedBox(width: 12),
-            ],
+                _rootPicker(
+                  unified: true,
+                  showName: !compact && availableWidth >= 820,
+                ),
+                const SizedBox(width: 6),
+                _taskButton(unified: true),
+                const SizedBox(width: 6),
+                _accountButton(unified: true),
+                const SizedBox(width: 12),
+              ],
+            ),
           ),
         ),
       ),
@@ -498,7 +503,7 @@ extension _ClientShellChrome on _ClientShellState {
                 ),
           ),
           child: AnimatedSize(
-            duration: MediaQuery.disableAnimationsOf(context)
+            duration: IsleMotion.reducedMotion(context)
                 ? Duration.zero
                 : IsleMotion.normal,
             curve: IsleMotion.curve,

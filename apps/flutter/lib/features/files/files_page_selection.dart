@@ -220,6 +220,14 @@ extension _FilesPageSelection on _FilesPageState {
   }
 
   void _toggleSelected(FileEntry item, bool? selected) {
+    if (HardwareKeyboard.instance.isShiftPressed &&
+        _transfers.selectionAnchorPath != null &&
+        _dir.entries.any(
+          (entry) => entry.path == _transfers.selectionAnchorPath,
+        )) {
+      _selectRangeTo(item);
+      return;
+    }
     if (selected == true &&
         !_transfers.selectedPaths.contains(item.path) &&
         _transfers.selectedPaths.length >= 50) {
@@ -229,10 +237,49 @@ extension _FilesPageSelection on _FilesPageState {
     _refreshState(() {
       if (selected == true) {
         _transfers.selectedPaths.add(item.path);
+        _transfers.selectionAnchorPath = item.path;
       } else {
         _transfers.selectedPaths.remove(item.path);
       }
       _dir.error = null;
+    });
+  }
+
+  void _selectRangeTo(FileEntry target) {
+    final entries = _dir.entries;
+    final anchorPath = _transfers.selectionAnchorPath;
+    final anchorIndex = anchorPath == null
+        ? -1
+        : entries.indexWhere((entry) => entry.path == anchorPath);
+    final targetIndex = entries.indexWhere(
+      (entry) => entry.path == target.path,
+    );
+    if (anchorIndex < 0 || targetIndex < 0) {
+      _toggleSelected(target, !_transfers.selectedPaths.contains(target.path));
+      return;
+    }
+    final start = anchorIndex < targetIndex ? anchorIndex : targetIndex;
+    final end = anchorIndex > targetIndex ? anchorIndex : targetIndex;
+    final additions = entries
+        .sublist(start, end + 1)
+        .map((entry) => entry.path)
+        .toList(growable: false);
+    final next = {..._transfers.selectedPaths};
+    var truncated = false;
+    for (final path in additions) {
+      if (next.contains(path)) continue;
+      if (next.length >= 50) {
+        truncated = true;
+        break;
+      }
+      next.add(path);
+    }
+    _refreshState(() {
+      _transfers.selecting = true;
+      _transfers.selectedPaths
+        ..clear()
+        ..addAll(next);
+      _dir.error = truncated ? '已按 Shift 区间选择，单次最多选择 50 项文件。' : null;
     });
   }
 

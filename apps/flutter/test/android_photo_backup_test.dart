@@ -6,7 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lightisle/core/lightisle_api.dart';
-import 'package:lightisle/features/files/android_photo_backup_page.dart';
+import 'package:lightisle/features/files/mobile_photo_backup_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:crypto/crypto.dart';
 
@@ -53,7 +53,7 @@ Future<void> open(WidgetTester tester, {bool personal = true}) async {
   await tester.pumpWidget(
     MaterialApp(
       theme: ThemeData(useMaterial3: true),
-      home: AndroidPhotoBackupPage(
+      home: MobilePhotoBackupPage(
         api: api,
         accountName: 'owner',
         baseDirectory: personal ? 'Users/u7/photos' : 'PhonePhotos',
@@ -501,7 +501,7 @@ void main() {
       await tester.pumpWidget(
         MaterialApp(
           theme: ThemeData(useMaterial3: true),
-          home: AndroidPhotoBackupPage(
+          home: MobilePhotoBackupPage(
             api: api,
             accountName: 'owner',
             baseDirectory: 'Users/u7/photos',
@@ -611,7 +611,7 @@ void main() {
     };
     await tester.pumpWidget(
       MaterialApp(
-        home: AndroidPhotoBackupPage(
+        home: MobilePhotoBackupPage(
           api: api,
           accountName: 'owner',
           baseDirectory: 'Users/u7/photos',

@@ -17,32 +17,38 @@ void main() {
       expect(state.isVideoReady, isFalse);
     });
 
-    test('CinemaPlayerChromeState tracks dock drag threshold and timer reset', () {
-      final chrome = CinemaPlayerChromeState();
-      expect(chrome.isDockMoved, isFalse);
+    test(
+      'CinemaPlayerChromeState tracks dock drag threshold and timer reset',
+      () {
+        final chrome = CinemaPlayerChromeState();
+        expect(chrome.isDockMoved, isFalse);
 
-      chrome.dockDragOffset = const Offset(1.5, -1.0);
-      expect(chrome.isDockMoved, isFalse);
+        chrome.dockDragOffset = const Offset(1.5, -1.0);
+        expect(chrome.isDockMoved, isFalse);
 
-      chrome.dockDragOffset = const Offset(12.0, -24.0);
-      expect(chrome.isDockMoved, isTrue);
-      expect(chrome.cancelTimer, returnsNormally);
-    });
+        chrome.dockDragOffset = const Offset(12.0, -24.0);
+        expect(chrome.isDockMoved, isTrue);
+        expect(chrome.cancelTimer, returnsNormally);
+      },
+    );
 
-    test('CinemaMetadataMatchState aggregates busy flags and disposes cleanly', () {
-      final meta = CinemaMetadataMatchState(initialQuery: '星际穿越');
-      expect(meta.tmdbQueryController.text, '星际穿越');
-      expect(meta.isAnyBusy, isFalse);
+    test(
+      'CinemaMetadataMatchState aggregates busy flags and disposes cleanly',
+      () {
+        final meta = CinemaMetadataMatchState(initialQuery: '星际穿越');
+        expect(meta.tmdbQueryController.text, '星际穿越');
+        expect(meta.isAnyBusy, isFalse);
 
-      meta.doubanSearching = true;
-      expect(meta.isAnyBusy, isTrue);
+        meta.doubanSearching = true;
+        expect(meta.isAnyBusy, isTrue);
 
-      meta.doubanSearching = false;
-      meta.tmdbTokenController.text = 'secret-token';
-      final initialGen = meta.generation;
-      meta.dispose();
-      expect(meta.generation, initialGen + 1);
-    });
+        meta.doubanSearching = false;
+        meta.tmdbTokenController.text = 'secret-token';
+        final initialGen = meta.generation;
+        meta.dispose();
+        expect(meta.generation, initialGen + 1);
+      },
+    );
   });
 
   group('Cinema page state models', () {
@@ -75,81 +81,90 @@ void main() {
   });
 
   group('Photos page state models', () {
-    test('PhotosFilterScopeState tracks full timeline selection accurately', () {
-      final scope = PhotosFilterScopeState();
-      expect(scope.isUnscopedCollection, isTrue);
-      expect(scope.isFullTimelineSelected, isTrue);
+    test(
+      'PhotosFilterScopeState tracks full timeline selection accurately',
+      () {
+        final scope = PhotosFilterScopeState();
+        expect(scope.isUnscopedCollection, isTrue);
+        expect(scope.isFullTimelineSelected, isTrue);
 
-      scope.setCollectionScope(privateAlbumId: 7);
-      expect(scope.isUnscopedCollection, isFalse);
-      expect(scope.isFullTimelineSelected, isFalse);
+        scope.setCollectionScope(privateAlbumId: 7);
+        expect(scope.isUnscopedCollection, isFalse);
+        expect(scope.isFullTimelineSelected, isFalse);
 
-      scope.setCollectionScope();
-      expect(scope.isFullTimelineSelected, isTrue);
+        scope.setCollectionScope();
+        expect(scope.isFullTimelineSelected, isTrue);
 
-      scope.cameraFilter = 'RICOH GR III';
-      expect(scope.isUnscopedCollection, isTrue);
-      expect(scope.isFullTimelineSelected, isFalse);
+        scope.cameraFilter = 'RICOH GR III';
+        expect(scope.isUnscopedCollection, isTrue);
+        expect(scope.isFullTimelineSelected, isFalse);
 
-      scope.clearSearchAndFacets(closeSearchBar: true);
-      expect(scope.isFullTimelineSelected, isTrue);
-      scope.dispose();
-    });
+        scope.clearSearchAndFacets(closeSearchBar: true);
+        expect(scope.isFullTimelineSelected, isTrue);
+        scope.dispose();
+      },
+    );
 
-    test('PhotosFilterScopeState builds query parameters for scopes and facets', () {
-      final scope = PhotosFilterScopeState()
-        ..setCollectionScope(
-          albumId: 3,
-          folderPath: 'Trips/2026',
-          personId: 9,
-          personName: 'Alice',
-          favorites: true,
-        )
-        ..query = '海边'
-        ..searchMode = PhotoSearchMode.scene
-        ..mediaType = 'photo'
-        ..cameraFilter = 'Sony A7C'
-        ..locationFilter = '1'
-        ..yearFilter = 2025;
+    test(
+      'PhotosFilterScopeState builds query parameters for scopes and facets',
+      () {
+        final scope = PhotosFilterScopeState()
+          ..setCollectionScope(
+            albumId: 3,
+            folderPath: 'Trips/2026',
+            personId: 9,
+            personName: 'Alice',
+            favorites: true,
+          )
+          ..query = '海边'
+          ..searchMode = PhotoSearchMode.scene
+          ..mediaType = 'photo'
+          ..cameraFilter = 'Sony A7C'
+          ..locationFilter = '1'
+          ..yearFilter = 2025;
 
-      final params = scope.buildQueryParameters(limit: 48, cursor: 96);
-      expect(params['limit'], '48');
-      expect(params['cursor'], '96');
-      expect(params['album'], '3');
-      expect(params['directory'], 'Trips/2026');
-      expect(params['favorites'], '1');
-      expect(params['q'], '海边');
-      expect(params['searchMode'], 'scene');
-      expect(params['personId'], '9');
-      expect(params['type'], 'photo');
-      expect(params['camera'], 'Sony A7C');
-      expect(params['hasLocation'], '1');
-      expect(int.parse(params['takenFrom']!), greaterThan(0));
-      expect(
-        int.parse(params['takenTo']!),
-        greaterThan(int.parse(params['takenFrom']!)),
-      );
-      scope.dispose();
-    });
+        final params = scope.buildQueryParameters(limit: 48, cursor: 96);
+        expect(params['limit'], '48');
+        expect(params['cursor'], '96');
+        expect(params['album'], '3');
+        expect(params['directory'], 'Trips/2026');
+        expect(params['favorites'], '1');
+        expect(params['q'], '海边');
+        expect(params['searchMode'], 'scene');
+        expect(params['personId'], '9');
+        expect(params['type'], 'photo');
+        expect(params['camera'], 'Sony A7C');
+        expect(params['hasLocation'], '1');
+        expect(int.parse(params['takenFrom']!), greaterThan(0));
+        expect(
+          int.parse(params['takenTo']!),
+          greaterThan(int.parse(params['takenFrom']!)),
+        );
+        scope.dispose();
+      },
+    );
 
-    test('PhotosAlbumCatalogState resolves shared and private albums by id', () {
-      final catalog = PhotosAlbumCatalogState()
-        ..sharedAlbums = const [
-          MediaAlbum(id: 11, name: '家庭旅行', count: 20, coverAssetId: 1),
-        ]
-        ..privateAlbums = const [
-          MediaAlbum(id: 22, name: '个人精选', count: 5, coverAssetId: 2),
-        ];
+    test(
+      'PhotosAlbumCatalogState resolves shared and private albums by id',
+      () {
+        final catalog = PhotosAlbumCatalogState()
+          ..sharedAlbums = const [
+            MediaAlbum(id: 11, name: '家庭旅行', count: 20, coverAssetId: 1),
+          ]
+          ..privateAlbums = const [
+            MediaAlbum(id: 22, name: '个人精选', count: 5, coverAssetId: 2),
+          ];
 
-      expect(catalog.findShared(0), isNull);
-      expect(catalog.findShared(11)?.name, '家庭旅行');
-      expect(catalog.findPrivate(22)?.name, '个人精选');
-      expect(catalog.findPrivate(99), isNull);
+        expect(catalog.findShared(0), isNull);
+        expect(catalog.findShared(11)?.name, '家庭旅行');
+        expect(catalog.findPrivate(22)?.name, '个人精选');
+        expect(catalog.findPrivate(99), isNull);
 
-      catalog.cancelPending();
-      expect(catalog.sharedGeneration, 1);
-      expect(catalog.privateGeneration, 1);
-    });
+        catalog.cancelPending();
+        expect(catalog.sharedGeneration, 1);
+        expect(catalog.privateGeneration, 1);
+      },
+    );
 
     test('PhotosSelectionState and PhotosLibraryFeedState reset cleanly', () {
       final selection = PhotosSelectionState()
@@ -171,34 +186,38 @@ void main() {
   });
 
   group('Files & Mobile backup state models', () {
-    test('FilesDirectoryState and FilesSearchAndTrashState reset on root switch', () {
-      final dir = FilesDirectoryState(path: 'Users/u2/files', rootIdentity: 'r1:1')
-        ..canWrite = true
-        ..nextCursor = 'c2'
-        ..error = 'stale';
-      dir.failedThumbnails.add('a.jpg@1');
+    test(
+      'FilesDirectoryState and FilesSearchAndTrashState reset on root switch',
+      () {
+        final dir =
+            FilesDirectoryState(path: 'Users/u2/files', rootIdentity: 'r1:1')
+              ..canWrite = true
+              ..nextCursor = 'c2'
+              ..error = 'stale';
+        dir.failedThumbnails.add('a.jpg@1');
 
-      dir.resetForIdentity('.', 'r2:1');
-      expect(dir.loadGeneration, 1);
-      expect(dir.rootIdentity, 'r2:1');
-      expect(dir.path, '.');
-      expect(dir.canWrite, isFalse);
-      expect(dir.nextCursor, isEmpty);
-      expect(dir.error, isNull);
-      expect(dir.failedThumbnails, isEmpty);
+        dir.resetForIdentity('.', 'r2:1');
+        expect(dir.loadGeneration, 1);
+        expect(dir.rootIdentity, 'r2:1');
+        expect(dir.path, '.');
+        expect(dir.canWrite, isFalse);
+        expect(dir.nextCursor, isEmpty);
+        expect(dir.error, isNull);
+        expect(dir.failedThumbnails, isEmpty);
 
-      final filter = FilesSearchAndTrashState()
-        ..showingTrash = true
-        ..searching = true
-        ..searchKind = 'video';
-      filter.searchController.text = 'movie';
-      filter.reset();
-      expect(filter.showingTrash, isFalse);
-      expect(filter.searching, isFalse);
-      expect(filter.searchKind, isEmpty);
-      expect(filter.searchController.text, isEmpty);
-      filter.dispose();
-    });
+        final filter = FilesSearchAndTrashState()
+          ..showingTrash = true
+          ..searching = true
+          ..searchKind = 'video';
+        filter.searchController.text = 'movie';
+        filter.reset();
+        expect(filter.showingTrash, isFalse);
+        expect(filter.searching, isFalse);
+        expect(filter.searchKind, isEmpty);
+        expect(filter.searchController.text, isEmpty);
+        filter.dispose();
+      },
+    );
 
     test('PhotoBackupRunProgressState and PhotoBackupPrepareSessionState reset counters', () {
       final progress = PhotoBackupRunProgressState()

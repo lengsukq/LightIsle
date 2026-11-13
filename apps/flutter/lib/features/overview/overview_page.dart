@@ -2,18 +2,27 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../core/isle_quick_jump.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 import '../../core/isle_theme.dart';
-import '../files/file_shares_page.dart';
 import '../files/computer_files_page.dart';
+import '../files/downloads_page.dart';
+import '../files/duplicate_files_page.dart';
+import '../files/file_shares_page.dart';
+import '../settings/admin_smb_page.dart';
 import '../settings/apps_center_page.dart';
+import '../settings/automation_page.dart';
+import '../settings/dav_page.dart';
 import '../settings/storage_page.dart';
 import 'dashboard_role_widgets.dart';
+import 'overview_telemetry_grid.dart';
 import 'storage_volume_browser.dart';
+import 'task_history_page.dart';
 
 export 'dashboard_role_widgets.dart' show TaskTile, taskName, taskStatus;
+export 'task_history_page.dart' show TaskHistoryPage;
 
 class OverviewPage extends StatefulWidget {
   const OverviewPage({
@@ -40,14 +49,33 @@ class _OverviewPageState extends State<OverviewPage>
   List<LightIsleRoot> _roots = const [];
   String? _rootsError;
   DateTime? _lastRootCheck;
+  DateTime? _lastComputerFilesCheck;
+  bool _computerFilesAvailable = false;
   List<Map<String, dynamic>> _tasks = [];
   String? _error, _taskError;
   Timer? _timer;
-  bool _busy = false, _visible = true, _foreground = true;
+  final ValueNotifier<bool> _busyNotifier = ValueNotifier<bool>(false);
+  bool get _busy => _busyNotifier.value;
+  static const int _maxHistorySamples = 24;
+  List<double> _cpuHistory = const [];
+  List<double> _netHistory = const [];
+  bool _visible = true, _foreground = true;
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void didUpdateWidget(covariant OverviewPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.isAdmin != widget.isAdmin || oldWidget.api != widget.api) {
+      _cpuHistory = const [];
+      _netHistory = const [];
+      _lastRootCheck = null;
+      _lastComputerFilesCheck = null;
+      _schedule();
+    }
   }
 
   @override
@@ -76,27 +104,42 @@ class _OverviewPageState extends State<OverviewPage>
 
   Future<void> _refresh() async {
     if (_busy) return;
-    setState(() => _busy = true);
+    _busyNotifier.value = true;
+    var nextStats = _stats;
+    var nextPersonalStorage = _personalStorage;
+    var nextComputerFilesAvailable = _computerFilesAvailable;
+    var nextRoots = _roots;
+    var nextRootsError = _rootsError;
+    var nextTasks = _tasks;
+    var nextError = _error;
+    var nextTaskError = _taskError;
+
     try {
       if (widget.isAdmin) {
-        final stats = await widget.api.get('/api/v2/system');
-        if (mounted) {
-          setState(() {
-            _stats = stats;
-            _error = null;
-          });
-        }
+        nextStats = await widget.api.get('/api/v2/system');
+        nextError = null;
       } else {
-        final storage = await widget.api.get('/api/v2/me/storage');
-        if (mounted) {
-          setState(() {
-            _personalStorage = storage;
-            _error = null;
-          });
+        nextPersonalStorage = await widget.api.get('/api/v2/me/storage');
+        nextError = null;
+        final now = DateTime.now();
+        if (_lastComputerFilesCheck == null ||
+            now.difference(_lastComputerFilesCheck!) >=
+                const Duration(seconds: 60)) {
+          _lastComputerFilesCheck = now;
+          try {
+            final status = await widget.api.get(
+              '/api/v2/computer-files/status',
+            );
+            nextComputerFilesAvailable =
+                status['enabled'] == true &&
+                (status['mode']?.toString() ?? 'none') != 'none';
+          } catch (_) {
+            nextComputerFilesAvailable = false;
+          }
         }
       }
     } catch (e) {
-      if (mounted) setState(() => _error = userFacingError(e));
+      nextError = userFacingError(e);
     }
     final now = DateTime.now();
     if (_lastRootCheck == null ||
@@ -106,42 +149,119 @@ class _OverviewPageState extends State<OverviewPage>
         final response = await widget.api.get('/api/v2/roots');
         final items = response['roots'];
         if (items is! List) throw const FormatException('存储根响应无效');
-        final roots = items
+        nextRoots = items
             .map(
               (item) => LightIsleRoot.fromJson(
                 Map<String, dynamic>.from(item as Map),
               ),
             )
             .toList(growable: false);
-        if (mounted) {
-          setState(() {
-            _roots = roots;
-            _rootsError = null;
-          });
-        }
+        nextRootsError = null;
       } catch (e) {
-        if (mounted) {
-          setState(() {
-            _roots = const [];
-            _rootsError = userFacingError(e);
-          });
-        }
+        nextRoots = const [];
+        nextRootsError = userFacingError(e);
       }
     }
     if (widget.isAdmin && mounted) {
       try {
         final result = await widget.api.get('/api/v2/tasks');
-        if (mounted) {
-          setState(() {
-            _tasks = objectList(result['tasks']);
-            _taskError = null;
-          });
-        }
+        nextTasks = objectList(result['tasks']);
+        nextTaskError = null;
       } catch (e) {
-        if (mounted) setState(() => _taskError = userFacingError(e));
+        nextTaskError = userFacingError(e);
       }
     }
-    if (mounted) setState(() => _busy = false);
+    if (!mounted) {
+      _busyNotifier.value = false;
+      return;
+    }
+    final changed =
+        !_overviewJsonEqual(_stats, nextStats) ||
+        !_overviewJsonEqual(_personalStorage, nextPersonalStorage) ||
+        _computerFilesAvailable != nextComputerFilesAvailable ||
+        !_overviewRootsEqual(_roots, nextRoots) ||
+        _rootsError != nextRootsError ||
+        !_overviewJsonEqual(_tasks, nextTasks) ||
+        _error != nextError ||
+        _taskError != nextTaskError;
+    _busyNotifier.value = false;
+    if (changed) {
+      final statsChanged = !_overviewJsonEqual(_stats, nextStats);
+      setState(() {
+        _stats = nextStats;
+        _personalStorage = nextPersonalStorage;
+        _computerFilesAvailable = nextComputerFilesAvailable;
+        _roots = nextRoots;
+        _rootsError = nextRootsError;
+        _tasks = nextTasks;
+        _error = nextError;
+        _taskError = nextTaskError;
+        if (statsChanged && nextStats != null) {
+          _recordTelemetrySample(nextStats);
+        }
+      });
+    }
+  }
+
+  void _recordTelemetrySample(Map<String, dynamic> stats) {
+    List<double> append(List<double> list, double value) {
+      if (!value.isFinite) return list;
+      final next = [...list, value];
+      if (next.length > _maxHistorySamples) {
+        return List<double>.unmodifiable(
+          next.sublist(next.length - _maxHistorySamples),
+        );
+      }
+      return List<double>.unmodifiable(next);
+    }
+
+    final cpu = stats['cpuPercent'];
+    if (cpu is num) {
+      _cpuHistory = append(_cpuHistory, cpu.toDouble().clamp(0.0, 100.0));
+    }
+    final down = (stats['networkDownBps'] as num?)?.toDouble() ?? 0;
+    final up = (stats['networkUpBps'] as num?)?.toDouble() ?? 0;
+    _netHistory = append(_netHistory, (down + up).clamp(0.0, double.infinity));
+  }
+
+  static bool _overviewRootsEqual(
+    List<LightIsleRoot> a,
+    List<LightIsleRoot> b,
+  ) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i].id != b[i].id ||
+          a[i].name != b[i].name ||
+          a[i].generation != b[i].generation ||
+          a[i].online != b[i].online ||
+          a[i].isDefault != b[i].isDefault ||
+          a[i].volumeMount != b[i].volumeMount) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  static bool _overviewJsonEqual(Object? a, Object? b) {
+    if (identical(a, b)) return true;
+    if (a is Map && b is Map) {
+      if (a.length != b.length) return false;
+      for (final key in a.keys) {
+        if (!b.containsKey(key) || !_overviewJsonEqual(a[key], b[key])) {
+          return false;
+        }
+      }
+      return true;
+    }
+    if (a is List && b is List) {
+      if (a.length != b.length) return false;
+      for (var i = 0; i < a.length; i++) {
+        if (!_overviewJsonEqual(a[i], b[i])) return false;
+      }
+      return true;
+    }
+    return a == b;
   }
 
   String _formatSamplingTime(Object? raw) {
@@ -165,24 +285,29 @@ class _OverviewPageState extends State<OverviewPage>
   @override
   void dispose() {
     _timer?.cancel();
+    _busyNotifier.dispose();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
-  String _percent(Object? value) =>
-      value is num ? '${value.clamp(0, 100).toStringAsFixed(1)}%' : '采样中';
   void _openSharesPage() {
     Navigator.of(context).push<void>(
-      MaterialPageRoute(builder: (_) => FileSharesPage(api: widget.api)),
+      buildIslePageRoute(builder: (_) => FileSharesPage(api: widget.api)),
     );
   }
 
   void _openAppsCenterPage() {
     Navigator.of(context).push<void>(
-      MaterialPageRoute(
+      buildIslePageRoute(
         builder: (_) =>
             AppsCenterPage(api: widget.api, isAdmin: widget.isAdmin),
       ),
+    );
+  }
+
+  void _openDownloadsPage() {
+    Navigator.of(context).push<void>(
+      buildIslePageRoute(builder: (_) => DownloadsPage(api: widget.api)),
     );
   }
 
@@ -195,43 +320,81 @@ class _OverviewPageState extends State<OverviewPage>
       return const SizedBox.shrink();
     }
     final scheme = Theme.of(context).colorScheme;
+    final message = [
+      if (offlineRoots.isNotEmpty)
+        '${offlineRoots.length} 个存储目录离线（${offlineRoots.map((e) => e.name).join('、')}）',
+      if (failedTasks.isNotEmpty) '${failedTasks.length} 项后台任务异常待处理',
+    ].join(' · ');
     return Padding(
       padding: const EdgeInsets.only(bottom: 14),
       child: IsleSurface(
         radius: IsleRadius.item,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        child: Row(
-          children: [
-            Icon(Icons.warning_amber_rounded, color: scheme.error, size: 22),
-            const SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                [
-                  if (offlineRoots.isNotEmpty)
-                    '${offlineRoots.length} 个存储目录离线（${offlineRoots.map((e) => e.name).join('、')}）',
-                  if (failedTasks.isNotEmpty)
-                    '${failedTasks.length} 项后台任务异常待处理',
-                ].join(' · '),
-                style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  color: scheme.onSurface,
-                ),
-              ),
-            ),
-            if (offlineRoots.isNotEmpty)
-              TextButton(
-                onPressed: () => Navigator.of(context).push<void>(
-                  MaterialPageRoute(
-                    builder: (_) => StoragePage(api: widget.api, isAdmin: true),
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final compact =
+                constraints.maxWidth < 520 ||
+                MediaQuery.textScalerOf(context).scale(1) > 1.25;
+            final actions = <Widget>[
+              if (offlineRoots.isNotEmpty)
+                TextButton(
+                  onPressed: () => Navigator.of(context).push<void>(
+                    buildIslePageRoute(
+                      builder: (_) =>
+                          StoragePage(api: widget.api, isAdmin: true),
+                    ),
                   ),
+                  child: const Text('查看存储'),
                 ),
-                child: const Text('查看存储'),
+              ValueListenableBuilder<bool>(
+                valueListenable: _busyNotifier,
+                builder: (_, busy, _) => TextButton(
+                  onPressed: busy ? null : _refresh,
+                  child: const Text('重新检查'),
+                ),
               ),
-            TextButton(
-              onPressed: _busy ? null : _refresh,
-              child: const Text('重新检查'),
-            ),
-          ],
+            ];
+            final messageWidget = Text(
+              message,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                fontWeight: FontWeight.w600,
+                color: scheme.onSurface,
+              ),
+            );
+            if (compact) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(
+                        Icons.warning_amber_rounded,
+                        color: scheme.error,
+                        size: 22,
+                      ),
+                      const SizedBox(width: 12),
+                      Expanded(child: messageWidget),
+                    ],
+                  ),
+                  const SizedBox(height: 6),
+                  Wrap(spacing: 4, runSpacing: 4, children: actions),
+                ],
+              );
+            }
+            return Row(
+              children: [
+                Icon(
+                  Icons.warning_amber_rounded,
+                  color: scheme.error,
+                  size: 22,
+                ),
+                const SizedBox(width: 12),
+                Expanded(child: messageWidget),
+                ...actions,
+              ],
+            );
+          },
         ),
       ),
     );
@@ -259,95 +422,25 @@ class _OverviewPageState extends State<OverviewPage>
             label: const Text('文件管理'),
           ),
         const SizedBox(width: 4),
-        IconButton(
-          tooltip: '刷新状态',
-          visualDensity: compact ? VisualDensity.compact : null,
-          onPressed: _busy ? null : _refresh,
-          icon: const Icon(Icons.refresh_rounded),
+        ValueListenableBuilder<bool>(
+          valueListenable: _busyNotifier,
+          builder: (_, busy, _) => IconButton(
+            tooltip: '刷新状态',
+            visualDensity: compact ? VisualDensity.compact : null,
+            onPressed: busy ? null : _refresh,
+            icon: const Icon(Icons.refresh_rounded),
+          ),
         ),
       ],
     );
   }
 
-  Widget _buildAdminStatsGrid(Map<String, dynamic> stats) {
-    final memoryTotal = (stats['memoryTotal'] as num?) ?? 0;
-    final memoryUsed = (stats['memoryUsed'] as num?) ?? 0;
-    final diskTotal = (stats['diskTotal'] as num?) ?? 0;
-    final diskFree = (stats['diskFree'] as num?) ?? 0;
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final width = constraints.maxWidth;
-        final largeText = MediaQuery.textScalerOf(context).scale(14) > 19;
-        final columns = largeText
-            ? (width >= 760 ? 2 : 1)
-            : width >= 680
-            ? 4
-            : 2;
-        final gap = width < IsleLayout.compactPageWidth ? 8.0 : 12.0;
-        final cpuPct = stats['cpuPercent'] is num
-            ? (stats['cpuPercent'] as num).toDouble() / 100
-            : null;
-        final memPct = memoryTotal > 0
-            ? (memoryUsed / memoryTotal).clamp(0.0, 1.0)
-            : null;
-        final diskPct = diskTotal > 0
-            ? (1.0 - (diskFree / diskTotal)).clamp(0.0, 1.0)
-            : null;
-        final cards = [
-          IsleBentoStatCard(
-            title: '处理器',
-            value: _percent(stats['cpuPercent']),
-            detail: '${stats['cpuCount']} 核 · ${stats['architecture']}',
-            icon: Icons.memory_rounded,
-            color: const Color(0xff0071e3),
-            gradient: const [Color(0xff2589ff), Color(0xff0066cc)],
-            progress: cpuPct,
-          ),
-          IsleBentoStatCard(
-            title: '内存',
-            value: formatBytes(memoryUsed),
-            detail:
-                '共 ${formatBytes(memoryTotal)} · ${memoryTotal == 0 ? '—' : _percent(memoryUsed / memoryTotal * 100)}',
-            icon: Icons.speed_rounded,
-            color: const Color(0xff8b5cf6),
-            gradient: const [Color(0xffa78bfa), Color(0xff7c3aed)],
-            progress: memPct,
-          ),
-          IsleBentoStatCard(
-            title: '系统磁盘',
-            value: '${formatBytes(diskFree)} 可用',
-            detail: '共 ${formatBytes(diskTotal)}',
-            icon: Icons.storage_rounded,
-            color: const Color(0xff0ea5e9),
-            gradient: const [Color(0xff38bdf8), Color(0xff0284c7)],
-            progress: diskPct,
-          ),
-          IsleBentoStatCard(
-            title: '网络',
-            value: '↓ ${formatBytes(stats['networkDownBps'] as num?)}/s',
-            detail: '↑ ${formatBytes(stats['networkUpBps'] as num?)}/s',
-            icon: Icons.swap_vert_rounded,
-            color: const Color(0xff10b981),
-            gradient: const [Color(0xff34d399), Color(0xff059669)],
-          ),
-        ];
-        return Wrap(
-          spacing: gap,
-          runSpacing: gap,
-          children: List.generate(
-            cards.length,
-            (i) => SizedBox(
-              width: (width - (columns - 1) * gap) / columns,
-              child: IsleAnimatedEntrance(
-                delay: Duration(milliseconds: 35 * i),
-                child: cards[i],
-              ),
-            ),
-          ),
-        );
-      },
-    );
-  }
+  Widget _buildAdminStatsGrid(Map<String, dynamic> stats) =>
+      AdminTelemetryBentoGrid(
+        stats: stats,
+        cpuHistory: _cpuHistory,
+        netHistory: _netHistory,
+      );
 
   List<Widget> _buildAdminTasksSection(BuildContext context) {
     return [
@@ -360,7 +453,7 @@ class _OverviewPageState extends State<OverviewPage>
             padding: const EdgeInsets.symmetric(horizontal: 8),
           ),
           onPressed: () => Navigator.of(context).push(
-            MaterialPageRoute<void>(
+            buildIslePageRoute<void>(
               builder: (_) => TaskHistoryPage(api: widget.api),
             ),
           ),
@@ -440,19 +533,33 @@ class _OverviewPageState extends State<OverviewPage>
                 onOpenFiles: widget.onOpenFiles,
                 onOpenShares: _openSharesPage,
                 onOpenAppsCenter: _openAppsCenterPage,
-                onOpenComputerFiles: () => Navigator.of(context).push<void>(
-                  MaterialPageRoute(
-                    builder: (_) => ComputerFilesPage(
-                      api: widget.api,
-                      isAdmin: widget.isAdmin,
-                    ),
-                  ),
-                ),
+                onOpenDownloads: widget.isAdmin ? null : _openDownloadsPage,
+                onOpenComputerFiles: (widget.isAdmin || _computerFilesAvailable)
+                    ? () => Navigator.of(context).push<void>(
+                        buildIslePageRoute(
+                          builder: (_) => ComputerFilesPage(
+                            api: widget.api,
+                            isAdmin: widget.isAdmin,
+                          ),
+                        ),
+                      )
+                    : null,
               ),
+              const SizedBox(height: 10),
+              _buildOverviewQuickJumpStrip(context),
               SizedBox(height: compact ? 6 : 12),
-              if (_busy &&
-                  (widget.isAdmin ? stats == null : _personalStorage == null))
-                const IsleLoadingState(label: '正在同步设备与空间状态…'),
+              ValueListenableBuilder<bool>(
+                valueListenable: _busyNotifier,
+                builder: (_, busy, _) {
+                  if (!busy ||
+                      (widget.isAdmin
+                          ? stats != null
+                          : _personalStorage != null)) {
+                    return const SizedBox.shrink();
+                  }
+                  return const IsleLoadingState(label: '正在同步设备与空间状态…');
+                },
+              ),
               if (_error != null)
                 Notice(
                   '无法更新服务状态：$_error${stats == null ? '' : '\n以下为上一次成功采样。'}',
@@ -488,7 +595,7 @@ class _OverviewPageState extends State<OverviewPage>
                         )
                       : null,
                 ),
-                _buildAdminStatsGrid(stats),
+                RepaintBoundary(child: _buildAdminStatsGrid(stats)),
                 const SizedBox(height: 6),
                 AdminVolumeBrowser(
                   volumes: objectList(stats['volumes']),
@@ -504,153 +611,61 @@ class _OverviewPageState extends State<OverviewPage>
       ),
     );
   }
-}
 
-class TaskHistoryPage extends StatefulWidget {
-  const TaskHistoryPage({super.key, required this.api});
-  final LightIsleApi api;
-  @override
-  State<TaskHistoryPage> createState() => _TaskHistoryPageState();
-}
-
-class _TaskHistoryPageState extends State<TaskHistoryPage> {
-  final List<Map<String, dynamic>> _runs = [];
-  String _cursor = '';
-  String? _error;
-  bool _busy = false, _loaded = false;
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load({bool reset = false}) async {
-    if (_busy) return;
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      final result = await widget.api.get(
-        '/api/v2/tasks/history',
-        query: {
-          'limit': '20',
-          if (!reset && _cursor.isNotEmpty) 'before': _cursor,
-        },
-      );
-      if (mounted) {
-        setState(() {
-          if (reset) _runs.clear();
-          _runs.addAll(objectList(result['runs']));
-          _cursor = result['nextCursor']?.toString() ?? '';
-          _loaded = true;
-        });
-      }
-    } catch (e) {
-      if (mounted) setState(() => _error = userFacingError(e));
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: IsleAppBar(
-      title: const Text('任务历史'),
-      actions: [
-        IconButton(
-          tooltip: '刷新历史',
-          onPressed: _busy ? null : () => _load(reset: true),
-          icon: const Icon(Icons.refresh),
-        ),
-      ],
-    ),
-    body: IsleListView(
-      maxWidth: 1120,
-      children: [
-        if (_error != null) Notice(_error!, error: true, onRetry: _load),
-        if (_busy) const LinearProgressIndicator(),
-        if (_loaded && _runs.isEmpty) const Notice('还没有任务历史。'),
-        if (_runs.isNotEmpty)
-          IsleGroupCard(
-            children: [
-              for (final task in _runs)
-                Builder(
-                  builder: (context) {
-                    final lastError = task['lastError']?.toString() ?? '';
-                    return ListTile(
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 14,
-                        vertical: 4,
-                      ),
-                      leading: IsleSquircleBadge(
-                        icon: Icons.assignment_outlined,
-                        color: IslePalette.of(context)['brandBlue'],
-                        size: 36,
-                        iconSize: 19,
-                      ),
-                      title: Text(
-                        '${taskName(task['kind'], operation: task['operation'])} · ${taskStatus(task)}',
-                        style: Theme.of(context).textTheme.titleSmall
-                            ?.copyWith(fontWeight: FontWeight.w700),
-                      ),
-                      subtitle: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            '已处理 ${task['processed'] ?? task['progress'] ?? 0} 项 · '
-                            '第 ${task['attempts'] ?? 1} 次尝试',
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(
-                                  color: Theme.of(context)
-                                      .colorScheme
-                                      .onSurfaceVariant,
-                                ),
-                          ),
-                          if (task['startedAt'] is num)
-                            Text(
-                              _formatTime((task['startedAt'] as num).toInt()),
-                              style: Theme.of(context).textTheme.bodySmall
-                                  ?.copyWith(
-                                    color: Theme.of(context)
-                                        .colorScheme
-                                        .onSurfaceVariant,
-                                  ),
-                            ),
-                          if (lastError.isNotEmpty)
-                            Text(
-                              '原因：$lastError',
-                              style: Theme.of(context).textTheme.bodySmall
-                                  ?.copyWith(
-                                    color: Theme.of(context).colorScheme.error,
-                                  ),
-                            ),
-                        ],
-                      ),
-                    );
-                  },
-                ),
-            ],
+  Widget _buildOverviewQuickJumpStrip(BuildContext context) {
+    return IsleQuickJumpStrip(
+      key: const ValueKey('overviewQuickJumpStrip'),
+      items: [
+        IsleQuickJumpItem(
+          icon: Icons.storage_rounded,
+          label: widget.isAdmin ? '存储与成员配额' : '我的存储与额度',
+          tooltip: widget.isAdmin ? '管理存储位置、物理盘及成员每盘配额' : '查看各硬盘额度与分类占用',
+          onTap: () => Navigator.of(context).push<void>(
+            buildIslePageRoute(
+              builder: (_) =>
+                  StoragePage(api: widget.api, isAdmin: widget.isAdmin),
+            ),
           ),
-        if (!_busy && _cursor.isNotEmpty)
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: OutlinedButton(
-                onPressed: _load,
-                child: const Text('加载更多'),
+        ),
+        IsleQuickJumpItem(
+          icon: Icons.folder_shared_outlined,
+          label: 'WebDAV 挂载连接',
+          tooltip: '获取 WebDAV 挂载地址并管理独立访问密码',
+          onTap: () => Navigator.of(context).push<void>(
+            buildIslePageRoute(builder: (_) => DavPage(api: widget.api)),
+          ),
+        ),
+        IsleQuickJumpItem(
+          icon: Icons.file_copy_outlined,
+          label: '重复大文件清理',
+          tooltip: '扫描重复大文件并按比例清理释放磁盘空间',
+          onTap: () => Navigator.of(context).push<void>(
+            buildIslePageRoute(
+              builder: (_) => DuplicateFilesPage(api: widget.api),
+            ),
+          ),
+        ),
+        if (widget.isAdmin) ...[
+          IsleQuickJumpItem(
+            icon: Icons.lan_outlined,
+            label: 'Mac 文件共享 (SMB)',
+            tooltip: '管理局域网 SMB 文件共享与访客权限',
+            onTap: () => Navigator.of(context).push<void>(
+              buildIslePageRoute(builder: (_) => AdminSmbPage(api: widget.api)),
+            ),
+          ),
+          IsleQuickJumpItem(
+            icon: Icons.terminal_rounded,
+            label: '本机脚本自动化',
+            tooltip: '管理本地调度脚本、Cron 规则与执行日志',
+            onTap: () => Navigator.of(context).push<void>(
+              buildIslePageRoute(
+                builder: (_) => AutomationPage(api: widget.api),
               ),
             ),
           ),
+        ],
       ],
-    ),
-  );
-
-  String _formatTime(int seconds) {
-    final t = DateTime.fromMillisecondsSinceEpoch(seconds * 1000).toLocal();
-    String p(int v) => v.toString().padLeft(2, '0');
-    return '${t.year.toString().padLeft(4, '0')}-${p(t.month)}-${p(t.day)} '
-        '${p(t.hour)}:${p(t.minute)}';
+    );
   }
 }

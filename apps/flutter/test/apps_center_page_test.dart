@@ -8,15 +8,12 @@ class _FakeAppsApi extends LightIsleApi {
   _FakeAppsApi({required this.isAdmin}) : super('http://127.0.0.1');
 
   final bool isAdmin;
-  bool mcpEnabled = false;
-  bool mcpLanEnabled = false;
-  String mcpToken = 'mcp-tok-initial';
   String defaultLocationId = 'internal';
   Map<String, dynamic>? externalStorageLocation;
+  bool includeTemplates = false;
   final List<String> calls = <String>[];
   Map<String, dynamic>? lastPutBody;
   Map<String, dynamic>? lastStorageBody;
-  Map<String, dynamic>? lastMcpDebugBody;
   String? lastDownloadedPath;
   String? lastDownloadSavePath;
 
@@ -72,12 +69,15 @@ class _FakeAppsApi extends LightIsleApi {
   Map<String, dynamic> _snapshot() => {
     'apps': apps.map((e) => Map<String, dynamic>.from(e)).toList(),
     'isAdmin': isAdmin,
-    'mcpEnabled': mcpEnabled,
-    'mcpLanEnabled': mcpLanEnabled,
-    'mcpToken': mcpToken,
-    'lanHttpUrl': 'http://192.168.1.10:16666/api/v2/mcp',
-    'lanSseUrl': 'http://192.168.1.10:16666/api/v2/mcp/sse',
-    'mcpPrompt': 'lightisled mcp --data-dir /tmp/lightisle',
+    if (includeTemplates)
+      'templates': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'home-notes',
+          'name': '家庭记事本',
+          'description': '静态记事应用',
+          'installed': false,
+        },
+      ],
     'members': <Map<String, dynamic>>[
       {'id': 1, 'username': 'admin', 'role': 'admin'},
       {'id': 2, 'username': 'alice', 'role': 'member'},
@@ -173,7 +173,8 @@ class _FakeAppsApi extends LightIsleApi {
             'path': map['path'].toString(),
             'pluginsDir': '${map['path']}/plugins',
             'pluginDataDir': '${map['path']}/plugin-data',
-            'isDefault': map['setDefault'] == true || defaultLocationId == 'external',
+            'isDefault':
+                map['setDefault'] == true || defaultLocationId == 'external',
             'isCustomPath': true,
             'online': true,
             'writable': true,
@@ -190,27 +191,6 @@ class _FakeAppsApi extends LightIsleApi {
         defaultLocationId = map['defaultLocationId']?.toString() ?? 'internal';
       }
       return _snapshot();
-    }
-    if (method == 'POST' && path == '/api/v2/apps/mcp/logs/clear' ||
-        method == 'DELETE' && path == '/api/v2/apps/mcp/logs') {
-      return {'ok': true};
-    }
-    if (method == 'PUT' && path == '/api/v2/apps/mcp') {
-      final map = Map<String, dynamic>.from(body as Map);
-      mcpEnabled = map['enabled'] == true;
-      if (map.containsKey('lanEnabled')) {
-        mcpLanEnabled = map['lanEnabled'] == true;
-      } else if (!mcpEnabled) {
-        mcpLanEnabled = false;
-      }
-      return {
-        'mcpEnabled': mcpEnabled,
-        'mcpLanEnabled': mcpLanEnabled,
-        'mcpToken': mcpToken,
-        'lanHttpUrl': 'http://192.168.1.10:16666/api/v2/mcp',
-        'lanSseUrl': 'http://192.168.1.10:16666/api/v2/mcp/sse',
-        'mcpPrompt': 'lightisled mcp --data-dir /tmp/lightisle',
-      };
     }
     if (method == 'POST' && path == '/api/v2/apps/cpe-monitor/launch') {
       apps[0]['status'] = 'running';
@@ -238,13 +218,6 @@ class _FakeAppsApi extends LightIsleApi {
         apps[idx]['cron'] = Map<String, dynamic>.from(map['cron'] as Map);
       }
       return _snapshot();
-    }
-    if (method == 'POST' && path == '/api/v2/apps/mcp/debug') {
-      lastMcpDebugBody = Map<String, dynamic>.from(body as Map);
-      return {
-        'responseJson': '{"uri":"${lastMcpDebugBody?['uri']}"}',
-        'logs': <Map<String, dynamic>>[],
-      };
     }
     throw StateError('unexpected $method $path');
   }
@@ -477,59 +450,209 @@ void main() {
     },
   );
 
-  testWidgets('app storage locations card supports 1 internal + 1 external slot lifecycle', (
-    tester,
-  ) async {
-    tester.view.physicalSize = const Size(1100, 1400);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.resetPhysicalSize);
-    addTearDown(tester.view.resetDevicePixelRatio);
+  testWidgets(
+    'app storage locations card supports 1 internal + 1 external slot lifecycle',
+    (tester) async {
+      tester.view.physicalSize = const Size(1100, 1400);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
 
-    final api = _FakeAppsApi(isAdmin: true);
-    addTearDown(api.close);
+      final api = _FakeAppsApi(isAdmin: true);
+      addTearDown(api.close);
 
-    await tester.pumpWidget(
-      MaterialApp(home: AppsCenterPage(api: api, isAdmin: true)),
-    );
-    await tester.pumpAndSettle();
+      await tester.pumpWidget(
+        MaterialApp(home: AppsCenterPage(api: api, isAdmin: true)),
+      );
+      await tester.pumpAndSettle();
 
-    expect(find.byKey(const ValueKey('appStorageLocationsCard')), findsOneWidget);
-    expect(find.text('已配置 1/2（1 内置盘 + 1 其他盘）'), findsOneWidget);
-    expect(find.text('内置盘 1/1'), findsOneWidget);
-    expect(find.text('其他盘 0/1'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('appStorageLocationsCard')),
+        findsOneWidget,
+      );
+      expect(find.text('已配置 1/2（1 内置盘 + 1 其他盘）'), findsOneWidget);
+      expect(find.text('内置盘 1/1'), findsOneWidget);
+      expect(find.text('其他盘 0/1'), findsOneWidget);
 
-    await tester.ensureVisible(
-      find.byKey(const ValueKey('addExternalAppStorageButton')),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey('addExternalAppStorageButton')));
-    await tester.pumpAndSettle();
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('addExternalAppStorageButton')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('addExternalAppStorageButton')),
+      );
+      await tester.pumpAndSettle();
 
-    expect(find.byKey(const ValueKey('appStoragePathField')), findsOneWidget);
-    await tester.tap(
-      find.byKey(const ValueKey('confirmAppStorageDialogButton')),
-    );
-    await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('appStoragePathField')), findsOneWidget);
+      await tester.tap(
+        find.byKey(const ValueKey('confirmAppStorageDialogButton')),
+      );
+      await tester.pumpAndSettle();
 
-    expect(api.lastStorageBody?['action'], 'add');
-    expect(api.lastStorageBody?['kind'], 'external');
-    expect(api.lastStorageBody?['path'], '/Volumes/ExtSSD/LightIsleApps');
-    expect(find.text('已配置 2/2（1 内置盘 + 1 其他盘）'), findsOneWidget);
-    expect(find.text('其他盘 1/1'), findsOneWidget);
-    expect(find.byKey(const ValueKey('addExternalAppStorageButton')), findsNothing);
+      expect(api.lastStorageBody?['action'], 'add');
+      expect(api.lastStorageBody?['kind'], 'external');
+      expect(api.lastStorageBody?['path'], '/Volumes/ExtSSD/LightIsleApps');
+      expect(find.text('已配置 2/2（1 内置盘 + 1 其他盘）'), findsOneWidget);
+      expect(find.text('其他盘 1/1'), findsOneWidget);
+      expect(
+        find.byKey(const ValueKey('addExternalAppStorageButton')),
+        findsNothing,
+      );
 
-    await tester.ensureVisible(
-      find.byKey(const ValueKey('removeExternalAppStorageButton')),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(
-      find.byKey(const ValueKey('removeExternalAppStorageButton')),
-    );
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('确认移除'));
-    await tester.pumpAndSettle();
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('removeExternalAppStorageButton')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('removeExternalAppStorageButton')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('确认移除'));
+      await tester.pumpAndSettle();
 
-    expect(api.lastStorageBody?['action'], 'remove_external');
-    expect(find.text('其他盘 0/1'), findsOneWidget);
-  });
+      expect(api.lastStorageBody?['action'], 'remove_external');
+      expect(find.text('其他盘 0/1'), findsOneWidget);
+    },
+  );
+
+  testWidgets(
+    '320px workbench exits via Back without overflow, hides member runtime badges, filters static menus, and validates empty storage path',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 568);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final adminApi = _FakeAppsApi(isAdmin: true)
+        ..includeTemplates = true
+        ..externalStorageLocation = <String, dynamic>{
+          'id': 'external',
+          'kind': 'external',
+          'name': 'ExtSSD',
+          'path': '/Volumes/ExtSSD/LightIsleApps',
+          'isDefault': false,
+          'isCustomPath': true,
+          'online': true,
+          'writable': true,
+          'freeBytes': 500000000000,
+          'totalBytes': 1000000000000,
+          'appCount': 0,
+        };
+      addTearDown(adminApi.close);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AppsCenterPage(
+            api: adminApi,
+            isAdmin: true,
+            urlLauncher: (_, {mode = LaunchMode.platformDefault}) async => true,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Select external slot, mark offline on reload -> resets cleanly to default ('').
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('templateInstallLocationDropdown')),
+        150,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('templateInstallLocationDropdown')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('其他盘 · ExtSSD').last);
+      await tester.pumpAndSettle();
+      adminApi.externalStorageLocation!['online'] = false;
+      await tester.tap(find.byKey(const ValueKey('refreshAppsIconButton')));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+      expect(find.text('跟随默认位置'), findsOneWidget);
+
+      // Static + no-cron app filters out process & cron actions in popup menu.
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('moreActionsApp_network-pulse')),
+        150,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('moreActionsApp_network-pulse')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('启动 Web 进程'), findsNothing);
+      expect(find.text('立即执行定时任务'), findsNothing);
+      expect(find.text('导出应用数据 (.tar.gz)'), findsOneWidget);
+      await tester.tapAt(const Offset(5, 5));
+      await tester.pumpAndSettle();
+
+      // Launch workbench at 320px -> zero overflow and system Back exits workbench.
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('launchApp_cpe-monitor')),
+        -150,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('launchApp_cpe-monitor')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('workbenchBackButton')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('workbenchBackButton')), findsNothing);
+
+      // Member workbench hides admin runtime & storage badges.
+      final memberApi = _FakeAppsApi(isAdmin: false);
+      addTearDown(memberApi.close);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AppsCenterPage(
+            key: const ValueKey('memberAppsCenterPage'),
+            api: memberApi,
+            isAdmin: false,
+            urlLauncher: (_, {mode = LaunchMode.platformDefault}) async => true,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('launchApp_cpe-monitor')),
+        150,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('launchApp_cpe-monitor')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('workbenchBackButton')), findsOneWidget);
+      expect(find.text('运行中 24 MB'), findsNothing);
+      expect(find.textContaining('内置盘'), findsNothing);
+
+      // Storage path dialog validates empty path inline without calling API.
+      adminApi.externalStorageLocation = null;
+      await tester.pumpWidget(
+        MaterialApp(home: AppsCenterPage(api: adminApi, isAdmin: true)),
+      );
+      await tester.pumpAndSettle();
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('addExternalAppStorageButton')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('addExternalAppStorageButton')),
+      );
+      await tester.pumpAndSettle();
+      await tester.enterText(
+        find.byKey(const ValueKey('appStoragePathField')),
+        '   ',
+      );
+      await tester.tap(
+        find.byKey(const ValueKey('confirmAppStorageDialogButton')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('请填写 Mac 本机目录路径'), findsOneWidget);
+      expect(adminApi.lastStorageBody, isNull);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

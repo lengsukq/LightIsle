@@ -201,9 +201,8 @@ extension _CinemaDetailPlayerView on _CinemaDetailDialogState {
     final compactControls =
         MediaQuery.sizeOf(context).width < 480 ||
         MediaQuery.textScalerOf(context).scale(14) > 20;
-    final controlTextStyle = Theme.of(
-      context,
-    ).textTheme.labelSmall?.copyWith(color: Colors.white);
+    final controlTextStyle = Theme.of(context).textTheme.labelSmall
+        ?.copyWith(color: Colors.white);
     final playButton = IconButton(
       tooltip: controller.value.isPlaying ? '暂停' : '播放',
       color: Colors.white,
@@ -308,9 +307,8 @@ extension _CinemaDetailPlayerView on _CinemaDetailDialogState {
     BuildContext context,
     VideoPlayerController controller,
   ) {
-    final textStyle = Theme.of(
-      context,
-    ).textTheme.bodyMedium?.copyWith(color: Colors.white);
+    final textStyle = Theme.of(context).textTheme.bodyMedium
+        ?.copyWith(color: Colors.white);
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
       child: Wrap(
@@ -548,6 +546,9 @@ extension _CinemaDetailPlayerView on _CinemaDetailDialogState {
               GestureDetector(
                 behavior: HitTestBehavior.opaque,
                 onTap: () {
+                  if (!_chrome.playerFocusNode.hasFocus) {
+                    _chrome.playerFocusNode.requestFocus();
+                  }
                   if (_chrome.dockManuallyCollapsed) {
                     _updateState(() => _chrome.dockManuallyCollapsed = false);
                     _revealChrome();
@@ -578,6 +579,7 @@ extension _CinemaDetailPlayerView on _CinemaDetailDialogState {
                   !_playback.transcodeStarting &&
                   !_chrome.dockManuallyCollapsed)
                 _buildStageCenterPlayOverlay(controller),
+              _buildPlayerShortcutHud(),
               if (_activeCue case final cue?)
                 _buildStageSubtitleOverlay(
                   cue,
@@ -591,8 +593,7 @@ extension _CinemaDetailPlayerView on _CinemaDetailDialogState {
   }
 
   Widget _buildStageUnplayableFallback(BuildContext context) {
-    final canTranscode =
-        !_film.canAttemptPlayback && _film.probeStatus != 'pending';
+    final canRecover = _film.probeStatus != 'pending';
     return ColoredBox(
       color: Colors.black,
       child: Center(
@@ -623,7 +624,8 @@ extension _CinemaDetailPlayerView on _CinemaDetailDialogState {
                   ),
                 const SizedBox(height: 14),
                 Text(
-                  _playback.playbackMessage ?? '此视频无法播放。',
+                  _playback.playbackMessage ??
+                      '此视频无法在当前浏览器/内置解码器中播放，原始文件安全未受影响。',
                   textAlign: TextAlign.center,
                   style: const TextStyle(
                     color: Colors.white,
@@ -631,28 +633,31 @@ extension _CinemaDetailPlayerView on _CinemaDetailDialogState {
                     height: 1.45,
                   ),
                 ),
-                if (canTranscode && !_playback.transcodeStarting) ...[
+                if (canRecover && !_playback.transcodeStarting) ...[
                   const SizedBox(height: 16),
                   Wrap(
                     spacing: 10,
                     runSpacing: 8,
                     alignment: WrapAlignment.center,
                     children: [
-                      FilledButton.tonalIcon(
-                        key: const ValueKey('cinemaStageTryLocalDecodeButton'),
-                        style: FilledButton.styleFrom(
-                          backgroundColor: const Color(0x2EFFFFFF),
-                          foregroundColor: Colors.white,
-                        ),
-                        onPressed: () => unawaited(
-                          _loadDetailAndPlayer(
-                            seekTo: _film.canResume ? _film.position : 0,
-                            forceDirect: true,
+                      if (!_playback.directLocalActive)
+                        FilledButton.tonalIcon(
+                          key: const ValueKey(
+                            'cinemaStageTryLocalDecodeButton',
                           ),
+                          style: FilledButton.styleFrom(
+                            backgroundColor: const Color(0x2EFFFFFF),
+                            foregroundColor: Colors.white,
+                          ),
+                          onPressed: () => unawaited(
+                            _loadDetailAndPlayer(
+                              seekTo: _film.canResume ? _film.position : 0,
+                              forceDirect: true,
+                            ),
+                          ),
+                          icon: const Icon(Icons.memory_rounded, size: 17),
+                          label: const Text('原画直传（本地解码）'),
                         ),
-                        icon: const Icon(Icons.memory_rounded, size: 17),
-                        label: const Text('原画直传（本地解码）'),
-                      ),
                       FilledButton.tonalIcon(
                         style: FilledButton.styleFrom(
                           backgroundColor: const Color(0x2EFFFFFF),

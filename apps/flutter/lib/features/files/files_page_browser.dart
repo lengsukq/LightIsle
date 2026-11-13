@@ -12,6 +12,8 @@ extension _FilesPageBrowserOperations on _FilesPageState {
     String? target,
     bool more = false,
     bool keepSearch = false,
+    double? restoreScrollOffset,
+    String? highlightPath,
   }) async {
     final generation = ++_dir.loadGeneration;
     final rootIdentity = _dir.rootIdentity;
@@ -39,7 +41,11 @@ extension _FilesPageBrowserOperations on _FilesPageState {
         _dir.entries = more
             ? [..._dir.entries, ...response.entries]
             : response.entries;
-        if (!more) _transfers.selectedPaths.clear();
+        if (!more) {
+          _transfers.selectedPaths.clear();
+          _transfers.selectionAnchorPath = null;
+          _dir.highlightedPath = highlightPath;
+        }
         _dir.nextCursor = response.nextCursor;
         _filter.searchTruncated = false;
         _filter.showingTrash = false;
@@ -47,6 +53,12 @@ extension _FilesPageBrowserOperations on _FilesPageState {
           _filter.clearSearchState();
         }
       });
+      if (highlightPath != null &&
+          _dir.entries.any((entry) => entry.path == highlightPath)) {
+        _activateLocateHighlight(highlightPath);
+      } else if (restoreScrollOffset != null) {
+        _scheduleRestoreScroll(restoreScrollOffset);
+      }
     } catch (error) {
       if (_browserRequestCurrent(generation, rootIdentity)) {
         _refreshState(() {
@@ -62,17 +74,50 @@ extension _FilesPageBrowserOperations on _FilesPageState {
     }
   }
 
+  Future<void> _openContainingFolder(FileEntry item) async {
+    final slash = item.path.lastIndexOf('/');
+    final parent = slash < 0 ? '.' : item.path.substring(0, slash);
+    _filter.searchFocusNode.unfocus();
+    await _loadFiles(target: parent, highlightPath: item.path);
+    var pagesLoaded = 0;
+    while (mounted &&
+        !_disposed &&
+        _dir.path == parent &&
+        !_dir.entries.any((entry) => entry.path == item.path) &&
+        _dir.nextCursor.isNotEmpty &&
+        pagesLoaded < 6) {
+      pagesLoaded++;
+      await _loadFiles(target: parent, more: true, highlightPath: item.path);
+    }
+    if (mounted &&
+        !_disposed &&
+        _dir.entries.any((entry) => entry.path == item.path)) {
+      _activateLocateHighlight(item.path);
+    }
+  }
+
   Future<void> _searchFiles() async {
     final term = _filter.searchController.text.trim();
-    if (term.runes.length < 2) {
-      _refreshState(() => _dir.error = '请输入至少两个字符再搜索。');
+    if (term.isEmpty) {
+      _refreshState(() => _dir.error = '请输入要搜索的关键词。');
       return;
     }
     final generation = ++_dir.loadGeneration;
     final rootIdentity = _dir.rootIdentity;
     if (!_filter.searching && !_filter.showingTrash) {
       _filter.preSearchPath = _dir.path;
+      _filter.preSearchScrollOffset = _scrollController.hasClients
+          ? _scrollController.offset
+          : 0.0;
+      final current = _dir.path;
+      _filter.searchScopeSubdir =
+          current.isNotEmpty && current != widget.initialPath ? current : null;
+      _filter.searchEntireRoot = _filter.searchScopeSubdir == null;
     }
+    final scopePath =
+        (_filter.searchScopeSubdir != null && !_filter.searchEntireRoot)
+        ? _filter.searchScopeSubdir!
+        : widget.initialPath;
     _refreshState(() {
       _dir.loading = true;
       _dir.error = null;
@@ -81,12 +126,15 @@ extension _FilesPageBrowserOperations on _FilesPageState {
       _filter.showingTrash = false;
       _dir.entries = [];
       _transfers.selectedPaths.clear();
+      _transfers.selectionAnchorPath = null;
+      _dir.highlightedPath = null;
       _dir.nextCursor = '';
       _filter.searchTruncated = false;
     });
+    unawaited(_recordSearchHistory(term));
     try {
       final response = await _browserRepository.search(
-        initialPath: widget.initialPath,
+        initialPath: scopePath,
         term: term,
         limit: _pageSize,
         kind: _filter.searchKind,
@@ -94,8 +142,9 @@ extension _FilesPageBrowserOperations on _FilesPageState {
       );
       if (!_browserRequestCurrent(generation, rootIdentity)) return;
       _refreshState(() {
-        _dir.path = widget.initialPath;
+        _dir.path = scopePath;
         _transfers.selectedPaths.clear();
+        _transfers.selectionAnchorPath = null;
         _dir.canWrite = response.canWrite || widget.isAdmin;
         _dir.entries = response.entries;
         _dir.nextCursor = '';

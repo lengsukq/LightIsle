@@ -32,9 +32,8 @@ extension _PhotosPageBatchActions on _PhotosPageState {
     if (!confirmed || !current()) return false;
     _updateState(() => _selection.batchBusy = true);
     try {
-      final result = await MediaBatchOperations(
-        widget.api,
-      ).trashOriginals(paths: paths, stillCurrent: current);
+      final result = await MediaBatchOperations(widget.api)
+          .trashOriginals(paths: paths, stillCurrent: current);
       if (!mounted) return false;
       if (!current() || result.cancelled) {
         _updateState(
@@ -122,9 +121,8 @@ extension _PhotosPageBatchActions on _PhotosPageState {
       }
     });
     if (capped && mounted) {
-      ScaffoldMessenger.maybeOf(
-        context,
-      )?.showSnackBar(const SnackBar(content: Text('每次最多选择 50 项媒体。')));
+      ScaffoldMessenger.maybeOf(context)
+          ?.showSnackBar(const SnackBar(content: Text('每次最多选择 50 项媒体。')));
     }
   }
 
@@ -153,7 +151,8 @@ extension _PhotosPageBatchActions on _PhotosPageState {
     }
     final rootIdentity = widget.api.selectedRoot?.identity ?? 'default';
     final generation = _feed.generation;
-    bool current() => _batchSelectionCurrent(rootIdentity, generation, selected);
+    bool current() =>
+        _batchSelectionCurrent(rootIdentity, generation, selected);
     final originals = <MediaBatchItem>[
       for (final item in items)
         (path: item.path, name: item.name, size: item.size),
@@ -186,10 +185,8 @@ extension _PhotosPageBatchActions on _PhotosPageState {
     }
     if (!current()) {
       _updateState(
-        () => _feed.setActionFeedback(
-          '共享目录或选择已变化，请重新选择需要导出的媒体。',
-          isError: true,
-        ),
+        () =>
+            _feed.setActionFeedback('共享目录或选择已变化，请重新选择需要导出的媒体。', isError: true),
       );
       return;
     }
@@ -260,7 +257,8 @@ extension _PhotosPageBatchActions on _PhotosPageState {
     }
     final rootIdentity = widget.api.selectedRoot?.identity ?? 'default';
     final generation = _feed.generation;
-    bool current() => _batchSelectionCurrent(rootIdentity, generation, selected);
+    bool current() =>
+        _batchSelectionCurrent(rootIdentity, generation, selected);
     final confirmed = await confirmAction(
       context,
       '分享所选媒体？',
@@ -271,10 +269,8 @@ extension _PhotosPageBatchActions on _PhotosPageState {
     if (!confirmed || !mounted) return;
     if (!current()) {
       _updateState(
-        () => _feed.setActionFeedback(
-          '共享目录或选择已变化，请重新选择需要分享的媒体。',
-          isError: true,
-        ),
+        () =>
+            _feed.setActionFeedback('共享目录或选择已变化，请重新选择需要分享的媒体。', isError: true),
       );
       return;
     }
@@ -329,16 +325,43 @@ extension _PhotosPageBatchActions on _PhotosPageState {
 
   void _toggleSelection(PhotoAsset asset) {
     HapticFeedback.selectionClick();
+    final shiftPressed = HardwareKeyboard.instance.isShiftPressed;
     _updateState(() {
       _selection.selecting = true;
+      final anchorId = _selection.selectionAnchorId;
+      if (shiftPressed && anchorId != null && anchorId != asset.id) {
+        final anchorIndex = _feed.assets.indexWhere((a) => a.id == anchorId);
+        final targetIndex = _feed.assets.indexWhere((a) => a.id == asset.id);
+        if (anchorIndex >= 0 && targetIndex >= 0) {
+          final start = anchorIndex < targetIndex ? anchorIndex : targetIndex;
+          final end = anchorIndex > targetIndex ? anchorIndex : targetIndex;
+          var capped = false;
+          for (var i = start; i <= end; i++) {
+            final id = _feed.assets[i].id;
+            if (_selection.selectedAssets.contains(id)) continue;
+            if (_selection.selectedAssets.length >= 50) {
+              capped = true;
+              break;
+            }
+            _selection.selectedAssets.add(id);
+          }
+          _selection.selectionAnchorId = asset.id;
+          if (capped) {
+            ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+              const SnackBar(content: Text('每次最多选择 50 项媒体，已选取前 50 项。')),
+            );
+          }
+          return;
+        }
+      }
       if (_selection.selectedAssets.contains(asset.id)) {
         _selection.selectedAssets.remove(asset.id);
       } else if (_selection.selectedAssets.length < 50) {
         _selection.selectedAssets.add(asset.id);
+        _selection.selectionAnchorId = asset.id;
       } else {
-        ScaffoldMessenger.maybeOf(
-          context,
-        )?.showSnackBar(const SnackBar(content: Text('每次最多选择 50 项媒体。')));
+        ScaffoldMessenger.maybeOf(context)
+            ?.showSnackBar(const SnackBar(content: Text('每次最多选择 50 项媒体。')));
       }
     });
   }
@@ -378,6 +401,40 @@ extension _PhotosPageBatchActions on _PhotosPageState {
     });
   }
 
+  Future<bool> _removeSingleAssetFromCurrentAlbum(PhotoAsset asset) async {
+    final privateAlbumId = _scope.activePrivateAlbum;
+    final sharedAlbumId = widget.isAdmin ? _scope.activeAlbum : 0;
+    if (privateAlbumId <= 0 && sharedAlbumId <= 0) return false;
+    final isPrivate = privateAlbumId > 0;
+    final albumId = isPrivate ? privateAlbumId : sharedAlbumId;
+    final albumName =
+        (isPrivate ? _currentPrivateAlbum?.name : _currentAlbum?.name) ??
+        '当前相册';
+    final confirmed = await confirmAction(
+      context,
+      '从相册移出（保留原片）',
+      '将“${asset.name}”从“$albumName”中移出？这只会解除相册关联，不会删除 NAS 中的原始文件。',
+      action: '移出相册',
+    );
+    if (!confirmed || !mounted) return false;
+    await _albumRepository.removeItem(
+      isPrivate ? PhotoAlbumScope.personal : PhotoAlbumScope.shared,
+      albumId: albumId,
+      assetId: asset.id,
+    );
+    if (!mounted) return true;
+    _updateState(() {
+      _feed.assets.removeWhere((item) => item.id == asset.id);
+      _feed.setActionFeedback('已将“${asset.name}”从“$albumName”移出，原片仍保留。');
+    });
+    if (isPrivate) {
+      await _refreshPrivateAlbums();
+    } else {
+      await _refreshAlbums();
+    }
+    return true;
+  }
+
   Future<void> _batchRemoveFromCurrentAlbum() async {
     if (_selection.batchBusy || _selection.selectedAssets.isEmpty) return;
     final privateAlbumId = _scope.activePrivateAlbum;
@@ -391,7 +448,8 @@ extension _PhotosPageBatchActions on _PhotosPageState {
     final selected = Set<int>.unmodifiable(_selection.selectedAssets);
     final rootIdentity = widget.api.selectedRoot?.identity ?? 'default';
     final generation = _feed.generation;
-    bool current() => _batchSelectionCurrent(rootIdentity, generation, selected);
+    bool current() =>
+        _batchSelectionCurrent(rootIdentity, generation, selected);
 
     final confirmed = await confirmAction(
       context,
@@ -402,10 +460,7 @@ extension _PhotosPageBatchActions on _PhotosPageState {
     if (!confirmed || !mounted) return;
     if (!current()) {
       _updateState(
-        () => _feed.setActionFeedback(
-          '共享目录或选择已变化，未执行移出操作。',
-          isError: true,
-        ),
+        () => _feed.setActionFeedback('共享目录或选择已变化，未执行移出操作。', isError: true),
       );
       return;
     }
@@ -507,10 +562,8 @@ extension _PhotosPageBatchActions on _PhotosPageState {
     if (!stillCurrent() ||
         !setEquals(_selection.selectedAssets, selectedIds.toSet())) {
       _updateState(
-        () => _feed.setActionFeedback(
-          '共享目录或选择已变化，请重新选择需要整理的媒体。',
-          isError: true,
-        ),
+        () =>
+            _feed.setActionFeedback('共享目录或选择已变化，请重新选择需要整理的媒体。', isError: true),
       );
       return;
     }
@@ -519,7 +572,7 @@ extension _PhotosPageBatchActions on _PhotosPageState {
         (asset) => widget.isAdmin || asset.canWrite,
       );
       final selection = await Navigator.of(context).push<FolderAlbumSelection>(
-        MaterialPageRoute(
+        buildIslePageRoute(
           builder: (_) => FolderAlbumsPage(
             api: widget.api,
             sources: selectedAssets,

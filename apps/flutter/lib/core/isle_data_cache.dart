@@ -117,9 +117,13 @@ class IsleDataCache {
       }
     } catch (error) {
       if (kDebugMode) {
-        debugPrint('IsleDataCache.getJsonMap evicted corrupt entry $key: $error');
+        debugPrint(
+          'IsleDataCache.getJsonMap evicted corrupt entry $key: $error',
+        );
       }
-      unawaited(IsleCacheManager.instance.remove(IsleCacheCategory.metadata, key));
+      unawaited(
+        IsleCacheManager.instance.remove(IsleCacheCategory.metadata, key),
+      );
     }
     return null;
   }
@@ -177,9 +181,13 @@ class IsleDataCache {
       }
     } catch (error) {
       if (kDebugMode) {
-        debugPrint('IsleDataCache.getJsonList evicted corrupt entry $key: $error');
+        debugPrint(
+          'IsleDataCache.getJsonList evicted corrupt entry $key: $error',
+        );
       }
-      unawaited(IsleCacheManager.instance.remove(IsleCacheCategory.metadata, key));
+      unawaited(
+        IsleCacheManager.instance.remove(IsleCacheCategory.metadata, key),
+      );
     }
     return null;
   }
@@ -209,7 +217,9 @@ class IsleDataCache {
       );
     } catch (error) {
       if (kDebugMode) {
-        debugPrint('IsleDataCache.putJsonList persist skipped for $key: $error');
+        debugPrint(
+          'IsleDataCache.putJsonList persist skipped for $key: $error',
+        );
       }
     }
   }

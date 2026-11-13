@@ -274,7 +274,9 @@ class _StartupCurtainState extends State<StartupCurtain>
                     begin: Alignment.topLeft,
                     end: Alignment.bottomRight,
                     colors: [
-                      palette['cardTop'].withValues(alpha: isDark ? 0.92 : 0.98),
+                      palette['cardTop'].withValues(
+                        alpha: isDark ? 0.92 : 0.98,
+                      ),
                       Color.lerp(
                         palette['cardBottom'],
                         primary,
@@ -392,7 +394,7 @@ class _StartupCurtainState extends State<StartupCurtain>
     final palette = IslePalette.of(context);
     final primary = theme.colorScheme.primary;
     final cyan = palette['brandCyan'];
-    final disableAnimations = MediaQuery.disableAnimationsOf(context);
+    final disableAnimations = IsleMotion.reducedMotion(context);
     final highContrast = MediaQuery.highContrastOf(context);
 
     if (disableAnimations && _controller.value < 1.0) {

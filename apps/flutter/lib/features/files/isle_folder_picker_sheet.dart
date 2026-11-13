@@ -144,9 +144,7 @@ class _IsleFolderBrowserCardState extends State<IsleFolderBrowserCard> {
             ],
           ),
           IsleStatusBadge(
-            label: widget.loading
-                ? '读取中'
-                : (widget.canWrite ? '可写入' : '只读目录'),
+            label: widget.loading ? '读取中' : (widget.canWrite ? '可写入' : '只读目录'),
             color: widget.canWrite
                 ? const Color(0xff10b981)
                 : const Color(0xff64748b),
@@ -271,9 +269,7 @@ class _IsleFolderBrowserCardState extends State<IsleFolderBrowserCard> {
                     const SizedBox(width: 8),
                     Flexible(
                       child: Text(
-                        _filterQuery.trim().isEmpty
-                            ? '当前没有子文件夹'
-                            : '没有匹配的文件夹',
+                        _filterQuery.trim().isEmpty ? '当前没有子文件夹' : '没有匹配的文件夹',
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: colors.onSurfaceVariant,
                         ),

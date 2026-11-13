@@ -65,9 +65,7 @@ extension _FilesPageFileActions on _FilesPageState {
       return;
     }
     if (kind == FilePreviewKind.external) {
-      _refreshState(
-        () => _dir.error = '该文件暂不支持在线预览，请通过右侧更多菜单保存文件或使用其他应用打开。',
-      );
+      _refreshState(() => _dir.error = '该文件暂不支持在线预览，请通过右侧更多菜单保存文件或使用其他应用打开。');
       return;
     }
     final generation = _dir.loadGeneration;

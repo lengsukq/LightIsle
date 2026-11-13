@@ -8,27 +8,15 @@ extension _PhotosPageLibrary on _PhotosPageState {
     }
     final generation = ++_feed.generation;
     final cursor = reset ? (startCursor ?? 0) : _feed.nextCursor;
-    _updateState(() {
-      if (reset) {
-        // A fast seek must not blank the current gallery until the target
-        // month is actually received. Normal refreshes still reset promptly.
-        if (startCursor == null) {
-          _feed.assets.clear();
-          _feed.nextCursor = 0;
-          _timeline.activeFirstIndex = 0;
-        }
-        _feed.loadError = null;
-        _feed.loading = true;
-      } else {
-        _feed.loadingMore = true;
-      }
-    });
-
     final query = _scope.buildQueryParameters(
       limit: _PhotosPageState._pageSize,
       cursor: cursor,
     );
     final cacheKey = Uri(queryParameters: query).query;
+    final scopeKey =
+        '${identityHashCode(widget.api)}:${widget.api.selectedRoot?.identity ?? ''}:$cacheKey';
+
+    MediaPageResult<PhotoAsset>? cachedPage;
     if (reset && startCursor == null) {
       final cached = IsleDataCache.instance.getJsonMap(
         widget.api,
@@ -36,20 +24,45 @@ extension _PhotosPageLibrary on _PhotosPageState {
         cacheKey,
       );
       if (cached != null) {
-        final cachedPage = MediaPageResult.parse<PhotoAsset>(
+        cachedPage = MediaPageResult.parse<PhotoAsset>(
           cached,
           itemsKey: 'assets',
           fromJson: PhotoAsset.fromJson,
         );
-        _updateState(() {
+      }
+    }
+
+    _updateState(() {
+      if (reset) {
+        if (cachedPage != null) {
           _feed.assets
             ..clear()
             ..addAll(cachedPage.items);
           _feed.nextCursor = cachedPage.nextCursor;
+          _feed.activeScopeKey = scopeKey;
+          _timeline.activeFirstIndex = 0;
+          _feed.loadError = null;
           _feed.loading = false;
-        });
+        } else {
+          final sameScope =
+              startCursor == null &&
+              _feed.activeScopeKey == scopeKey &&
+              _feed.assets.isNotEmpty;
+          // Preserve existing gallery rows during same-scope pull-to-refresh
+          // and fast timeline seeks so the screen never flashes empty.
+          if (startCursor == null && !sameScope) {
+            _feed.assets.clear();
+            _feed.nextCursor = 0;
+            _timeline.activeFirstIndex = 0;
+          }
+          _feed.activeScopeKey = scopeKey;
+          _feed.loadError = null;
+          _feed.loading = true;
+        }
+      } else {
+        _feed.loadingMore = true;
       }
-    }
+    });
     try {
       final response = await widget.api.get('/api/v2/photos', query: query);
       if (!mounted || generation != _feed.generation) return;
@@ -188,6 +201,13 @@ extension _PhotosPageLibrary on _PhotosPageState {
           onPersonalFavorite: _togglePersonalFavorite,
           onDelete: (asset) => _trashAssets([asset]),
           onFolderAlbum: _addAssetToFolder,
+          currentAlbumName:
+              _currentPrivateAlbum?.name ?? _currentAlbum?.name ?? '',
+          onRemoveFromCurrentAlbum:
+              (_scope.activePrivateAlbum > 0 ||
+                  (widget.isAdmin && _scope.activeAlbum > 0))
+              ? _removeSingleAssetFromCurrentAlbum
+              : null,
           onDetails: _showAssetDetails,
           onSyncAsset: (id) {
             for (final item in _feed.assets) {
@@ -289,9 +309,7 @@ extension _PhotosPageLibrary on _PhotosPageState {
         : (width / 138).floor().clamp(6, 10);
     // Thumbnails are image-based, not text-based; increasing system font size
     // must not turn the gallery back into a sparse file list.
-    return _feed.comfortableGrid
-        ? (baseColumns - 1).clamp(2, 8)
-        : baseColumns;
+    return _feed.comfortableGrid ? (baseColumns - 1).clamp(2, 8) : baseColumns;
   }
 
   List<_AssetMonthSection> _groupAssetsByMonth() {
@@ -347,10 +365,7 @@ extension _PhotosPageLibrary on _PhotosPageState {
     required MediaAlbum? privateAlbum,
   }) {
     if (_scope.activeFolderPath.isNotEmpty) {
-      return (
-        '文件夹相册还没有媒体',
-        '可以在文件管理中放入照片，或在照片预览中选择复制或移动到此相册。',
-      );
+      return ('文件夹相册还没有媒体', '可以在文件管理中放入照片，或在照片预览中选择复制或移动到此相册。');
     }
     if (album != null) {
       return ('此相册还没有媒体', '在全部照片中打开一项媒体，选择此相册并加入。');
@@ -435,16 +450,14 @@ extension _PhotosPageLibrary on _PhotosPageState {
             Expanded(
               child: Text(
                 section.title,
-                style: Theme.of(
-                  context,
-                ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                style: Theme.of(context).textTheme.titleMedium
+                    ?.copyWith(fontWeight: FontWeight.w700),
               ),
             ),
             Text(
               '${section.items.length} 项',
-              style: Theme.of(
-                context,
-              ).textTheme.labelSmall?.copyWith(color: scheme.onSurfaceVariant),
+              style: Theme.of(context).textTheme.labelSmall
+                  ?.copyWith(color: scheme.onSurfaceVariant),
             ),
           ],
         ),
@@ -489,7 +502,14 @@ extension _PhotosPageLibrary on _PhotosPageState {
       label:
           '${asset.name}, ${asset.isVideo ? '视频' : '照片'}，${formatMediaDate(asset.takenAt)}${asset.personalFavorite ? '，我的收藏' : ''}${asset.favorite ? '，共享收藏' : ''}',
       child: InkWell(
-        onTap: () => _openAsset(asset),
+        onTap: () {
+          if (_selection.selecting ||
+              HardwareKeyboard.instance.isShiftPressed) {
+            _toggleSelection(asset);
+            return;
+          }
+          _openAsset(asset);
+        },
         onLongPress: () => _toggleSelection(asset),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(tileRadius),
@@ -508,19 +528,30 @@ extension _PhotosPageLibrary on _PhotosPageState {
                   left: 5,
                   child: DecoratedBox(
                     decoration: BoxDecoration(
-                      color: Colors.black.withValues(alpha: 0.58),
+                      color: Colors.black.withValues(alpha: 0.62),
                       borderRadius: BorderRadius.circular(10),
                     ),
                     child: const Padding(
                       padding: EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                      child: Text(
-                        'LIVE',
-                        style: TextStyle(
-                          color: Colors.white,
-                          fontSize: 9.5,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0.4,
-                        ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.motion_photos_on_rounded,
+                            color: Color(0xFF9CDCF5),
+                            size: 11,
+                          ),
+                          SizedBox(width: 3),
+                          Text(
+                            'LIVE',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 9.5,
+                              fontWeight: FontWeight.w800,
+                              letterSpacing: 0.4,
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -626,26 +657,36 @@ extension _PhotosPageLibrary on _PhotosPageState {
     return Positioned(
       right: 5,
       bottom: 5,
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          const Icon(
-            Icons.play_arrow_rounded,
-            color: Colors.white,
-            size: 18,
-            shadows: [Shadow(blurRadius: 6, color: Colors.black87)],
-          ),
-          if (asset.durationSeconds > 0)
-            Text(
-              formatMediaSeconds(asset.durationSeconds),
-              style: const TextStyle(
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          color: Colors.black.withValues(alpha: 0.62),
+          borderRadius: BorderRadius.circular(9),
+        ),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.play_arrow_rounded,
                 color: Colors.white,
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-                shadows: [Shadow(blurRadius: 6, color: Colors.black87)],
+                size: 14,
               ),
-            ),
-        ],
+              if (asset.durationSeconds > 0) ...[
+                const SizedBox(width: 2),
+                Text(
+                  formatMediaSeconds(asset.durationSeconds),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    fontFeatures: [FontFeature.tabularFigures()],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
       ),
     );
   }

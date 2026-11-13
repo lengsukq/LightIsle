@@ -36,6 +36,7 @@ class PhotoMediaImage extends StatefulWidget {
     required this.onZoomChanged,
     this.onDragProgressChanged,
     this.active = true,
+    this.resetZoomNonce = 0,
     this.allowHorizontalPageSwipe = false,
     this.onSwipeDown,
     this.onSwipeUp,
@@ -48,6 +49,7 @@ class PhotoMediaImage extends StatefulWidget {
   final ValueChanged<bool> onZoomChanged;
   final ValueChanged<double>? onDragProgressChanged;
   final bool active;
+  final int resetZoomNonce;
   final bool allowHorizontalPageSwipe;
   final VoidCallback? onSwipeDown;
   final VoidCallback? onSwipeUp;
@@ -100,6 +102,7 @@ class PhotoMediaImageState extends State<PhotoMediaImage> {
       child: PhotoZoomSurface(
         aspectRatio: widget.asset.displayAspectRatio,
         active: widget.active,
+        resetZoomNonce: widget.resetZoomNonce,
         allowHorizontalPageSwipe: widget.allowHorizontalPageSwipe,
         onSwipeDown: widget.onSwipeDown,
         onSwipeUp: widget.onSwipeUp,
@@ -335,6 +338,7 @@ class PhotoMediaVideo extends StatefulWidget {
     required this.active,
     this.autoPlay = false,
     this.liveMode = false,
+    this.fileBrowserMode = false,
     this.streamPathOverride,
     this.onCompleted,
   });
@@ -343,6 +347,7 @@ class PhotoMediaVideo extends StatefulWidget {
   final bool active;
   final bool autoPlay;
   final bool liveMode;
+  final bool fileBrowserMode;
   final String? streamPathOverride;
   final VoidCallback? onCompleted;
 
@@ -357,6 +362,7 @@ class PhotoMediaVideoState extends State<PhotoMediaVideo>
   bool _preparing = false;
   int _generation = 0;
   double _speed = 1.0;
+  bool _muted = false;
   bool _wasPlaying = false;
   bool _completionNotified = false;
   List<SubtitleCue> _localCues = const [];
@@ -402,6 +408,11 @@ class PhotoMediaVideoState extends State<PhotoMediaVideo>
     _player = null;
     old?.removeListener(_playerChanged);
     if (old != null) {
+      // Silence native decoder audio on the current frame before async disposal.
+      try {
+        await old.setVolume(0);
+        await old.pause();
+      } catch (_) {}
       await old.dispose();
     }
   }
@@ -444,6 +455,7 @@ class PhotoMediaVideoState extends State<PhotoMediaVideo>
       }
       player.addListener(_playerChanged);
       await player.setPlaybackSpeed(_speed);
+      await player.setVolume(_muted ? 0 : 1);
       if (widget.autoPlay) {
         await player.play();
       }
@@ -486,11 +498,23 @@ class PhotoMediaVideoState extends State<PhotoMediaVideo>
     }
   }
 
+  Future<void> _toggleMute() async {
+    final nextMuted = !_muted;
+    setState(() => _muted = nextMuted);
+    final player = _player;
+    if (player == null || !player.value.isInitialized) return;
+    try {
+      await player.setVolume(nextMuted ? 0 : 1);
+    } catch (_) {}
+  }
+
   Future<void> _importSubtitle() async {
     try {
-      final selected = await pickLocalSubtitle();
+      final selected = await pickLocalSubtitle(
+        extensions: const ['srt', 'ass', 'ssa', 'vtt'],
+      );
       if (!mounted || selected == null) return;
-      final cues = parseWebVtt(selected.contents);
+      final cues = parseSubtitleText(selected.contents);
       if (cues.isEmpty) {
         throw const FormatException('没有找到有效的字幕时间轴');
       }
@@ -536,14 +560,19 @@ class PhotoMediaVideoState extends State<PhotoMediaVideo>
       );
     }
     if (!widget.active && player == null) {
+      final useGalleryThumb = !widget.fileBrowserMode && widget.asset.id > 0;
       return Stack(
         fit: StackFit.expand,
         children: [
           AuthenticatedMediaImage(
             api: widget.api,
             memoryCache: IsleCacheManager.instance.sharedThumbnails,
-            path: '/api/v2/files/thumbnail',
-            query: {'path': widget.asset.path, 'size': '1024'},
+            path: useGalleryThumb
+                ? '/api/v2/photos/${widget.asset.id}/thumbnail'
+                : '/api/v2/files/thumbnail',
+            query: useGalleryThumb
+                ? null
+                : {'path': widget.asset.path, 'size': '512'},
             maxBytes: 4 * 1024 * 1024,
             fit: BoxFit.contain,
             loadingBuilder: (_) => const SizedBox.shrink(),
@@ -688,6 +717,16 @@ class PhotoMediaVideoState extends State<PhotoMediaVideo>
                           onPressed: () => _seekSeconds(10),
                           icon: const Icon(Icons.forward_10),
                         ),
+                        IconButton(
+                          tooltip: _muted ? '取消静音' : '静音',
+                          color: Colors.white,
+                          onPressed: _toggleMute,
+                          icon: Icon(
+                            _muted
+                                ? Icons.volume_off_rounded
+                                : Icons.volume_up_rounded,
+                          ),
+                        ),
                         MediaPlaybackSpeedPicker(
                           value: _speed,
                           onChanged: (value) => unawaited(_setSpeed(value)),
@@ -716,7 +755,7 @@ class PhotoMediaVideoState extends State<PhotoMediaVideo>
                             ),
                             const PopupMenuItem(
                               value: 'load',
-                              child: Text('加载本机字幕 SRT / VTT'),
+                              child: Text('加载本机字幕 SRT / ASS / VTT'),
                             ),
                           ],
                         ),

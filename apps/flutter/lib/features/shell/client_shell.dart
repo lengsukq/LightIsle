@@ -236,12 +236,12 @@ class _ClientShellState extends State<ClientShell> with WidgetsBindingObserver {
     HapticFeedback.selectionClick();
     setState(() {
       _index = 0;
-      _showingDashboardFiles = true;
-      _manualRootSection = null;
-      if (_fileEntryOverride != null) {
-        _fileEntryOverride = null;
+      if (!_showingDashboardFiles || _fileEntryOverride != null) {
         _dashboardFilesWidget = null;
       }
+      _showingDashboardFiles = true;
+      _manualRootSection = null;
+      _fileEntryOverride = null;
     });
     _applyPersonalRoute(0);
     if (_personalRouteError != null || _myStoragePolicy == null) {
@@ -354,89 +354,95 @@ class _ClientShellState extends State<ClientShell> with WidgetsBindingObserver {
     }
     final photosRoute = _routeForCategory('photos');
     final cinemaRoute = _routeForCategory('cinema');
-    final built = PageStorage(
-      bucket: _browseStateBucket,
-      child: _pages.putIfAbsent(
-        index,
-        () => KeyedSubtree(
-          key: ValueKey(
-            'root:${widget.api.selectedRoot?.identity ?? 'default'}:$index',
-          ),
-          child: switch (index) {
-            0 => OverviewPage(
-              api: widget.api,
-              isAdmin: _admin,
-              onNavigate: (target) {
-                if (target < 0) {
-                  _openDashboardFiles();
-                } else {
-                  _select(target);
-                }
-              },
-              onOpenFiles: _openDashboardFiles,
-              onBrowseDirectory: _browseAssignedDirectory,
-            ),
-            1 => PhotosPage(
-              api: widget.api,
-              taskCenter: _uploadCenter,
-              isAdmin: _admin,
-              hasOtherRoots: _roots.length > 1,
-              accountName: widget.identity['username']?.toString() ?? '',
-              offlineAccountId:
-                  widget.identity['id'] is int &&
-                      (widget.identity['id'] as int) > 0
-                  ? 'uid:${widget.identity['id']}'
-                  : '',
-              canBackup:
-                  _manualRootSection != 1 &&
-                  photosRoute.kind == PersonalRouteKind.personal,
-              uploadDirectory:
-                  _manualRootSection != 1 &&
-                      photosRoute.kind == PersonalRouteKind.personal
-                  ? photosRoute.path!
-                  : '图库',
-              backupDirectory:
-                  photosRoute.kind == PersonalRouteKind.personal &&
-                      _manualRootSection != 1
-                  ? photosRoute.path!
-                  : 'PhonePhotos',
-            ),
-            2 => CinemaPage(
-              api: widget.api,
-              taskCenter: _uploadCenter,
-              isAdmin: _admin,
-              // A stable, server-issued ID prevents re-created usernames
-              // from inheriting a former account's offline downloads.
-              accountName:
-                  widget.identity['id'] is int &&
-                      (widget.identity['id'] as int) > 0
-                  ? 'uid:${widget.identity['id']}'
-                  : '',
-              uploadDirectory:
-                  _manualRootSection != 2 &&
-                      cinemaRoute.kind == PersonalRouteKind.personal
-                  ? cinemaRoute.path!
-                  : '影视',
-            ),
-            _ => SettingsPage(
-              api: widget.api,
-              identity: widget.identity,
-              onLogout: widget.onLogout,
-              pendingUploads: () =>
-                  _uploadCenter.unfinished +
-                  (_desktopBackupController?.running == true ? 1 : 0),
-              historyStore: widget.historyStore,
-              latencyProber: widget.latencyProber,
-              onSwitchAccount: widget.onSwitchAccount,
-              desktopBackupController: _desktopBackupController,
-            ),
-          },
-        ),
-      ),
-    );
+    final rootId = widget.api.selectedRoot?.identity ?? 'default';
+    final photosCanBackup =
+        _manualRootSection != 1 &&
+        photosRoute.kind == PersonalRouteKind.personal;
+    final photosUploadDir = photosCanBackup ? photosRoute.path! : '图库';
+    final photosBackupDir = photosCanBackup ? photosRoute.path! : 'PhonePhotos';
+    final cinemaUploadDir =
+        _manualRootSection != 2 &&
+            cinemaRoute.kind == PersonalRouteKind.personal
+        ? cinemaRoute.path!
+        : '影视';
+    final expectedKey = ValueKey<String>(switch (index) {
+      1 =>
+        'root:$rootId:1:${_roots.length > 1}:$photosCanBackup:$photosUploadDir:$photosBackupDir',
+      2 => 'root:$rootId:2:$cinemaUploadDir',
+      _ => 'root:$rootId:$index',
+    });
+    final cached = _pages[index];
+    final page = cached != null && cached.key == expectedKey
+        ? cached
+        : (_pages[index] = KeyedSubtree(
+            key: expectedKey,
+            child: switch (index) {
+              0 => OverviewPage(
+                api: widget.api,
+                isAdmin: _admin,
+                onNavigate: (target) {
+                  if (target < 0) {
+                    _openDashboardFiles();
+                  } else {
+                    _select(target);
+                  }
+                },
+                onOpenFiles: _openDashboardFiles,
+                onBrowseDirectory: _browseAssignedDirectory,
+              ),
+              1 => PhotosPage(
+                api: widget.api,
+                taskCenter: _uploadCenter,
+                isAdmin: _admin,
+                hasOtherRoots: _roots.length > 1,
+                accountName: widget.identity['username']?.toString() ?? '',
+                offlineAccountId:
+                    widget.identity['id'] is int &&
+                        (widget.identity['id'] as int) > 0
+                    ? 'uid:${widget.identity['id']}'
+                    : '',
+                canBackup: photosCanBackup,
+                uploadDirectory: photosUploadDir,
+                backupDirectory: photosBackupDir,
+              ),
+              2 => CinemaPage(
+                api: widget.api,
+                taskCenter: _uploadCenter,
+                isAdmin: _admin,
+                // A stable, server-issued ID prevents re-created usernames
+                // from inheriting a former account's offline downloads.
+                accountName:
+                    widget.identity['id'] is int &&
+                        (widget.identity['id'] as int) > 0
+                    ? 'uid:${widget.identity['id']}'
+                    : '',
+                uploadDirectory: cinemaUploadDir,
+              ),
+              _ => SettingsPage(
+                api: widget.api,
+                identity: widget.identity,
+                onLogout: widget.onLogout,
+                pendingUploads: () =>
+                    _uploadCenter.unfinished +
+                    (_desktopBackupController?.running == true ? 1 : 0),
+                historyStore: widget.historyStore,
+                latencyProber: widget.latencyProber,
+                onSwitchAccount: widget.onSwitchAccount,
+                desktopBackupController: _desktopBackupController,
+              ),
+            },
+          ));
+    final built = PageStorage(bucket: _browseStateBucket, child: page);
     if (index == 0) {
       return IsleFluidTabSwitcher(
         index: _showingDashboardFiles ? 1 : 0,
+        onSettled: () {
+          if (mounted &&
+              !_showingDashboardFiles &&
+              _dashboardFilesWidget != null) {
+            setState(() => _dashboardFilesWidget = null);
+          }
+        },
         children: [
           built,
           (_showingDashboardFiles || _dashboardFilesWidget != null)
@@ -454,7 +460,6 @@ class _ClientShellState extends State<ClientShell> with WidgetsBindingObserver {
       HapticFeedback.selectionClick();
       setState(() {
         _showingDashboardFiles = false;
-        _dashboardFilesWidget = null;
         _fileEntryOverride = null;
       });
       return;
@@ -464,7 +469,6 @@ class _ClientShellState extends State<ClientShell> with WidgetsBindingObserver {
       setState(() {
         _index = index;
         _showingDashboardFiles = false;
-        _dashboardFilesWidget = null;
         _manualRootSection = null;
         _fileEntryOverride = null;
       });
@@ -530,7 +534,7 @@ class _ClientShellState extends State<ClientShell> with WidgetsBindingObserver {
               expanded: true,
             );
             final extendedRail = canExtendRail && _railExpanded;
-            return PopScope(
+            return IslePopScopeHost(
               canPop: !_showingDashboardFiles && _index == 0,
               onPopInvokedWithResult: (didPop, _) {
                 if (didPop) return;
@@ -551,24 +555,26 @@ class _ClientShellState extends State<ClientShell> with WidgetsBindingObserver {
                     : AppBar(
                         backgroundColor: Colors.transparent,
                         toolbarHeight: rail ? 46 : 50,
-                        flexibleSpace: IsleGlassBackdrop(
-                          blur: IsleGlass.sigmaRegular,
-                          child: DecoratedBox(
-                            decoration: BoxDecoration(
-                              color: IsleLayout.opaqueNavigation(context)
-                                  ? Theme.of(context).colorScheme.surface
-                                  : IsleGlass.regularTint(
+                        flexibleSpace: RepaintBoundary(
+                          child: IsleGlassBackdrop(
+                            blur: IsleGlass.sigmaRegular,
+                            child: DecoratedBox(
+                              decoration: BoxDecoration(
+                                color: IsleLayout.opaqueNavigation(context)
+                                    ? Theme.of(context).colorScheme.surface
+                                    : IsleGlass.regularTint(
+                                        Theme.of(context).brightness ==
+                                            Brightness.dark,
+                                        Theme.of(context).colorScheme.surface,
+                                      ),
+                                border: Border(
+                                  bottom: BorderSide(
+                                    color: IsleGlass.rimBorderColor(
                                       Theme.of(context).brightness ==
                                           Brightness.dark,
-                                      Theme.of(context).colorScheme.surface,
                                     ),
-                              border: Border(
-                                bottom: BorderSide(
-                                  color: IsleGlass.rimBorderColor(
-                                    Theme.of(context).brightness ==
-                                        Brightness.dark,
+                                    width: 0.6,
                                   ),
-                                  width: 0.6,
                                 ),
                               ),
                             ),

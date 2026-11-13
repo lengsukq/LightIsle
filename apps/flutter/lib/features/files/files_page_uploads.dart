@@ -147,6 +147,35 @@ extension _FilesPageUploads on _FilesPageState {
     _refreshState(() {});
   }
 
+  Future<void> _confirmAndCancelUpload(
+    FileUploadJob job, {
+    bool discard = false,
+  }) async {
+    final hasProgress =
+        job.status == FileUploadStatus.uploading ||
+        (job.status == FileUploadStatus.paused && job.offset > 0) ||
+        job.uploadId != null;
+    if (hasProgress) {
+      final approved = await confirmAction(
+        context,
+        '取消上传任务',
+        '确认取消「${job.file.name}」？取消后将清理服务端已接收的临时分片，下次需重新上传。若仅需稍后继续，请使用「暂停上传」。',
+        action: '确认取消',
+        isDestructive: true,
+      );
+      if (!approved || !mounted) return;
+    }
+    if (widget.taskCenter != null) {
+      widget.taskCenter!.cancel(job);
+      return;
+    }
+    if (discard) {
+      await _discardUpload(job);
+    } else {
+      _cancelUpload(job);
+    }
+  }
+
   void _cancelUpload(FileUploadJob job) {
     job.requestCancel();
     _refreshState(() {});
@@ -225,7 +254,8 @@ extension _FilesPageUploads on _FilesPageState {
               ),
               const SizedBox(height: 16),
               FilledButton.icon(
-                onPressed: _dir.loading || _transfers.uploadBusy || !_dir.canWrite
+                onPressed:
+                    _dir.loading || _transfers.uploadBusy || !_dir.canWrite
                     ? null
                     : () => _pickUploads(type: widget.initialUploadType),
                 icon: const Icon(Icons.add_rounded),
@@ -258,7 +288,7 @@ extension _FilesPageUploads on _FilesPageState {
               icon: const Icon(Icons.sync_alt_rounded),
               label: const Text('查看传输任务'),
               onPressed: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(
+                buildIslePageRoute<void>(
                   builder: (_) =>
                       UploadTaskCenterPage(center: widget.taskCenter!),
                 ),
@@ -280,15 +310,11 @@ extension _FilesPageUploads on _FilesPageState {
     onPause: (job) => widget.taskCenter == null
         ? _togglePause(job)
         : widget.taskCenter!.togglePause(job),
-    onCancel: (job) => widget.taskCenter == null
-        ? _cancelUpload(job)
-        : widget.taskCenter!.cancel(job),
+    onCancel: (job) => _confirmAndCancelUpload(job),
     onRetry: (job) => widget.taskCenter == null
         ? _retryUpload(job)
         : widget.taskCenter!.retry(job),
-    onDiscard: (job) => widget.taskCenter == null
-        ? _discardUpload(job)
-        : widget.taskCenter!.cancel(job),
+    onDiscard: (job) => _confirmAndCancelUpload(job, discard: true),
     onClear: (job) => widget.taskCenter == null
         ? _refreshState(() => _transfers.uploadJobs.remove(job))
         : widget.taskCenter!.clearFinished(),

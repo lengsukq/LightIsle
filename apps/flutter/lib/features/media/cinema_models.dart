@@ -224,60 +224,6 @@ class TMDBCandidate {
   }
 }
 
-class SubtitleCue {
-  const SubtitleCue({
-    required this.start,
-    required this.end,
-    required this.text,
-  });
-
-  final Duration start;
-  final Duration end;
-  final String text;
-
-  bool contains(Duration position) => position >= start && position <= end;
-}
-
-List<SubtitleCue> parseWebVtt(String source) {
-  Duration? timestamp(String value) {
-    final match = RegExp(r'^(?:(\d{1,2}):)?(\d{2}):(\d{2})[.,](\d{3})$')
-        .firstMatch(value.trim());
-    if (match == null) return null;
-    final hours = int.tryParse(match.group(1) ?? '0') ?? 0;
-    final minutes = int.tryParse(match.group(2) ?? '') ?? 0;
-    final seconds = int.tryParse(match.group(3) ?? '') ?? 0;
-    final milliseconds = int.tryParse(match.group(4) ?? '') ?? 0;
-    return Duration(
-      hours: hours,
-      minutes: minutes,
-      seconds: seconds,
-      milliseconds: milliseconds,
-    );
-  }
-
-  final normalized = source
-      .replaceAll('\r\n', '\n')
-      .replaceAll('\r', '\n')
-      .replaceFirst('\uFEFF', '');
-  final blocks = normalized.split(RegExp(r'\n\s*\n'));
-  final cues = <SubtitleCue>[];
-  for (final block in blocks) {
-    final lines = block.split('\n').map((line) => line.trimRight()).toList();
-    final timingIndex = lines.indexWhere((line) => line.contains('-->'));
-    if (timingIndex < 0) continue;
-    final sides = lines[timingIndex].split('-->');
-    if (sides.length != 2) continue;
-    final startToken = sides[0].trim();
-    final endToken = sides[1].trim().split(RegExp(r'\s+')).first;
-    final start = timestamp(startToken);
-    final end = timestamp(endToken);
-    final text = lines.skip(timingIndex + 1).join('\n').trim();
-    if (start == null || end == null || end <= start || text.isEmpty) continue;
-    cues.add(SubtitleCue(start: start, end: end, text: text));
-  }
-  return List.unmodifiable(cues);
-}
-
 /// One audio track of a film container, as reported by the server's ffprobe
 /// (transcode stack). [audioIndex] is the relative index used to request a
 /// specific audio mapping in an HLS session.
@@ -491,6 +437,8 @@ class CinemaSeriesInfo {
     required this.watchedCount,
     this.year = 0,
     this.nextFilmId = 0,
+    this.nextSeason = 0,
+    this.nextEpisode = 0,
     this.nextTitle = '',
     this.inProgress = false,
     this.position = 0,
@@ -506,6 +454,8 @@ class CinemaSeriesInfo {
   final int watchedCount;
   final int year;
   final int nextFilmId;
+  final int nextSeason;
+  final int nextEpisode;
   final String nextTitle;
   final bool inProgress;
   final double position;
@@ -523,6 +473,8 @@ class CinemaSeriesInfo {
     watchedCount: _asInt(json['watchedCount']),
     year: _asInt(json['year']),
     nextFilmId: _asInt(json['nextFilmId']),
+    nextSeason: _asInt(json['nextSeason']),
+    nextEpisode: _asInt(json['nextEpisode']),
     nextTitle: _asString(json['nextTitle']),
     inProgress: _asBool(json['inProgress']),
     position: _asDouble(json['position']),

@@ -80,11 +80,76 @@ extension _FilesPagePreferences on _FilesPageState {
     unawaited(_savePreferences());
   }
 
+  String get _searchHistoryScope => FileSearchHistoryStore.scope(
+    server: widget.api.uri('/'),
+    account: widget.accountName,
+    rootIdentity: _dir.rootIdentity,
+  );
+
+  Future<void> _loadSearchHistory() async {
+    final generation = ++_filter.searchHistoryGeneration;
+    final scope = _searchHistoryScope;
+    try {
+      final loaded = await FileSearchHistoryStore.load(scope);
+      if (!mounted ||
+          _disposed ||
+          generation != _filter.searchHistoryGeneration) {
+        return;
+      }
+      _refreshState(() => _filter.recentSearches = loaded);
+    } catch (_) {
+      // Non-critical history read should never block file browsing.
+    }
+  }
+
+  Future<void> _recordSearchHistory(String term) async {
+    final generation = _filter.searchHistoryGeneration;
+    final scope = _searchHistoryScope;
+    try {
+      final updated = await FileSearchHistoryStore.record(scope, term);
+      if (!mounted ||
+          _disposed ||
+          generation != _filter.searchHistoryGeneration) {
+        return;
+      }
+      _refreshState(() => _filter.recentSearches = updated);
+    } catch (_) {}
+  }
+
+  Future<void> _removeSearchHistory(String term) async {
+    final generation = _filter.searchHistoryGeneration;
+    final scope = _searchHistoryScope;
+    try {
+      final updated = await FileSearchHistoryStore.remove(scope, term);
+      if (!mounted ||
+          _disposed ||
+          generation != _filter.searchHistoryGeneration) {
+        return;
+      }
+      _refreshState(() => _filter.recentSearches = updated);
+    } catch (_) {}
+  }
+
+  Future<void> _clearSearchHistory() async {
+    final generation = _filter.searchHistoryGeneration;
+    final scope = _searchHistoryScope;
+    try {
+      await FileSearchHistoryStore.clear(scope);
+      if (!mounted ||
+          _disposed ||
+          generation != _filter.searchHistoryGeneration) {
+        return;
+      }
+      _refreshState(() => _filter.recentSearches = const <String>[]);
+    } catch (_) {}
+  }
+
   Future<void> _initialize() async {
     final generation = ++_prefsState.preferencesGeneration;
     final initialSort = _prefsState.fileSort;
     final initialDirection = _prefsState.fileSortDirection;
     final initialLoad = _loadFiles();
+    unawaited(_loadSearchHistory());
     await _restorePreferences(generation);
     if (!mounted || generation != _prefsState.preferencesGeneration) return;
     if (_prefsState.fileSort != initialSort ||

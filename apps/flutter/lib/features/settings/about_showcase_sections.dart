@@ -265,15 +265,11 @@ class AboutMediaExperienceShowcase extends StatelessWidget {
     required this.phase,
     required this.scrollOffset,
     required this.isDark,
-    required this.colors,
-    required this.theme,
   });
 
   final double phase;
   final double scrollOffset;
   final bool isDark;
-  final ColorScheme colors;
-  final ThemeData theme;
 
   static const _memories = <(String, String, Color, IconData)>[
     ('那年今日', '2023 · 镰仓海街', Color(0xFF8B5CF6), Icons.auto_awesome_rounded),

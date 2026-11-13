@@ -31,7 +31,7 @@ class CinemaSubtitleRepository {
       maxBytes: 1 << 20,
     );
     return List.unmodifiable(
-      parseWebVtt(utf8.decode(bytes, allowMalformed: true)),
+      parseSubtitleText(utf8.decode(bytes, allowMalformed: true)),
     );
   }
 
@@ -40,7 +40,7 @@ class CinemaSubtitleRepository {
   Future<({String name, List<SubtitleCue> cues})?> importLocal() async {
     final selected = await pickLocal();
     if (selected == null) return null;
-    final cues = parseWebVtt(selected.contents);
+    final cues = parseSubtitleText(selected.contents);
     if (cues.isEmpty) {
       throw const FormatException('没有找到有效的字幕时间轴');
     }

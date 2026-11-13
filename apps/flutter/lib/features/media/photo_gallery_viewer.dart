@@ -14,6 +14,8 @@ import '../files/file_share_dialog.dart';
 import 'media_models.dart';
 import 'media_ui.dart';
 import 'offline_photo_store.dart';
+import 'photo_exif_panel.dart';
+import 'photo_gallery_viewer_filmstrip.dart';
 import 'photo_media_view.dart';
 
 export 'photo_media_view.dart'
@@ -23,6 +25,7 @@ export 'photo_media_view.dart'
         PhotoMediaVideo,
         PhotoMediaVideoState;
 
+part 'photo_gallery_viewer_actions.dart';
 part 'photo_gallery_viewer_chrome.dart';
 
 /// The media-first browsing route. Technical metadata and album management
@@ -40,6 +43,8 @@ class PhotoGalleryViewer extends StatefulWidget {
     required this.onPersonalFavorite,
     this.onDelete,
     this.onFolderAlbum,
+    this.onRemoveFromCurrentAlbum,
+    this.currentAlbumName = '',
     required this.onDetails,
     this.onSyncAsset,
     required this.onLoadMore,
@@ -58,6 +63,8 @@ class PhotoGalleryViewer extends StatefulWidget {
   /// Optional original-file trash action; absent in read-only/file-browser mode.
   final Future<bool> Function(PhotoAsset)? onDelete;
   final Future<bool> Function(PhotoAsset)? onFolderAlbum;
+  final Future<bool> Function(PhotoAsset)? onRemoveFromCurrentAlbum;
+  final String currentAlbumName;
   final Future<void> Function(PhotoAsset) onDetails;
   final PhotoAsset? Function(int id)? onSyncAsset;
   final Future<List<PhotoAsset>> Function() onLoadMore;
@@ -107,6 +114,10 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
   int _slideSeconds = 5;
   bool _livePlaying = false;
   bool _continuousVideo = true;
+  bool _currentZoomed = false;
+  bool _showInfoSidebar = false;
+  int _resetZoomNonce = 0;
+  final Set<int> _removedIds = <int>{};
   String? _error;
 
   PhotoAsset get _current => _items[_index];
@@ -121,52 +132,6 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
     if (!identical(oldWidget.api, widget.api)) {
       _imageCache =
           widget.memoryCache ?? IsleCacheManager.instance.sharedThumbnails;
-    }
-  }
-
-  Future<void> _mediaAction(String action) async {
-    if (_busy || !mounted) return;
-    final asset = _current;
-    switch (action) {
-      case 'shared':
-        if (widget.canEditSharedFavorite(asset)) {
-          await _favorite(shared: true);
-        }
-      case 'export':
-        await _exportCurrent();
-      case 'offline':
-        await _saveOfflinePhoto();
-      case 'live':
-        _stopSlideshow();
-        if (mounted) setState(() => _livePlaying = !_livePlaying);
-      case 'trash':
-        if (widget.onDelete == null || !widget.canEditSharedFavorite(asset)) {
-          return;
-        }
-        final deleted = await widget.onDelete!(asset);
-        if (deleted && mounted) _removeCurrentItem();
-      case 'folder':
-        final callback = widget.onFolderAlbum;
-        if (callback == null) return;
-        final moved = await callback(asset);
-        if (moved && mounted) _removeCurrentItem();
-    }
-  }
-
-  void _removeCurrentItem() {
-    if (_items.length <= 1) {
-      Navigator.of(context).pop();
-      return;
-    }
-    setState(() {
-      _items.removeAt(_index);
-      if (_index >= _items.length) {
-        _index = _items.length - 1;
-      }
-      _livePlaying = false;
-    });
-    if (_controller.hasClients) {
-      _controller.jumpToPage(_index);
     }
   }
 
@@ -189,105 +154,7 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
     _index = widget.initialIndex.clamp(0, _items.length - 1);
     _controller = PageController(initialPage: _index);
     _scheduleChromeHide();
-  }
-
-  Future<void> _nextVideo() async {
-    if (!widget.fileBrowserMode || !_continuousVideo || !mounted) return;
-    final next = _items.indexWhere((asset) => asset.isVideo, _index + 1);
-    if (next < 0) return;
-    await _navigate(next - _index);
-  }
-
-  void _showFilePlaylist() {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (sheetContext) => SafeArea(
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.68,
-          ),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              const ListTile(title: Text('当前文件夹 · 图片与视频')),
-              Flexible(
-                child: ListView.builder(
-                  shrinkWrap: true,
-                  itemCount: _items.length,
-                  itemBuilder: (context, index) => ListTile(
-                    leading: Icon(
-                      _items[index].isVideo
-                          ? Icons.movie_outlined
-                          : Icons.image_outlined,
-                    ),
-                    title: Text(
-                      _items[index].name,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    selected: index == _index,
-                    onTap: () {
-                      Navigator.pop(sheetContext);
-                      unawaited(_navigate(index - _index));
-                    },
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-
-  Future<void> _saveOfflinePhoto() async {
-    if (_busy || _current.isVideo || widget.offlineAccountId.isEmpty) return;
-    _stopSlideshow();
-    final asset = _current;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('离线保存照片原件？'),
-        content: Text(
-          '保存“${asset.name}”到本机专属离线照片库。'
-          '最多 512 MiB/张、当前离线库最多 2 GiB；照片会保留原始格式，'
-          'RAW/HEIC 可能无法在本机直接预览，但可以原样导出。',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(dialogContext, true),
-            child: const Text('保存原件'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      final store = OfflinePhotoStore(
-        api: widget.api,
-        accountId: widget.offlineAccountId,
-      );
-      await store.save(asset);
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('原片已保存到本机离线照片库，断网也可查看或导出。')),
-        );
-      }
-    } catch (error) {
-      if (mounted) setState(() => _error = mediaErrorLabel(error));
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
+    unawaited(_loadMore(forceCheck: true));
   }
 
   void _scheduleChromeHide() {
@@ -303,46 +170,6 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
   void _toggleChrome() {
     setState(() => _chromeVisible = !_chromeVisible);
     _scheduleChromeHide();
-  }
-
-  Future<void> _shareCurrent() async {
-    _stopSlideshow();
-    final asset = _current;
-    try {
-      await openMediaFileShare(
-        context,
-        api: widget.api,
-        path: asset.path,
-        name: asset.name,
-      );
-    } catch (error) {
-      if (mounted) setState(() => _error = mediaErrorLabel(error));
-    }
-  }
-
-  Future<void> _exportCurrent() async {
-    if (_busy) return;
-    _stopSlideshow();
-    final asset = _current;
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      final result = await exportMediaFile(
-        widget.api,
-        path: asset.path,
-        name: asset.name,
-      );
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(result)));
-      }
-    } catch (error) {
-      if (mounted) setState(() => _error = mediaErrorLabel(error));
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
   }
 
   double _horizontalScrollAccumulator = 0;
@@ -374,28 +201,6 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
       duration: const Duration(milliseconds: 220),
       curve: Curves.easeInOut,
     );
-  }
-
-  KeyEventResult _onKeyEvent(FocusNode node, KeyEvent event) {
-    if (event is! KeyDownEvent) return KeyEventResult.ignored;
-    if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
-      unawaited(_navigate(1));
-      return KeyEventResult.handled;
-    }
-    if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
-      unawaited(_navigate(-1));
-      return KeyEventResult.handled;
-    }
-    if (event.logicalKey == LogicalKeyboardKey.space) {
-      _toggleSlideshow();
-      return KeyEventResult.handled;
-    }
-    if (event.logicalKey == LogicalKeyboardKey.escape) {
-      _stopSlideshow();
-      unawaited(Navigator.of(context).maybePop());
-      return KeyEventResult.handled;
-    }
-    return KeyEventResult.ignored;
   }
 
   @override
@@ -476,19 +281,6 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
     if (mounted && _slideshow) _scheduleSlide();
   }
 
-  Future<void> _loadMore() async {
-    if (_loadingMore || _index < _items.length - 4) return;
-    _loadingMore = true;
-    try {
-      final next = await widget.onLoadMore();
-      if (mounted && next.length > _items.length) {
-        setState(() => _items = next);
-      }
-    } finally {
-      _loadingMore = false;
-    }
-  }
-
   void _changed(int index) {
     // A manual page swipe pauses the timer instead of unexpectedly moving on.
     if (_slideshow && !_slideAdvancing) _stopSlideshow();
@@ -498,273 +290,288 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
       _dismissDragProgress = 0.0;
       _error = null;
       _livePlaying = false;
+      _currentZoomed = false;
     });
     _scheduleChromeHide();
     unawaited(_loadMore());
-  }
-
-  Future<void> _favorite({required bool shared}) async {
-    if (_busy) return;
-    setState(() {
-      _busy = true;
-      _error = null;
-    });
-    try {
-      final asset = _current;
-      final updated = await (shared
-          ? widget.onSharedFavorite(asset)
-          : widget.onPersonalFavorite(asset));
-      if (!mounted) return;
-      final index = _items.indexWhere((item) => item.id == updated.id);
-      if (index >= 0) setState(() => _items[index] = updated);
-    } catch (error) {
-      if (mounted) setState(() => _error = mediaErrorLabel(error));
-    } finally {
-      if (mounted) setState(() => _busy = false);
-    }
   }
 
   @override
   Widget build(BuildContext context) {
     final asset = _current;
     final safe = MediaQuery.paddingOf(context);
-    final disableAnimations = MediaQuery.disableAnimationsOf(context);
+    final disableAnimations = IsleMotion.reducedMotion(context);
     final chromeDuration = disableAnimations
         ? Duration.zero
         : const Duration(milliseconds: 180);
     final backdropAlpha = (1.0 - _dismissDragProgress * 0.62).clamp(0.22, 1.0);
+    final wideSidebar =
+        !widget.fileBrowserMode &&
+        _showInfoSidebar &&
+        MediaQuery.sizeOf(context).width >= 840;
     return Focus(
       autofocus: true,
       onKeyEvent: _onKeyEvent,
       child: Scaffold(
         backgroundColor: Colors.black.withValues(alpha: backdropAlpha),
-        body: Stack(
+        body: Row(
           children: [
-            Positioned.fill(
-              child: ScrollConfiguration(
-                behavior: ScrollConfiguration.of(context).copyWith(
-                  dragDevices: {
-                    PointerDeviceKind.touch,
-                    PointerDeviceKind.mouse,
-                    PointerDeviceKind.trackpad,
-                    PointerDeviceKind.stylus,
-                    PointerDeviceKind.unknown,
-                  },
-                ),
-                child: Listener(
-                  behavior: HitTestBehavior.translucent,
-                  onPointerPanZoomUpdate: (event) {
-                    _handleHorizontalScroll(event.panDelta.dx);
-                  },
-                  onPointerSignal: (event) {
-                    if (event is PointerScrollEvent) {
-                      if (event.scrollDelta.dx != 0) {
-                        _handleHorizontalScroll(-event.scrollDelta.dx);
-                      }
-                    }
-                  },
-                  child: PageView.builder(
-                    controller: _controller,
-                    physics: const PageScrollPhysics(),
-                    itemCount: _items.length,
-                    onPageChanged: _changed,
-                    itemBuilder: (context, index) {
-                      final item = _items[index];
-                      return RepaintBoundary(
-                        child: item.isVideo
-                            ? PhotoMediaVideo(
-                                key: ValueKey('video-${item.id}'),
-                                api: widget.api,
-                                asset: item,
-                                active: index == _index,
-                                autoPlay: widget.fileBrowserMode,
-                                onCompleted: widget.fileBrowserMode
-                                    ? () => unawaited(_nextVideo())
-                                    : null,
-                              )
-                            : PhotoMediaImage(
-                                key: ValueKey('image-${item.id}'),
-                                api: widget.api,
-                                memoryCache: _imageCache,
-                                originalMemoryCache: _originalCache,
-                                asset: item,
-                                active: index == _index,
-                                allowHorizontalPageSwipe: true,
-                                onSwipeDown: () =>
-                                    Navigator.of(context).maybePop(),
-                                onSwipeUp: widget.fileBrowserMode
-                                    ? null
-                                    : () {
-                                        _stopSlideshow();
-                                        unawaited(widget.onDetails(_current));
+            Expanded(
+              child: Stack(
+                children: [
+                  Positioned.fill(
+                    child: ScrollConfiguration(
+                      behavior: ScrollConfiguration.of(context).copyWith(
+                        dragDevices: {
+                          PointerDeviceKind.touch,
+                          PointerDeviceKind.mouse,
+                          PointerDeviceKind.trackpad,
+                          PointerDeviceKind.stylus,
+                          PointerDeviceKind.unknown,
+                        },
+                      ),
+                      child: Listener(
+                        behavior: HitTestBehavior.translucent,
+                        onPointerPanZoomUpdate: (event) {
+                          _handleHorizontalScroll(event.panDelta.dx);
+                        },
+                        onPointerSignal: (event) {
+                          if (event is PointerScrollEvent) {
+                            if (event.scrollDelta.dx != 0) {
+                              _handleHorizontalScroll(-event.scrollDelta.dx);
+                            }
+                          }
+                        },
+                        child: PageView.builder(
+                          controller: _controller,
+                          physics: const PageScrollPhysics(),
+                          itemCount: _items.length,
+                          onPageChanged: _changed,
+                          itemBuilder: (context, index) {
+                            final item = _items[index];
+                            return RepaintBoundary(
+                              child: item.isVideo
+                                  ? PhotoMediaVideo(
+                                      key: ValueKey('video-${item.id}'),
+                                      api: widget.api,
+                                      asset: item,
+                                      active: index == _index,
+                                      autoPlay: widget.fileBrowserMode,
+                                      fileBrowserMode: widget.fileBrowserMode,
+                                      onCompleted: widget.fileBrowserMode
+                                          ? () => unawaited(_nextVideo())
+                                          : null,
+                                    )
+                                  : PhotoMediaImage(
+                                      key: ValueKey('image-${item.id}'),
+                                      api: widget.api,
+                                      memoryCache: _imageCache,
+                                      originalMemoryCache: _originalCache,
+                                      asset: item,
+                                      active: index == _index,
+                                      resetZoomNonce: _resetZoomNonce,
+                                      allowHorizontalPageSwipe: true,
+                                      onSwipeDown: () =>
+                                          Navigator.of(context).maybePop(),
+                                      onSwipeUp: widget.fileBrowserMode
+                                          ? null
+                                          : () {
+                                              _stopSlideshow();
+                                              unawaited(
+                                                _openFullDetailsAndSync(),
+                                              );
+                                            },
+                                      onTap: _toggleChrome,
+                                      onDragProgressChanged: (progress) {
+                                        if (mounted &&
+                                            index == _index &&
+                                            (progress - _dismissDragProgress)
+                                                    .abs() >
+                                                0.01) {
+                                          setState(
+                                            () =>
+                                                _dismissDragProgress = progress,
+                                          );
+                                        }
                                       },
-                                onTap: _toggleChrome,
-                                onDragProgressChanged: (progress) {
-                                  if (mounted &&
-                                      index == _index &&
-                                      (progress - _dismissDragProgress).abs() >
-                                          0.01) {
-                                    setState(
-                                      () => _dismissDragProgress = progress,
-                                    );
-                                  }
-                                },
-                                onZoomChanged: (zoomed) {
-                                  if (mounted && index == _index && zoomed) {
-                                    _stopSlideshow();
-                                  }
-                                },
-                              ),
-                      );
-                    },
-                  ),
-                ),
-              ),
-            ),
-            // A Live Photo plays the companion MOV over its own still frame,
-            // then returns to that still. It never navigates to a second
-            // gallery item or changes the active photo index/favourites.
-            if (_livePlaying && _hasLiveMotion && !asset.isVideo)
-              Positioned.fill(
-                child: ColoredBox(
-                  color: Colors.black,
-                  child: PhotoMediaVideo(
-                    key: ValueKey(
-                      'live-motion-${_liveMotion?.id ?? asset.liveVideoAssetId}',
+                                      onZoomChanged: (zoomed) {
+                                        if (!mounted || index != _index) return;
+                                        setState(() => _currentZoomed = zoomed);
+                                        if (zoomed) _stopSlideshow();
+                                      },
+                                    ),
+                            );
+                          },
+                        ),
+                      ),
                     ),
-                    api: widget.api,
-                    asset: _liveMotion ?? asset,
-                    streamPathOverride: asset.isLivePhoto
-                        ? '/api/v2/photos/${asset.id}/live-video'
-                        : null,
-                    active: true,
-                    autoPlay: true,
-                    liveMode: true,
-                    onCompleted: () {
-                      if (mounted) setState(() => _livePlaying = false);
-                    },
                   ),
-                ),
-              ),
-            if (_chromeVisible &&
-                (defaultTargetPlatform == TargetPlatform.macOS ||
-                    defaultTargetPlatform == TargetPlatform.windows ||
-                    defaultTargetPlatform == TargetPlatform.linux ||
-                    MediaQuery.sizeOf(context).width >= 600)) ...[
-              if (_index > 0)
-                Positioned(
-                  left: 20,
-                  top: 0,
-                  bottom: 0,
-                  child: Center(
-                    child: ClipOval(
-                      child: IsleGlassBackdrop(
-                        blur: 16,
-                        child: Material(
-                          color: Colors.transparent,
-                          shape: const CircleBorder(),
-                          clipBehavior: Clip.antiAlias,
-                          child: InkWell(
-                            onTap: () => unawaited(_navigate(-1)),
-                            child: Container(
-                              width: 44,
-                              height: 44,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: Colors.black.withValues(alpha: 0.45),
-                                border: Border.all(
-                                  color: Colors.white.withValues(alpha: 0.22),
-                                  width: 0.8,
+                  // A Live Photo plays the companion MOV over its own still frame,
+                  // then returns to that still. It never navigates to a second
+                  // gallery item or changes the active photo index/favourites.
+                  if (_livePlaying && _hasLiveMotion && !asset.isVideo)
+                    Positioned.fill(
+                      child: ColoredBox(
+                        color: Colors.black,
+                        child: PhotoMediaVideo(
+                          key: ValueKey(
+                            'live-motion-${_liveMotion?.id ?? asset.liveVideoAssetId}',
+                          ),
+                          api: widget.api,
+                          asset: _liveMotion ?? asset,
+                          streamPathOverride: asset.isLivePhoto
+                              ? '/api/v2/photos/${asset.id}/live-video'
+                              : null,
+                          active: true,
+                          autoPlay: true,
+                          liveMode: true,
+                          onCompleted: () {
+                            if (mounted) setState(() => _livePlaying = false);
+                          },
+                        ),
+                      ),
+                    ),
+                  if (_chromeVisible &&
+                      (defaultTargetPlatform == TargetPlatform.macOS ||
+                          defaultTargetPlatform == TargetPlatform.windows ||
+                          defaultTargetPlatform == TargetPlatform.linux ||
+                          MediaQuery.sizeOf(context).width >= 600)) ...[
+                    if (_index > 0)
+                      Positioned(
+                        left: 20,
+                        top: 0,
+                        bottom: 0,
+                        child: Center(
+                          child: ClipOval(
+                            child: IsleGlassBackdrop(
+                              blur: 16,
+                              child: Material(
+                                color: Colors.transparent,
+                                shape: const CircleBorder(),
+                                clipBehavior: Clip.antiAlias,
+                                child: InkWell(
+                                  onTap: () => unawaited(_navigate(-1)),
+                                  child: Container(
+                                    width: 44,
+                                    height: 44,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: Colors.black.withValues(
+                                        alpha: 0.45,
+                                      ),
+                                      border: Border.all(
+                                        color: Colors.white.withValues(
+                                          alpha: 0.22,
+                                        ),
+                                        width: 0.8,
+                                      ),
+                                    ),
+                                    child: const Icon(
+                                      Icons.chevron_left_rounded,
+                                      color: Colors.white,
+                                      size: 28,
+                                    ),
+                                  ),
                                 ),
-                              ),
-                              child: const Icon(
-                                Icons.chevron_left_rounded,
-                                color: Colors.white,
-                                size: 28,
                               ),
                             ),
                           ),
                         ),
                       ),
-                    ),
-                  ),
-                ),
-              if (_index < _items.length - 1)
-                Positioned(
-                  right: 20,
-                  top: 0,
-                  bottom: 0,
-                  child: Center(
-                    child: ClipOval(
-                      child: IsleGlassBackdrop(
-                        blur: 16,
-                        child: Material(
-                          color: Colors.transparent,
-                          shape: const CircleBorder(),
-                          clipBehavior: Clip.antiAlias,
-                          child: InkWell(
-                            onTap: () => unawaited(_navigate(1)),
-                            child: Container(
-                              width: 44,
-                              height: 44,
-                              decoration: BoxDecoration(
-                                shape: BoxShape.circle,
-                                color: Colors.black.withValues(alpha: 0.45),
-                                border: Border.all(
-                                  color: Colors.white.withValues(alpha: 0.22),
-                                  width: 0.8,
+                    if (_index < _items.length - 1)
+                      Positioned(
+                        right: 20,
+                        top: 0,
+                        bottom: 0,
+                        child: Center(
+                          child: ClipOval(
+                            child: IsleGlassBackdrop(
+                              blur: 16,
+                              child: Material(
+                                color: Colors.transparent,
+                                shape: const CircleBorder(),
+                                clipBehavior: Clip.antiAlias,
+                                child: InkWell(
+                                  onTap: () => unawaited(_navigate(1)),
+                                  child: Container(
+                                    width: 44,
+                                    height: 44,
+                                    decoration: BoxDecoration(
+                                      shape: BoxShape.circle,
+                                      color: Colors.black.withValues(
+                                        alpha: 0.45,
+                                      ),
+                                      border: Border.all(
+                                        color: Colors.white.withValues(
+                                          alpha: 0.22,
+                                        ),
+                                        width: 0.8,
+                                      ),
+                                    ),
+                                    child: const Icon(
+                                      Icons.chevron_right_rounded,
+                                      color: Colors.white,
+                                      size: 28,
+                                    ),
+                                  ),
                                 ),
-                              ),
-                              child: const Icon(
-                                Icons.chevron_right_rounded,
-                                color: Colors.white,
-                                size: 28,
                               ),
                             ),
                           ),
                         ),
                       ),
-                    ),
-                  ),
-                ),
-            ],
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              child: IgnorePointer(
-                ignoring: !_chromeVisible,
-                child: AnimatedOpacity(
-                  opacity: _chromeVisible ? 1.0 : 0.0,
-                  duration: chromeDuration,
-                  curve: Curves.easeOutCubic,
-                  child: DecoratedBox(
-                    decoration: const BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [Color(0xB5000000), Colors.transparent],
+                  ],
+                  Positioned(
+                    top: 0,
+                    left: 0,
+                    right: 0,
+                    child: IgnorePointer(
+                      ignoring: !_chromeVisible,
+                      child: AnimatedOpacity(
+                        opacity: _chromeVisible ? 1.0 : 0.0,
+                        duration: chromeDuration,
+                        curve: Curves.easeOutCubic,
+                        child: DecoratedBox(
+                          decoration: const BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.topCenter,
+                              end: Alignment.bottomCenter,
+                              colors: [Color(0xB5000000), Colors.transparent],
+                            ),
+                          ),
+                          child: _buildModernHeader(asset, safe.top),
+                        ),
                       ),
                     ),
-                    child: _buildModernHeader(asset, safe.top),
                   ),
-                ),
+                  if (!asset.isVideo)
+                    Positioned(
+                      left: 0,
+                      right: 0,
+                      bottom: 0,
+                      child: IgnorePointer(
+                        ignoring: !_chromeVisible,
+                        child: AnimatedOpacity(
+                          opacity: _chromeVisible ? 1.0 : 0.0,
+                          duration: chromeDuration,
+                          curve: Curves.easeOutCubic,
+                          child: _buildBottomToolbar(
+                            context,
+                            asset,
+                            safe.bottom,
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
               ),
             ),
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: IgnorePointer(
-                ignoring: !_chromeVisible,
-                child: AnimatedOpacity(
-                  opacity: _chromeVisible ? 1.0 : 0.0,
-                  duration: chromeDuration,
-                  curve: Curves.easeOutCubic,
-                  child: _buildBottomToolbar(asset, safe.bottom),
-                ),
+            if (wideSidebar)
+              PhotoViewerInfoSidebar(
+                asset: asset,
+                onClose: () => setState(() => _showInfoSidebar = false),
+                onOpenFullDetails: () => unawaited(_openFullDetailsAndSync()),
               ),
-            ),
           ],
         ),
       ),

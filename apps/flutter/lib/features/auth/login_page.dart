@@ -118,7 +118,8 @@ class _LoginPageState extends State<LoginPage> {
     if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
       return trimmed;
     }
-    final hasPortOrPath = RegExp(r'^(\[[^\]]+\]|[^/:]+)(:\d+|/)').hasMatch(trimmed);
+    final hasPortOrPath = RegExp(r'^(\[[^\]]+\]|[^/:]+)(:\d+|/)')
+        .hasMatch(trimmed);
     return hasPortOrPath ? 'http://$trimmed' : 'http://$trimmed:16666';
   }
 
@@ -541,10 +542,7 @@ class _LoginPageState extends State<LoginPage> {
                 prefixIcon: Icon(Icons.verified_user_outlined, size: 20),
               ),
               validator: (value) {
-                final pin = (value ?? '').replaceAll(
-                  RegExp(r'[:\s]'),
-                  '',
-                );
+                final pin = (value ?? '').replaceAll(RegExp(r'[:\s]'), '');
                 if (pin.isEmpty) return null;
                 if (_httpsOrigin(_normalizeServerAddress(_server.text)) ==
                     null) {

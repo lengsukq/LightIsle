@@ -17,7 +17,10 @@ class CinemaCatalogViewState {
   int nextCursor = 0;
   int listGeneration = 0;
   String mode = 'all';
+  String watched = 'all';
+  String sort = 'recent';
   String query = '';
+  String activeScopeKey = '';
   bool showSearch = false;
   bool loading = true;
   bool loadingMore = false;

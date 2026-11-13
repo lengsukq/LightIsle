@@ -24,7 +24,9 @@ extension _CinemaPageHomeRails on _CinemaPageState {
       padding: EdgeInsets.fromLTRB(_pageInset, 4, _pageInset, wide ? 16 : 12),
       child: Container(
         key: const ValueKey('cinemaFeaturedBanner'),
-        height: wide ? 236 + 210 * (textScale - 1) : null,
+        constraints: wide
+            ? BoxConstraints(minHeight: 236 + 210 * (textScale - 1))
+            : null,
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
           borderRadius: wide ? IsleRadius.brHero : IsleRadius.brCard,
@@ -45,12 +47,14 @@ extension _CinemaPageHomeRails on _CinemaPageState {
           color: Colors.transparent,
           child: InkWell(
             onTap: () => _openFilm(film),
-            child: Row(
+            child: Stack(
               children: [
                 if (wide)
-                  SizedBox(
+                  Positioned(
+                    left: 0,
+                    top: 0,
+                    bottom: 0,
                     width: 156,
-                    height: double.infinity,
                     child: AuthenticatedMediaImage(
                       api: widget.api,
                       memoryCache: _posterCache,
@@ -62,7 +66,8 @@ extension _CinemaPageHomeRails on _CinemaPageState {
                           InkWell(onTap: retry, child: _continuePlaceholder()),
                     ),
                   ),
-                Expanded(
+                Padding(
+                  padding: EdgeInsets.only(left: wide ? 156 : 0),
                   child: Padding(
                     padding: EdgeInsets.symmetric(
                       horizontal: wide ? 22 : 14,
@@ -165,7 +170,11 @@ extension _CinemaPageHomeRails on _CinemaPageState {
                                 Icons.play_arrow_rounded,
                                 size: 18,
                               ),
-                              label: Text(film.canResume ? '继续播放' : '播放'),
+                              label: Text(
+                                film.canResume
+                                    ? formatCinemaResumeCtaLabel(film)
+                                    : '播放',
+                              ),
                             ),
                             OutlinedButton.icon(
                               key: const ValueKey('cinemaFeaturedDetails'),
@@ -396,19 +405,47 @@ extension _CinemaPageHomeRails on _CinemaPageState {
                               child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text(
-                                    film.title,
-                                    maxLines: 2,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: theme.textTheme.titleSmall?.copyWith(
-                                      color: Colors.white,
-                                      fontWeight: FontWeight.w600,
-                                    ),
+                                  Row(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          film.title,
+                                          maxLines: 2,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: theme.textTheme.titleSmall
+                                              ?.copyWith(
+                                                color: Colors.white,
+                                                fontWeight: FontWeight.w600,
+                                              ),
+                                        ),
+                                      ),
+                                      IconButton(
+                                        key: ValueKey(
+                                          'cinemaContinueRemove_${film.id}',
+                                        ),
+                                        tooltip: '移出继续观看',
+                                        visualDensity: VisualDensity.compact,
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(
+                                          minWidth: 28,
+                                          minHeight: 28,
+                                        ),
+                                        onPressed: () =>
+                                            unawaited(_clearFilmProgress(film)),
+                                        icon: const Icon(
+                                          Icons.close_rounded,
+                                          size: 16,
+                                          color: Colors.white70,
+                                        ),
+                                      ),
+                                    ],
                                   ),
                                   const Spacer(),
                                   Text(
                                     film.isSeries
-                                        ? '第 ${film.season} 季 · 第 ${film.episode} 集'
+                                        ? '${formatCinemaSeasonEpisodeCode(film)} · 第 ${film.season} 季第 ${film.episode} 集'
                                         : '继续播放',
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
@@ -417,11 +454,18 @@ extension _CinemaPageHomeRails on _CinemaPageState {
                                     ),
                                   ),
                                   const SizedBox(height: 3),
-                                  Text(
-                                    '剩余 ${formatMediaSeconds((film.duration - film.position).clamp(0, double.infinity).toDouble())}',
-                                    style: theme.textTheme.labelSmall?.copyWith(
-                                      color: Colors.white70,
-                                    ),
+                                  Builder(
+                                    builder: (_) {
+                                      final remaining =
+                                          formatCinemaRemainingText(film);
+                                      return Text(
+                                        remaining.isEmpty
+                                            ? '已看 ${formatMediaSeconds(film.position)}'
+                                            : '剩余 $remaining',
+                                        style: theme.textTheme.labelSmall
+                                            ?.copyWith(color: Colors.white70),
+                                      );
+                                    },
                                   ),
                                   const SizedBox(height: 6),
                                   ClipRRect(

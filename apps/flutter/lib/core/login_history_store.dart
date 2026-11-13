@@ -339,9 +339,6 @@ class ServerLatencyResult {
   final ServerLatencyState state;
   final int? latencyMs;
   final String message;
-
-  bool get isOnline => state == ServerLatencyState.online;
-  bool get isProbing => state == ServerLatencyState.probing;
 }
 
 typedef ServerLatencyProber = Future<ServerLatencyResult> Function(

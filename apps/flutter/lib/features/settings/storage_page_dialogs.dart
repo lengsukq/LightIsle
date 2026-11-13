@@ -487,6 +487,19 @@ extension _StoragePageDialogs on _StoragePageState {
                   style: const TextStyle(fontWeight: FontWeight.w600),
                 ),
               ),
+              if (max > 0) ...[
+                const SizedBox(width: 8),
+                StorageCompactDonut(
+                  fraction: (used + reserved) / max,
+                  color: ((used + reserved) / max) >= 0.92
+                      ? const Color(0xffef4444)
+                      : ((used + reserved) / max) >= 0.8
+                      ? const Color(0xfff59e0b)
+                      : const Color(0xff0071e3),
+                  semanticsLabel:
+                      '$rootName 配额已用 ${(((used + reserved) / max).clamp(0.0, 1.0) * 100).round()}%',
+                ),
+              ],
               if (widget.isAdmin && rootsKnown && active && limit is num)
                 TextButton(
                   onPressed: loading
@@ -504,10 +517,7 @@ extension _StoragePageDialogs on _StoragePageState {
           ),
           if (max > 0) ...[
             const SizedBox(height: 6),
-            LinearProgressIndicator(
-              minHeight: 6,
-              value: ((used + reserved) / max).clamp(0.0, 1.0),
-            ),
+            StorageQuotaSegmentedBar(used: used, reserved: reserved, max: max),
           ],
           const SizedBox(height: 6),
           Text(

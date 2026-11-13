@@ -92,12 +92,6 @@ Future<void> showCinemaDecodeSettingsDialog(BuildContext context) async {
   );
 }
 
-Future<void> showExternalPlayerLaunchDialog(
-  BuildContext context, {
-  required LightIsleApi api,
-  required CinemaFilm film,
-}) => showCinemaExternalPlayerDialog(context, api: api, film: film);
-
 Future<void> showCinemaExternalPlayerDialog(
   BuildContext context, {
   required LightIsleApi api,

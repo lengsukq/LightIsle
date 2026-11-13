@@ -768,7 +768,4 @@ class IsleCacheManager extends ChangeNotifier {
     }
     notifyListeners();
   }
-
-  Future<void> clearAllTemporary() =>
-      clearCategories(IsleCacheCategory.values.toSet());
 }

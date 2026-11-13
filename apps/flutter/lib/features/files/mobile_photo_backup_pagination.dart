@@ -48,9 +48,8 @@ extension _MobilePhotoBackupPagination on _MobilePhotoBackupState {
     int listedSize,
   ) {
     if (raw == null || raw.isEmpty) return null;
-    final withSize = RegExp(
-      r'^([a-f0-9]{64}):([1-9][0-9]{0,14})$',
-    ).firstMatch(raw);
+    final withSize = RegExp(r'^([a-f0-9]{64}):([1-9][0-9]{0,14})$')
+        .firstMatch(raw);
     if (withSize != null) {
       final digest = withSize.group(1)!;
       final savedSize = int.tryParse(withSize.group(2)!);

@@ -5,12 +5,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import 'media_models.dart';
+import 'media_ui.dart';
+import 'photo_exif_panel.dart';
 import 'photo_gallery_viewer.dart';
 import 'photo_live_text_card.dart';
 import 'photo_map_page.dart';
-import 'media_ui.dart';
 
 class PhotoDetailDialog extends StatefulWidget {
   const PhotoDetailDialog({
@@ -21,7 +23,6 @@ class PhotoDetailDialog extends StatefulWidget {
     required this.isAdmin,
     required this.currentAlbumId,
     this.currentPrivateAlbumId = 0,
-    this.personalFavoritesOnly = false,
     required this.canToggleFavorite,
     required this.onToggleFavorite,
     this.onTogglePersonalFavorite,
@@ -42,7 +43,6 @@ class PhotoDetailDialog extends StatefulWidget {
   final bool isAdmin;
   final int currentAlbumId;
   final int currentPrivateAlbumId;
-  final bool personalFavoritesOnly;
   final bool canToggleFavorite;
   final Future<PhotoAsset> Function(PhotoAsset asset) onToggleFavorite;
   final Future<PhotoAsset> Function(PhotoAsset asset)? onTogglePersonalFavorite;
@@ -176,17 +176,9 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog> {
     }
   }
 
-  String get _detailsDate {
-    if (_asset.capturedAt.isNotEmpty) {
-      final parsed = DateTime.tryParse(_asset.capturedAt);
-      if (parsed != null) return parsed.toLocal().toString().split('.').first;
-    }
-    return formatMediaDate(_asset.takenAt);
-  }
-
   void _openFullScreenPhoto() {
     Navigator.of(context).push(
-      MaterialPageRoute<void>(
+      buildIslePageRoute<void>(
         builder: (_) => PhotoGalleryViewer(
           api: widget.api,
           assets: [_asset],
@@ -225,116 +217,6 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog> {
           onZoomChanged: (_) {},
         ),
       ),
-    );
-  }
-
-  Widget _metadata(BuildContext context) {
-    final values = <(IconData, String, String)>[
-      (Icons.event_outlined, '拍摄时间', _detailsDate),
-      (Icons.storage_outlined, '文件大小', formatMediaSize(_asset.size)),
-      if (_asset.width > 0 && _asset.height > 0)
-        (
-          Icons.aspect_ratio_outlined,
-          '画面尺寸',
-          '${_asset.width} × ${_asset.height}',
-        ),
-      if (_asset.isVideo)
-        (
-          Icons.schedule_outlined,
-          '时长',
-          formatMediaSeconds(_asset.durationSeconds),
-        ),
-      if (_asset.container.isNotEmpty || _asset.videoCodec.isNotEmpty)
-        (
-          Icons.movie_outlined,
-          '格式',
-          [
-            _asset.container,
-            _asset.videoCodec,
-            _asset.audioCodec,
-          ].where((value) => value.isNotEmpty).join(' · '),
-        ),
-      if (_asset.cameraMake.isNotEmpty || _asset.cameraModel.isNotEmpty)
-        (
-          Icons.photo_camera_outlined,
-          '相机',
-          [
-            _asset.cameraMake,
-            _asset.cameraModel,
-          ].where((value) => value.isNotEmpty).join(' '),
-        ),
-      if (_asset.lensModel.isNotEmpty)
-        (Icons.camera_outlined, '镜头', _asset.lensModel),
-      if (_asset.iso > 0 ||
-          _asset.fNumber > 0 ||
-          _asset.exposureSeconds > 0 ||
-          _asset.focalLength > 0)
-        (
-          Icons.tune_outlined,
-          '拍摄参数',
-          [
-            if (_asset.iso > 0) 'ISO ${_asset.iso}',
-            if (_asset.fNumber > 0)
-              'f/${_asset.fNumber < 10 ? _asset.fNumber.toStringAsFixed(1) : _asset.fNumber.round().toString()}',
-            if (_asset.exposureSeconds > 0)
-              _asset.exposureSeconds >= 1
-                  ? '${_asset.exposureSeconds.toStringAsFixed(1)}s'
-                  : '1/${(1 / _asset.exposureSeconds).round()}s',
-            if (_asset.focalLength > 0) '${_asset.focalLength.round()}mm',
-          ].join(' · '),
-        ),
-      if (_asset.latitude != null && _asset.longitude != null)
-        (
-          Icons.place_outlined,
-          '位置',
-          '${_asset.latitude!.abs().toStringAsFixed(5)}°'
-              '${_asset.latitude! >= 0 ? 'N' : 'S'}，'
-              '${_asset.longitude!.abs().toStringAsFixed(5)}°'
-              '${_asset.longitude! >= 0 ? 'E' : 'W'}',
-        ),
-    ];
-    return Wrap(
-      spacing: 14,
-      runSpacing: 12,
-      children: [
-        for (final value in values)
-          SizedBox(
-            width: 220,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(
-                  value.$1,
-                  size: 18,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-                const SizedBox(width: 9),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        value.$2,
-                        style: Theme.of(context).textTheme.labelMedium
-                            ?.copyWith(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .onSurfaceVariant,
-                            ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        value.$3,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-      ],
     );
   }
 
@@ -570,7 +452,7 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog> {
           ),
         Text('媒体信息', style: Theme.of(context).textTheme.titleMedium),
         const SizedBox(height: 12),
-        _metadata(context),
+        PhotoExifPanel(asset: _asset),
         if (!_asset.isVideo)
           PhotoLiveTextCard(
             api: widget.api,
@@ -589,7 +471,7 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog> {
                 final lat = _asset.latitude!;
                 final lon = _asset.longitude!;
                 Navigator.of(context).push<void>(
-                  MaterialPageRoute<void>(
+                  buildIslePageRoute<void>(
                     builder: (_) => PhotoMapPage(
                       api: widget.api,
                       initialZoom: 13,

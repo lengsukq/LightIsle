@@ -175,4 +175,41 @@ void main() {
       contains('不支持跨账号或跨公共与私人目录直接移动'),
     );
   });
+
+  test('new backend app, automation, strm, person share, tmdb & transcode codes map cleanly', () {
+    const codes = [
+      'app_access_forbidden',
+      'app_invalid',
+      'app_unavailable',
+      'app_already_exists',
+      'app_template_not_found',
+      'app_busy',
+      'app_operation_failed',
+      'automation_task_not_found',
+      'automation_operation_failed',
+      'invalid_strm_url',
+      'forbidden_strm_url',
+      'person_share_requires_owned_photos',
+      'invalid_person_share',
+      'admin_confirmation_required',
+      'admin_confirmation_invalid',
+      'tmdb_token_not_configured',
+      'douban_web_unavailable',
+      'transcode_insufficient_space',
+      'transcode_busy',
+      'transcode_failed',
+    ];
+    for (final code in codes) {
+      expect(
+        knownLightIsleErrorMessage(code),
+        isNotNull,
+        reason: 'Missing mapping for $code',
+      );
+      final text = userFacingError(
+        LightIsleApiException(code: code, statusCode: 400, message: code),
+      );
+      expect(text, isNot(contains(code)));
+      expect(text, isNot(contains('排查标识')));
+    }
+  });
 }

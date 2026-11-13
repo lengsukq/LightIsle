@@ -1,8 +1,9 @@
-import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import 'isle_route.dart';
 import 'isle_style.dart';
+export 'isle_route.dart';
 export 'isle_style.dart';
 
 ColorScheme _buildIsleColorScheme(
@@ -285,13 +286,7 @@ ThemeData buildIsleTheme(Brightness brightness, {bool highContrast = false}) {
       space: 18,
     ),
     pageTransitionsTheme: const PageTransitionsTheme(
-      builders: {
-        TargetPlatform.android: PredictiveBackPageTransitionsBuilder(),
-        TargetPlatform.iOS: CupertinoPageTransitionsBuilder(),
-        TargetPlatform.macOS: FadeForwardsPageTransitionsBuilder(
-          backgroundColor: Colors.transparent,
-        ),
-      },
+      builders: islePageTransitionBuilders,
     ),
   );
 }
@@ -385,9 +380,9 @@ class _IsleSurfaceState extends State<IsleSurface> {
     final colors = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final palette = IslePalette(isDark);
-    final highContrast = MediaQuery.highContrastOf(context);
-    final animate =
-        widget.onTap != null && !MediaQuery.disableAnimationsOf(context);
+    final highContrast = MediaQuery.maybeHighContrastOf(context) ?? false;
+    final reducedMotion = IsleMotion.reducedMotion(context);
+    final animate = widget.onTap != null && !reducedMotion;
     final hovered = animate && _hovered;
     final pressed = animate && _pressed;
 
@@ -434,7 +429,16 @@ class _IsleSurfaceState extends State<IsleSurface> {
             tint: widget.tint,
           );
 
-    Widget interactiveContent = widget.onTap == null
+    final decoration = ShapeDecoration(
+      shape: shape,
+      gradient: highContrast ? null : gradient,
+      color: highContrast ? (widget.tint ?? colors.surface) : null,
+      shadows: highContrast
+          ? const []
+          : (hovered ? IsleShadows.raised(isDark) : IsleShadows.card(isDark)),
+    );
+
+    final Widget interactiveContent = widget.onTap == null
         ? Material(type: MaterialType.transparency, child: content)
         : Material(
             type: MaterialType.transparency,
@@ -453,46 +457,43 @@ class _IsleSurfaceState extends State<IsleSurface> {
             ),
           );
 
-    Widget cardBody = AnimatedContainer(
-      duration: IsleMotion.fast,
-      curve: IsleMotion.spring,
-      decoration: ShapeDecoration(
-        shape: shape,
-        gradient: highContrast ? null : gradient,
-        color: highContrast ? (widget.tint ?? colors.surface) : null,
-        shadows: highContrast
-            ? const []
-            : (hovered ? IsleShadows.raised(isDark) : IsleShadows.card(isDark)),
-      ),
-      child: ClipPath(
-        clipper: ShapeBorderClipper(shape: innerShape),
-        child: Stack(
-          children: [
-            interactiveContent,
-            if (!highContrast)
-              Positioned(
-                top: 0,
-                left: widget.radius * 0.6,
-                right: widget.radius * 0.6,
-                height: 0.8,
-                child: IgnorePointer(
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        colors: [
-                          Colors.transparent,
-                          IsleGlass.specularLipColor(isDark),
-                          Colors.transparent,
-                        ],
-                      ),
+    final Widget innerStack = ClipPath(
+      clipper: ShapeBorderClipper(shape: innerShape),
+      child: Stack(
+        children: [
+          interactiveContent,
+          if (!highContrast)
+            Positioned(
+              top: 0,
+              left: widget.radius * 0.6,
+              right: widget.radius * 0.6,
+              height: 0.8,
+              child: IgnorePointer(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        Colors.transparent,
+                        IsleGlass.specularLipColor(isDark),
+                        Colors.transparent,
+                      ],
                     ),
                   ),
                 ),
               ),
-          ],
-        ),
+            ),
+        ],
       ),
     );
+
+    Widget cardBody = widget.onTap == null
+        ? DecoratedBox(decoration: decoration, child: innerStack)
+        : AnimatedContainer(
+            duration: animate ? IsleMotion.fast : Duration.zero,
+            curve: IsleMotion.spring,
+            decoration: decoration,
+            child: innerStack,
+          );
 
     if (isGlass) {
       cardBody = ClipPath(
@@ -501,13 +502,23 @@ class _IsleSurfaceState extends State<IsleSurface> {
       );
     }
 
+    if (widget.onTap == null) {
+      return Padding(padding: widget.margin, child: cardBody);
+    }
+
     return Padding(
       padding: widget.margin,
-      child: AnimatedScale(
-        scale: pressed ? IsleMotion.pressScale : (hovered ? 1.006 : 1.0),
-        duration: IsleMotion.fast,
-        curve: IsleMotion.spring,
-        child: cardBody,
+      child: RepaintBoundary(
+        child: animate
+            ? AnimatedScale(
+                scale: pressed
+                    ? IsleMotion.pressScale
+                    : (hovered ? 1.006 : 1.0),
+                duration: IsleMotion.fast,
+                curve: IsleMotion.spring,
+                child: cardBody,
+              )
+            : cardBody,
       ),
     );
   }
@@ -540,12 +551,10 @@ class IslePageHeader extends StatelessWidget {
     super.key,
     required this.title,
     required this.subtitle,
-    this.icon,
     this.trailing,
     this.hideSubtitleOnCompact = false,
   });
   final String title, subtitle;
-  final IconData? icon;
   final Widget? trailing;
   final bool hideSubtitleOnCompact;
   @override

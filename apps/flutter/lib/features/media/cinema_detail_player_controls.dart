@@ -189,38 +189,41 @@ extension _CinemaDetailPlayerControls on _CinemaDetailDialogState {
     return _buildDraggableDockShell(
       context: context,
       compactControls: compactControls,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          _buildDockDragHandleRow(),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            child: _buildTransportSeekBar(context, controller),
-          ),
-          const SizedBox(height: 2),
-          if (compactControls)
-            Wrap(
-              spacing: 8,
-              runSpacing: 6,
-              alignment: WrapAlignment.spaceBetween,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: [leftCluster, rightCluster],
-            )
-          else
-            Row(
-              children: [
-                leftCluster,
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Align(
-                    alignment: Alignment.centerRight,
-                    child: rightCluster,
-                  ),
-                ),
-              ],
+      child: FocusScope(
+        canRequestFocus: false,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _buildDockDragHandleRow(),
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 4),
+              child: _buildTransportSeekBar(context, controller),
             ),
-        ],
+            const SizedBox(height: 2),
+            if (compactControls)
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                alignment: WrapAlignment.spaceBetween,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: [leftCluster, rightCluster],
+              )
+            else
+              Row(
+                children: [
+                  leftCluster,
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: rightCluster,
+                    ),
+                  ),
+                ],
+              ),
+          ],
+        ),
       ),
     );
   }
@@ -361,46 +364,69 @@ extension _CinemaDetailPlayerControls on _CinemaDetailDialogState {
     BuildContext context,
     VideoPlayerController controller,
   ) {
-    if (_playback.hlsSession != null && _originalPlaybackDuration > 0) {
-      final total = _originalPlaybackDuration;
-      return Semantics(
-        label: '原片完整进度',
-        child: SliderTheme(
-          data: SliderTheme.of(context).copyWith(
-            trackHeight: 3.5,
-            activeTrackColor: _crimsonAccent,
-            inactiveTrackColor: const Color(0x33FFFFFF),
-            thumbColor: Colors.white,
-            overlayColor: _crimsonAccent.withValues(alpha: 0.22),
-            thumbShape: const RoundSliderThumbShape(enabledThumbRadius: 5.5),
-            overlayShape: const RoundSliderOverlayShape(overlayRadius: 10),
-          ),
-          child: Slider(
-            value: (_playback.seekDraft ?? _originalPlaybackSeconds).clamp(
-              0.0,
-              total,
-            ),
-            min: 0,
-            max: total,
-            onChanged: _playback.transcodeStarting
-                ? null
-                : (value) {
-                    _revealChrome();
-                    _updateState(() => _playback.seekDraft = value);
-                  },
-            onChangeEnd: (value) => unawaited(_seekAbsolute(value)),
-          ),
+    if (_playback.hlsSession != null) {
+      return RepaintBoundary(
+        child: AnimatedBuilder(
+          animation: controller,
+          builder: (context, _) {
+            final total = _originalPlaybackDuration;
+            if (total <= 0) {
+              return VideoProgressIndicator(
+                controller,
+                allowScrubbing: true,
+                padding: const EdgeInsets.symmetric(vertical: 5),
+                colors: const VideoProgressColors(
+                  playedColor: _crimsonAccent,
+                  bufferedColor: Color(0x59FFFFFF),
+                  backgroundColor: Color(0x2EFFFFFF),
+                ),
+              );
+            }
+            return Semantics(
+              label: '原片完整进度',
+              child: SliderTheme(
+                data: SliderTheme.of(context).copyWith(
+                  trackHeight: 3.5,
+                  activeTrackColor: _crimsonAccent,
+                  inactiveTrackColor: const Color(0x33FFFFFF),
+                  thumbColor: Colors.white,
+                  overlayColor: _crimsonAccent.withValues(alpha: 0.22),
+                  thumbShape: const RoundSliderThumbShape(
+                    enabledThumbRadius: 5.5,
+                  ),
+                  overlayShape: const RoundSliderOverlayShape(
+                    overlayRadius: 10,
+                  ),
+                ),
+                child: Slider(
+                  value: (_playback.seekDraft ?? _originalPlaybackSeconds)
+                      .clamp(0.0, total),
+                  min: 0,
+                  max: total,
+                  onChanged: _playback.transcodeStarting
+                      ? null
+                      : (value) {
+                          _revealChrome();
+                          _updateState(() => _playback.seekDraft = value);
+                        },
+                  onChangeEnd: (value) => unawaited(_seekAbsolute(value)),
+                ),
+              ),
+            );
+          },
         ),
       );
     }
-    return VideoProgressIndicator(
-      controller,
-      allowScrubbing: true,
-      padding: const EdgeInsets.symmetric(vertical: 5),
-      colors: const VideoProgressColors(
-        playedColor: _crimsonAccent,
-        bufferedColor: Color(0x59FFFFFF),
-        backgroundColor: Color(0x2EFFFFFF),
+    return RepaintBoundary(
+      child: VideoProgressIndicator(
+        controller,
+        allowScrubbing: true,
+        padding: const EdgeInsets.symmetric(vertical: 5),
+        colors: const VideoProgressColors(
+          playedColor: _crimsonAccent,
+          bufferedColor: Color(0x59FFFFFF),
+          backgroundColor: Color(0x2EFFFFFF),
+        ),
       ),
     );
   }
@@ -432,25 +458,36 @@ extension _CinemaDetailPlayerControls on _CinemaDetailDialogState {
   }
 
   Widget _buildTransportTimeReadout() {
-    final currentStr = _timeLabel(
-      Duration(milliseconds: (_originalPlaybackSeconds * 1000).round()),
-    );
-    final totalStr = _timeLabel(
-      Duration(milliseconds: (_originalPlaybackDuration * 1000).round()),
-    );
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Text(currentStr, style: _tabularTimeStyle),
-        const Text(
-          ' / ',
-          style: TextStyle(color: Color(0x80FFFFFF), fontSize: 11.5),
-        ),
-        Text(
-          totalStr,
-          style: _tabularTimeStyle.copyWith(color: const Color(0xB3FFFFFF)),
-        ),
-      ],
+    final controller = _playback.controller;
+    if (controller == null) return const SizedBox.shrink();
+    return RepaintBoundary(
+      child: AnimatedBuilder(
+        animation: controller,
+        builder: (context, _) {
+          final currentStr = _timeLabel(
+            Duration(milliseconds: (_originalPlaybackSeconds * 1000).round()),
+          );
+          final totalStr = _timeLabel(
+            Duration(milliseconds: (_originalPlaybackDuration * 1000).round()),
+          );
+          return Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(currentStr, style: _tabularTimeStyle),
+              const Text(
+                ' / ',
+                style: TextStyle(color: Color(0x80FFFFFF), fontSize: 11.5),
+              ),
+              Text(
+                totalStr,
+                style: _tabularTimeStyle.copyWith(
+                  color: const Color(0xB3FFFFFF),
+                ),
+              ),
+            ],
+          );
+        },
+      ),
     );
   }
 
@@ -465,19 +502,7 @@ extension _CinemaDetailPlayerControls on _CinemaDetailDialogState {
         tooltip: controller.value.volume == 0 ? '取消静音' : '静音',
         style: buttonStyle,
         onPressed: () {
-          final current = controller.value.volume;
-          if (current > 0) {
-            _playback.lastNonZeroVolume = current;
-            unawaited(controller.setVolume(0));
-          } else {
-            unawaited(
-              controller.setVolume(
-                _playback.lastNonZeroVolume > 0
-                    ? _playback.lastNonZeroVolume
-                    : 1.0,
-              ),
-            );
-          }
+          unawaited(_toggleMuteShortcut());
           _revealChrome();
         },
         icon: Icon(
@@ -505,10 +530,7 @@ extension _CinemaDetailPlayerControls on _CinemaDetailDialogState {
               child: Slider(
                 value: controller.value.volume.clamp(0.0, 1.0).toDouble(),
                 onChanged: (value) {
-                  if (value > 0) {
-                    _playback.lastNonZeroVolume = value;
-                  }
-                  controller.setVolume(value);
+                  unawaited(_setPlayerVolume(value));
                   _revealChrome();
                 },
                 semanticFormatterCallback: (value) =>

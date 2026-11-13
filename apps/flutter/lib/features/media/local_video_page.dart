@@ -383,7 +383,7 @@ class _LocalVideoPageState extends State<LocalVideoPage>
                     aspectRatio: player!.value.aspectRatio > 0
                         ? player.value.aspectRatio
                         : 16 / 9,
-                    child: VideoPlayer(player),
+                    child: RepaintBoundary(child: VideoPlayer(player)),
                   ),
                 )
               : Column(
@@ -394,148 +394,156 @@ class _LocalVideoPageState extends State<LocalVideoPage>
                           aspectRatio: player!.value.aspectRatio > 0
                               ? player.value.aspectRatio
                               : 16 / 9,
-                          child: VideoPlayer(player),
+                          child: RepaintBoundary(child: VideoPlayer(player)),
                         ),
                       ),
                     ),
-                    VideoProgressIndicator(
-                      player,
-                      allowScrubbing: true,
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      colors: const VideoProgressColors(
-                        playedColor: Color(0xFFE50914),
-                        bufferedColor: Colors.white54,
-                        backgroundColor: Colors.white24,
+                    RepaintBoundary(
+                      child: VideoProgressIndicator(
+                        player,
+                        allowScrubbing: true,
+                        padding: const EdgeInsets.symmetric(horizontal: 20),
+                        colors: const VideoProgressColors(
+                          playedColor: Color(0xFFE50914),
+                          bufferedColor: Colors.white54,
+                          backgroundColor: Colors.white24,
+                        ),
                       ),
                     ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(16),
-                        child: IsleGlassBackdrop(
-                          blur: 20,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 14,
-                              vertical: 6,
-                            ),
-                            decoration: BoxDecoration(
-                              color: const Color(0xBD10141D),
-                              borderRadius: BorderRadius.circular(16),
-                              border: Border.all(
-                                color: const Color(0x29FFFFFF),
-                                width: 0.8,
+                    RepaintBoundary(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
+                        child: ClipRRect(
+                          borderRadius: BorderRadius.circular(16),
+                          child: IsleGlassBackdrop(
+                            blur: 20,
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 14,
+                                vertical: 6,
                               ),
-                            ),
-                            child: Wrap(
-                              alignment: WrapAlignment.spaceEvenly,
-                              crossAxisAlignment: WrapCrossAlignment.center,
-                              children: [
-                                if (_playlist.length > 1)
-                                  IconButton(
-                                    tooltip: '上一部',
-                                    onPressed: prev == null
-                                        ? null
-                                        : () => unawaited(_switchToPath(prev)),
-                                    color: Colors.white,
-                                    disabledColor: Colors.white38,
-                                    icon: const Icon(Icons.skip_previous),
-                                  ),
-                                IconButton(
-                                  tooltip: '快退 10 秒',
-                                  onPressed: () => unawaited(_seek(-10)),
-                                  color: Colors.white,
-                                  icon: const Icon(Icons.replay_10),
+                              decoration: BoxDecoration(
+                                color: const Color(0xBD10141D),
+                                borderRadius: BorderRadius.circular(16),
+                                border: Border.all(
+                                  color: const Color(0x29FFFFFF),
+                                  width: 0.8,
                                 ),
-                                if (defaultTargetPlatform ==
-                                        TargetPlatform.iOS ||
-                                    defaultTargetPlatform ==
-                                        TargetPlatform.macOS)
+                              ),
+                              child: Wrap(
+                                alignment: WrapAlignment.spaceEvenly,
+                                crossAxisAlignment: WrapCrossAlignment.center,
+                                children: [
+                                  if (_playlist.length > 1)
+                                    IconButton(
+                                      tooltip: '上一部',
+                                      onPressed: prev == null
+                                          ? null
+                                          : () =>
+                                                unawaited(_switchToPath(prev)),
+                                      color: Colors.white,
+                                      disabledColor: Colors.white38,
+                                      icon: const Icon(Icons.skip_previous),
+                                    ),
+                                  IconButton(
+                                    tooltip: '快退 10 秒',
+                                    onPressed: () => unawaited(_seek(-10)),
+                                    color: Colors.white,
+                                    icon: const Icon(Icons.replay_10),
+                                  ),
+                                  if (defaultTargetPlatform ==
+                                          TargetPlatform.iOS ||
+                                      defaultTargetPlatform ==
+                                          TargetPlatform.macOS)
+                                    TextButton.icon(
+                                      style: TextButton.styleFrom(
+                                        foregroundColor: Colors.white,
+                                      ),
+                                      onPressed: _openSystemPlayer,
+                                      icon: const Icon(
+                                        Icons.picture_in_picture_alt_rounded,
+                                      ),
+                                      label: const Text(
+                                        '系统播放器 / 画中画 / AirPlay',
+                                      ),
+                                    ),
+                                  if (defaultTargetPlatform ==
+                                          TargetPlatform.android &&
+                                      _pip.supported)
+                                    TextButton.icon(
+                                      style: TextButton.styleFrom(
+                                        foregroundColor: Colors.white,
+                                      ),
+                                      onPressed: _enterPiP,
+                                      icon: const Icon(
+                                        Icons.picture_in_picture_alt_rounded,
+                                      ),
+                                      label: const Text('画中画'),
+                                    ),
+                                  IconButton(
+                                    tooltip: _playing ? '暂停' : '播放',
+                                    color: Colors.white,
+                                    onPressed: () => unawaited(
+                                      _playing ? player.pause() : player.play(),
+                                    ),
+                                    icon: Icon(
+                                      _playing ? Icons.pause : Icons.play_arrow,
+                                    ),
+                                  ),
+                                  IconButton(
+                                    tooltip: '快进 10 秒',
+                                    onPressed: () => unawaited(_seek(10)),
+                                    color: Colors.white,
+                                    icon: const Icon(Icons.forward_10),
+                                  ),
+                                  if (_playlist.length > 1)
+                                    IconButton(
+                                      tooltip: '下一部',
+                                      onPressed: next == null
+                                          ? null
+                                          : () =>
+                                                unawaited(_switchToPath(next)),
+                                      color: Colors.white,
+                                      disabledColor: Colors.white38,
+                                      icon: const Icon(Icons.skip_next),
+                                    ),
                                   TextButton.icon(
                                     style: TextButton.styleFrom(
                                       foregroundColor: Colors.white,
                                     ),
-                                    onPressed: _openSystemPlayer,
+                                    onPressed: _showPlaylistSheet,
                                     icon: const Icon(
-                                      Icons.picture_in_picture_alt_rounded,
+                                      Icons.playlist_play_rounded,
+                                      size: 18,
                                     ),
-                                    label: const Text('系统播放器 / 画中画 / AirPlay'),
-                                  ),
-                                if (defaultTargetPlatform ==
-                                        TargetPlatform.android &&
-                                    _pip.supported)
-                                  TextButton.icon(
-                                    style: TextButton.styleFrom(
-                                      foregroundColor: Colors.white,
+                                    label: Text(
+                                      _playlist.length > 1
+                                          ? '播放列表 ${_currentIndex + 1}/${_playlist.length}'
+                                          : '播放列表',
                                     ),
-                                    onPressed: _enterPiP,
-                                    icon: const Icon(
-                                      Icons.picture_in_picture_alt_rounded,
-                                    ),
-                                    label: const Text('画中画'),
                                   ),
-                                IconButton(
-                                  tooltip: _playing ? '暂停' : '播放',
-                                  color: Colors.white,
-                                  onPressed: () => unawaited(
-                                    _playing ? player.pause() : player.play(),
-                                  ),
-                                  icon: Icon(
-                                    _playing ? Icons.pause : Icons.play_arrow,
-                                  ),
-                                ),
-                                IconButton(
-                                  tooltip: '快进 10 秒',
-                                  onPressed: () => unawaited(_seek(10)),
-                                  color: Colors.white,
-                                  icon: const Icon(Icons.forward_10),
-                                ),
-                                if (_playlist.length > 1)
-                                  IconButton(
-                                    tooltip: '下一部',
-                                    onPressed: next == null
-                                        ? null
-                                        : () => unawaited(_switchToPath(next)),
-                                    color: Colors.white,
-                                    disabledColor: Colors.white38,
-                                    icon: const Icon(Icons.skip_next),
-                                  ),
-                                TextButton.icon(
-                                  style: TextButton.styleFrom(
-                                    foregroundColor: Colors.white,
-                                  ),
-                                  onPressed: _showPlaylistSheet,
-                                  icon: const Icon(
-                                    Icons.playlist_play_rounded,
-                                    size: 18,
-                                  ),
-                                  label: Text(
-                                    _playlist.length > 1
-                                        ? '播放列表 ${_currentIndex + 1}/${_playlist.length}'
-                                        : '播放列表',
-                                  ),
-                                ),
-                                MediaPlaybackSpeedPicker(
-                                  value: _speed,
-                                  onChanged: (value) async {
-                                    try {
-                                      await player.setPlaybackSpeed(value);
-                                      if (mounted) {
-                                        setState(() => _speed = value);
+                                  MediaPlaybackSpeedPicker(
+                                    value: _speed,
+                                    onChanged: (value) async {
+                                      try {
+                                        await player.setPlaybackSpeed(value);
+                                        if (mounted) {
+                                          setState(() => _speed = value);
+                                        }
+                                      } catch (_) {
+                                        if (context.mounted) {
+                                          ScaffoldMessenger.of(context)
+                                              .showSnackBar(
+                                                const SnackBar(
+                                                  content: Text('当前格式不支持此倍速'),
+                                                ),
+                                              );
+                                        }
                                       }
-                                    } catch (_) {
-                                      if (context.mounted) {
-                                        ScaffoldMessenger.of(context)
-                                            .showSnackBar(
-                                              const SnackBar(
-                                                content: Text('当前格式不支持此倍速'),
-                                              ),
-                                            );
-                                      }
-                                    }
-                                  },
-                                ),
-                              ],
+                                    },
+                                  ),
+                                ],
+                              ),
                             ),
                           ),
                         ),

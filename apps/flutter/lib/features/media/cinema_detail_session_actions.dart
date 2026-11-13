@@ -39,8 +39,7 @@ extension _CinemaDetailSessionActions on _CinemaDetailDialogState {
       if (!mounted) return;
       if (devices.isEmpty) {
         _updateState(
-          () =>
-              _playback.playbackMessage = '未发现支持 DLNA 的设备，请检查电视与本机是否位于同一局域网。',
+          () => _playback.playbackMessage = '未发现支持 DLNA 的设备，请检查电视与本机是否位于同一局域网。',
         );
         return;
       }
@@ -166,9 +165,8 @@ extension _CinemaDetailSessionActions on _CinemaDetailDialogState {
           name: fileName,
         );
         if (mounted) {
-          ScaffoldMessenger.maybeOf(
-            context,
-          )?.showSnackBar(SnackBar(content: Text(result)));
+          ScaffoldMessenger.maybeOf(context)
+              ?.showSnackBar(SnackBar(content: Text(result)));
         }
       } else if (action == 'offline') {
         await _saveFilmOffline();
@@ -273,9 +271,7 @@ extension _CinemaDetailSessionActions on _CinemaDetailDialogState {
       },
     );
     if (mounted) {
-      _updateState(
-        () => _playback.playbackMessage = '已保存到本设备离线影片库，可在断网时播放。',
-      );
+      _updateState(() => _playback.playbackMessage = '已保存到本设备离线影片库，可在断网时播放。');
     }
   }
 
@@ -466,8 +462,7 @@ extension _CinemaDetailSessionActions on _CinemaDetailDialogState {
     } catch (error) {
       if (stillCurrent()) {
         _updateState(
-          () =>
-              _playback.playbackMessage = '无法读取下一集：${mediaErrorLabel(error)}',
+          () => _playback.playbackMessage = '无法读取下一集：${mediaErrorLabel(error)}',
         );
       }
     } finally {
@@ -478,6 +473,11 @@ extension _CinemaDetailSessionActions on _CinemaDetailDialogState {
   }
 
   Future<void> _restorePlaybackSpeed() async {
+    final cached = _sessionCinemaSpeed;
+    if (cached != null) {
+      _playback.playbackSpeed = cached;
+      await _playback.controller?.setPlaybackSpeed(cached);
+    }
     try {
       final prefs = await SharedPreferences.getInstance();
       final speed = prefs.getDouble('lightisle_cinema_playback_speed');
@@ -486,6 +486,7 @@ extension _CinemaDetailSessionActions on _CinemaDetailDialogState {
           !const [0.75, 1.0, 1.25, 1.5, 2.0].contains(speed)) {
         return;
       }
+      _sessionCinemaSpeed = speed;
       _updateState(() => _playback.playbackSpeed = speed);
       await _playback.controller?.setPlaybackSpeed(speed);
     } catch (_) {
@@ -591,61 +592,6 @@ extension _CinemaDetailSessionActions on _CinemaDetailDialogState {
         );
       }
     }
-  }
-
-  KeyEventResult _onPlayerKey(FocusNode node, KeyEvent event) {
-    if (event is! KeyDownEvent || _playback.closing || !widget.playerOnly) {
-      return KeyEventResult.ignored;
-    }
-    // Pop-up routes, text editing and input sliders own their own keys.
-    if (ModalRoute.of(context)?.isCurrent == false) {
-      return KeyEventResult.ignored;
-    }
-    final focused = FocusManager.instance.primaryFocus?.context;
-    if (focused?.findAncestorWidgetOfExactType<EditableText>() != null) {
-      return KeyEventResult.ignored;
-    }
-    if (event.logicalKey == LogicalKeyboardKey.escape) {
-      if (_chrome.showPlaylistSheet) {
-        _updateState(() => _chrome.showPlaylistSheet = false);
-        return KeyEventResult.handled;
-      }
-      if (_chrome.showPlayerDetails) {
-        _updateState(() => _chrome.showPlayerDetails = false);
-        return KeyEventResult.handled;
-      }
-      unawaited(_close());
-      return KeyEventResult.handled;
-    }
-    if (event.logicalKey == LogicalKeyboardKey.keyF) {
-      unawaited(_toggleFullscreen());
-      return KeyEventResult.handled;
-    }
-    final controller = _playback.controller;
-    if (controller == null || !controller.value.isInitialized) {
-      return KeyEventResult.ignored;
-    }
-    if (event.logicalKey == LogicalKeyboardKey.arrowLeft) {
-      _revealChrome();
-      unawaited(_seekRelative(-10));
-      return KeyEventResult.handled;
-    }
-    if (event.logicalKey == LogicalKeyboardKey.arrowRight) {
-      _revealChrome();
-      unawaited(_seekRelative(10));
-      return KeyEventResult.handled;
-    }
-    if (event.logicalKey == LogicalKeyboardKey.space) {
-      if (controller.value.isPlaying) {
-        unawaited(controller.pause());
-        unawaited(_queueProgressSave(force: true));
-      } else {
-        unawaited(controller.play());
-      }
-      _revealChrome();
-      return KeyEventResult.handled;
-    }
-    return KeyEventResult.ignored;
   }
 
   Future<void> _renameFilm() async {

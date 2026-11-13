@@ -265,7 +265,7 @@ void _registerPhotoBackupRecoveryTests() {
       await tester.pumpWidget(
         MaterialApp(
           theme: ThemeData(useMaterial3: true),
-          home: AndroidPhotoBackupPage(
+          home: MobilePhotoBackupPage(
             api: api,
             accountName: 'owner',
             baseDirectory: 'Users/u7/photos',
@@ -353,7 +353,7 @@ void _registerPhotoBackupRecoveryTests() {
     await tester.pumpWidget(
       MaterialApp(
         theme: ThemeData(useMaterial3: true),
-        home: AndroidPhotoBackupPage(
+        home: MobilePhotoBackupPage(
           api: api,
           accountName: 'owner',
           baseDirectory: 'Users/u7/photos',

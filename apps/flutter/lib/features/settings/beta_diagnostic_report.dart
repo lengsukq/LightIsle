@@ -15,27 +15,41 @@ Future<void> showBetaDiagnosticReport(
   if (!context.mounted) return;
   final save = await showDialog<bool>(
     context: context,
-    builder: (dialog) => AlertDialog(
-      title: const Text('Beta 故障报告'),
-      content: SizedBox(
-        width: 480,
-        child: SingleChildScrollView(child: SelectableText(report)),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.of(dialog).pop(false),
-          child: const Text('关闭'),
+    builder: (dialog) {
+      var copied = false;
+      return StatefulBuilder(
+        builder: (dialogContext, setDialogState) => AlertDialog(
+          title: const Text('Beta 故障报告'),
+          content: SizedBox(
+            width: 480,
+            child: SingleChildScrollView(child: SelectableText(report)),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialog).pop(false),
+              child: const Text('关闭'),
+            ),
+            TextButton.icon(
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: report));
+                if (dialogContext.mounted) {
+                  setDialogState(() => copied = true);
+                }
+              },
+              icon: Icon(
+                copied ? Icons.check_rounded : Icons.copy_rounded,
+                size: 16,
+              ),
+              label: Text(copied ? '已复制报告' : '复制报告'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialog).pop(true),
+              child: const Text('导出报告'),
+            ),
+          ],
         ),
-        TextButton(
-          onPressed: () => Clipboard.setData(ClipboardData(text: report)),
-          child: const Text('复制报告'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.of(dialog).pop(true),
-          child: const Text('导出报告'),
-        ),
-      ],
-    ),
+      );
+    },
   );
   if (save != true || !context.mounted) return;
   Directory? staging;

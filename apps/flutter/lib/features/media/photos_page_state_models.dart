@@ -104,6 +104,15 @@ class PhotosFilterScopeState {
       takenFromFilter == 0 &&
       takenToFilter == 0;
 
+  bool get hasActiveQueryOrFacets =>
+      query.isNotEmpty ||
+      mediaType.isNotEmpty ||
+      cameraFilter.isNotEmpty ||
+      locationFilter.isNotEmpty ||
+      yearFilter > 0 ||
+      takenFromFilter > 0 ||
+      takenToFilter > 0;
+
   void setCollectionScope({
     int albumId = 0,
     int privateAlbumId = 0,
@@ -186,10 +195,12 @@ class PhotosFilterScopeState {
 class PhotosSelectionState {
   bool selecting = false;
   bool batchBusy = false;
+  int? selectionAnchorId;
   final Set<int> selectedAssets = <int>{};
 
   void clear() {
     selecting = false;
+    selectionAnchorId = null;
     selectedAssets.clear();
   }
 }
@@ -203,6 +214,7 @@ class PhotosLibraryFeedState {
   bool loading = true;
   bool loadingMore = false;
   bool comfortableGrid = false;
+  String activeScopeKey = '';
   String? loadError;
   String? actionMessage;
   bool actionIsError = false;

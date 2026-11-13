@@ -101,10 +101,10 @@ void main() {
           await tester.pumpAndSettle();
           expect(find.text(admin ? '家庭与存储' : '我的空间'), findsOneWidget);
           expect(find.text('账号与目录授权'), admin ? findsOneWidget : findsNothing);
-          expect(
-            find.text('设备诊断与 Key 状态'),
-            admin ? findsOneWidget : findsNothing,
-          );
+          expect(find.text('高级排障'), admin ? findsOneWidget : findsNothing);
+          expect(find.text('设备诊断与 Key 状态'), findsNothing);
+          expect(find.text('安全审计'), findsNothing);
+          expect(find.text('上传维护'), findsNothing);
           expect(find.text('我的存储空间'), admin ? findsNothing : findsOneWidget);
           expect(tester.takeException(), isNull);
           await tester.tap(find.text('连接详情'));
@@ -115,12 +115,20 @@ void main() {
           await tester.pumpAndSettle();
           if (admin) {
             await tester.scrollUntilVisible(
-              find.text('安全审计'),
+              find.byKey(const ValueKey('adminTroubleshootingToggle')),
               160,
               scrollable: find.byType(Scrollable).first,
             );
+            await tester.pumpAndSettle();
+            await tester.tap(
+              find.byKey(const ValueKey('adminTroubleshootingToggle')),
+            );
+            await tester.pumpAndSettle();
+            expect(find.text('设备诊断与 Key 状态'), findsOneWidget);
             expect(find.text('安全审计'), findsOneWidget);
+            expect(find.text('上传维护'), findsOneWidget);
           } else {
+            expect(find.text('高级排障'), findsNothing);
             expect(find.text('安全审计'), findsNothing);
           }
           expect(tester.takeException(), isNull);
@@ -159,15 +167,71 @@ void main() {
             expect(api.calls, contains('/api/v2/system'));
             expect(api.calls, contains('/api/v2/tasks'));
             expect(api.calls, isNot(contains('/api/v2/me/storage')));
+            expect(
+              find.byKey(const ValueKey('dashboardDownloadsEntry')),
+              findsNothing,
+            );
+            expect(
+              find.byKey(const ValueKey('dashboardComputerFilesEntry')),
+              findsOneWidget,
+            );
           } else {
             expect(api.calls, contains('/api/v2/me/storage'));
+            expect(api.calls, contains('/api/v2/computer-files/status'));
             expect(api.calls, isNot(contains('/api/v2/system')));
             expect(api.calls, isNot(contains('/api/v2/tasks')));
+            expect(
+              find.byKey(const ValueKey('dashboardDownloadsEntry')),
+              findsOneWidget,
+            );
+            expect(
+              find.byKey(const ValueKey('dashboardComputerFilesEntry')),
+              findsNothing,
+            );
           }
           expect(tester.takeException(), isNull);
           await tester.pumpWidget(const SizedBox.shrink());
         },
       );
     }
+  }
+
+  testWidgets(
+    'member dashboard shows computer-files entry only when enabled and granted',
+    (tester) async {
+      final api = _ComputerStatusApi(enabled: true, mode: 'granted');
+      addTearDown(api.close);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildIsleTheme(Brightness.light),
+          home: Scaffold(
+            body: OverviewPage(api: api, isAdmin: false, onNavigate: (_) {}),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(
+        find.byKey(const ValueKey('dashboardComputerFilesEntry')),
+        findsOneWidget,
+      );
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
+}
+
+class _ComputerStatusApi extends FixtureApi {
+  _ComputerStatusApi({required this.enabled, required this.mode});
+
+  final bool enabled;
+  final String mode;
+
+  @override
+  Future<Map<String, dynamic>> get(String path, {Map<String, String>? query}) {
+    if (path == '/api/v2/computer-files/status') {
+      calls.add(path);
+      return Future.value({'enabled': enabled, 'mode': mode});
+    }
+    return super.get(path, query: query);
   }
 }

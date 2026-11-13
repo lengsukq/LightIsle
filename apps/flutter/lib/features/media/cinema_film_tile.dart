@@ -75,6 +75,27 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
   Widget build(BuildContext context) {
     final film = widget.film;
     final surface = Theme.of(context).colorScheme;
+    final reducedMotion = IsleMotion.reducedMotion(context);
+    final scaled =
+        !reducedMotion && (_hovered || _pressed) && !widget.selecting;
+    final childBody = Material(
+      color: widget.selected
+          ? surface.primaryContainer.withValues(alpha: .32)
+          : Colors.transparent,
+      child: InkWell(
+        canRequestFocus: false,
+        onTap: widget.selecting ? widget.onToggle : widget.onOpen,
+        onLongPress: widget.onToggle,
+        onHighlightChanged: (value) {
+          if (_pressed != value) setState(() => _pressed = value);
+        },
+        borderRadius: IsleRadius.brControl,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [_buildPosterFrame(context), _buildTileCaptionRow(context)],
+        ),
+      ),
+    );
     return CinemaTvFocusable(
       onActivate: widget.selecting ? widget.onToggle : widget.onOpen,
       onLongActivate: widget.onToggle,
@@ -83,30 +104,25 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
         selected: widget.selected,
         label: widget.selecting ? '选择：${film.title}' : '播放：${film.title}',
         child: MouseRegion(
-          onEnter: (_) => setState(() => _hovered = true),
-          onExit: (_) => setState(() => _hovered = false),
-          child: AnimatedScale(
-            scale: (_hovered || _pressed) && !widget.selecting ? 1.03 : 1.0,
-            duration: IsleMotion.fast,
-            curve: IsleMotion.spring,
-            child: Material(
-              color: widget.selected
-                  ? surface.primaryContainer.withValues(alpha: .32)
-                  : Colors.transparent,
-              child: InkWell(
-                onTap: widget.selecting ? widget.onToggle : widget.onOpen,
-                onLongPress: widget.onToggle,
-                onHighlightChanged: (value) => setState(() => _pressed = value),
-                borderRadius: IsleRadius.brControl,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _buildPosterFrame(context),
-                    _buildTileCaptionRow(context),
-                  ],
-                ),
-              ),
-            ),
+          onEnter: reducedMotion
+              ? null
+              : (_) {
+                  if (!_hovered) setState(() => _hovered = true);
+                },
+          onExit: reducedMotion
+              ? null
+              : (_) {
+                  if (_hovered) setState(() => _hovered = false);
+                },
+          child: RepaintBoundary(
+            child: reducedMotion
+                ? childBody
+                : AnimatedScale(
+                    scale: scaled ? 1.03 : 1.0,
+                    duration: IsleMotion.fast,
+                    curve: IsleMotion.spring,
+                    child: childBody,
+                  ),
           ),
         ),
       ),

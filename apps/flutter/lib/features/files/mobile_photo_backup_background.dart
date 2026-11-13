@@ -77,7 +77,9 @@ extension _MobilePhotoBackupBackground on _MobilePhotoBackupState {
   }
 
   bool _isCurrentBackgroundStatusRead(int generation) =>
-      mounted && !_background.busy && generation == _background.statusGeneration;
+      mounted &&
+      !_background.busy &&
+      generation == _background.statusGeneration;
 
   void _beginBackgroundWrite() {
     _background.statusGeneration++;

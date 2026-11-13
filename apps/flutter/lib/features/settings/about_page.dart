@@ -147,7 +147,7 @@ class _AboutPageState extends State<AboutPage>
         ? _scrollController.position.maxScrollExtent
         : 2200.0;
     final target = _chapters[index].$2.clamp(0.0, maxExtent);
-    final disableAnimations = MediaQuery.disableAnimationsOf(context);
+    final disableAnimations = IsleMotion.reducedMotion(context);
     if (disableAnimations) {
       _scrollController.jumpTo(target);
     } else {
@@ -201,7 +201,7 @@ class _AboutPageState extends State<AboutPage>
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
-    final disableAnimations = MediaQuery.disableAnimationsOf(context);
+    final disableAnimations = IsleMotion.reducedMotion(context);
 
     return Scaffold(
       appBar: const IsleAppBar(
@@ -265,8 +265,6 @@ class _AboutPageState extends State<AboutPage>
                                   phase: phase,
                                   scrollOffset: _scrollOffset,
                                   isDark: isDark,
-                                  colors: colors,
-                                  theme: theme,
                                 ),
                               ),
                               const SizedBox(height: 16),
@@ -304,8 +302,6 @@ class _AboutPageState extends State<AboutPage>
                                   phase: phase,
                                   scrollOffset: _scrollOffset,
                                   isDark: isDark,
-                                  colors: colors,
-                                  theme: theme,
                                 ),
                               ),
                               const SizedBox(height: 18),
@@ -376,7 +372,7 @@ class _WebpageChapterBarState extends State<_WebpageChapterBar> {
       if (maxExtent > 0 && widget.chapters.length > 1) {
         final fraction = widget.activeIndex / (widget.chapters.length - 1);
         final target = (maxExtent * fraction).clamp(0.0, maxExtent);
-        if (MediaQuery.disableAnimationsOf(context)) {
+        if (IsleMotion.reducedMotion(context)) {
           _barScrollController.jumpTo(target);
         } else {
           _barScrollController.animateTo(

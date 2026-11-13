@@ -119,6 +119,8 @@ void main() {
         );
         expect(ownerSessions['truncated'], isFalse);
 
+        final ownerRoot = await _selectDefaultRoot(ownerApi);
+
         final initialAlerts = await ownerApi.get('/api/v2/alerts');
         expect(initialAlerts['alerts'], isA<List<dynamic>>());
 
@@ -333,7 +335,8 @@ void main() {
         final memberId = member['id'].toString();
         await ownerApi.send(
           'PUT',
-          '/api/v2/users/$memberId/file-grants',
+          '/api/v2/roots/${Uri.encodeComponent(ownerRoot.id)}/users/$memberId/file-grants',
+          query: <String, String>{'rootGeneration': '${ownerRoot.generation}'},
           body: <String, Object>{'path': '.', 'canWrite': false},
         );
 
@@ -354,6 +357,7 @@ void main() {
         );
         expect(memberIdentity['role'], 'member');
         expect(memberApi.authenticated, isTrue);
+        await _selectDefaultRoot(memberApi);
         final memberListing = await memberApi.get(
           '/api/v2/files',
           query: <String, String>{'path': '.'},
@@ -494,4 +498,20 @@ Future<String> _nextLine(StreamIterator<String> output, String stage) async {
   } on TimeoutException {
     throw StateError('Timed out waiting for Go core $stage.');
   }
+}
+
+Future<LightIsleRoot> _selectDefaultRoot(LightIsleApi api) async {
+  final response = await api.get('/api/v2/roots');
+  final rawRoots = response['roots'];
+  expect(rawRoots, isA<List<dynamic>>());
+  final roots = (rawRoots as List<dynamic>)
+      .cast<Map<String, dynamic>>()
+      .map(LightIsleRoot.fromJson)
+      .toList(growable: false);
+  final selected = roots.firstWhere(
+    (root) => root.isDefault && root.online,
+    orElse: () => roots.firstWhere((root) => root.online),
+  );
+  api.selectRoot(selected);
+  return selected;
 }

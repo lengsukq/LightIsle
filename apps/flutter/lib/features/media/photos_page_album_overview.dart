@@ -4,7 +4,7 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
   Future<bool> _addAssetToFolder(PhotoAsset asset) async {
     final root = widget.api.selectedRoot?.identity;
     final result = await Navigator.of(context).push<FolderAlbumSelection>(
-      MaterialPageRoute(
+      buildIslePageRoute(
         builder: (_) => FolderAlbumsPage(
           api: widget.api,
           source: asset,
@@ -49,10 +49,7 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
       if (!mounted) return;
       _updateState(() {
         _selection.clear();
-        _scope.setCollectionScope(
-          personId: personId,
-          personName: personName,
-        );
+        _scope.setCollectionScope(personId: personId, personName: personName);
       });
       unawaited(_loadAssets(reset: true));
     }
@@ -65,7 +62,6 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
       isAdmin: widget.isAdmin,
       currentAlbumId: _scope.activeAlbum,
       currentPrivateAlbumId: _scope.activePrivateAlbum,
-      personalFavoritesOnly: _scope.personalFavoritesOnly,
       canToggleFavorite: widget.isAdmin || asset.canWrite,
       onToggleFavorite: _toggleFavorite,
       onTogglePersonalFavorite: _togglePersonalFavorite,
@@ -160,7 +156,7 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
                       final root = widget.api.selectedRoot?.identity;
                       final album = await Navigator.of(pageContext)
                           .push<FolderAlbumSelection>(
-                            MaterialPageRoute(
+                            buildIslePageRoute(
                               builder: (_) => FolderAlbumsPage(api: widget.api),
                             ),
                           );
@@ -301,7 +297,7 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
                   final root = widget.api.selectedRoot?.identity;
                   final album = await Navigator.of(pageContext)
                       .push<FolderAlbumSelection>(
-                        MaterialPageRoute(
+                        buildIslePageRoute(
                           builder: (_) => FolderAlbumsPage(api: widget.api),
                         ),
                       );

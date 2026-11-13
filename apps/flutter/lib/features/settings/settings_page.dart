@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../core/isle_quick_jump.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/login_history_store.dart';
@@ -10,10 +11,12 @@ import '../../core/widgets.dart';
 import '../auth/login_history_section.dart';
 import '../files/desktop_backup_engine.dart';
 import '../files/downloads_page.dart';
+import '../files/duplicate_files_page.dart';
 import '../files/file_shares_page.dart';
 import '../media/cinema_decode_preference.dart';
 import '../media/offline_photo_store.dart';
 import '../media/offline_video_store.dart';
+import '../media/photo_similar_cleanup_sheet.dart';
 import 'about_page.dart';
 import 'account_security_page.dart';
 import 'accounts_page.dart';
@@ -28,6 +31,7 @@ import 'dav_page.dart';
 import 'missing_media_page.dart';
 import 'network_diagnostics_page.dart';
 import 'settings_backup_entries.dart';
+import 'settings_troubleshooting_section.dart';
 import 'storage_page.dart';
 import 'upload_maintenance_page.dart';
 
@@ -73,7 +77,7 @@ class SettingsPage extends StatelessWidget {
   switchApiFactory;
 
   void _go(BuildContext context, Widget page) {
-    Navigator.of(context).push(MaterialPageRoute<void>(builder: (_) => page));
+    Navigator.of(context).push(buildIslePageRoute<void>(builder: (_) => page));
   }
 
   Widget _entry(
@@ -356,9 +360,42 @@ class SettingsPage extends StatelessWidget {
               title: '设置',
               hideSubtitleOnCompact: true,
               subtitle: isAdmin ? '家庭管理、存储权限与服务维护' : '个人空间、连接与账号安全',
-              icon: Icons.tune_rounded,
             ),
             _identityCard(context, isAdmin),
+            const SizedBox(height: 8),
+            IsleQuickJumpStrip(
+              key: const ValueKey('settingsQuickJumpStrip'),
+              items: [
+                IsleQuickJumpItem(
+                  icon: Icons.file_copy_outlined,
+                  label: '重复大文件扫描',
+                  tooltip: '扫描并清理重复大文件释放空间',
+                  onTap: () => _go(context, DuplicateFilesPage(api: api)),
+                ),
+                IsleQuickJumpItem(
+                  icon: Icons.photo_library_outlined,
+                  label: '相似照片去重',
+                  tooltip: '整理相似或连拍照片并移入回收站',
+                  onTap: () => _go(context, PhotoSimilarCleanupPage(api: api)),
+                ),
+                IsleQuickJumpItem(
+                  icon: Icons.network_check_rounded,
+                  label: '网络测速',
+                  tooltip: '测试当前设备到 NAS 的延迟与传输速度',
+                  onTap: () => _go(context, NetworkDiagnosticsPage(api: api)),
+                ),
+                if (isAdmin)
+                  IsleQuickJumpItem(
+                    icon: Icons.notifications_outlined,
+                    label: '任务与告警历史',
+                    tooltip: '查看最近存储告警与后台任务历史',
+                    onTap: () => _go(
+                      context,
+                      AdminActivityPage(api: api, kind: AdminActivity.alerts),
+                    ),
+                  ),
+              ],
+            ),
             const SizedBox(height: 6),
             _buildResponsiveSectionsLayout(
               context,
@@ -391,6 +428,18 @@ class SettingsPage extends StatelessWidget {
       isAdmin: isAdmin,
     );
     final aboutSection = _buildAboutAndDataSection(context);
+    final troubleshootingSection = isAdmin
+        ? AdminTroubleshootingSection(
+            onOpenDiagnostics: () =>
+                _go(context, AdminDiagnosticsPage(api: api)),
+            onOpenAudit: () => _go(
+              context,
+              AdminActivityPage(api: api, kind: AdminActivity.audit),
+            ),
+            onOpenUploadMaintenance: () =>
+                _go(context, UploadMaintenancePage(api: api)),
+          )
+        : null;
 
     if (isWide) {
       return Row(
@@ -403,6 +452,10 @@ class SettingsPage extends StatelessWidget {
                 primarySpaceSection,
                 const SizedBox(height: 6),
                 securitySection,
+                if (troubleshootingSection != null) ...[
+                  const SizedBox(height: 6),
+                  troubleshootingSection,
+                ],
               ],
             ),
           ),
@@ -410,11 +463,7 @@ class SettingsPage extends StatelessWidget {
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                filesSection,
-                const SizedBox(height: 6),
-                aboutSection,
-              ],
+              children: [filesSection, const SizedBox(height: 6), aboutSection],
             ),
           ),
         ],
@@ -427,6 +476,10 @@ class SettingsPage extends StatelessWidget {
         primarySpaceSection,
         filesSection,
         securitySection,
+        if (troubleshootingSection != null) ...[
+          const SizedBox(height: 6),
+          troubleshootingSection,
+        ],
         const SizedBox(height: 4),
         aboutSection,
       ],
@@ -476,13 +529,6 @@ class SettingsPage extends StatelessWidget {
             AdminActivityPage(api: api, kind: AdminActivity.alerts),
           ),
         ),
-        _entry(
-          context,
-          icon: Icons.monitor_heart_outlined,
-          title: '设备诊断与 Key 状态',
-          subtitle: '性能历史、网卡、磁盘 SMART 和第三方配置状态',
-          onTap: () => _go(context, AdminDiagnosticsPage(api: api)),
-        ),
       ],
     );
   }
@@ -524,9 +570,7 @@ class SettingsPage extends StatelessWidget {
           context,
           icon: Icons.apps_rounded,
           title: '应用中心',
-          subtitle: isAdmin
-              ? '按需轻应用、存储位置与成员权限分配'
-              : '打开管理员授权给你的家庭轻应用与工具',
+          subtitle: isAdmin ? '按需轻应用、存储位置与成员权限分配' : '打开管理员授权给你的家庭轻应用与工具',
           onTap: () => _go(context, AppsCenterPage(api: api, isAdmin: isAdmin)),
         ),
         _entry(
@@ -627,25 +671,6 @@ class SettingsPage extends StatelessWidget {
             subtitle: '定时调度本地脚本、通知渠道与执行日志',
             onTap: () => _go(context, AutomationPage(api: api)),
           ),
-        if (isAdmin)
-          _entry(
-            context,
-            icon: Icons.policy_outlined,
-            title: '安全审计',
-            subtitle: '查看管理员操作记录',
-            onTap: () => _go(
-              context,
-              AdminActivityPage(api: api, kind: AdminActivity.audit),
-            ),
-          ),
-        if (isAdmin)
-          _entry(
-            context,
-            icon: Icons.cloud_upload_rounded,
-            title: '上传维护',
-            subtitle: '处理残留与过期上传',
-            onTap: () => _go(context, UploadMaintenancePage(api: api)),
-          ),
       ],
     );
   }
@@ -733,9 +758,8 @@ class SettingsPage extends StatelessWidget {
       '轻屿 LightIsle · Flutter 开发预览 0.1.0',
       textAlign: TextAlign.center,
       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-        color: Theme.of(
-          context,
-        ).colorScheme.onSurfaceVariant.withValues(alpha: 0.7),
+        color: Theme.of(context).colorScheme.onSurfaceVariant
+            .withValues(alpha: 0.7),
       ),
     );
   }

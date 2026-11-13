@@ -5,7 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lightisle/core/lightisle_api.dart';
-import 'package:lightisle/features/files/android_photo_backup_page.dart';
+import 'package:lightisle/features/files/mobile_photo_backup_page.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 class _IOSPhotoAPI extends LightIsleApi {
@@ -196,7 +196,7 @@ void main() {
     (tester) async {
       await tester.pumpWidget(
         MaterialApp(
-          home: AndroidPhotoBackupPage(
+          home: MobilePhotoBackupPage(
             api: api,
             accountName: 'owner',
             baseDirectory: 'Users/u7/photos',
@@ -232,7 +232,7 @@ void main() {
       videoMode = true;
       await tester.pumpWidget(
         MaterialApp(
-          home: AndroidPhotoBackupPage(
+          home: MobilePhotoBackupPage(
             api: api,
             accountName: 'owner',
             baseDirectory: 'Users/u7/photos',
@@ -298,7 +298,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
-          home: AndroidPhotoBackupPage(
+          home: MobilePhotoBackupPage(
             api: api,
             accountName: 'owner',
             baseDirectory: 'Users/u7/photos',
@@ -389,7 +389,7 @@ void main() {
 
       await tester.pumpWidget(
         MaterialApp(
-          home: AndroidPhotoBackupPage(
+          home: MobilePhotoBackupPage(
             api: api,
             accountName: 'owner',
             baseDirectory: 'Users/u7/photos',

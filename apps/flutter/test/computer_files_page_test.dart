@@ -27,9 +27,10 @@ class ComputerApi extends LightIsleApi {
     if (path.endsWith('/grants/2')) return {'mode': 'none', 'folders': []};
     if (path == '/api/v2/computer-files') {
       final selected = query?['path'] ?? '';
+      final atRoot = selected.isEmpty || selected == '/';
       return {
-        'path': selected.isEmpty ? '/' : selected,
-        'entries': selected.isEmpty
+        'path': atRoot ? '/' : selected,
+        'entries': atRoot
             ? [
                 {
                   'name': 'Documents',
@@ -128,4 +129,26 @@ void main() {
     });
     api.close();
   });
+
+  testWidgets(
+    'system Back navigates back through folder history before popping page',
+    (tester) async {
+      final api = ComputerApi();
+      addTearDown(api.close);
+      await tester.pumpWidget(
+        MaterialApp(home: ComputerFilesPage(api: api, isAdmin: false)),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.tap(find.text('Documents'));
+      await tester.pumpAndSettle();
+      expect(find.text('notes.txt'), findsOneWidget);
+
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.text('Documents'), findsOneWidget);
+      expect(find.text('notes.txt'), findsNothing);
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

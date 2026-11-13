@@ -62,9 +62,8 @@ extension _PhotosPageAIAndTimeline on _PhotosPageState {
     if (_timeline.months.isEmpty) await _refreshTimelineIndex();
     if (!mounted) return;
     if (_timeline.months.isEmpty) {
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('暂时无法读取拍摄年月，请检查网络并重试。')));
+      ScaffoldMessenger.of(context)
+          .showSnackBar(const SnackBar(content: Text('暂时无法读取拍摄年月，请检查网络并重试。')));
       return;
     }
     final month = await showModalBottomSheet<PhotoTimelineMonth>(
@@ -103,7 +102,7 @@ extension _PhotosPageAIAndTimeline on _PhotosPageState {
 
   Future<void> _openPeoplePage() async {
     final selected = await Navigator.of(context).push<PersonSummary>(
-      MaterialPageRoute<PersonSummary>(
+      buildIslePageRoute<PersonSummary>(
         builder: (_) => PhotoPeoplePage(api: widget.api),
       ),
     );
@@ -119,7 +118,7 @@ extension _PhotosPageAIAndTimeline on _PhotosPageState {
 
   Future<void> _openSimilarCleanupPage() async {
     final trashed = await Navigator.of(context).push<bool>(
-      MaterialPageRoute<bool>(
+      buildIslePageRoute<bool>(
         builder: (_) => PhotoSimilarCleanupPage(api: widget.api),
       ),
     );
@@ -136,9 +135,8 @@ extension _PhotosPageAIAndTimeline on _PhotosPageState {
       await PhotoAIRepository(widget.api).setAIPaused(nextPaused);
       if (!mounted) return;
       _updateState(
-        () => _feed.setActionFeedback(
-          nextPaused ? '已暂停后台智能识图索引' : '已恢复后台智能识图索引',
-        ),
+        () =>
+            _feed.setActionFeedback(nextPaused ? '已暂停后台智能识图索引' : '已恢复后台智能识图索引'),
       );
       await _refreshStatus();
     } catch (e) {
@@ -157,6 +155,9 @@ extension _PhotosPageAIAndTimeline on _PhotosPageState {
       return const SizedBox.shrink();
     }
     final remaining = _scan.status.aiRemaining;
+    final total = _scan.status.aiTotal;
+    final done = (total - remaining).clamp(0, total);
+    final fraction = total > 0 ? (done / total).clamp(0.0, 1.0) : null;
     final text = _scan.status.aiPaused
         ? '后台离线智能识图已暂停${remaining > 0 ? '（剩余 $remaining 张待索引）' : ''}'
         : '正在后台离线建立智能识图与 OCR 索引${remaining > 0 ? ' · 剩余 $remaining 张' : ''}';
@@ -165,6 +166,24 @@ extension _PhotosPageAIAndTimeline on _PhotosPageState {
       icon: _scan.status.aiPaused
           ? Icons.pause_circle_outline_rounded
           : Icons.auto_awesome_outlined,
+      leading: fraction == null
+          ? null
+          : IsleDonutGauge(
+              fraction: fraction,
+              color: _scan.status.aiPaused
+                  ? const Color(0xFFF59E0B)
+                  : Theme.of(context).colorScheme.primary,
+              size: 32,
+              strokeWidth: 3.5,
+              centerText: '${(fraction * 100).round()}%',
+              centerStyle: Theme.of(context).textTheme.labelSmall?.copyWith(
+                fontSize: 8.5,
+                fontWeight: FontWeight.w700,
+                fontFeatures: const [FontFeature.tabularFigures()],
+              ),
+              semanticsLabel:
+                  '智能识图索引进度 ${(fraction * 100).round()}%（$done/$total）',
+            ),
       trailing: widget.isAdmin
           ? TextButton(
               onPressed: _scan.aiPauseBusy ? null : _toggleAIPause,

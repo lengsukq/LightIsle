@@ -115,7 +115,7 @@ class _LightIsleAppState extends State<LightIsleApp>
       if (chosen == null || !mounted || !context.mounted) return;
       offlineApi.selectRoot(chosen.root);
       await _navigator.currentState?.push<void>(
-        MaterialPageRoute(
+        buildIslePageRoute(
           builder: (_) =>
               OfflinePhotosPage(api: offlineApi, accountId: accountId),
         ),
@@ -174,7 +174,7 @@ class _LightIsleAppState extends State<LightIsleApp>
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    if (MediaQuery.disableAnimationsOf(context)) {
+    if (IsleMotion.reducedMotion(context)) {
       // Respect system reduced motion even for the app's branded startup
       // transition; there must be no opaque overlay blocking login actions.
       _startupFadeTimer?.cancel();

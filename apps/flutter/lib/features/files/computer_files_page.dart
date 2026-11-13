@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
+import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
@@ -232,7 +233,7 @@ class _ComputerFilesPageState extends State<ComputerFilesPage> {
       );
     } else if (const {'mp4', 'm4v', 'webm'}.contains(extension)) {
       await Navigator.of(context).push<void>(
-        MaterialPageRoute(
+        buildIslePageRoute(
           builder: (_) => _ComputerVideo(api: widget.api, item: item),
         ),
       );
@@ -283,142 +284,158 @@ class _ComputerFilesPageState extends State<ComputerFilesPage> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: IsleAppBar(
-      title: const Text('电脑文件'),
-      actions: [
-        IconButton(
-          onPressed: _busy ? null : _refresh,
-          icon: const Icon(Icons.refresh),
-          tooltip: '刷新',
-        ),
-      ],
-    ),
-    body: ListView(
-      padding: const EdgeInsets.all(16),
-      children: [
-        const Text('只读浏览、查看和下载 Mac 当前允许访问的文件。'),
-        if (_busy) const LinearProgressIndicator(),
-        if (_error != null) Notice(_error!, error: true),
-        if (_message != null) Notice(_message!),
-        if (!_busy && !_enabled) const Notice('此功能未开启，请在 Mac 的轻屿设置 → 安全中开启。'),
-        if (!_busy && _enabled && _mode == 'none')
-          const Notice('暂无访问权限，请联系管理员授权。'),
-        if (_enabled && _mode != 'none') ...[
-          Row(
-            children: [
-              IconButton(
-                onPressed: _history.isEmpty
-                    ? null
-                    : () {
-                        final parent = _history.removeLast();
-                        _browse(parent);
-                      },
-                icon: const Icon(Icons.arrow_back),
-              ),
-              Expanded(
-                child: SelectableText(_path.isEmpty ? '已授权的文件夹' : _path),
-              ),
-              IconButton(
-                onPressed: () => _browse(_path),
-                icon: const Icon(Icons.refresh),
-              ),
-            ],
+  Widget build(BuildContext context) => PopScope(
+    canPop: _history.isEmpty,
+    onPopInvokedWithResult: (didPop, _) {
+      if (didPop || _history.isEmpty) return;
+      final parent = _history.removeLast();
+      _browse(parent);
+    },
+    child: Scaffold(
+      appBar: IsleAppBar(
+        title: const Text('电脑文件'),
+        actions: [
+          IconButton(
+            onPressed: _busy ? null : _refresh,
+            icon: const Icon(Icons.refresh),
+            tooltip: '刷新',
           ),
-          if (_entries.isEmpty && !_busy) const Notice('此文件夹为空，或没有可显示的普通文件。'),
-          for (final item in _entries)
-            ListTile(
-              leading: Icon(
-                item.isFolder
-                    ? Icons.folder_outlined
-                    : Icons.insert_drive_file_outlined,
+        ],
+      ),
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          const Text('只读浏览、查看和下载 Mac 当前允许访问的文件。'),
+          if (_busy && _entries.isEmpty)
+            const IsleLoadingState(label: '正在连接电脑文件…')
+          else if (_busy)
+            const LinearProgressIndicator(),
+          if (_error != null) Notice(_error!, error: true),
+          if (_message != null) Notice(_message!),
+          if (!_busy && !_enabled) const Notice('此功能未开启，请在 Mac 的轻屿设置 → 安全中开启。'),
+          if (!_busy && _enabled && _mode == 'none')
+            const Notice('暂无访问权限，请联系管理员授权。'),
+          if (_enabled && _mode != 'none') ...[
+            Row(
+              children: [
+                IconButton(
+                  tooltip: '返回上级目录',
+                  onPressed: _history.isEmpty
+                      ? null
+                      : () {
+                          final parent = _history.removeLast();
+                          _browse(parent);
+                        },
+                  icon: const Icon(Icons.arrow_back),
+                ),
+                Expanded(
+                  child: SelectableText(_path.isEmpty ? '已授权的文件夹' : _path),
+                ),
+                IconButton(
+                  tooltip: '刷新目录内容',
+                  onPressed: () => _browse(_path),
+                  icon: const Icon(Icons.refresh),
+                ),
+              ],
+            ),
+            if (_entries.isEmpty && !_busy) const Notice('此文件夹为空，或没有可显示的普通文件。'),
+            for (final item in _entries)
+              ListTile(
+                leading: Icon(
+                  item.isFolder
+                      ? Icons.folder_outlined
+                      : Icons.insert_drive_file_outlined,
+                ),
+                title: Text(item.name),
+                onTap: () => item.isFolder
+                    ? _browse(item.path, push: true)
+                    : _preview(item),
+                trailing: IconButton(
+                  onPressed: () => _download(item),
+                  tooltip: item.isFolder ? '下载文件夹' : '下载',
+                  icon: const Icon(Icons.download_outlined),
+                ),
               ),
-              title: Text(item.name),
-              onTap: () => item.isFolder
-                  ? _browse(item.path, push: true)
-                  : _preview(item),
-              trailing: IconButton(
-                onPressed: () => _download(item),
-                tooltip: item.isFolder ? '下载文件夹' : '下载',
-                icon: const Icon(Icons.download_outlined),
+            if (_cursor.isNotEmpty)
+              TextButton(
+                onPressed: () => _browse(_path, cursor: _cursor),
+                child: const Text('加载更多'),
               ),
-            ),
-          if (_cursor.isNotEmpty)
-            TextButton(
-              onPressed: () => _browse(_path, cursor: _cursor),
-              child: const Text('加载更多'),
-            ),
-          if (widget.isAdmin) ...[
-            const Divider(),
-            const Text(
-              '成员访问权限',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-            ),
-            const Text('整机权限可能包含其他成员的私人文件及敏感资料。'),
-            DropdownButton<String>(
-              value: _member,
-              isExpanded: true,
-              hint: const Text('选择成员'),
-              items: [
-                for (final member in _members)
-                  DropdownMenuItem(
-                    value: member['id'].toString(),
-                    child: Text(member['username'].toString()),
+            if (widget.isAdmin) ...[
+              const Divider(),
+              const Text(
+                '成员访问权限',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
+              const Text('整机权限可能包含其他成员的私人文件及敏感资料。'),
+              DropdownButton<String>(
+                value: _member,
+                isExpanded: true,
+                hint: const Text('选择成员'),
+                items: [
+                  for (final member in _members)
+                    DropdownMenuItem(
+                      value: member['id'].toString(),
+                      child: Text(member['username'].toString()),
+                    ),
+                ],
+                onChanged: _saving ? null : _loadGrant,
+              ),
+              if (_member != null)
+                DropdownButton<String>(
+                  value: _grantMode,
+                  isExpanded: true,
+                  items: const [
+                    DropdownMenuItem(value: 'none', child: Text('无权限')),
+                    DropdownMenuItem(value: 'folders', child: Text('指定文件夹')),
+                    DropdownMenuItem(value: 'all', child: Text('整台电脑')),
+                  ],
+                  onChanged: !_grantReady || _grantLoading || _saving
+                      ? null
+                      : (value) => setState(() => _grantMode = value ?? 'none'),
+                ),
+              if (_member != null && !_grantReady && !_grantLoading)
+                TextButton(
+                  onPressed: () => _loadGrant(_member),
+                  child: const Text('重新读取权限'),
+                ),
+              if (_member != null &&
+                  _grantReady &&
+                  _grantMode == 'folders') ...[
+                TextButton.icon(
+                  onPressed: _path.isEmpty || _folders.contains(_path)
+                      ? null
+                      : () => setState(() => _folders.add(_path)),
+                  icon: const Icon(Icons.add),
+                  label: const Text('将当前文件夹加入授权'),
+                ),
+                for (final folder in _folders)
+                  ListTile(
+                    title: Text(folder),
+                    trailing: IconButton(
+                      tooltip: '移除文件夹授权',
+                      icon: const Icon(Icons.close),
+                      onPressed: () => setState(() => _folders.remove(folder)),
+                    ),
                   ),
               ],
-              onChanged: _saving ? null : _loadGrant,
-            ),
-            if (_member != null)
-              DropdownButton<String>(
-                value: _grantMode,
-                isExpanded: true,
-                items: const [
-                  DropdownMenuItem(value: 'none', child: Text('无权限')),
-                  DropdownMenuItem(value: 'folders', child: Text('指定文件夹')),
-                  DropdownMenuItem(value: 'all', child: Text('整台电脑')),
-                ],
-                onChanged: !_grantReady || _grantLoading || _saving
-                    ? null
-                    : (value) => setState(() => _grantMode = value ?? 'none'),
-              ),
-            if (_member != null && !_grantReady && !_grantLoading)
-              TextButton(
-                onPressed: () => _loadGrant(_member),
-                child: const Text('重新读取权限'),
-              ),
-            if (_member != null && _grantReady && _grantMode == 'folders') ...[
-              TextButton.icon(
-                onPressed: _path.isEmpty || _folders.contains(_path)
-                    ? null
-                    : () => setState(() => _folders.add(_path)),
-                icon: const Icon(Icons.add),
-                label: const Text('将当前文件夹加入授权'),
-              ),
-              for (final folder in _folders)
-                ListTile(
-                  title: Text(folder),
-                  trailing: IconButton(
-                    icon: const Icon(Icons.close),
-                    onPressed: () => setState(() => _folders.remove(folder)),
+              if (_member != null)
+                FilledButton(
+                  onPressed: _saving || _grantLoading || !_grantReady
+                      ? null
+                      : _saveGrant,
+                  child: Text(
+                    _saving
+                        ? '正在保存…'
+                        : _grantLoading
+                        ? '正在读取权限…'
+                        : '保存权限',
                   ),
                 ),
             ],
-            if (_member != null)
-              FilledButton(
-                onPressed: _saving || _grantLoading || !_grantReady
-                    ? null
-                    : _saveGrant,
-                child: Text(
-                  _saving
-                      ? '正在保存…'
-                      : _grantLoading
-                      ? '正在读取权限…'
-                      : '保存权限',
-                ),
-              ),
           ],
         ],
-      ],
+      ),
     ),
   );
 }

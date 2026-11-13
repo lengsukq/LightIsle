@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/personal_storage_routing.dart';
 import '../../core/user_facing_error.dart';
@@ -18,7 +19,10 @@ Widget? buildPlatformBackupSettingsEntry(
 }) {
   final isAdmin = identity['role'] == 'admin';
   final accountName = identity['username']?.toString() ?? '';
-  final userId = identity['id'] is int ? identity['id'] as int : 0;
+  final rawId = identity['id'];
+  final userId = rawId is num
+      ? rawId.toInt()
+      : int.tryParse(rawId?.toString() ?? '') ?? 0;
 
   return switch (defaultTargetPlatform) {
     TargetPlatform.android || TargetPlatform.iOS => IsleGroupTile(
@@ -44,7 +48,7 @@ Widget? buildPlatformBackupSettingsEntry(
       subtitle: '桌面本地文件夹单向增量备份到 NAS，支持断网续传与安全防丢更新',
       onTap: () {
         Navigator.of(context).push(
-          MaterialPageRoute<void>(
+          buildIslePageRoute<void>(
             builder: (_) => DesktopFolderBackupPage(
               api: api,
               userId: userId,
@@ -115,7 +119,7 @@ Future<void> _openMobilePhotoBackupFromSettings(
     );
     if (openStorage == true && context.mounted) {
       await Navigator.of(context).push(
-        MaterialPageRoute<void>(
+        buildIslePageRoute<void>(
           builder: (_) => StoragePage(api: api, isAdmin: isAdmin),
         ),
       );
@@ -138,7 +142,7 @@ Future<void> _openMobilePhotoBackupFromSettings(
 
   try {
     await Navigator.of(context).push(
-      MaterialPageRoute<void>(
+      buildIslePageRoute<void>(
         builder: (_) => MobilePhotoBackupPage(
           api: backupApi,
           accountName: accountName,

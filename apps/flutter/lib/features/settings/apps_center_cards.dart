@@ -28,8 +28,10 @@ extension _AppsCenterCards on _AppsCenterPageState {
             crossAxisAlignment: WrapCrossAlignment.center,
             alignment: WrapAlignment.spaceBetween,
             children: [
-              Row(
-                mainAxisSize: MainAxisSize.min,
+              Wrap(
+                spacing: 8,
+                runSpacing: 6,
+                crossAxisAlignment: WrapCrossAlignment.center,
                 children: [
                   OutlinedButton.icon(
                     key: const ValueKey('workbenchBackButton'),
@@ -42,25 +44,25 @@ extension _AppsCenterCards on _AppsCenterPageState {
                       _reload(refresh: false);
                     },
                     icon: const Icon(Icons.arrow_back_rounded, size: 16),
-                    label: const Text('← 返回应用中心'),
+                    label: const Text('返回应用中心'),
                   ),
-                  const SizedBox(width: 10),
                   Text(
                     draft.name,
                     style: theme.textTheme.titleMedium?.copyWith(
                       fontWeight: FontWeight.w700,
                     ),
                   ),
-                  const SizedBox(width: 8),
-                  IsleStatusBadge(label: runtimeLabel, color: runtimeColor),
-                IsleStatusBadge(
-                  label: app['locationKind'] == 'external'
-                      ? '其他盘 · ${app['locationName'] ?? '外置盘'}'
-                      : '内置盘 · ${app['locationName'] ?? 'Mac 内置盘'}',
-                  color: app['locationKind'] == 'external'
-                      ? const Color(0xFF0D9488)
-                      : colors.primary,
-                ),
+                  if (_isAdmin) ...[
+                    IsleStatusBadge(label: runtimeLabel, color: runtimeColor),
+                    IsleStatusBadge(
+                      label: app['locationKind'] == 'external'
+                          ? '其他盘 · ${app['locationName'] ?? '外置盘'}'
+                          : '内置盘 · ${app['locationName'] ?? 'Mac 内置盘'}',
+                      color: app['locationKind'] == 'external'
+                          ? const Color(0xFF0D9488)
+                          : colors.primary,
+                    ),
+                  ],
                 ],
               ),
               Wrap(
@@ -71,7 +73,7 @@ extension _AppsCenterCards on _AppsCenterPageState {
                     key: const ValueKey('workbenchRefreshButton'),
                     onPressed: () => _launchApp(app),
                     icon: const Icon(Icons.refresh_rounded, size: 16),
-                    label: const Text('🔄 重新打开窗口'),
+                    label: const Text('重新打开窗口'),
                   ),
                   OutlinedButton.icon(
                     key: const ValueKey('workbenchFullscreenButton'),
@@ -84,13 +86,13 @@ extension _AppsCenterCards on _AppsCenterPageState {
                           : Icons.fullscreen_rounded,
                       size: 16,
                     ),
-                    label: Text(_workbenchFullscreen ? '⛶ 退出全屏' : '⛶ 全屏展开'),
+                    label: Text(_workbenchFullscreen ? '退出全屏' : '全屏展开'),
                   ),
                   FilledButton.icon(
                     key: const ValueKey('workbenchExternalButton'),
                     onPressed: () => _launchApp(app, preferExternal: true),
                     icon: const Icon(Icons.open_in_new_rounded, size: 16),
-                    label: const Text('↗ 外部浏览器打开'),
+                    label: const Text('外部浏览器打开'),
                   ),
                 ],
               ),
@@ -159,31 +161,44 @@ extension _AppsCenterCards on _AppsCenterPageState {
           if (_appStorage != null &&
               objectList(_appStorage?['locations']).length > 1) ...[
             const SizedBox(height: 10),
-            DropdownButtonFormField<String>(
-              key: const ValueKey('templateInstallLocationDropdown'),
-              initialValue: _selectedInstallLocationId,
-              decoration: const InputDecoration(
-                labelText: '模板安装目标位置',
-                border: OutlineInputBorder(),
-                isDense: true,
-              ),
-              items: [
-                const DropdownMenuItem(value: '', child: Text('跟随默认位置')),
-                for (final loc in objectList(_appStorage?['locations']))
-                  DropdownMenuItem(
-                    value: loc['id']?.toString() ?? '',
-                    enabled: loc['online'] == true && loc['writable'] == true,
+            KeyedSubtree(
+              key: ValueKey('location_$_selectedInstallLocationId'),
+              child: DropdownButtonFormField<String>(
+                key: const ValueKey('templateInstallLocationDropdown'),
+                initialValue: _selectedInstallLocationId,
+                isExpanded: true,
+                decoration: const InputDecoration(
+                  labelText: '模板安装目标位置',
+                  border: OutlineInputBorder(),
+                  isDense: true,
+                ),
+                items: [
+                  const DropdownMenuItem(
+                    value: '',
                     child: Text(
-                      '${loc['kind'] == 'external' ? '其他盘' : '内置盘'} · ${loc['name'] ?? ''}'
-                      '${loc['online'] == true ? '' : '（离线）'}',
+                      '跟随默认位置',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ),
-              ],
-              onChanged: _busy
-                  ? null
-                  : (v) => _updateState(
-                      () => _selectedInstallLocationId = v ?? '',
+                  for (final loc in objectList(_appStorage?['locations']))
+                    DropdownMenuItem(
+                      value: loc['id']?.toString() ?? '',
+                      enabled: loc['online'] == true && loc['writable'] == true,
+                      child: Text(
+                        '${loc['kind'] == 'external' ? '其他盘' : '内置盘'} · ${loc['name'] ?? ''}'
+                        '${loc['online'] == true ? '' : '（离线）'}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
+                ],
+                onChanged: _busy
+                    ? null
+                    : (v) => _updateState(
+                        () => _selectedInstallLocationId = v ?? '',
+                      ),
+              ),
             ),
           ],
           const SizedBox(height: 10),
@@ -196,7 +211,9 @@ extension _AppsCenterCards on _AppsCenterPageState {
                   width: 245,
                   padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
-                    color: colors.surfaceContainerHighest.withValues(alpha: 0.36),
+                    color: colors.surfaceContainerHighest.withValues(
+                      alpha: 0.36,
+                    ),
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Column(
@@ -222,9 +239,7 @@ extension _AppsCenterCards on _AppsCenterPageState {
                         onPressed: _busy || tpl['installed'] == true
                             ? null
                             : () => _installOfficialTemplate(tpl),
-                        child: Text(
-                          tpl['installed'] == true ? '已安装' : '一键安装',
-                        ),
+                        child: Text(tpl['installed'] == true ? '已安装' : '一键安装'),
                       ),
                     ],
                   ),
@@ -296,6 +311,7 @@ extension _AppsCenterCards on _AppsCenterPageState {
                             ),
                           ),
                         ),
+                        const SizedBox(width: 8),
                         IsleStatusBadge(
                           label: _categoryLabel(category),
                           color: colors.primary,
@@ -431,17 +447,32 @@ extension _AppsCenterCards on _AppsCenterPageState {
                       _performAction(app, act);
                     }
                   },
-                  itemBuilder: (_) => const [
-                    PopupMenuItem(value: 'start', child: Text('启动 Web 进程')),
-                    PopupMenuItem(value: 'stop', child: Text('休眠 / 停止进程')),
-                    PopupMenuItem(value: 'restart', child: Text('重启 Web 进程')),
-                    PopupMenuItem(value: 'run_cron', child: Text('立即执行定时任务')),
-                    PopupMenuItem(
+                  itemBuilder: (_) => [
+                    if (draft.hasWeb && draft.webMode != 'static') ...[
+                      const PopupMenuItem(
+                        value: 'start',
+                        child: Text('启动 Web 进程'),
+                      ),
+                      const PopupMenuItem(
+                        value: 'stop',
+                        child: Text('休眠 / 停止进程'),
+                      ),
+                      const PopupMenuItem(
+                        value: 'restart',
+                        child: Text('重启 Web 进程'),
+                      ),
+                    ],
+                    if (draft.hasCron)
+                      const PopupMenuItem(
+                        value: 'run_cron',
+                        child: Text('立即执行定时任务'),
+                      ),
+                    const PopupMenuItem(
                       value: 'export_data',
                       child: Text('导出应用数据 (.tar.gz)'),
                     ),
-                    PopupMenuDivider(),
-                    PopupMenuItem(value: 'delete', child: Text('删除插件')),
+                    const PopupMenuDivider(),
+                    const PopupMenuItem(value: 'delete', child: Text('删除插件')),
                   ],
                 ),
               ],

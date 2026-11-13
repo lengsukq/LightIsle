@@ -17,6 +17,7 @@ class DashboardQuickLinks extends StatelessWidget {
     this.onOpenShares,
     this.onOpenAppsCenter,
     this.onOpenComputerFiles,
+    this.onOpenDownloads,
     this.onQuickUpload,
   });
 
@@ -26,6 +27,7 @@ class DashboardQuickLinks extends StatelessWidget {
   final VoidCallback? onOpenShares;
   final VoidCallback? onOpenAppsCenter;
   final VoidCallback? onOpenComputerFiles;
+  final VoidCallback? onOpenDownloads;
   final VoidCallback? onQuickUpload;
 
   @override
@@ -70,6 +72,15 @@ class DashboardQuickLinks extends StatelessWidget {
           '海报墙、热播走廊与续播',
           false,
         ),
+        if (!admin && onOpenDownloads != null)
+          (
+            'dashboardDownloadsEntry',
+            onOpenDownloads!,
+            Icons.downloading_rounded,
+            '下载中心',
+            '查看离线下载与任务进度',
+            false,
+          ),
         if (onOpenComputerFiles != null)
           (
             'dashboardComputerFilesEntry',
@@ -331,6 +342,18 @@ class MemberStorageSummary extends StatelessWidget {
                                 .clamp(0.0, 1.0)
                                 .toDouble()
                           : null;
+                      final quotaColor = progress == null
+                          ? const Color(0xff0071e3)
+                          : progress >= 0.92
+                          ? const Color(0xffef4444)
+                          : progress >= 0.8
+                          ? const Color(0xfff59e0b)
+                          : const Color(0xff0071e3);
+                      final remaining = bound != null && bound > 0
+                          ? (bound - accounted - reserved)
+                                .clamp(0.0, bound)
+                                .toDouble()
+                          : 0.0;
                       return Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
@@ -351,18 +374,82 @@ class MemberStorageSummary extends StatelessWidget {
                                 '${bound == null ? '不限额' : formatBytes(bound)}',
                                 style: theme.textTheme.labelSmall,
                               ),
+                              if (progress != null) ...[
+                                const SizedBox(width: 8),
+                                IsleDonutGauge(
+                                  fraction: progress,
+                                  color: quotaColor,
+                                  size: 28,
+                                  strokeWidth: 3.5,
+                                  centerText: '${(progress * 100).round()}%',
+                                  centerStyle: theme.textTheme.labelSmall
+                                      ?.copyWith(
+                                        fontSize: 8.5,
+                                        fontWeight: FontWeight.w700,
+                                        fontFeatures: const [
+                                          FontFeature.tabularFigures(),
+                                        ],
+                                      ),
+                                  semanticsLabel:
+                                      '$label 配额已用 ${(progress * 100).round()}%',
+                                ),
+                              ],
                             ],
                           ),
                           if (progress != null) ...[
                             const SizedBox(height: 6),
-                            ClipRRect(
-                              borderRadius: BorderRadius.circular(6),
-                              child: LinearProgressIndicator(
-                                value: progress,
-                                minHeight: 5,
-                                backgroundColor:
-                                    theme.colorScheme.surfaceContainerHighest,
-                              ),
+                            IsleSegmentedBar(
+                              height: 7,
+                              legendGap: 5,
+                              legendSpacing: 10,
+                              legendRunSpacing: 2,
+                              segments: [
+                                if (accounted > 0)
+                                  IsleChartSegment(
+                                    label: '已入账',
+                                    value: accounted.toDouble(),
+                                    color: quotaColor,
+                                    detail: formatBytes(accounted),
+                                  ),
+                                if (reserved > 0)
+                                  IsleChartSegment(
+                                    label: '上传预占',
+                                    value: reserved.toDouble(),
+                                    color: const Color(0xfff59e0b),
+                                    detail: formatBytes(reserved),
+                                  ),
+                                IsleChartSegment(
+                                  label: '剩余额度',
+                                  value: remaining,
+                                  color:
+                                      theme.colorScheme.surfaceContainerHighest,
+                                  detail: formatBytes(remaining),
+                                ),
+                              ],
+                            ),
+                          ] else if (accounted > 0 || reserved > 0) ...[
+                            const SizedBox(height: 6),
+                            IsleSegmentedBar(
+                              height: 6,
+                              legendGap: 5,
+                              legendSpacing: 10,
+                              legendRunSpacing: 2,
+                              segments: [
+                                if (accounted > 0)
+                                  IsleChartSegment(
+                                    label: '已入账',
+                                    value: accounted.toDouble(),
+                                    color: quotaColor,
+                                    detail: formatBytes(accounted),
+                                  ),
+                                if (reserved > 0)
+                                  IsleChartSegment(
+                                    label: '上传预占',
+                                    value: reserved.toDouble(),
+                                    color: const Color(0xfff59e0b),
+                                    detail: formatBytes(reserved),
+                                  ),
+                              ],
                             ),
                           ],
                           if (reserved > 0) ...[

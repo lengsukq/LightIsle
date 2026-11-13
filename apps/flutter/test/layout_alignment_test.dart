@@ -463,11 +463,6 @@ void main() {
                       expanded = !expanded;
                     }),
                   ),
-                  IsleCapsuleChip(
-                    label: '全部照片',
-                    selected: activeIndex == 1,
-                    onSelected: () => setState(() => activeIndex = 1),
-                  ),
                   IsleAnimatedExpand(
                     expanded: expanded,
                     child: IsleSearchBar(

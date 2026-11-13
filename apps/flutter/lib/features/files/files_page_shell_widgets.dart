@@ -9,7 +9,6 @@ extension _FilesPageShellWidgets on _FilesPageState {
           title: '文件',
           subtitle: '浏览共享目录、管理文件并查看回收站。',
           hideSubtitleOnCompact: true,
-          icon: Icons.folder_open_rounded,
           trailing: IconButton(
             tooltip: _filter.showingTrash ? '刷新回收站' : '刷新目录',
             visualDensity: VisualDensity.compact,
@@ -101,7 +100,7 @@ extension _FilesPageShellWidgets on _FilesPageState {
 
   Future<void> _openDownloads() async {
     await Navigator.of(context).push(
-      MaterialPageRoute<void>(
+      buildIslePageRoute<void>(
         builder: (_) =>
             DownloadsPage(api: widget.api, initialDestination: _dir.path),
       ),
@@ -111,12 +110,30 @@ extension _FilesPageShellWidgets on _FilesPageState {
 
   Future<void> _openDuplicates() async {
     final trashed = await Navigator.of(context).push<bool>(
-      MaterialPageRoute<bool>(
+      buildIslePageRoute<bool>(
         builder: (_) =>
             DuplicateFilesPage(api: widget.api, initialPath: _dir.path),
       ),
     );
     if (trashed == true && mounted) await _loadFiles();
+  }
+
+  void _openWebDavMount() {
+    Navigator.of(context).push<void>(
+      buildIslePageRoute<void>(
+        builder: (_) => DavPage(
+          api: widget.api,
+          accountId: widget.accountName.isEmpty ? null : widget.accountName,
+        ),
+      ),
+    );
+  }
+
+  void _openSmbMount() {
+    if (!widget.isAdmin) return;
+    Navigator.of(context).push<void>(
+      buildIslePageRoute<void>(builder: (_) => AdminSmbPage(api: widget.api)),
+    );
   }
 
   Widget _buildToolbar(
@@ -133,20 +150,19 @@ extension _FilesPageShellWidgets on _FilesPageState {
         Expanded(
           child: IsleSearchBar(
             controller: _filter.searchController,
+            focusNode: _filter.searchFocusNode,
             enabled: !_dir.loading,
             hintText: _filter.searchViaSpotlight
                 ? '全文搜索文件名或正文'
-                : (iconActions || compact ? '搜索文件名' : '搜索文件名（至少 2 个字符）'),
+                : (iconActions || compact ? '搜索文件名' : '搜索文件名或空格多关键词'),
             showClear: _filter.searching,
+            onChanged: (_) => _refreshState(() {}),
             onSubmitted: (_) => _searchFiles(),
             onClear: _dir.loading
                 ? null
                 : () {
                     if (_filter.searching) {
-                      final target =
-                          _filter.preSearchPath ?? widget.initialPath;
-                      _filter.searchController.clear();
-                      _loadFiles(target: target);
+                      _exitSearchAndRestore();
                     } else {
                       _searchFiles();
                     }
@@ -165,7 +181,7 @@ extension _FilesPageShellWidgets on _FilesPageState {
               : (selected) {
                   _refreshState(() => _filter.searchViaSpotlight = selected);
                   if (_filter.searching &&
-                      _filter.searchController.text.trim().runes.length >= 2) {
+                      _filter.searchController.text.trim().isNotEmpty) {
                     _searchFiles();
                   }
                 },
@@ -224,7 +240,7 @@ extension _FilesPageShellWidgets on _FilesPageState {
             ),
         ],
         if (!singleRowToolbar) const Spacer() else const SizedBox(width: 6),
-        if (!_filter.showingTrash)
+        if (!_filter.showingTrash) ...[
           IconButton(
             key: const Key('files-select-toggle'),
             tooltip: _transfers.selecting ? '结束多选' : '多选文件',
@@ -234,6 +250,7 @@ extension _FilesPageShellWidgets on _FilesPageState {
                 : () => _refreshState(() {
                     _transfers.selecting = !_transfers.selecting;
                     _transfers.selectedPaths.clear();
+                    _transfers.selectionAnchorPath = null;
                   }),
             icon: Icon(
               _transfers.selecting
@@ -244,31 +261,44 @@ extension _FilesPageShellWidgets on _FilesPageState {
                 ? Theme.of(context).colorScheme.primary
                 : null,
           ),
-        if (!_filter.showingTrash)
+          IconButton(
+            tooltip: '查看回收站',
+            visualDensity: VisualDensity.compact,
+            onPressed: _dir.loading ? null : _toggleTrash,
+            icon: const Icon(Icons.delete_outline_rounded),
+          ),
+          IconButton(
+            tooltip: '重复大文件清理',
+            visualDensity: VisualDensity.compact,
+            onPressed: _dir.loading ? null : _openDuplicates,
+            icon: const Icon(Icons.cleaning_services_outlined),
+          ),
+          if (!compact)
+            IconButton(
+              tooltip: '下载中心',
+              visualDensity: VisualDensity.compact,
+              onPressed: _dir.loading ? null : _openDownloads,
+              icon: const Icon(Icons.download_outlined),
+            ),
           PopupMenuButton<String>(
             tooltip: '更多文件操作',
             icon: const Icon(Icons.more_horiz_rounded),
             position: PopupMenuPosition.under,
-            constraints: const BoxConstraints(minWidth: 228, maxWidth: 270),
+            constraints: const BoxConstraints(minWidth: 216, maxWidth: 270),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(16),
             ),
             elevation: 4,
             onSelected: (value) {
               switch (value) {
-                case 'folder':
-                  _createFolder();
-                case 'select':
-                  _refreshState(() {
-                    _transfers.selecting = !_transfers.selecting;
-                    _transfers.selectedPaths.clear();
-                  });
                 case 'downloads':
                   _openDownloads();
-                case 'duplicates':
-                  _openDuplicates();
                 case 'trash':
                   _toggleTrash();
+                case 'dav':
+                  _openWebDavMount();
+                case 'smb':
+                  _openSmbMount();
                 case 'rename':
                   _setUploadAutoRename(!_prefsState.uploadAutoRename);
                   ScaffoldMessenger.of(context).showSnackBar(
@@ -283,41 +313,30 @@ extension _FilesPageShellWidgets on _FilesPageState {
               }
             },
             itemBuilder: (_) => [
-              if (!_filter.showingTrash && _dir.canWrite)
-                isleActionMenuItem(
-                  value: 'folder',
-                  icon: Icons.create_new_folder_outlined,
-                  label: '新建文件夹',
-                ),
-              if (!_filter.showingTrash)
-                isleActionMenuItem(
-                  value: 'select',
-                  icon: _transfers.selecting
-                      ? Icons.close_rounded
-                      : Icons.checklist_rounded,
-                  label: _transfers.selecting ? '结束多选' : '多选文件',
-                ),
-              if (!_filter.showingTrash)
+              if (compact)
                 isleActionMenuItem(
                   value: 'downloads',
                   icon: Icons.download_outlined,
                   label: '下载中心',
                 ),
-              if (!_filter.showingTrash)
+              isleActionMenuItem(
+                value: 'trash',
+                icon: Icons.delete_outline_rounded,
+                label: '回收站',
+              ),
+              isleActionMenuItem(
+                value: 'dav',
+                icon: Icons.laptop_mac_outlined,
+                label: '挂载到电脑（WebDAV）',
+              ),
+              if (widget.isAdmin)
                 isleActionMenuItem(
-                  value: 'duplicates',
-                  icon: Icons.file_copy_outlined,
-                  label: '重复大文件清理',
+                  value: 'smb',
+                  icon: Icons.dns_outlined,
+                  label: 'Mac 文件共享（SMB）',
                 ),
-              if (!_filter.showingTrash)
-                isleActionMenuItem(
-                  value: 'trash',
-                  icon: Icons.delete_outline_rounded,
-                  label: '回收站',
-                ),
-              if (!_filter.showingTrash && _dir.canWrite)
-                const PopupMenuDivider(),
-              if (!_filter.showingTrash && _dir.canWrite)
+              if (_dir.canWrite) const PopupMenuDivider(),
+              if (_dir.canWrite)
                 isleActionMenuItem(
                   value: 'rename',
                   icon: Icons.drive_file_rename_outline_rounded,
@@ -326,23 +345,81 @@ extension _FilesPageShellWidgets on _FilesPageState {
                 ),
             ],
           ),
+        ],
       ],
     );
-    if (singleRowToolbar) {
-      return Row(
-        children: [
-          Expanded(child: searchField),
-          const SizedBox(width: 10),
-          actionsRow,
-        ],
-      );
-    }
+    final showHistory =
+        !_filter.showingTrash &&
+        _filter.recentSearches.isNotEmpty &&
+        ((_filter.searchInputFocused &&
+                _filter.searchController.text.trim().isEmpty) ||
+            (_filter.searching && _dir.entries.isEmpty));
+    final showQuickJump =
+        !_filter.showingTrash && !_filter.searching && !_transfers.selecting;
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        if (!_filter.showingTrash) searchField,
-        const SizedBox(height: 6),
-        actionsRow,
+        if (singleRowToolbar)
+          Row(
+            children: [
+              Expanded(child: searchField),
+              const SizedBox(width: 10),
+              actionsRow,
+            ],
+          )
+        else ...[
+          if (!_filter.showingTrash) searchField,
+          const SizedBox(height: 6),
+          actionsRow,
+        ],
+        if (showHistory)
+          FileSearchHistoryStrip(
+            terms: _filter.recentSearches,
+            busy: _dir.loading,
+            onTapTerm: (term) {
+              _filter.searchController.text = term;
+              unawaited(_searchFiles());
+            },
+            onRemoveTerm: (term) => unawaited(_removeSearchHistory(term)),
+            onClearAll: () => unawaited(_clearSearchHistory()),
+          ),
+        if (showQuickJump)
+          IsleQuickJumpStrip(
+            padding: const EdgeInsets.only(top: 6),
+            prefixLabel: '关联工具',
+            items: [
+              IsleQuickJumpItem(
+                key: const ValueKey('filesQuickJumpDuplicates'),
+                icon: Icons.cleaning_services_outlined,
+                label: '清理重复文件',
+                tooltip: '快速扫描并清理重复大文件释放空间',
+                onTap: _openDuplicates,
+              ),
+              IsleQuickJumpItem(
+                key: const ValueKey('filesQuickJumpTrash'),
+                icon: Icons.delete_outline_rounded,
+                label: '打开回收站',
+                tooltip: '查看已删文件或永久释放空间',
+                onTap: _toggleTrash,
+              ),
+              IsleQuickJumpItem(
+                key: const ValueKey('filesQuickJumpDav'),
+                icon: Icons.laptop_mac_outlined,
+                label: '挂载到电脑',
+                tooltip: '查看 WebDAV 挂载账号与访达连接地址',
+                onTap: _openWebDavMount,
+              ),
+              if (widget.isAdmin)
+                IsleQuickJumpItem(
+                  key: const ValueKey('filesQuickJumpSmb'),
+                  icon: Icons.dns_outlined,
+                  label: 'SMB 局域网共享',
+                  tooltip: '管理 macOS 本地共享目录与访达接入',
+                  onTap: _openSmbMount,
+                ),
+            ],
+          ),
       ],
     );
   }

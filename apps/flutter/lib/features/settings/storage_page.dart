@@ -2,12 +2,18 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 
+import '../../core/isle_quick_jump.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/widgets.dart';
 import '../../core/isle_theme.dart';
 import '../../core/user_facing_error.dart';
 import '../files/duplicate_files_page.dart';
 import '../files/isle_folder_picker_sheet.dart';
+import '../media/photo_similar_cleanup_sheet.dart';
+import 'admin_smb_page.dart';
+import 'cache_management_page.dart';
+import 'dav_page.dart';
+import 'storage_charts.dart';
 
 part 'storage_page_dialogs.dart';
 part 'storage_page_switch.dart';
@@ -336,7 +342,7 @@ class _StoragePageState extends State<StoragePage> {
         IconButton(
           tooltip: '重复大文件扫描与清理',
           onPressed: () => Navigator.of(context).push<void>(
-            MaterialPageRoute<void>(
+            buildIslePageRoute<void>(
               builder: (_) => DuplicateFilesPage(api: widget.api),
             ),
           ),
@@ -393,35 +399,20 @@ class _StoragePageState extends State<StoragePage> {
                 ),
                 const SizedBox(height: 10),
                 for (final root in roots)
-                  ListTile(
-                    contentPadding: EdgeInsets.zero,
-                    dense: true,
-                    leading: Icon(
-                      root['online'] == true
-                          ? Icons.check_circle_outline_rounded
-                          : Icons.do_not_disturb_on_outlined,
-                      color: root['online'] == true
-                          ? const Color(0xff10b981)
-                          : const Color(0xfff59e0b),
+                  StorageRootSummaryRow(
+                    root: root,
+                    physicalLabel: _physicalFreeLabel(root),
+                    boundCount: policies.values.fold<int>(
+                      0,
+                      (total, policy) =>
+                          total +
+                          objectList(policy['locations'])
+                              .where((loc) => loc['rootID'] == root['rootID'])
+                              .length,
                     ),
-                    title: Wrap(
-                      spacing: 8,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      children: [
-                        Text(
-                          root['name']?.toString() ?? '未命名存储位置',
-                          style: const TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                        if (root['isDefault'] == true)
-                          IsleStatusBadge(
-                            label: '默认主目录',
-                            color: IslePalette.of(context)['brandBlue'],
-                          ),
-                      ],
-                    ),
-                    subtitle: Text(
-                      '${_physicalFreeLabel(root)}'
-                      ' · 已绑定 ${policies.values.fold<int>(0, (total, policy) => total + objectList(policy['locations']).where((loc) => loc['rootID'] == root['rootID']).length)} 个账号分类',
+                    summary: StorageRootUsageSummary.fromRoot(
+                      root,
+                      policies.values,
                     ),
                   ),
               ],
@@ -688,6 +679,64 @@ class _StoragePageState extends State<StoragePage> {
                 ),
             ],
           ),
+        IsleQuickJumpStrip(
+          key: const ValueKey('storageQuickJumpStrip'),
+          items: [
+            IsleQuickJumpItem(
+              icon: Icons.file_copy_outlined,
+              label: '重复大文件清理',
+              tooltip: '扫描重复大文件并按比例清理释放空间',
+              onTap: () => Navigator.of(context).push<void>(
+                buildIslePageRoute<void>(
+                  builder: (_) => DuplicateFilesPage(api: widget.api),
+                ),
+              ),
+            ),
+            IsleQuickJumpItem(
+              icon: Icons.photo_library_outlined,
+              label: '相似照片去重',
+              tooltip: '对比连拍或相似照片并清理冗余副本',
+              onTap: () => Navigator.of(context).push<void>(
+                buildIslePageRoute<void>(
+                  builder: (_) => PhotoSimilarCleanupPage(api: widget.api),
+                ),
+              ),
+            ),
+            IsleQuickJumpItem(
+              icon: Icons.folder_shared_outlined,
+              label: 'WebDAV 挂载',
+              tooltip: '管理 WebDAV 挂载地址与独立访问密码',
+              onTap: () => Navigator.of(context).push<void>(
+                buildIslePageRoute<void>(
+                  builder: (_) => DavPage(api: widget.api),
+                ),
+              ),
+            ),
+            if (widget.isAdmin) ...[
+              IsleQuickJumpItem(
+                icon: Icons.lan_outlined,
+                label: 'Mac 文件共享 (SMB)',
+                tooltip: '管理 Mac 局域网 SMB 共享目录与访客权限',
+                onTap: () => Navigator.of(context).push<void>(
+                  buildIslePageRoute<void>(
+                    builder: (_) => AdminSmbPage(api: widget.api),
+                  ),
+                ),
+              ),
+              IsleQuickJumpItem(
+                icon: Icons.cleaning_services_outlined,
+                label: '本地缓存管理',
+                tooltip: '查看缩略图、海报、地图瓦片与离线副本缓存占比',
+                onTap: () => Navigator.of(context).push<void>(
+                  buildIslePageRoute<void>(
+                    builder: (_) =>
+                        CacheManagementPage(api: widget.api, isAdmin: true),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
         const IsleHelpDisclosure(
           summary: '存储位置与额度说明',
           details:

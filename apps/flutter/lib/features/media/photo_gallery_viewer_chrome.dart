@@ -10,14 +10,22 @@ extension _PhotoGalleryViewerChrome on _PhotoGalleryViewerState {
   Widget _toolbarIcon({
     required String tooltip,
     required IconData icon,
-    required VoidCallback onPressed,
+    required VoidCallback? onPressed,
+    Color color = Colors.white,
+    double width = 44,
+    double height = 44,
+    double iconSize = 22,
   }) => IconButton(
     tooltip: tooltip,
     onPressed: onPressed,
-    color: Colors.white,
+    color: color,
+    disabledColor: color.withValues(alpha: 0.45),
     padding: EdgeInsets.zero,
-    constraints: const BoxConstraints.tightFor(width: 44, height: 44),
-    iconSize: 22,
+    constraints: BoxConstraints.tightFor(width: width, height: height),
+    style: IconButton.styleFrom(
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+    ),
+    iconSize: iconSize,
     icon: Icon(icon),
   );
 
@@ -85,299 +93,365 @@ extension _PhotoGalleryViewerChrome on _PhotoGalleryViewerState {
     );
   }
 
-  Widget _viewerSettingsMenu() => PopupMenuButton<String>(
-    tooltip: widget.fileBrowserMode ? '视频连续播放' : '幻灯片设置',
-    padding: EdgeInsets.zero,
-    onSelected: (value) {
-      if (widget.fileBrowserMode) {
-        _updateState(() => _continuousVideo = !_continuousVideo);
-      } else if (value == 'loop') {
-        _updateState(() => _loop = !_loop);
-      } else {
-        _updateState(() => _slideSeconds = int.parse(value));
-      }
-      _scheduleSlide();
-    },
-    itemBuilder: (_) => widget.fileBrowserMode
-        ? [
-            CheckedPopupMenuItem<String>(
-              value: 'continuous',
-              checked: _continuousVideo,
-              child: const Text('视频播完自动播放下一个'),
-            ),
-          ]
-        : [
-            for (final seconds in [3, 5, 10])
-              CheckedPopupMenuItem<String>(
-                value: '$seconds',
-                checked: _slideSeconds == seconds,
-                child: Text('每 $seconds 秒切换'),
-              ),
-            CheckedPopupMenuItem<String>(
-              value: 'loop',
-              checked: _loop,
-              child: const Text('循环播放'),
-            ),
-            const PopupMenuItem<String>(
-              enabled: false,
-              child: Text('幻灯片自动跳过视频'),
-            ),
-          ],
-    child: const SizedBox(
-      height: 44,
-      width: 44,
-      child: Icon(Icons.tune_rounded, color: Colors.white, size: 21),
+  Widget _viewerSettingsMenu({double size = 44, double iconSize = 21}) =>
+      PopupMenuButton<String>(
+        tooltip: widget.fileBrowserMode ? '视频连续播放' : '幻灯片设置',
+        padding: EdgeInsets.zero,
+        onSelected: (value) {
+          if (widget.fileBrowserMode) {
+            _updateState(() => _continuousVideo = !_continuousVideo);
+          } else if (value == 'loop') {
+            _updateState(() => _loop = !_loop);
+          } else {
+            _updateState(() => _slideSeconds = int.parse(value));
+          }
+          _scheduleSlide();
+        },
+        itemBuilder: (_) => widget.fileBrowserMode
+            ? [
+                CheckedPopupMenuItem<String>(
+                  value: 'continuous',
+                  checked: _continuousVideo,
+                  child: const Text('视频播完自动播放下一个'),
+                ),
+              ]
+            : [
+                for (final seconds in [3, 5, 10])
+                  CheckedPopupMenuItem<String>(
+                    value: '$seconds',
+                    checked: _slideSeconds == seconds,
+                    child: Text('每 $seconds 秒切换'),
+                  ),
+                CheckedPopupMenuItem<String>(
+                  value: 'loop',
+                  checked: _loop,
+                  child: const Text('循环播放'),
+                ),
+                const PopupMenuItem<String>(
+                  enabled: false,
+                  child: Text('幻灯片自动跳过视频'),
+                ),
+              ],
+        child: SizedBox(
+          height: size,
+          width: size,
+          child: Icon(Icons.tune_rounded, color: Colors.white, size: iconSize),
+        ),
+      );
+
+  /// Shared action icons rendered in the bottom pill for photos or collapsed into
+  /// the top header pill for videos so the video control bar stays unobstructed.
+  List<Widget> _buildMediaActionButtons(
+    PhotoAsset asset, {
+    double buttonSize = 44,
+    double iconSize = 22,
+  }) => [
+    if (!widget.fileBrowserMode)
+      _toolbarIcon(
+        tooltip: asset.personalFavorite ? '从我的收藏移除' : '加入我的收藏',
+        icon: asset.personalFavorite
+            ? Icons.star_rounded
+            : Icons.star_border_rounded,
+        color: asset.personalFavorite ? const Color(0xffffd568) : Colors.white,
+        width: buttonSize,
+        height: buttonSize,
+        iconSize: iconSize,
+        onPressed: _busy ? null : () => _favorite(shared: false),
+      ),
+    if (!widget.fileBrowserMode)
+      _toolbarIcon(
+        tooltip: '照片信息与相册管理',
+        icon: Icons.info_outline_rounded,
+        color: _showInfoSidebar ? const Color(0xFF9CDCF5) : Colors.white,
+        width: buttonSize,
+        height: buttonSize,
+        iconSize: iconSize,
+        onPressed: _busy ? null : () => _inspectAsset(context),
+      ),
+    _toolbarIcon(
+      tooltip: '分享媒体',
+      icon: Icons.ios_share_outlined,
+      width: buttonSize,
+      height: buttonSize,
+      iconSize: iconSize,
+      onPressed: _busy ? null : _shareCurrent,
     ),
-  );
+    PopupMenuButton<String>(
+      tooltip: '更多媒体操作',
+      enabled: !_busy,
+      padding: EdgeInsets.zero,
+      onSelected: (value) => unawaited(_mediaAction(value)),
+      itemBuilder: (_) => [
+        const PopupMenuItem(value: 'export', child: Text('保存原文件')),
+        if (!widget.fileBrowserMode && widget.onFolderAlbum != null)
+          const PopupMenuItem(value: 'folder', child: Text('复制或移动到相册')),
+        if (!widget.fileBrowserMode && widget.canEditSharedFavorite(asset))
+          PopupMenuItem(
+            value: 'shared',
+            child: Text(asset.favorite ? '取消共享收藏' : '加入共享收藏'),
+          ),
+        if (!asset.isVideo && widget.offlineAccountId.isNotEmpty)
+          const PopupMenuItem(value: 'offline', child: Text('离线保存照片原件')),
+        if (_hasLiveMotion && !asset.isVideo)
+          PopupMenuItem(
+            value: 'live',
+            child: Text(
+              _livePlaying ? '返回 Live Photo 静态照片' : '播放 Live Photo 动态片段',
+            ),
+          ),
+        if (!widget.fileBrowserMode && widget.onRemoveFromCurrentAlbum != null)
+          PopupMenuItem(
+            value: 'remove_album',
+            child: Text(
+              widget.currentAlbumName.isNotEmpty
+                  ? '从“${widget.currentAlbumName}”移出（保留原片）'
+                  : '从当前相册移出（保留原片）',
+            ),
+          ),
+        if (!widget.fileBrowserMode &&
+            widget.onDelete != null &&
+            widget.canEditSharedFavorite(asset))
+          const PopupMenuItem(value: 'trash', child: Text('将原文件移入回收站')),
+      ],
+      child: SizedBox(
+        width: buttonSize,
+        height: buttonSize,
+        child: Icon(
+          Icons.more_horiz_rounded,
+          color: _busy ? Colors.white.withValues(alpha: 0.45) : Colors.white,
+          size: iconSize,
+        ),
+      ),
+    ),
+  ];
 
   Widget _buildModernHeader(PhotoAsset asset, double safeTop) {
     final isMacOS =
         defaultTargetPlatform == TargetPlatform.macOS ||
         Theme.of(context).platform == TargetPlatform.macOS;
     final leftInset = isMacOS ? 80.0 : 14.0;
+    final availableWidth = MediaQuery.sizeOf(context).width - leftInset - 14;
+    final compactVideoHeader = asset.isVideo && availableWidth < 360;
+    final btnSize = compactVideoHeader ? 36.0 : 44.0;
+    final iconSize = compactVideoHeader ? 20.0 : 22.0;
+    final gap = compactVideoHeader ? 6.0 : 8.0;
+    final subtitle = asset.isVideo
+        ? '${asset.name} · ${_index + 1} / ${_items.length}'
+        : '${_index + 1} / ${_items.length}';
     return Padding(
       padding: EdgeInsets.fromLTRB(leftInset, safeTop + 10, 14, 30),
-      child: Row(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          DecoratedBox(
-            decoration: _toolbarDecoration,
-            child: _toolbarIcon(
-              tooltip: widget.fileBrowserMode ? '返回文件' : '返回图库',
-              icon: Icons.arrow_back_rounded,
-              onPressed: () => Navigator.of(context).pop(),
-            ),
-          ),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  formatMediaDate(asset.takenAt),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
-                    fontSize: 13,
+          Row(
+            children: [
+              DecoratedBox(
+                decoration: _toolbarDecoration,
+                child: _toolbarIcon(
+                  tooltip: widget.fileBrowserMode ? '返回文件' : '返回图库',
+                  icon: Icons.arrow_back_rounded,
+                  width: btnSize,
+                  height: btnSize,
+                  iconSize: iconSize,
+                  onPressed: () => Navigator.of(context).pop(),
+                ),
+              ),
+              SizedBox(width: gap),
+              Expanded(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      formatMediaDate(asset.takenAt),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      subtitle,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      textAlign: TextAlign.center,
+                      style: const TextStyle(
+                        color: Color(0xBFFFFFFF),
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              SizedBox(width: gap),
+              if (_hasLiveMotion && !asset.isVideo) ...[
+                DecoratedBox(
+                  decoration: _toolbarDecoration,
+                  child: TextButton.icon(
+                    style: TextButton.styleFrom(
+                      foregroundColor: _livePlaying
+                          ? const Color(0xFFFFD568)
+                          : Colors.white,
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      minimumSize: const Size(0, 40),
+                    ),
+                    onPressed: () {
+                      _stopSlideshow();
+                      _updateState(() => _livePlaying = !_livePlaying);
+                    },
+                    icon: const Icon(Icons.motion_photos_on_rounded, size: 17),
+                    label: Text(
+                      _livePlaying ? '实况播放中' : 'LIVE',
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
                   ),
                 ),
-                const SizedBox(height: 2),
-                Text(
-                  '${_index + 1} / ${_items.length}',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    color: Color(0xBFFFFFFF),
-                    fontSize: 11,
-                  ),
-                ),
+                const SizedBox(width: 6),
               ],
-            ),
+              DecoratedBox(
+                key: asset.isVideo
+                    ? const Key('photoViewerVideoHeaderActions')
+                    : null,
+                decoration: _toolbarDecoration,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (widget.fileBrowserMode) ...[
+                      _toolbarIcon(
+                        tooltip: '播放列表',
+                        icon: Icons.playlist_play_rounded,
+                        width: btnSize,
+                        height: btnSize,
+                        iconSize: iconSize,
+                        onPressed: _showFilePlaylist,
+                      ),
+                      _viewerSettingsMenu(
+                        size: btnSize,
+                        iconSize: iconSize - 1,
+                      ),
+                    ] else if (!asset.isVideo) ...[
+                      _slideToggleButton(),
+                      _viewerSettingsMenu(
+                        size: btnSize,
+                        iconSize: iconSize - 1,
+                      ),
+                    ],
+                    if (asset.isVideo)
+                      ..._buildMediaActionButtons(
+                        asset,
+                        buttonSize: btnSize,
+                        iconSize: iconSize,
+                      ),
+                  ],
+                ),
+              ),
+            ],
           ),
-          const SizedBox(width: 8),
-          if (_hasLiveMotion && !asset.isVideo) ...[
+          if (asset.isVideo && _error != null) ...[
+            const SizedBox(height: 8),
             DecoratedBox(
               decoration: _toolbarDecoration,
-              child: TextButton.icon(
-                style: TextButton.styleFrom(
-                  foregroundColor: _livePlaying
-                      ? const Color(0xFFFFD568)
-                      : Colors.white,
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  minimumSize: const Size(0, 40),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 6,
                 ),
-                onPressed: () {
-                  _stopSlideshow();
-                  _updateState(() => _livePlaying = !_livePlaying);
-                },
-                icon: const Icon(Icons.motion_photos_on_rounded, size: 17),
-                label: Text(
-                  _livePlaying ? '实况播放中' : 'LIVE',
+                child: Text(
+                  _error!,
+                  textAlign: TextAlign.center,
                   style: const TextStyle(
+                    color: Color(0xffffb4ab),
                     fontSize: 12,
-                    fontWeight: FontWeight.w700,
                   ),
                 ),
               ),
             ),
-            const SizedBox(width: 6),
           ],
-          DecoratedBox(
-            decoration: _toolbarDecoration,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (widget.fileBrowserMode)
-                  _toolbarIcon(
-                    tooltip: '播放列表',
-                    icon: Icons.playlist_play_rounded,
-                    onPressed: _showFilePlaylist,
-                  )
-                else
-                  _slideToggleButton(),
-                _viewerSettingsMenu(),
-              ],
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBottomToolbar(
+    BuildContext context,
+    PhotoAsset asset,
+    double safeBottom,
+  ) {
+    if (asset.isVideo) return const SizedBox.shrink();
+    return Padding(
+      padding: EdgeInsets.fromLTRB(14, 8, 14, safeBottom + 14),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          if (_error != null)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text(
+                _error!,
+                textAlign: TextAlign.center,
+                style: const TextStyle(color: Color(0xffffb4ab)),
+              ),
+            ),
+          if (_items.length > 1) ...[
+            PhotoGalleryViewerFilmstrip(
+              api: widget.api,
+              memoryCache: _imageCache,
+              items: _items,
+              currentIndex: _index,
+              fileBrowserMode: widget.fileBrowserMode,
+              onSelectIndex: (target) {
+                if (target == _index) return;
+                unawaited(_navigate(target - _index));
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+          Text(
+            asset.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              color: Color(0xCCFFFFFF),
+              fontSize: 12,
+              shadows: [Shadow(color: Color(0xD9000000), blurRadius: 8)],
+            ),
+          ),
+          const SizedBox(height: 10),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 520),
+            child: ClipRRect(
+              key: const Key('photoViewerBottomToolbar'),
+              borderRadius: BorderRadius.circular(18),
+              child: IsleGlassBackdrop(
+                blur: 12,
+                child: DecoratedBox(
+                  decoration: _toolbarDecoration,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 6,
+                      vertical: 2,
+                    ),
+                    child: Wrap(
+                      alignment: WrapAlignment.center,
+                      spacing: 2,
+                      runSpacing: 0,
+                      children: _buildMediaActionButtons(asset),
+                    ),
+                  ),
+                ),
+              ),
             ),
           ),
         ],
       ),
     );
   }
-
-  Widget _buildBottomToolbar(PhotoAsset asset, double safeBottom) => Padding(
-    padding: EdgeInsets.fromLTRB(14, 12, 14, safeBottom + 16),
-    child: Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.center,
-      children: [
-        if (_error != null)
-          Padding(
-            padding: const EdgeInsets.only(bottom: 8),
-            child: Text(
-              _error!,
-              textAlign: TextAlign.center,
-              style: const TextStyle(color: Color(0xffffb4ab)),
-            ),
-          ),
-        Text(
-          asset.name,
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            color: Color(0xCCFFFFFF),
-            fontSize: 12,
-            shadows: [Shadow(color: Color(0xD9000000), blurRadius: 8)],
-          ),
-        ),
-        const SizedBox(height: 10),
-        ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 520),
-          child: ClipRRect(
-            key: const Key('photoViewerBottomToolbar'),
-            borderRadius: BorderRadius.circular(18),
-            child: IsleGlassBackdrop(
-              blur: 12,
-              child: DecoratedBox(
-                decoration: _toolbarDecoration,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 2,
-                  ),
-                  child: Wrap(
-                    alignment: WrapAlignment.center,
-                    spacing: 2,
-                    runSpacing: 0,
-                    children: [
-                      if (!widget.fileBrowserMode)
-                        IconButton(
-                          tooltip: asset.personalFavorite
-                              ? '从我的收藏移除'
-                              : '加入我的收藏',
-                          onPressed: _busy
-                              ? null
-                              : () => _favorite(shared: false),
-                          color: asset.personalFavorite
-                              ? const Color(0xffffd568)
-                              : Colors.white,
-                          icon: Icon(
-                            asset.personalFavorite
-                                ? Icons.star_rounded
-                                : Icons.star_border_rounded,
-                          ),
-                        ),
-                      if (!widget.fileBrowserMode)
-                        IconButton(
-                          tooltip: '照片信息与相册管理',
-                          onPressed: _busy
-                              ? null
-                              : () async {
-                                  _stopSlideshow();
-                                  final currentId = _current.id;
-                                  await widget.onDetails(_current);
-                                  if (!mounted || widget.onSyncAsset == null) {
-                                    return;
-                                  }
-                                  final synced = widget.onSyncAsset!(currentId);
-                                  if (synced == null) {
-                                    _removeCurrentItem();
-                                  } else {
-                                    final idx = _items.indexWhere(
-                                      (item) => item.id == currentId,
-                                    );
-                                    if (idx >= 0) {
-                                      _updateState(() => _items[idx] = synced);
-                                    }
-                                  }
-                                },
-                          color: Colors.white,
-                          icon: const Icon(Icons.info_outline_rounded),
-                        ),
-                      IconButton(
-                        tooltip: '分享媒体',
-                        onPressed: _busy ? null : _shareCurrent,
-                        color: Colors.white,
-                        icon: const Icon(Icons.ios_share_outlined),
-                      ),
-                      PopupMenuButton<String>(
-                        tooltip: '更多媒体操作',
-                        enabled: !_busy,
-                        icon: const Icon(
-                          Icons.more_horiz_rounded,
-                          color: Colors.white,
-                        ),
-                        onSelected: (value) => unawaited(_mediaAction(value)),
-                        itemBuilder: (_) => [
-                          const PopupMenuItem(
-                            value: 'export',
-                            child: Text('保存原文件'),
-                          ),
-                          if (!widget.fileBrowserMode &&
-                              widget.onFolderAlbum != null)
-                            const PopupMenuItem(
-                              value: 'folder',
-                              child: Text('复制或移动到相册'),
-                            ),
-                          if (!widget.fileBrowserMode &&
-                              widget.canEditSharedFavorite(asset))
-                            PopupMenuItem(
-                              value: 'shared',
-                              child: Text(asset.favorite ? '取消共享收藏' : '加入共享收藏'),
-                            ),
-                          if (!asset.isVideo &&
-                              widget.offlineAccountId.isNotEmpty)
-                            const PopupMenuItem(
-                              value: 'offline',
-                              child: Text('离线保存照片原件'),
-                            ),
-                          if (_hasLiveMotion)
-                            PopupMenuItem(
-                              value: 'live',
-                              child: Text(
-                                _livePlaying
-                                    ? '返回 Live Photo 静态照片'
-                                    : '播放 Live Photo 动态片段',
-                              ),
-                            ),
-                          if (!widget.fileBrowserMode &&
-                              widget.onDelete != null &&
-                              widget.canEditSharedFavorite(asset))
-                            const PopupMenuItem(
-                              value: 'trash',
-                              child: Text('将原文件移入回收站'),
-                            ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ],
-    ),
-  );
 }

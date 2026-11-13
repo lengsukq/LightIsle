@@ -101,7 +101,9 @@ class PlatformDesktopDirectoryAccess extends DesktopDirectoryAccess {
               'accessId': accessId,
             });
           } catch (error) {
-            debugPrint('PlatformDesktopDirectoryAccess.stopAccess failed: $error');
+            debugPrint(
+              'PlatformDesktopDirectoryAccess.stopAccess failed: $error',
+            );
           }
         },
       );

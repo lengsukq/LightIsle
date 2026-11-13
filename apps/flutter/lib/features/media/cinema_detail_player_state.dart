@@ -66,6 +66,9 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
       if (_playback.playbackSpeed != 1.0) {
         await controller.setPlaybackSpeed(_playback.playbackSpeed);
       }
+      if (_playback.volume < 0.999) {
+        await controller.setVolume(_playback.volume);
+      }
       if (!mounted || _playback.controller != controller) return;
       controller.addListener(_onVideoChanged);
       final isTestBinding = WidgetsBinding.instance.runtimeType
@@ -190,6 +193,9 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
       }
       if (_playback.playbackSpeed != 1.0) {
         await controller.setPlaybackSpeed(_playback.playbackSpeed);
+      }
+      if (_playback.volume < 0.999) {
+        await controller.setVolume(_playback.volume);
       }
       if (!mounted || _playback.controller != controller) return;
       controller.addListener(_onVideoChanged);
@@ -336,11 +342,10 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
 
   Future<void> _setPlaybackSpeed(double speed) async {
     if (!const [0.75, 1.0, 1.25, 1.5, 2.0].contains(speed)) return;
+    _sessionCinemaSpeed = speed;
     _playback.playbackSpeed = speed;
     await _playback.controller?.setPlaybackSpeed(speed);
-    if (mounted) {
-      _updateState(() {});
-    }
+    if (mounted) _updateState(() {});
     try {
       final prefs = await SharedPreferences.getInstance();
       await prefs.setDouble('lightisle_cinema_playback_speed', speed);
@@ -556,9 +561,8 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
                                 : 16 / 9,
                             child: GestureDetector(
                               onDoubleTapDown: (details) async {
-                                final width = MediaQuery.sizeOf(
-                                  dialogContext,
-                                ).width;
+                                final width = MediaQuery.sizeOf(dialogContext)
+                                    .width;
                                 final direction =
                                     details.localPosition.dx < width * .4
                                     ? -10.0
@@ -679,106 +683,14 @@ extension _CinemaDetailPlayerState on _CinemaDetailDialogState {
       }
       return;
     }
-    if (mounted) {
+    if (mounted &&
+        _playback.consumeShouldRebuild(
+          controller.value,
+          playerOnly: widget.playerOnly,
+          subtitleText: _subtitles.cues.isEmpty ? null : _activeCue?.text,
+        )) {
       _updateState(() {});
     }
-    final now = DateTime.now();
-    final ended = controller.value.isCompleted;
-    if (ended && !_playback.completionSaved) {
-      _playback.completionSaved = true;
-      final value = controller.value;
-      final sessionStart = _playback.hlsSession?.start ?? 0;
-      final clock = cinemaPlaybackClock(
-        value.position.inMilliseconds / 1000.0,
-        value.duration.inMilliseconds / 1000.0,
-        sessionStart: sessionStart,
-        originalDuration: _film.durationSeconds,
-      );
-      // A still-growing HLS playlist can reach its temporary end well before
-      // the real film. Do not mark watched or play the next episode then.
-      unawaited(_onPlaybackCompleted(nearRealEnd: clock.nearEnd));
-    } else if (now.difference(_progressQueue.lastQueuedAt) >=
-        CinemaProgressSaveQueue.minimumInterval) {
-      unawaited(_queueProgressSave(force: true));
-    }
-  }
-
-  Future<void> _onPlaybackCompleted({required bool nearRealEnd}) async {
-    final completedID = _film.id;
-    final saved = await _queueProgressSave(force: true, completed: nearRealEnd);
-    if (!nearRealEnd && mounted && !_playback.closing) {
-      _updateState(
-        () => _playback.playbackMessage =
-            '当前转码片段已播放至末尾，但整部影片尚未结束。可等待转码继续，或调整播放进度。',
-      );
-    }
-    if (nearRealEnd &&
-        saved &&
-        mounted &&
-        !_playback.closing &&
-        _playlistState.autoPlayNext &&
-        _film.id == completedID) {
-      await _goToNextEpisode(alreadySaved: true);
-    }
-  }
-
-  Future<bool> _queueProgressSave({
-    bool force = false,
-    bool completed = false,
-  }) {
-    final controller = _playback.controller;
-    if (controller == null || !controller.value.isInitialized) {
-      return Future<bool>.value(true);
-    }
-    final value = controller.value;
-    final offset = _playback.hlsSession?.start ?? 0;
-    final localSeconds = value.position.inMilliseconds / 1000.0;
-    final playlistSeconds = value.duration.inMilliseconds / 1000.0;
-    if (offset + playlistSeconds <= 0 ||
-        !localSeconds.isFinite ||
-        !playlistSeconds.isFinite) {
-      return Future<bool>.value(true);
-    }
-    final clock = cinemaPlaybackClock(
-      localSeconds,
-      playlistSeconds,
-      sessionStart: offset,
-      originalDuration: _knownFilmDuration,
-      ongoingHls: _playback.hlsSession != null,
-    );
-    final isCompleted = completed || clock.nearEnd;
-    final filmId = _film.id;
-    return _progressQueue.save(() async {
-      try {
-        await widget.api.send(
-          'PUT',
-          '/api/v2/cinema/$filmId/progress',
-          body: <String, Object>{
-            'position': clock.position,
-            'duration': clock.duration,
-            'completed': isCompleted,
-          },
-        );
-        if (mounted && _film.id == filmId) {
-          final updated = _film.withProgress(
-            newPosition: clock.position,
-            newDuration: clock.duration,
-            isCompleted: isCompleted,
-          );
-          _updateState(() {
-            _film = updated;
-            _playback.progressSaveMessage = null;
-          });
-          widget.onProgressUpdated(updated);
-        }
-      } catch (_) {
-        if (mounted && _film.id == filmId) {
-          _updateState(() {
-            _playback.progressSaveMessage = '播放进度暂时未能保存，请检查连接后重试。';
-          });
-        }
-        rethrow;
-      }
-    }, force: force);
+    _handlePlayerProgressTick(controller);
   }
 }

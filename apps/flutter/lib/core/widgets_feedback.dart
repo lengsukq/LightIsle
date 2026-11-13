@@ -182,8 +182,6 @@ class IsleSquircleBadge extends StatelessWidget {
     this.size = 34,
     this.iconSize = 18,
     this.iconColor,
-    this.gradient,
-    this.shadow = false,
   });
 
   final IconData icon;
@@ -191,8 +189,6 @@ class IsleSquircleBadge extends StatelessWidget {
   final double size;
   final double iconSize;
   final Color? iconColor;
-  final List<Color>? gradient;
-  final bool shadow;
 
   @override
   Widget build(BuildContext context) {
@@ -442,5 +438,3 @@ class IsleEmptyStateCard extends StatelessWidget {
     );
   }
 }
-
-typedef IsleEmptyState = IsleEmptyStateCard;

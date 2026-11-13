@@ -9,6 +9,7 @@ import 'package:lightisle/core/lightisle_api.dart';
 import 'package:lightisle/core/media_image_memory_cache.dart';
 import 'package:lightisle/features/media/media_models.dart';
 import 'package:lightisle/features/media/photo_gallery_viewer.dart';
+import 'package:lightisle/features/media/photo_gallery_viewer_filmstrip.dart';
 import 'package:lightisle/features/media/photo_zoom_surface.dart';
 
 class _ViewerApi extends LightIsleApi {
@@ -76,7 +77,10 @@ Widget _viewer(
   bool editable = false,
   bool deleteConfirmed = false,
   bool offline = false,
+  bool fileBrowserMode = false,
   MediaImageMemoryCache? sharedCache,
+  Future<PhotoAsset> Function(PhotoAsset)? onPersonalFavorite,
+  Future<void> Function(PhotoAsset)? onDetails,
 }) => MaterialApp(
   home: PhotoGalleryViewer(
     api: api,
@@ -85,11 +89,12 @@ Widget _viewer(
     initialIndex: 0,
     canEditSharedFavorite: (_) => editable,
     onSharedFavorite: (asset) async => asset,
-    onPersonalFavorite: (asset) async => asset,
+    onPersonalFavorite: onPersonalFavorite ?? (asset) async => asset,
     onDelete: editable ? (_) async => deleteConfirmed : null,
-    onDetails: (_) async {},
+    onDetails: onDetails ?? (_) async {},
     onLoadMore: () async => assets,
     offlineAccountId: offline ? 'test-account' : '',
+    fileBrowserMode: fileBrowserMode,
   ),
 );
 
@@ -496,6 +501,151 @@ void main() {
       final offset = tester.getTopLeft(backBtn);
       expect(offset.dx, greaterThanOrEqualTo(80.0));
       debugDefaultTargetPlatformOverride = previous;
+    },
+  );
+
+  testWidgets(
+    'video asset omits bottom toolbar and relocates actions into top header',
+    (tester) async {
+      tester.view.physicalSize = const Size(430, 860);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      final api = _ViewerApi();
+      addTearDown(api.close);
+      var favoriteCalls = 0;
+      var detailsCalls = 0;
+      await tester.pumpWidget(
+        _viewer(
+          api,
+          [_asset(1, video: true), _asset(2)],
+          editable: true,
+          onPersonalFavorite: (asset) async {
+            favoriteCalls++;
+            return PhotoAsset.fromJson(<String, dynamic>{
+              'id': asset.id,
+              'name': asset.name,
+              'path': asset.path,
+              'type': asset.type,
+              'takenAt': asset.takenAt,
+              'personalFavorite': !asset.personalFavorite,
+            });
+          },
+          onDetails: (_) async {
+            detailsCalls++;
+          },
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.byKey(const Key('photoViewerBottomToolbar')), findsNothing);
+      expect(find.byType(PhotoGalleryViewerFilmstrip), findsNothing);
+      expect(find.byTooltip('播放幻灯片'), findsNothing);
+      expect(find.byTooltip('幻灯片设置'), findsNothing);
+      expect(find.text('movie.mp4 · 1 / 2'), findsOneWidget);
+
+      final headerActions = find.byKey(
+        const Key('photoViewerVideoHeaderActions'),
+      );
+      expect(headerActions, findsOneWidget);
+      expect(
+        find.descendant(of: headerActions, matching: find.byTooltip('加入我的收藏')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(
+          of: headerActions,
+          matching: find.byTooltip('照片信息与相册管理'),
+        ),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: headerActions, matching: find.byTooltip('分享媒体')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: headerActions, matching: find.byTooltip('更多媒体操作')),
+        findsOneWidget,
+      );
+
+      await tester.tap(find.byTooltip('加入我的收藏'));
+      await tester.pumpAndSettle();
+      expect(favoriteCalls, 1);
+      expect(find.byTooltip('从我的收藏移除'), findsOneWidget);
+
+      await tester.tap(find.byTooltip('照片信息与相册管理'));
+      await tester.pumpAndSettle();
+      expect(detailsCalls, 1);
+
+      await tester.tap(find.byTooltip('更多媒体操作'));
+      await tester.pumpAndSettle();
+      expect(find.text('保存原文件'), findsOneWidget);
+      expect(find.text('将原文件移入回收站'), findsOneWidget);
+      await tester.tapAt(const Offset(20, 200));
+      await tester.pumpAndSettle();
+
+      // Swiping back to a photo asset restores the photo bottom toolbar.
+      await tester.drag(find.byType(PageView), const Offset(-380, 0));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('photoViewerBottomToolbar')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'video header fits narrow phones and file browser mode without overflow',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 680);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(() {
+        tester.view.resetPhysicalSize();
+        tester.view.resetDevicePixelRatio();
+      });
+
+      final api = _ViewerApi();
+      addTearDown(api.close);
+      final longVideo = PhotoAsset.fromJson(<String, dynamic>{
+        'id': 9,
+        'name': 'very-long-vacation-4k-hdr-movie-recording-final.mp4',
+        'path': 'Trips/very-long-vacation-4k-hdr-movie-recording-final.mp4',
+        'type': 'video',
+        'takenAt': 1792000000,
+      });
+
+      await tester.pumpWidget(_viewer(api, [longVideo]));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('photoViewerBottomToolbar')), findsNothing);
+      expect(find.byTooltip('分享媒体'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      await tester.pumpWidget(_viewer(api, [longVideo], fileBrowserMode: true));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const Key('photoViewerBottomToolbar')), findsNothing);
+      final headerActions = find.byKey(
+        const Key('photoViewerVideoHeaderActions'),
+      );
+      expect(
+        find.descendant(of: headerActions, matching: find.byTooltip('播放列表')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: headerActions, matching: find.byTooltip('视频连续播放')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: headerActions, matching: find.byTooltip('分享媒体')),
+        findsOneWidget,
+      );
+      expect(
+        find.descendant(of: headerActions, matching: find.byTooltip('更多媒体操作')),
+        findsOneWidget,
+      );
+      expect(find.byTooltip('加入我的收藏'), findsNothing);
+      expect(find.byTooltip('照片信息与相册管理'), findsNothing);
+      expect(tester.takeException(), isNull);
     },
   );
 }

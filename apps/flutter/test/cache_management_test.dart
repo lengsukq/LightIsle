@@ -165,7 +165,9 @@ void main() {
 
       final api = _FakeCacheApi();
       IsleCacheManager.instance.setDiskRootForTesting(tempDir);
-      await IsleCacheManager.instance.clearAllTemporary();
+      await IsleCacheManager.instance.clearCategories(
+        IsleCacheCategory.values.toSet(),
+      );
 
       final thumbBytes = Uint8List.fromList(List<int>.filled(2048, 1));
       final posterBytes = Uint8List.fromList(List<int>.filled(4096, 2));
@@ -240,7 +242,9 @@ void main() {
       });
 
       IsleCacheManager.instance.setDiskRootForTesting(tempDir);
-      await IsleCacheManager.instance.clearAllTemporary();
+      await IsleCacheManager.instance.clearCategories(
+        IsleCacheCategory.values.toSet(),
+      );
       await IsleCacheManager.instance.putBytes(
         IsleCacheCategory.mapTiles,
         'tile-key-1',
@@ -286,7 +290,9 @@ void main() {
     });
 
     IsleCacheManager.instance.setDiskRootForTesting(tempDir);
-    await IsleCacheManager.instance.clearAllTemporary();
+    await IsleCacheManager.instance.clearCategories(
+      IsleCacheCategory.values.toSet(),
+    );
 
     final futureExpiry = DateTime.now()
         .add(const Duration(days: 7))

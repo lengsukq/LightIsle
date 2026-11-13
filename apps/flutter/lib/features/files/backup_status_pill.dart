@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/lightisle_api.dart';
+import '../../core/widgets.dart';
 
 enum MobileBackupBadgeKind { unconfigured, idle, synced, pendingAttention }
 
@@ -201,7 +202,31 @@ class _PhotoBackupStatusPillState extends State<PhotoBackupStatusPill> {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(icon, size: 15, color: accent),
+                if (_snapshot.kind == MobileBackupBadgeKind.synced)
+                  IsleDonutGauge(
+                    fraction: 1.0,
+                    color: accent,
+                    size: 16,
+                    strokeWidth: 2.2,
+                    center: Icon(Icons.check_rounded, size: 10, color: accent),
+                    semanticsLabel: '相册已同步完成',
+                  )
+                else if (_snapshot.kind ==
+                    MobileBackupBadgeKind.pendingAttention)
+                  IsleDonutGauge(
+                    fraction: 0.72,
+                    color: accent,
+                    size: 16,
+                    strokeWidth: 2.2,
+                    center: Icon(
+                      Icons.priority_high_rounded,
+                      size: 9.5,
+                      color: accent,
+                    ),
+                    semanticsLabel: _snapshot.label,
+                  )
+                else
+                  Icon(icon, size: 15, color: accent),
                 if (showLabel) ...[
                   const SizedBox(width: 5),
                   Text(

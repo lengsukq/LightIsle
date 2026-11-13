@@ -400,7 +400,7 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
       groupAssets.indexWhere((item) => item.id == asset.id),
     );
     await Navigator.of(context).push<void>(
-      MaterialPageRoute<void>(
+      buildIslePageRoute<void>(
         builder: (_) => PhotoGalleryViewer(
           api: widget.api,
           memoryCache: _thumbCache,

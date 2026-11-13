@@ -154,22 +154,20 @@ abstract final class IsleMotion {
   static const double tabSlideDistance = 0.014;
   static const double tabScaleBegin = 0.988;
   static const double pressScale = 0.972;
+
+  static bool reducedMotion(BuildContext context) =>
+      MediaQuery.maybeDisableAnimationsOf(context) ?? false;
 }
 
 /// Liquid Glass material parameters (blur sigmas, tints, specular rims).
 abstract final class IsleGlass {
   static const double sigmaSubtle = 14.0;
-  static const double sigmaClear = 18.0;
   static const double sigmaRegular = 28.0;
   static const double sigmaIntense = 36.0;
 
   static final ui.ImageFilter filterSubtle = ui.ImageFilter.blur(
     sigmaX: sigmaSubtle,
     sigmaY: sigmaSubtle,
-  );
-  static final ui.ImageFilter filterClear = ui.ImageFilter.blur(
-    sigmaX: sigmaClear,
-    sigmaY: sigmaClear,
   );
   static final ui.ImageFilter filterRegular = ui.ImageFilter.blur(
     sigmaX: sigmaRegular,
@@ -182,13 +180,6 @@ abstract final class IsleGlass {
 
   static Color regularTint(bool dark, Color surface) =>
       surface.withValues(alpha: dark ? 0.72 : 0.76);
-
-  static Color dockTint(bool dark, Color surface) =>
-      surface.withValues(alpha: dark ? 0.76 : 0.80);
-
-  static Color clearTint(bool dark) => dark
-      ? const Color(0xff0b101d).withValues(alpha: 0.46)
-      : Colors.white.withValues(alpha: 0.56);
 
   static Color rimBorderColor(
     bool dark, {
@@ -374,18 +365,8 @@ abstract final class IsleLayout {
 
   /// High contrast / reduced-motion users should not pay for a blurred dock.
   static bool opaqueNavigation(BuildContext context) =>
-      MediaQuery.highContrastOf(context) ||
-      MediaQuery.disableAnimationsOf(context);
-
-  static int responsiveColumns(
-    double availableWidth, {
-    double minWidth = 320,
-    int maxColumns = 2,
-    double textScale = 1.0,
-  }) {
-    final adjusted = minWidth * (textScale > 1.3 ? 1.25 : 1.0);
-    return (availableWidth / adjusted).floor().clamp(1, maxColumns).toInt();
-  }
+      (MediaQuery.maybeHighContrastOf(context) ?? false) ||
+      IsleMotion.reducedMotion(context);
 }
 
 /// Shared LightIsle brand colors. Functional surfaces stay quiet around media.

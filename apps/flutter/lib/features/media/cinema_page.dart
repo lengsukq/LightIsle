@@ -9,6 +9,7 @@ import '../../core/authenticated_media_image.dart';
 import '../../core/isle_action_menu.dart';
 import '../../core/isle_cache_manager.dart';
 import '../../core/isle_data_cache.dart';
+import '../../core/isle_quick_jump.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/media_image_memory_cache.dart';
@@ -16,10 +17,12 @@ import '../../core/widgets.dart';
 import '../files/file_export_service.dart';
 import '../files/files_page.dart';
 import '../files/upload_task_center.dart';
+import '../settings/dav_page.dart';
 import 'cinema_catalog_display.dart';
 import 'cinema_detail_dialog.dart';
 import 'cinema_film_overview.dart';
 import 'cinema_film_tile.dart';
+import 'cinema_metadata_repository.dart';
 import 'cinema_page_state_models.dart';
 import 'cinema_series_overview.dart';
 import 'local_video_page.dart';
@@ -36,6 +39,7 @@ part 'cinema_page_library.dart';
 part 'cinema_page_history.dart';
 part 'cinema_page_series.dart';
 part 'cinema_page_home_rails.dart';
+part 'cinema_library_controls.dart';
 
 class CinemaPage extends StatefulWidget {
   const CinemaPage({
@@ -74,7 +78,11 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
     onPoll: () => unawaited(_refreshStatus()),
   );
 
-  bool get _isRootCinemaView => _subpages.isRootView && _catalog.mode == 'all';
+  bool get _isRootCinemaView =>
+      _subpages.isRootView &&
+      _catalog.mode == 'all' &&
+      _catalog.watched == 'all' &&
+      _catalog.sort == 'recent';
 
   @override
   void initState() {
@@ -98,7 +106,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
         return;
       }
       await Navigator.of(context).push<void>(
-        MaterialPageRoute(builder: (_) => LocalVideoPage(path: path)),
+        buildIslePageRoute(builder: (_) => LocalVideoPage(path: path)),
       );
     } catch (error) {
       if (mounted) {
@@ -115,7 +123,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
     _catalog.dispose();
     _indexing.dispose();
     _scanPoller.dispose();
-    WidgetsBinding.instance.addObserver(this);
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
@@ -216,7 +224,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
           return;
         }
         Navigator.of(context).push<void>(
-          MaterialPageRoute(
+          buildIslePageRoute(
             builder: (_) => OfflineVideosPage(
               api: widget.api,
               accountName: widget.accountName,
@@ -237,113 +245,22 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
     }
   }
 
-  Widget _cinemaNavigation() => Padding(
-    padding: EdgeInsets.fromLTRB(_pageInset, 0, _pageInset, 8),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
-      children: [
-        SingleChildScrollView(
-          scrollDirection: Axis.horizontal,
-          child: Row(
-            children: [
-              _viewChip(
-                '首页',
-                Icons.home_outlined,
-                _isRootCinemaView,
-                () => _switchToFilmMode('all'),
-              ),
-              const SizedBox(width: 6),
-              _viewChip(
-                '电影',
-                Icons.movie_outlined,
-                _subpages.isRootView && _catalog.mode == 'movie',
-                () => _switchToFilmMode('movie'),
-              ),
-              const SizedBox(width: 6),
-              _viewChip(
-                '剧集',
-                Icons.video_library_rounded,
-                _subpages.showSeries,
-                () {
-                  setState(() {
-                    _subpages.showSeries = true;
-                    _subpages.showHistory = false;
-                    _selection.clear();
-                  });
-                  unawaited(_loadSeries());
-                  if (widget.isAdmin) unawaited(_refreshScrape());
-                },
-              ),
-              const SizedBox(width: 6),
-              _viewChip(
-                '继续观看',
-                Icons.play_circle_outline_rounded,
-                _subpages.isRootView && _catalog.mode == 'continue',
-                () => _switchToFilmMode('continue'),
-              ),
-              const SizedBox(width: 6),
-              _viewChip(
-                '观看历史',
-                Icons.history_rounded,
-                _subpages.showHistory,
-                () {
-                  setState(() {
-                    _subpages.showHistory = true;
-                    _subpages.showSeries = false;
-                    _selection.clear();
-                    if (_catalog.searchController.text.isEmpty) {
-                      _catalog.showSearch = false;
-                    }
-                  });
-                  unawaited(_loadHistory());
-                },
-              ),
-              const SizedBox(width: 6),
-              _viewChip(
-                '待匹配',
-                Icons.auto_fix_high_outlined,
-                _subpages.isRootView && _catalog.mode == 'unmatched',
-                () {
-                  _switchToFilmMode('unmatched');
-                  if (widget.isAdmin) unawaited(_refreshScrape());
-                },
-              ),
-              if (_subpages.showHistory || _catalog.mode == 'continue') ...[
-                const SizedBox(width: 6),
-                TextButton(
-                  onPressed: () => _switchToFilmMode('all'),
-                  child: const Text('返回首页'),
-                ),
-              ],
-            ],
-          ),
-        ),
-        IsleAnimatedExpand(
-          expanded: _catalog.showSearch && !_subpages.showHistory,
-          child: Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: IsleSearchBar(
-              controller: _catalog.searchController,
-              autofocus: true,
-              onChanged: _searchChanged,
-              maxLength: 120,
-              hintText: '搜索影片或剧集',
-              showClear: true,
-              clearTooltip: '关闭搜索',
-              onClear: () {
-                _catalog.searchController.clear();
-                _searchChanged('');
-                setState(() => _catalog.showSearch = false);
-              },
-            ),
-          ),
-        ),
-      ],
-    ),
-  );
+  void _openDavPage() {
+    Navigator.of(context).push<void>(
+      buildIslePageRoute(
+        builder: (_) => DavPage(api: widget.api, accountId: widget.accountName),
+      ),
+    );
+  }
 
   void _switchToFilmMode(String targetMode) {
-    setState(_subpages.exitSecondaryViews);
+    setState(() {
+      _subpages.exitSecondaryViews();
+      if (targetMode == 'all') {
+        _catalog.watched = 'all';
+        _catalog.sort = 'recent';
+      }
+    });
     _changeMode(targetMode);
   }
 
@@ -371,7 +288,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
         !_selection.selecting;
     final showFilmListSection = _subpages.isRootView;
 
-    return PopScope(
+    return IsleChildPopScope(
       canPop:
           !_selection.selecting && !_catalog.showSearch && _isRootCinemaView,
       onPopInvokedWithResult: _handleSystemBack,
@@ -456,165 +373,6 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
     }
   }
 
-  Widget _buildHeaderTrailingActions(BuildContext context) {
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (_subpages.isRootView)
-          IconButton(
-            key: const Key('cinema-select-toggle'),
-            visualDensity: VisualDensity.compact,
-            tooltip: _selection.selecting ? '结束多选' : '多选影片',
-            onPressed: _selection.batchBusy
-                ? null
-                : () {
-                    if (_selection.selecting) {
-                      _endFilmSelection();
-                    } else {
-                      setState(() => _selection.selecting = true);
-                    }
-                  },
-            icon: Icon(
-              _selection.selecting
-                  ? Icons.close_rounded
-                  : Icons.checklist_rounded,
-            ),
-            color: _selection.selecting
-                ? Theme.of(context).colorScheme.primary
-                : null,
-          ),
-        IconButton(
-          visualDensity: VisualDensity.compact,
-          tooltip: '搜索影片',
-          onPressed: () {
-            if (_catalog.showSearch) {
-              _catalog.searchController.clear();
-              _searchChanged('');
-              setState(() => _catalog.showSearch = false);
-            } else {
-              setState(() {
-                _catalog.showSearch = true;
-                _subpages.showHistory = false;
-              });
-            }
-          },
-          icon: const Icon(Icons.search_rounded),
-        ),
-        IconButton(
-          visualDensity: VisualDensity.compact,
-          tooltip: '上传视频',
-          onPressed: _upload,
-          icon: const Icon(Icons.add_rounded),
-        ),
-        _buildOverflowMenuButton(),
-      ],
-    );
-  }
-
-  Widget _buildOverflowMenuButton() {
-    return PopupMenuButton<String>(
-      tooltip: '更多影院操作',
-      onSelected: _cinemaAction,
-      position: PopupMenuPosition.under,
-      constraints: const BoxConstraints(minWidth: 218, maxWidth: 270),
-      shape: IsleShapes.menu(),
-      itemBuilder: (_) => [
-        isleActionMenuItem(
-          value: 'select',
-          icon: _selection.selecting
-              ? Icons.close_rounded
-              : Icons.checklist_rounded,
-          label: _selection.selecting ? '结束多选' : '多选影片',
-        ),
-        const PopupMenuDivider(),
-        isleActionMenuItem(
-          value: 'files',
-          icon: Icons.folder_open_outlined,
-          label: '管理视频文件',
-        ),
-        isleActionMenuItem(
-          value: 'local',
-          icon: Icons.play_circle_outline_rounded,
-          label: '播放本地视频（离线）',
-        ),
-        isleActionMenuItem(
-          value: 'offline',
-          icon: Icons.offline_pin_outlined,
-          label: '我的离线影片库',
-        ),
-        isleActionMenuItem(
-          value: 'refresh',
-          icon: Icons.refresh_rounded,
-          label: '刷新影视库',
-        ),
-        if (widget.isAdmin)
-          isleActionMenuItem(
-            value: 'scan',
-            enabled: !_indexing.scanning,
-            icon: Icons.sync_rounded,
-            label: _indexing.scanning ? '扫描中' : '扫描影视库',
-          ),
-      ],
-    );
-  }
-
-  Widget _buildSelectionToolbar() {
-    final allPageSelected = _catalog.films
-        .take(50)
-        .every((film) => _selection.selectedFilmIds.contains(film.id));
-    final canTrashSelected =
-        _selectedFilms.isNotEmpty &&
-        _selectedFilms.every((film) => widget.isAdmin || film.canWrite);
-
-    return IsleAnimatedExpand(
-      expanded: _selection.selecting && _subpages.isRootView,
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(_pageInset, 0, _pageInset, 14),
-        child: MediaSelectionActionBar(
-          label: '已选 ${_selection.selectedFilmIds.length} 项 · 最多 50 项',
-          actions: [
-            OutlinedButton.icon(
-              onPressed: _selection.batchBusy || _catalog.films.isEmpty
-                  ? null
-                  : _selectVisibleFilms,
-              icon: const Icon(Icons.select_all_rounded, size: 17),
-              label: Text(allPageSelected ? '取消全选' : '全选当前页'),
-            ),
-            OutlinedButton.icon(
-              onPressed:
-                  _selection.batchBusy || _selection.selectedFilmIds.isEmpty
-                  ? null
-                  : _batchSaveFilms,
-              icon: const Icon(Icons.download_outlined, size: 17),
-              label: const Text('保存原文件'),
-            ),
-            OutlinedButton.icon(
-              onPressed:
-                  _selection.batchBusy || _selection.selectedFilmIds.isEmpty
-                  ? null
-                  : _batchShareFilms,
-              icon: const Icon(Icons.ios_share_outlined, size: 17),
-              label: const Text('分享'),
-            ),
-            if (canTrashSelected)
-              FilledButton.tonalIcon(
-                onPressed:
-                    _selection.batchBusy || _selection.selectedFilmIds.isEmpty
-                    ? null
-                    : _batchTrashFilms,
-                icon: const Icon(Icons.delete_outline_rounded, size: 17),
-                label: const Text('移入回收站'),
-              ),
-            TextButton(
-              onPressed: _selection.batchBusy ? null : _endFilmSelection,
-              child: const Text('完成'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Widget _buildStatusBanners() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -667,9 +425,8 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
         padding: EdgeInsets.fromLTRB(_pageInset, 8, _pageInset, 6),
         child: Text(
           title,
-          style: Theme.of(
-            context,
-          ).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+          style: Theme.of(context).textTheme.titleMedium
+              ?.copyWith(fontWeight: FontWeight.w700),
         ),
       ),
     );

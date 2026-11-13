@@ -450,10 +450,7 @@ class _DavPageState extends State<DavPage> {
           const Notice('当前账号还没有可挂载的硬盘。'),
         if (_localVaultNotice != null) Notice(_localVaultNotice!),
         if (_loading)
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 20),
-            child: Center(child: CircularProgressIndicator()),
-          )
+          const IsleLoadingState(compact: true, label: '正在加载 WebDAV 配置…')
         else if (_credentials.isEmpty)
           const IsleEmptyStateCard(
             '还没有 WebDAV 密码，生成一个即可连接。',

@@ -49,3 +49,70 @@ String? cinemaDisambiguationBadge(
   if (!duplicateTitleKeys.contains(key)) return null;
   return cinemaFilmFolderBadge(film.path);
 }
+
+String formatCinemaSeasonEpisodeCode(CinemaFilm film) {
+  if (!film.isSeries || (film.season <= 0 && film.episode <= 0)) return '';
+  final s = film.season > 0 ? film.season : 1;
+  final e = film.episode > 0 ? film.episode : 1;
+  return 'S${s.toString().padLeft(2, '0')}E${e.toString().padLeft(2, '0')}';
+}
+
+String formatCinemaRemainingText(CinemaFilm film) {
+  final total = film.duration > 0 ? film.duration : film.durationSeconds;
+  if (!total.isFinite || total <= 0) return '';
+  final remaining = (total - film.position).clamp(0.0, total).toDouble();
+  if (remaining <= 0) return '';
+  if (remaining < 60) return '不足 1 分钟';
+  final totalMinutes = (remaining / 60).ceil();
+  final hours = totalMinutes ~/ 60;
+  final minutes = totalMinutes % 60;
+  if (hours > 0 && minutes > 0) return '$hours 小时 $minutes 分钟';
+  if (hours > 0) return '$hours 小时';
+  return '$totalMinutes 分钟';
+}
+
+String formatCinemaResumeCtaLabel(CinemaFilm film) {
+  if (!film.canResume) return '开始播放';
+  final code = formatCinemaSeasonEpisodeCode(film);
+  final remaining = formatCinemaRemainingText(film);
+  final parts = <String>[
+    '继续播放',
+    if (code.isNotEmpty) code,
+    if (remaining.isNotEmpty) '剩余 $remaining',
+  ];
+  if (parts.length == 1) return parts.first;
+  if (code.isNotEmpty && remaining.isNotEmpty) {
+    return '继续播放 $code · 剩余 $remaining';
+  }
+  if (code.isNotEmpty) return '继续播放 $code';
+  return '继续播放 · 剩余 $remaining';
+}
+
+CinemaFilm? resolveSeriesResumeEpisode(
+  CinemaSeriesInfo series,
+  List<CinemaFilm> episodes,
+) {
+  if (episodes.isEmpty) return null;
+  if (series.nextFilmId > 0) {
+    for (final episode in episodes) {
+      if (episode.id == series.nextFilmId) return episode;
+    }
+  }
+  for (final episode in episodes) {
+    if (episode.canResume) return episode;
+  }
+  if (series.nextSeason > 0 && series.nextEpisode > 0) {
+    for (final episode in episodes) {
+      if (episode.season == series.nextSeason &&
+          episode.episode == series.nextEpisode) {
+        return episode;
+      }
+    }
+  }
+  if (series.inProgress) {
+    for (final episode in episodes) {
+      if (!episode.completed) return episode;
+    }
+  }
+  return null;
+}

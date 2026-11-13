@@ -19,6 +19,7 @@ class FilesDirectoryState {
   bool loading = false;
   String? error;
   String? directoryDiagnostic;
+  String? highlightedPath;
   int loadGeneration = 0;
 
   void resetForIdentity(String initialPath, String newRootIdentity) {
@@ -32,6 +33,7 @@ class FilesDirectoryState {
     nextCursor = '';
     error = null;
     directoryDiagnostic = null;
+    highlightedPath = null;
     loading = true;
   }
 }
@@ -40,6 +42,8 @@ class FilesDirectoryState {
 /// state for [FilesPage].
 class FilesSearchAndTrashState {
   final TextEditingController searchController = TextEditingController();
+  final FocusNode searchFocusNode = FocusNode();
+  bool searchInputFocused = false;
   bool showingTrash = false;
   bool trashLoading = false;
   List<TrashEntry> trashEntries = <TrashEntry>[];
@@ -47,14 +51,22 @@ class FilesSearchAndTrashState {
   bool searching = false;
   bool searchViaSpotlight = false;
   String? preSearchPath;
+  double preSearchScrollOffset = 0;
+  String? searchScopeSubdir;
+  bool searchEntireRoot = false;
   bool searchTruncated = false;
   String searchTerm = '';
   String searchKind = '';
+  List<String> recentSearches = <String>[];
+  int searchHistoryGeneration = 0;
 
   void clearSearchState() {
     searching = false;
     searchKind = '';
     preSearchPath = null;
+    preSearchScrollOffset = 0;
+    searchScopeSubdir = null;
+    searchEntireRoot = false;
     searchTerm = '';
     searchController.clear();
   }
@@ -64,10 +76,13 @@ class FilesSearchAndTrashState {
     trashLoading = false;
     trashEntries = <TrashEntry>[];
     searchTruncated = false;
+    recentSearches = <String>[];
+    searchHistoryGeneration++;
     clearSearchState();
   }
 
   void dispose() {
+    searchFocusNode.dispose();
     searchController.dispose();
   }
 }
@@ -95,6 +110,7 @@ class FilesDisplayPrefsState {
 class FilesSelectionAndTransferState {
   bool selecting = false;
   final Set<String> selectedPaths = <String>{};
+  String? selectionAnchorPath;
 
   bool batchBusy = false;
   bool batchStopRequested = false;
@@ -113,6 +129,7 @@ class FilesSelectionAndTransferState {
   void clearSelection() {
     selecting = false;
     selectedPaths.clear();
+    selectionAnchorPath = null;
   }
 
   void resetForRootChange() {

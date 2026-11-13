@@ -35,6 +35,8 @@ part 'cinema_detail_player_view.dart';
 part 'cinema_detail_player_controls.dart';
 part 'cinema_detail_player_menus.dart';
 part 'cinema_detail_player_sheets.dart';
+part 'cinema_detail_player_shortcuts.dart';
+part 'cinema_detail_player_progress.dart';
 
 class CinemaDetailDialog extends StatefulWidget {
   const CinemaDetailDialog({
@@ -75,6 +77,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
       CinemaDirectoryPlaylistState();
   late final CinemaMetadataMatchState _metaMatch;
   final CinemaPlayerChromeState _chrome = CinemaPlayerChromeState();
+  final CinemaShortcutHudState _hud = CinemaShortcutHudState();
   final CinemaExternalActionState _externalActions =
       CinemaExternalActionState();
   final CinemaProgressSaveQueue _progressQueue = CinemaProgressSaveQueue();
@@ -94,6 +97,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     _film = widget.film;
     _metaMatch = CinemaMetadataMatchState(initialQuery: _film.title);
     _restorePlaybackSpeed();
+    _restorePlaybackVolume();
     _restoreAutoplayNext();
     unawaited(CinemaDecodePreference.load());
     _loadDetailAndPlayer();
@@ -190,7 +194,8 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
 
   @override
   void dispose() {
-    _chrome.cancelTimer();
+    _hud.cancelTimers();
+    _chrome.dispose();
     if (_chrome.windowFullscreen) {
       unawaited(_exitNativeFullscreen());
     }
@@ -230,7 +235,12 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
         backgroundColor: Colors.transparent,
         elevation: 0,
         insetPadding: compact ? EdgeInsets.zero : const EdgeInsets.all(14),
-        child: _buildDialogSurface(context, compact: compact, isDark: isDark, resume: resume),
+        child: _buildDialogSurface(
+          context,
+          compact: compact,
+          isDark: isDark,
+          resume: resume,
+        ),
       ),
     );
   }
@@ -245,10 +255,8 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     return ClipRRect(
       borderRadius: BorderRadius.circular(compact ? 0 : 24),
       child: BackdropFilter(
-        filter: ui.ImageFilter.blur(
-          sigmaX: compact ? 0 : 24,
-          sigmaY: compact ? 0 : 24,
-        ),
+        enabled: !(compact || IsleLayout.opaqueNavigation(context)),
+        filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
         child: Container(
           constraints: BoxConstraints(
             maxWidth: 1040,
@@ -450,6 +458,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     final showChrome = _shouldShowPlayerChrome(videoReady);
 
     return Focus(
+      focusNode: _chrome.playerFocusNode,
       autofocus: true,
       onKeyEvent: _onPlayerKey,
       child: PopScope<void>(
@@ -465,14 +474,18 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
             child: Stack(
               fit: StackFit.expand,
               children: [
-                Positioned.fill(child: _fullscreenStage(context)),
+                Positioned.fill(
+                  child: RepaintBoundary(child: _fullscreenStage(context)),
+                ),
                 Positioned(
                   top: 0,
                   left: 0,
                   right: 0,
-                  child: _buildPlayerTopChromeOverlay(
-                    showChrome: showChrome,
-                    videoReady: videoReady,
+                  child: RepaintBoundary(
+                    child: _buildPlayerTopChromeOverlay(
+                      showChrome: showChrome,
+                      videoReady: videoReady,
+                    ),
                   ),
                 ),
                 if (videoReady)
@@ -480,13 +493,17 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                     left: 0,
                     right: 0,
                     bottom: 0,
-                    child: IgnorePointer(
-                      ignoring: !showChrome,
-                      child: AnimatedOpacity(
-                        opacity: showChrome ? 1.0 : 0.0,
-                        duration: const Duration(milliseconds: 220),
-                        curve: Curves.easeOutCubic,
-                        child: _buildBottomTransportDeck(context),
+                    child: RepaintBoundary(
+                      child: IgnorePointer(
+                        ignoring: !showChrome,
+                        child: AnimatedOpacity(
+                          opacity: showChrome ? 1.0 : 0.0,
+                          duration: IsleMotion.reducedMotion(context)
+                              ? Duration.zero
+                              : IsleMotion.quick,
+                          curve: IsleMotion.curve,
+                          child: _buildBottomTransportDeck(context),
+                        ),
                       ),
                     ),
                   ),
@@ -543,7 +560,8 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                   reserveMacTrafficLights: !_chrome.windowFullscreen,
                   trailingActions: _buildPlayerHeaderTrailingActions(),
                 ),
-                if (hasBanner) _buildPlayerOverlayBanners(videoReady: videoReady),
+                if (hasBanner)
+                  _buildPlayerOverlayBanners(videoReady: videoReady),
               ],
             ),
           ),

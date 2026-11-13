@@ -26,12 +26,7 @@ extension _CinemaDetailPlayerSheets on _CinemaDetailDialogState {
                   maxHeight: screenSize.height * 0.8,
                 ),
                 child: Padding(
-                  padding: EdgeInsets.fromLTRB(
-                    16,
-                    20,
-                    isWide ? 24 : 16,
-                    24,
-                  ),
+                  padding: EdgeInsets.fromLTRB(16, 20, isWide ? 24 : 16, 24),
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(22),
                     child: IsleGlassBackdrop(
@@ -180,7 +175,8 @@ extension _CinemaDetailPlayerSheets on _CinemaDetailDialogState {
           IconButton(
             tooltip: '收起播放列表',
             color: Colors.white70,
-            onPressed: () => _updateState(() => _chrome.showPlaylistSheet = false),
+            onPressed: () =>
+                _updateState(() => _chrome.showPlaylistSheet = false),
             icon: const Icon(Icons.close_rounded, size: 20),
           ),
         ],
@@ -408,8 +404,8 @@ extension _CinemaDetailPlayerSheets on _CinemaDetailDialogState {
                                         tooltip: '收起播放信息',
                                         color: Colors.white70,
                                         onPressed: () => _updateState(
-                                          () => _chrome.showPlayerDetails =
-                                              false,
+                                          () =>
+                                              _chrome.showPlayerDetails = false,
                                         ),
                                         icon: const Icon(Icons.close_rounded),
                                       ),

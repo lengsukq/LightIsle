@@ -13,15 +13,11 @@ class AboutCinemaHeroStage extends StatelessWidget {
     required this.phase,
     required this.scrollOffset,
     required this.isDark,
-    required this.colors,
-    required this.theme,
   });
 
   final double phase;
   final double scrollOffset;
   final bool isDark;
-  final ColorScheme colors;
-  final ThemeData theme;
 
   @override
   Widget build(BuildContext context) {

@@ -118,4 +118,48 @@ class CinemaMetadataRepository {
 
   Future<CinemaFilm> _updatedFilm(int filmId) async =>
       CinemaFilm.fromJson(await api.get('/api/v2/cinema/$filmId'));
+
+  Future<CinemaFilm?> fetchFilm(int filmId) async {
+    try {
+      final response = await api.get('/api/v2/cinema/$filmId');
+      if (response.containsKey('id')) {
+        return CinemaFilm.fromJson(response);
+      }
+    } catch (_) {}
+    return null;
+  }
+
+  Future<CinemaFilm> setWatched(
+    CinemaFilm film, {
+    required bool completed,
+  }) async {
+    final response = await api.send(
+      'POST',
+      '/api/v2/cinema/${film.id}/watched',
+      body: <String, Object>{'completed': completed},
+    );
+    if (response.containsKey('id')) {
+      return CinemaFilm.fromJson(response);
+    }
+    final duration = film.durationSeconds > 0
+        ? film.durationSeconds
+        : film.duration;
+    return film.withProgress(
+      newPosition: completed ? 0 : film.position,
+      newDuration: duration,
+      isCompleted: completed,
+    );
+  }
+
+  Future<CinemaFilm> clearProgress(CinemaFilm film) async {
+    await api.send('DELETE', '/api/v2/cinema/${film.id}/progress');
+    final duration = film.durationSeconds > 0
+        ? film.durationSeconds
+        : film.duration;
+    return film.withProgress(
+      newPosition: 0,
+      newDuration: duration,
+      isCompleted: false,
+    );
+  }
 }

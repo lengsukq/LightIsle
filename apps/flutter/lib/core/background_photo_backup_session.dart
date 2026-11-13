@@ -55,11 +55,6 @@ class BackgroundPhotoBackupSession {
     });
   }
 
-  Future<void> endCurrent() async {
-    final token = _activeToken;
-    if (token != null) await end(token);
-  }
-
   /// Explicit local sign-out/account switch must also revoke a persisted
   /// background worker from a previous process. Its old in-memory token may
   /// no longer exist after Android killed and recreated the Flutter engine.

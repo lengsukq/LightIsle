@@ -193,6 +193,7 @@ class MediaStatusBanner extends StatelessWidget {
   const MediaStatusBanner({
     required this.message,
     this.icon = Icons.info_outline,
+    this.leading,
     this.isError = false,
     this.trailing,
     this.diagnostic,
@@ -201,6 +202,7 @@ class MediaStatusBanner extends StatelessWidget {
 
   final String message;
   final IconData icon;
+  final Widget? leading;
   final bool isError;
   final Widget? trailing;
   final String? diagnostic;
@@ -213,6 +215,7 @@ class MediaStatusBanner extends StatelessWidget {
       child: Notice(
         message,
         icon: icon,
+        leading: leading,
         error: isError,
         trailing: trailing,
         diagnostic: diagnostic,

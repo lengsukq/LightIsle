@@ -8,11 +8,14 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../core/authenticated_media_image.dart';
+import '../../core/isle_quick_jump.dart';
 import '../../core/isle_theme.dart';
 import '../../core/isle_action_menu.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
+import '../settings/admin_smb_page.dart';
+import '../settings/dav_page.dart';
 import 'downloads_page.dart';
 import 'duplicate_files_page.dart';
 import 'file_destination_dialog.dart';
@@ -22,6 +25,8 @@ import 'file_name_validation.dart';
 import 'file_share_dialog.dart';
 import 'file_models.dart';
 import 'file_browser_preferences.dart';
+import 'file_search_history_store.dart';
+import 'file_search_widgets.dart';
 import 'file_selection_toolbar.dart';
 import 'file_selection_snapshot.dart';
 import 'file_browser_repository.dart';
@@ -51,6 +56,7 @@ part 'files_page_file_actions.dart';
 part 'files_page_uploads.dart';
 part 'files_page_shell_widgets.dart';
 part 'files_page_file_widgets.dart';
+part 'files_page_item_tiles.dart';
 
 const int _pageSize = 100;
 const int _maxTextPreviewSize = 1024 * 1024;
@@ -62,7 +68,7 @@ Future<void> openFileManager(
   required String directory,
   required String title,
 }) => Navigator.of(context).push<void>(
-  MaterialPageRoute(
+  buildIslePageRoute<void>(
     builder: (_) => Scaffold(
       appBar: IsleAppBar(title: Text(title)),
       body: SafeArea(
@@ -87,7 +93,7 @@ Future<int> openFileUpload(
 }) async {
   var completed = 0;
   await Navigator.of(context).push<void>(
-    MaterialPageRoute(
+    buildIslePageRoute<void>(
       builder: (_) => Scaffold(
         appBar: IsleAppBar(title: Text(title)),
         body: SafeArea(
@@ -116,7 +122,6 @@ class FilesPage extends StatefulWidget {
     required this.isAdmin,
     this.accountName = '',
     this.initialPath = '.',
-    this.showPhotoBackup = false,
     this.uploadOnly = false,
     this.initialUploadType = FileType.any,
     this.onUploaded,
@@ -132,7 +137,6 @@ class FilesPage extends StatefulWidget {
 
   /// The authenticated user's configured files directory.
   final String initialPath;
-  final bool showPhotoBackup;
   final bool uploadOnly;
   final FileType initialUploadType;
   final VoidCallback? onUploaded;
@@ -159,6 +163,9 @@ class _FilesPageState extends State<FilesPage> {
   final FilesDisplayPrefsState _prefsState = FilesDisplayPrefsState();
   final FilesSelectionAndTransferState _transfers =
       FilesSelectionAndTransferState();
+  final ScrollController _scrollController = ScrollController();
+  final GlobalKey _highlightedItemKey = GlobalKey();
+  Timer? _highlightTimer;
   bool _disposed = false;
   late FileUploadService _uploadService;
 
@@ -183,8 +190,17 @@ class _FilesPageState extends State<FilesPage> {
       rootIdentity: widget.api.selectedRoot?.identity ?? 'default',
     );
     _uploadService = _newUploadService();
+    _filter.searchFocusNode.addListener(_onSearchFocusChanged);
     widget.taskCenter?.addListener(_onTaskCenterChange);
     unawaited(_initialize());
+  }
+
+  void _onSearchFocusChanged() {
+    if (_disposed || !mounted) return;
+    final focused = _filter.searchFocusNode.hasFocus;
+    if (_filter.searchInputFocused != focused) {
+      _refreshState(() => _filter.searchInputFocused = focused);
+    }
   }
 
   @override
@@ -214,6 +230,10 @@ class _FilesPageState extends State<FilesPage> {
   @override
   void dispose() {
     _disposed = true;
+    _highlightTimer?.cancel();
+    _highlightTimer = null;
+    _filter.searchFocusNode.removeListener(_onSearchFocusChanged);
+    _scrollController.dispose();
     _prefsState.preferencesGeneration++;
     _filter.dispose();
     widget.taskCenter?.removeListener(_onTaskCenterChange);
@@ -225,6 +245,47 @@ class _FilesPageState extends State<FilesPage> {
     if (mounted && !_disposed) setState(action);
   }
 
+  void _exitSearchAndRestore() {
+    final target = _filter.preSearchPath ?? widget.initialPath;
+    final offset = _filter.preSearchScrollOffset;
+    _filter.searchFocusNode.unfocus();
+    unawaited(_loadFiles(target: target, restoreScrollOffset: offset));
+  }
+
+  void _activateLocateHighlight(String path) {
+    _highlightTimer?.cancel();
+    _refreshState(() => _dir.highlightedPath = path);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _disposed) return;
+      final itemContext = _highlightedItemKey.currentContext;
+      if (itemContext != null) {
+        final reduced = IsleMotion.reducedMotion(context);
+        unawaited(
+          Scrollable.ensureVisible(
+            itemContext,
+            alignment: 0.35,
+            duration: reduced
+                ? Duration.zero
+                : const Duration(milliseconds: 260),
+          ),
+        );
+      }
+    });
+    _highlightTimer = Timer(const Duration(milliseconds: 2800), () {
+      if (mounted && !_disposed && _dir.highlightedPath == path) {
+        _refreshState(() => _dir.highlightedPath = null);
+      }
+    });
+  }
+
+  void _scheduleRestoreScroll(double offset) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _disposed || !_scrollController.hasClients) return;
+      final maxExtent = _scrollController.position.maxScrollExtent;
+      _scrollController.jumpTo(offset.clamp(0.0, maxExtent).toDouble());
+    });
+  }
+
   void _handlePopInvoked(bool didPop, Object? result) {
     if (didPop || _dir.loading) return;
     if (_transfers.selecting) {
@@ -232,7 +293,7 @@ class _FilesPageState extends State<FilesPage> {
     } else if (_filter.showingTrash) {
       _toggleTrash();
     } else if (_filter.searching) {
-      _loadFiles(target: _filter.preSearchPath ?? widget.initialPath);
+      _exitSearchAndRestore();
     } else {
       final segments = _pathSegments();
       if (segments.length > 1) {
@@ -331,11 +392,21 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   void _handleEscapeShortcut() {
-    if (_isEditingText() || _dir.loading || _transfers.batchBusy) return;
+    if (_dir.loading || _transfers.batchBusy) return;
+    if (ModalRoute.of(context)?.isCurrent == false) return;
+    if (_filter.searchFocusNode.hasFocus) {
+      if (_filter.searching) {
+        _exitSearchAndRestore();
+      } else {
+        _filter.searchFocusNode.unfocus();
+      }
+      return;
+    }
+    if (_isEditingText()) return;
     if (_transfers.selecting) {
       _refreshState(_transfers.clearSelection);
     } else if (_filter.searching) {
-      _loadFiles(target: _filter.preSearchPath ?? widget.initialPath);
+      _exitSearchAndRestore();
     } else if (_filter.showingTrash) {
       _toggleTrash();
     }
@@ -365,7 +436,7 @@ class _FilesPageState extends State<FilesPage> {
     final useMeta =
         defaultTargetPlatform == TargetPlatform.macOS ||
         defaultTargetPlatform == TargetPlatform.iOS;
-    return PopScope(
+    return IsleChildPopScope(
       canPop:
           _dir.path == widget.initialPath &&
           !_filter.showingTrash &&
@@ -393,61 +464,69 @@ class _FilesPageState extends State<FilesPage> {
               return RefreshIndicator(
                 onRefresh: _refreshCurrentView,
                 child: ListView(
-              physics: const AlwaysScrollableScrollPhysics(),
-              padding: EdgeInsets.fromLTRB(inset, topInset, inset, inset + 56),
-              children: [
-                _buildHeader(context),
-                const SizedBox(height: 6),
-                _buildToolbar(
-                  context,
-                  compact,
-                  constraints.maxWidth - inset * 2,
+                  controller: _scrollController,
+                  physics: const AlwaysScrollableScrollPhysics(),
+                  padding: EdgeInsets.fromLTRB(
+                    inset,
+                    topInset,
+                    inset,
+                    inset + 56,
+                  ),
+                  children: [
+                    _buildHeader(context),
+                    const SizedBox(height: 6),
+                    _buildToolbar(
+                      context,
+                      compact,
+                      constraints.maxWidth - inset * 2,
+                    ),
+                    if (_filter.searching) ...[
+                      const SizedBox(height: 6),
+                      Text(
+                        '${_filter.searchScopeSubdir != null && !_filter.searchEntireRoot ? '在当前目录“${_filter.searchScopeSubdir!.split('/').last}”中' : '在当前整盘中'}搜索“${_filter.searchTerm}” · 仅搜索当前账号可访问的名称。',
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ],
+                    if (!_filter.showingTrash &&
+                        !_dir.canWrite &&
+                        !_dir.loading &&
+                        _dir.error == null)
+                      _buildReadOnlyBanner(colors, compact: compact),
+                    if (_transfers.batchBusy &&
+                        _transfers.batchProgress != null)
+                      _buildBatchProgressBanner(colors),
+                    if (_dir.error != null)
+                      Notice(
+                        _dir.error!,
+                        error: true,
+                        diagnostic: _dir.error!.startsWith('读取目录失败：')
+                            ? _dir.directoryDiagnostic
+                            : null,
+                        retryLabel: _transfers.lastFailedBatchRetry != null
+                            ? '仅重试失败项'
+                            : '重试',
+                        onRetry: _transfers.lastFailedBatchRetry != null
+                            ? _retryFailedBatchTransfer
+                            : _filter.showingTrash
+                            ? _loadTrash
+                            : _filter.searching
+                            ? _searchFiles
+                            : () => _loadFiles(),
+                      ),
+                    if (_transfers.downloadMessage != null)
+                      _downloadNotice(context),
+                    if ((widget.taskCenter?.jobs ?? _transfers.uploadJobs)
+                        .isNotEmpty) ...[
+                      const SizedBox(height: 8),
+                      _buildUploads(context),
+                    ],
+                    const SizedBox(height: 8),
+                    _buildFileList(context, compact),
+                    const SizedBox(height: 16),
+                  ],
                 ),
-                if (_filter.searching) ...[
-                  const SizedBox(height: 6),
-                  Text(
-                    '共享目录搜索“${_filter.searchTerm}” · 仅搜索当前账号可访问的名称。',
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
-                ],
-                if (!_filter.showingTrash &&
-                    !_dir.canWrite &&
-                    !_dir.loading &&
-                    _dir.error == null)
-                  _buildReadOnlyBanner(colors, compact: compact),
-                if (_transfers.batchBusy && _transfers.batchProgress != null)
-                  _buildBatchProgressBanner(colors),
-                if (_dir.error != null)
-                  Notice(
-                    _dir.error!,
-                    error: true,
-                    diagnostic: _dir.error!.startsWith('读取目录失败：')
-                        ? _dir.directoryDiagnostic
-                        : null,
-                    retryLabel: _transfers.lastFailedBatchRetry != null
-                        ? '仅重试失败项'
-                        : '重试',
-                    onRetry: _transfers.lastFailedBatchRetry != null
-                        ? _retryFailedBatchTransfer
-                        : _filter.showingTrash
-                        ? _loadTrash
-                        : _filter.searching
-                        ? _searchFiles
-                        : () => _loadFiles(),
-                  ),
-                if (_transfers.downloadMessage != null) _downloadNotice(context),
-                if ((widget.taskCenter?.jobs ?? _transfers.uploadJobs)
-                    .isNotEmpty) ...[
-                  const SizedBox(height: 8),
-                  _buildUploads(context),
-                ],
-                const SizedBox(height: 8),
-                _buildFileList(context, compact),
-                const SizedBox(height: 16),
-              ],
-            ),
-          );
-        },
+              );
+            },
           ),
         ),
       ),

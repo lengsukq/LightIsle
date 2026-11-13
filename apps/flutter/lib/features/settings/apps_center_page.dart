@@ -5,11 +5,15 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/isle_quick_jump.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
+import 'accounts_page.dart';
 import 'apps_center_sheets.dart';
+import 'network_diagnostics_page.dart';
+import 'storage_page.dart';
 
 export 'apps_center_sheets.dart';
 
@@ -59,6 +63,19 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
     _reload(refresh: false);
   }
 
+  @override
+  void didUpdateWidget(covariant AppsCenterPage oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.api != widget.api || oldWidget.isAdmin != widget.isAdmin) {
+      _isAdmin = widget.isAdmin ?? false;
+      _activeWorkbenchAppId = null;
+      _activeWorkbenchUrl = null;
+      _loaded = false;
+      _selectedInstallLocationId = '';
+      unawaited(_reload(refresh: false));
+    }
+  }
+
   void _updateState(VoidCallback fn) => setState(fn);
 
   void _applySnapshot(Map<String, dynamic> res) {
@@ -75,8 +92,16 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
       }
       if (res['appStorage'] is Map) {
         _appStorage = Map<String, dynamic>.from(res['appStorage'] as Map);
-        if (_selectedInstallLocationId == 'external' &&
-            _appStorage?['hasExternal'] != true) {
+        final locations = objectList(_appStorage?['locations']);
+        final selectedAvailable =
+            _selectedInstallLocationId.isEmpty ||
+            locations.any(
+              (loc) =>
+                  loc['id']?.toString() == _selectedInstallLocationId &&
+                  loc['online'] == true &&
+                  loc['writable'] == true,
+            );
+        if (!selectedAvailable) {
           _selectedInstallLocationId = '';
         }
       }
@@ -369,70 +394,124 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
   @override
   Widget build(BuildContext context) {
     final activeWorkbench = _activeWorkbenchApp;
-    return Scaffold(
-      appBar: IsleAppBar(
-        title: Text(
-          activeWorkbench != null
-              ? '应用工作台 · ${activeWorkbench['name'] ?? ''}'
-              : '应用中心',
-        ),
-        actions: [
-          IconButton(
-            key: const ValueKey('refreshAppsIconButton'),
-            tooltip: '刷新应用列表',
-            onPressed: _busy ? null : () => _reload(refresh: _isAdmin),
-            icon: const Icon(Icons.refresh_rounded),
+    return PopScope(
+      canPop: activeWorkbench == null,
+      onPopInvokedWithResult: (didPop, _) {
+        if (didPop || activeWorkbench == null) return;
+        setState(() {
+          _activeWorkbenchAppId = null;
+          _activeWorkbenchUrl = null;
+          _workbenchFullscreen = false;
+        });
+        _reload(refresh: false);
+      },
+      child: Scaffold(
+        appBar: IsleAppBar(
+          title: Text(
+            activeWorkbench != null
+                ? '应用工作台 · ${activeWorkbench['name'] ?? ''}'
+                : '应用中心',
           ),
-        ],
-      ),
-      body: IsleListView(
-        children: [
-          if (activeWorkbench != null)
-            _buildEmbeddedWorkbench(context, activeWorkbench)
-          else ...[
-            if (_isAdmin && _appStorage != null) _buildStorageLocationsCard(context),
-            if (_isAdmin && _templates.isNotEmpty)
-              _buildOfficialTemplatesCard(context),
-            if (!_isAdmin)
-              const IsleIntroCard(
-                icon: Icons.apps_rounded,
-                title: '家庭轻应用工作台',
-                description: '这里展示家庭管理员为你开启的实用工具与看板，点击即可免密打开，无需额外配置端口或账号。',
-              ),
-            if (_error != null)
-              Notice(
-                _error!,
-                error: true,
-                onRetry: () => _reload(refresh: _isAdmin),
-              ),
-            if (_notice != null) Notice(_notice!),
-            if (_busy || _wakingAppId != null) const LinearProgressIndicator(),
-            if (_loaded && _apps.isEmpty && !_busy)
-              IsleEmptyStateCard(
-                _isAdmin
-                    ? '还没有已安装的轻应用插件。可一键安装上方官方精选轻应用，或在 Mac 端 LightIsle 客户端中添加。'
-                    : '管理员暂未向当前账号开放轻应用。',
-                title: '暂无可用轻应用',
-                icon: Icons.widgets_outlined,
-              ),
-            if (_apps.isNotEmpty) ...[
-              IsleSectionHeader(
-                title: _isAdmin
-                    ? '已安装轻应用（${_apps.length}）'
-                    : '可用轻应用（${_apps.length}）',
-              ),
-              IsleResponsiveGrid(
-                minItemWidth: 340,
-                maxColumns: 2,
-                spacing: 12,
-                runSpacing: 12,
-                children: [
-                  for (final app in _apps) _buildAppCard(context, app),
+          actions: [
+            IconButton(
+              key: const ValueKey('refreshAppsIconButton'),
+              tooltip: '刷新应用列表',
+              onPressed: _busy ? null : () => _reload(refresh: _isAdmin),
+              icon: const Icon(Icons.refresh_rounded),
+            ),
+          ],
+        ),
+        body: IsleListView(
+          children: [
+            if (activeWorkbench != null)
+              _buildEmbeddedWorkbench(context, activeWorkbench)
+            else if (!_loaded && _busy)
+              const IsleLoadingState(label: '正在加载应用中心…')
+            else ...[
+              if (_isAdmin && _appStorage != null)
+                _buildStorageLocationsCard(context),
+              if (_isAdmin && _templates.isNotEmpty)
+                _buildOfficialTemplatesCard(context),
+              if (!_isAdmin)
+                const IsleIntroCard(
+                  icon: Icons.apps_rounded,
+                  title: '家庭轻应用工作台',
+                  description: '这里展示家庭管理员为你开启的实用工具与看板，点击即可免密打开，无需额外配置端口或账号。',
+                ),
+              IsleQuickJumpStrip(
+                key: const ValueKey('appsCenterQuickJumpStrip'),
+                items: [
+                  if (_isAdmin) ...[
+                    IsleQuickJumpItem(
+                      icon: Icons.storage_rounded,
+                      label: '管理存储与配额',
+                      tooltip: '查看物理磁盘状态与轻应用可用存储位置',
+                      onTap: () => Navigator.of(context).push<void>(
+                        buildIslePageRoute<void>(
+                          builder: (_) =>
+                              StoragePage(api: widget.api, isAdmin: true),
+                        ),
+                      ),
+                    ),
+                    IsleQuickJumpItem(
+                      icon: Icons.people_outline_rounded,
+                      label: '成员与目录授权',
+                      tooltip: '管理家庭成员账号并配合轻应用授权可见范围',
+                      onTap: () => Navigator.of(context).push<void>(
+                        buildIslePageRoute<void>(
+                          builder: (_) => AccountsPage(api: widget.api),
+                        ),
+                      ),
+                    ),
+                  ],
+                  IsleQuickJumpItem(
+                    icon: Icons.speed_rounded,
+                    label: '连接测速',
+                    tooltip: '检测轻量应用与 NAS 服务连接的网络质量',
+                    onTap: () => Navigator.of(context).push<void>(
+                      buildIslePageRoute<void>(
+                        builder: (_) => NetworkDiagnosticsPage(api: widget.api),
+                      ),
+                    ),
+                  ),
                 ],
               ),
+              if (_error != null)
+                Notice(
+                  _error!,
+                  error: true,
+                  onRetry: () => _reload(refresh: _isAdmin),
+                ),
+              if (_notice != null) Notice(_notice!),
+              if (_busy || _wakingAppId != null)
+                const LinearProgressIndicator(),
+              if (_loaded && _apps.isEmpty && !_busy)
+                IsleEmptyStateCard(
+                  _isAdmin
+                      ? '还没有已安装的轻应用插件。可一键安装上方官方精选轻应用，或在 Mac 端 LightIsle 客户端中添加。'
+                      : '管理员暂未向当前账号开放轻应用。',
+                  title: '暂无可用轻应用',
+                  icon: Icons.widgets_outlined,
+                ),
+              if (_apps.isNotEmpty) ...[
+                IsleSectionHeader(
+                  title: _isAdmin
+                      ? '已安装轻应用（${_apps.length}）'
+                      : '可用轻应用（${_apps.length}）',
+                ),
+                IsleResponsiveGrid(
+                  minItemWidth: 340,
+                  maxColumns: 2,
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    for (final app in _apps) _buildAppCard(context, app),
+                  ],
+                ),
+              ],
             ],
           ],
-        ],
+        ),
       ),
     );
   }

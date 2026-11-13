@@ -6,6 +6,7 @@ library;
 
 export 'isle_action_menu.dart';
 export 'isle_controls.dart';
+export 'isle_route.dart';
 export 'isle_style.dart';
 export 'isle_theme.dart';
 export 'widgets.dart';

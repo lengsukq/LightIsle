@@ -6,7 +6,7 @@ import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lightisle/core/isle_theme.dart';
-import 'package:lightisle/features/files/android_photo_backup_page.dart';
+import 'package:lightisle/features/files/mobile_photo_backup_page.dart';
 import 'package:lightisle/features/files/downloads_page.dart';
 import 'package:lightisle/features/files/file_shares_page.dart';
 import 'package:lightisle/features/overview/overview_page.dart';
@@ -85,7 +85,7 @@ void main() {
     ('Photo map', (api) => PhotoMapPage(api: api)),
     (
       'Photo backup',
-      (api) => AndroidPhotoBackupPage(
+      (api) => MobilePhotoBackupPage(
         api: api,
         accountName: 'uid:1',
         androidPlatformOverride: false,

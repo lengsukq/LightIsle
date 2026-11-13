@@ -9,6 +9,7 @@ import '../../core/authenticated_media_image.dart';
 import '../../core/isle_action_menu.dart';
 import '../../core/isle_cache_manager.dart';
 import '../../core/isle_data_cache.dart';
+import '../../core/isle_quick_jump.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/media_image_memory_cache.dart';
@@ -29,6 +30,7 @@ import 'offline_photos_page.dart';
 import 'photo_ai_models.dart';
 import 'photo_album_repository.dart';
 import 'photo_detail_dialog.dart';
+import 'photo_exif_filter_sheet.dart';
 import 'photo_gallery_viewer.dart';
 import 'photo_map_page.dart';
 import 'photo_people_section.dart';
@@ -176,7 +178,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
-    return PopScope(
+    return IsleChildPopScope(
       canPop:
           !_selection.selecting && !_scope.showSearch && _fullTimelineSelected,
       onPopInvokedWithResult: _handleSystemBack,
@@ -299,8 +301,11 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
           onPressed: _selection.batchBusy
               ? null
               : () => setState(() {
-                  _selection.selecting = !_selection.selecting;
-                  _selection.selectedAssets.clear();
+                  if (_selection.selecting) {
+                    _selection.clear();
+                  } else {
+                    _selection.selecting = true;
+                  }
                 }),
           icon: Icon(
             _selection.selecting
@@ -308,6 +313,13 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                 : Icons.checklist_rounded,
           ),
         ),
+        if (MediaQuery.sizeOf(context).width >= 600)
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            tooltip: '足迹地图',
+            onPressed: _openPhotoMap,
+            icon: const Icon(Icons.map_outlined),
+          ),
         IconButton(
           visualDensity: VisualDensity.compact,
           tooltip: '搜索照片',
@@ -343,34 +355,9 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
         defaultTargetPlatform == TargetPlatform.iOS;
     return [
       isleActionMenuItem(
-        value: 'select',
-        icon: _selection.selecting
-            ? Icons.close_rounded
-            : Icons.checklist_rounded,
-        label: _selection.selecting ? '结束多选' : '多选照片',
-      ),
-      const PopupMenuDivider(),
-      isleActionMenuItem(
         value: 'offline',
         icon: Icons.offline_pin_outlined,
         label: '本机离线照片库',
-      ),
-      if (_currentPrivateAlbum == null && _currentAlbum == null) ...[
-        isleActionMenuItem(
-          value: 'people',
-          icon: Icons.face_retouching_natural_outlined,
-          label: '人物相册',
-        ),
-        isleActionMenuItem(
-          value: 'similarCleanup',
-          icon: Icons.auto_fix_high_outlined,
-          label: '连拍与相似清理',
-        ),
-      ],
-      isleActionMenuItem(
-        value: 'map',
-        icon: Icons.map_outlined,
-        label: '地图回溯',
       ),
       if (_fullTimelineSelected &&
           _scope.query.isEmpty &&

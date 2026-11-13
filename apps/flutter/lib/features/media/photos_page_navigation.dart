@@ -22,7 +22,7 @@ extension _PhotosPageNavigation on _PhotosPageState {
 
   Future<void> _openPhotoMap() async {
     final selected = await Navigator.of(context).push<PhotoAsset>(
-      MaterialPageRoute<PhotoAsset>(
+      buildIslePageRoute<PhotoAsset>(
         builder: (_) => PhotoMapPage(api: widget.api),
       ),
     );
@@ -77,13 +77,12 @@ extension _PhotosPageNavigation on _PhotosPageState {
       case 'offline':
         if (widget.offlineAccountId.isEmpty) {
           _updateState(
-            () => _feed.setActionFeedback(
-              '当前服务器未提供稳定账号 ID，升级 NAS 后才能安全使用离线照片库。',
-            ),
+            () =>
+                _feed.setActionFeedback('当前服务器未提供稳定账号 ID，升级 NAS 后才能安全使用离线照片库。'),
           );
         } else {
           Navigator.of(context).push(
-            MaterialPageRoute<void>(
+            buildIslePageRoute<void>(
               builder: (_) => OfflinePhotosPage(
                 api: widget.api,
                 accountId: widget.offlineAccountId,
@@ -154,7 +153,7 @@ extension _PhotosPageNavigation on _PhotosPageState {
       );
       if (goStorage == true && mounted) {
         await Navigator.of(context).push(
-          MaterialPageRoute<void>(
+          buildIslePageRoute<void>(
             builder: (_) =>
                 StoragePage(api: widget.api, isAdmin: widget.isAdmin),
           ),
@@ -163,7 +162,7 @@ extension _PhotosPageNavigation on _PhotosPageState {
       return;
     }
     await Navigator.of(context).push(
-      MaterialPageRoute<void>(
+      buildIslePageRoute<void>(
         builder: (_) => MobilePhotoBackupPage(
           api: widget.api,
           accountName: widget.accountName,
@@ -189,8 +188,106 @@ extension _PhotosPageNavigation on _PhotosPageState {
               ),
             ),
           _buildExpandableSearchBar(),
+          if (_scope.hasActiveQueryOrFacets) _buildActiveFilterSummary(context),
+          if (!_selection.selecting && _fullTimelineSelected)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: _buildQuickJumpStrip(),
+            ),
         ],
       ),
+    );
+  }
+
+  Widget _buildActiveFilterSummary(BuildContext context) {
+    final parts = <String>[
+      if (_scope.query.isNotEmpty) '关键词 “${_scope.query}”',
+      if (_scope.cameraFilter.isNotEmpty) _scope.cameraFilter,
+      if (_scope.locationFilter.isNotEmpty)
+        _scope.locationFilter == '1' ? '含定位' : '无定位',
+      if (_scope.yearFilter > 0) '${_scope.yearFilter} 年',
+      if (_scope.takenFromFilter > 0 || _scope.takenToFilter > 0)
+        _formatCustomDateRangeLabel(),
+      if (_scope.mediaType == 'photo') '仅照片',
+      if (_scope.mediaType == 'live') '实况照片',
+      if (_scope.mediaType == 'video') '仅视频',
+    ];
+    final scheme = Theme.of(context).colorScheme;
+    return Container(
+      key: const Key('photoFilterSummaryBanner'),
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      decoration: BoxDecoration(
+        color: scheme.surfaceContainerHigh.withValues(alpha: 0.72),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.filter_alt_outlined, size: 16, color: scheme.primary),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '当前筛选：${parts.join(' · ')}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              _updateState(() => _scope.clearSearchAndFacets());
+              _loadAssets(reset: true);
+            },
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+            ),
+            child: const Text('清除条件'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuickJumpStrip() {
+    final isMobilePlatform =
+        defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS;
+    return IsleQuickJumpStrip(
+      prefixLabel: '快速入口',
+      items: [
+        IsleQuickJumpItem(
+          icon: Icons.map_outlined,
+          label: '足迹地图',
+          tooltip: '按拍摄位置在地图上浏览照片',
+          onTap: _openPhotoMap,
+        ),
+        IsleQuickJumpItem(
+          icon: Icons.auto_fix_high_outlined,
+          label: '连拍相似清理',
+          tooltip: '对比并清理手机连拍与相似废片',
+          onTap: _openSimilarCleanupPage,
+        ),
+        if (isMobilePlatform && widget.canBackup)
+          IsleQuickJumpItem(
+            icon: Icons.cloud_upload_outlined,
+            label: '手机照片备份',
+            tooltip: '前往手机相册自动备份设置',
+            onTap: _openMobilePhotoBackup,
+          ),
+        IsleQuickJumpItem(
+          icon: Icons.offline_pin_outlined,
+          label: '离线照片库',
+          tooltip: '查看已保存到本机的离线原片',
+          onTap: () => _photoAction('offline'),
+        ),
+        IsleQuickJumpItem(
+          icon: Icons.folder_open_outlined,
+          label: '管理照片文件',
+          tooltip: '打开文件管理器查看原始照片目录',
+          onTap: () => _photoAction('files'),
+        ),
+      ],
     );
   }
 
@@ -590,157 +687,24 @@ extension _PhotosPageNavigation on _PhotosPageState {
       await _refreshFacets();
     }
     if (!mounted) return;
-    var cam = _scope.cameraFilter;
-    var loc = _scope.locationFilter;
-    var yr = _scope.yearFilter;
-    var fromSec = _scope.takenFromFilter;
-    var toSec = _scope.takenToFilter;
-    final applied = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      builder: (sheetContext) => StatefulBuilder(
-        builder: (context, setSheetState) => SafeArea(
-          child: ConstrainedBox(
-            constraints: BoxConstraints(
-              maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.85,
-            ),
-            child: SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  Text('多维筛选', style: Theme.of(context).textTheme.titleMedium),
-                  const SizedBox(height: 12),
-                  if (_scope.facetCameras.isNotEmpty)
-                    DropdownButtonFormField<String>(
-                      initialValue: cam,
-                      decoration: const InputDecoration(labelText: '相机型号'),
-                      items: [
-                        const DropdownMenuItem(value: '', child: Text('全部相机')),
-                        for (final model in _scope.facetCameras)
-                          DropdownMenuItem(value: model, child: Text(model)),
-                      ],
-                      onChanged: (v) => setSheetState(() => cam = v ?? ''),
-                    ),
-                  const SizedBox(height: 12),
-                  DropdownButtonFormField<String>(
-                    initialValue: loc,
-                    decoration: const InputDecoration(labelText: '地理位置'),
-                    items: const [
-                      DropdownMenuItem(value: '', child: Text('全部位置')),
-                      DropdownMenuItem(value: '1', child: Text('含定位')),
-                      DropdownMenuItem(value: '0', child: Text('无定位')),
-                    ],
-                    onChanged: (v) => setSheetState(() => loc = v ?? ''),
-                  ),
-                  if (_scope.facetYears.isNotEmpty) ...[
-                    const SizedBox(height: 12),
-                    DropdownButtonFormField<int>(
-                      initialValue: yr,
-                      decoration: const InputDecoration(labelText: '拍摄年份'),
-                      items: [
-                        const DropdownMenuItem(value: 0, child: Text('全部年份')),
-                        for (final y in _scope.facetYears)
-                          DropdownMenuItem(value: y, child: Text('$y 年')),
-                      ],
-                      onChanged: (v) => setSheetState(() {
-                        yr = v ?? 0;
-                        if (yr > 0) {
-                          fromSec = 0;
-                          toSec = 0;
-                        }
-                      }),
-                    ),
-                  ],
-                  const SizedBox(height: 12),
-                  OutlinedButton.icon(
-                    onPressed: () async {
-                      final now = DateTime.now();
-                      final picked = await showDateRangePicker(
-                        context: context,
-                        firstDate: DateTime(1970, 1, 1),
-                        lastDate: DateTime(now.year + 1, 12, 31),
-                        initialDateRange: fromSec > 0 && toSec > 0
-                            ? DateTimeRange(
-                                start: DateTime.fromMillisecondsSinceEpoch(
-                                  fromSec * 1000,
-                                ),
-                                end: DateTime.fromMillisecondsSinceEpoch(
-                                  toSec * 1000,
-                                ),
-                              )
-                            : null,
-                      );
-                      if (picked != null) {
-                        setSheetState(() {
-                          yr = 0;
-                          fromSec =
-                              DateTime(
-                                picked.start.year,
-                                picked.start.month,
-                                picked.start.day,
-                              ).millisecondsSinceEpoch ~/
-                              1000;
-                          toSec =
-                              DateTime(
-                                picked.end.year,
-                                picked.end.month,
-                                picked.end.day,
-                                23,
-                                59,
-                                59,
-                              ).millisecondsSinceEpoch ~/
-                              1000;
-                        });
-                      }
-                    },
-                    icon: const Icon(Icons.date_range_rounded, size: 18),
-                    label: Text(
-                      fromSec > 0 && toSec > 0
-                          ? '已选自定义日期区间（点击重选）'
-                          : '按自定义日期区间筛选',
-                    ),
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.end,
-                    children: [
-                      TextButton(
-                        onPressed: () {
-                          cam = '';
-                          loc = '';
-                          yr = 0;
-                          fromSec = 0;
-                          toSec = 0;
-                          Navigator.pop(sheetContext, true);
-                        },
-                        child: const Text('重置'),
-                      ),
-                      const SizedBox(width: 8),
-                      FilledButton(
-                        onPressed: () => Navigator.pop(sheetContext, true),
-                        child: const Text('应用筛选'),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
+    final selection = await showPhotoExifFilterSheet(
+      context,
+      facetCameras: _scope.facetCameras,
+      facetYears: _scope.facetYears,
+      cameraFilter: _scope.cameraFilter,
+      locationFilter: _scope.locationFilter,
+      yearFilter: _scope.yearFilter,
+      takenFromFilter: _scope.takenFromFilter,
+      takenToFilter: _scope.takenToFilter,
     );
-    if (applied == true && mounted) {
-      _updateState(() {
-        _scope.cameraFilter = cam;
-        _scope.locationFilter = loc;
-        _scope.yearFilter = yr;
-        _scope.takenFromFilter = fromSec;
-        _scope.takenToFilter = toSec;
-      });
-      await _loadAssets(reset: true);
-    }
+    if (selection == null || !mounted) return;
+    _updateState(() {
+      _scope.cameraFilter = selection.camera;
+      _scope.locationFilter = selection.location;
+      _scope.yearFilter = selection.year;
+      _scope.takenFromFilter = selection.takenFrom;
+      _scope.takenToFilter = selection.takenTo;
+    });
+    await _loadAssets(reset: true);
   }
 }

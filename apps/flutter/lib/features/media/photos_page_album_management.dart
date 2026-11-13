@@ -304,9 +304,7 @@ extension _PhotosPageAlbumManagement on _PhotosPageState {
         _scope.activeAlbum = 0;
         _scope.favoritesOnly = false;
       }
-      _updateState(
-        () => _feed.setActionFeedback('相册已删除，原始媒体仍保留。'),
-      );
+      _updateState(() => _feed.setActionFeedback('相册已删除，原始媒体仍保留。'));
       await Future.wait([_refreshAlbums(), _loadAssets(reset: true)]);
     } catch (error) {
       if (mounted) {
@@ -344,9 +342,7 @@ extension _PhotosPageAlbumManagement on _PhotosPageState {
       if (!mounted) return;
       final wasCurrent = _scope.activePrivateAlbum == album.id;
       if (wasCurrent) _scope.activePrivateAlbum = 0;
-      _updateState(
-        () => _feed.setActionFeedback('私人相册已删除，原始媒体和共享相册仍保留。'),
-      );
+      _updateState(() => _feed.setActionFeedback('私人相册已删除，原始媒体和共享相册仍保留。'));
       await Future.wait([
         _refreshPrivateAlbums(),
         if (wasCurrent) _loadAssets(reset: true),
@@ -467,7 +463,7 @@ extension _PhotosPageAlbumManagement on _PhotosPageState {
     // Albums are a destination, not a temporary picker floating above the
     // timeline. Keep a proper back stack and preserve the timeline underneath.
     final value = await Navigator.of(context).push<String>(
-      MaterialPageRoute<String>(
+      buildIslePageRoute<String>(
         builder: (context) => StatefulBuilder(
           builder: (context, refreshPage) => Scaffold(
             key: const ValueKey('photoAlbumsPage'),

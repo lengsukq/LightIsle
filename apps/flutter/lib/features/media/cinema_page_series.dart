@@ -8,10 +8,13 @@ extension _CinemaPageSeries on _CinemaPageState {
       _subpages.seriesError = null;
     });
     try {
-      final response = await widget.api.get(
-        '/api/v2/series',
-        query: const <String, String>{'limit': '60'},
-      );
+      final query = <String, String>{'limit': '60'};
+      if (_catalog.query.trim().isNotEmpty) {
+        query['query'] = _catalog.query.trim();
+      }
+      if (_catalog.watched != 'all') query['watched'] = _catalog.watched;
+      if (_catalog.sort != 'recent') query['sort'] = _catalog.sort;
+      final response = await widget.api.get('/api/v2/series', query: query);
       final items = <CinemaSeriesInfo>[];
       final raw = response['series'];
       if (raw is List) {
@@ -39,9 +42,39 @@ extension _CinemaPageSeries on _CinemaPageState {
     }
   }
 
+  Future<CinemaSeriesSnapshot?> _fetchSeriesSnapshot(int seriesId) async {
+    try {
+      final response = await widget.api.get('/api/v2/series/$seriesId');
+      final raw = response['films'];
+      final parsed = <CinemaFilm>[];
+      if (raw is List) {
+        for (final item in raw) {
+          if (item is Map) {
+            try {
+              parsed.add(CinemaFilm.fromJson(Map<String, dynamic>.from(item)));
+            } on FormatException {
+              // Skip malformed rows while keeping usable episodes.
+            }
+          }
+        }
+      }
+      CinemaSeriesInfo? seriesInfo;
+      final rawSeries = response['series'];
+      if (rawSeries is Map) {
+        seriesInfo = CinemaSeriesInfo.fromJson(
+          Map<String, dynamic>.from(rawSeries),
+        );
+      }
+      return (series: seriesInfo, episodes: parsed);
+    } catch (_) {
+      return null;
+    }
+  }
+
   Future<void> _openSeries(CinemaSeriesInfo series) async {
     HapticFeedback.selectionClick();
     List<CinemaFilm> films = const [];
+    var currentSeries = series;
     String? error;
     try {
       final response = await widget.api.get('/api/v2/series/${series.id}');
@@ -58,21 +91,30 @@ extension _CinemaPageSeries on _CinemaPageState {
           }
         }
       }
+      final rawSeries = response['series'];
+      if (rawSeries is Map) {
+        currentSeries = CinemaSeriesInfo.fromJson(
+          Map<String, dynamic>.from(rawSeries),
+        );
+      }
       films = parsed;
     } catch (caught) {
       error = mediaErrorLabel(caught);
     }
     if (!mounted) return;
     await Navigator.of(context).push<void>(
-      MaterialPageRoute(
+      buildIslePageRoute(
         builder: (_) => CinemaSeriesOverview(
-          series: series,
+          series: currentSeries,
           episodes: films,
           error: error,
+          onRefreshEpisodes: () => _fetchSeriesSnapshot(series.id),
           onEpisode: (episode) => _openFilmPlayer(episode, playlist: films),
         ),
       ),
     );
+    if (!mounted) return;
+    await Future.wait([_loadSeries(), _loadShelves(), _loadFilms(reset: true)]);
   }
 
   Future<void> _refreshScrape() async {
@@ -138,12 +180,18 @@ extension _CinemaPageSeries on _CinemaPageState {
 
   List<Widget> _seriesView() {
     final theme = Theme.of(context);
-    final filteredSeries = _catalog.query.isEmpty
+    final queryTokens = _catalog.query
+        .trim()
+        .toLowerCase()
+        .split(RegExp(r'\s+'))
+        .where((token) => token.isNotEmpty)
+        .toList();
+    final filteredSeries = queryTokens.isEmpty
         ? _subpages.series
         : _subpages.series
               .where(
-                (item) => item.name.toLowerCase().contains(
-                  _catalog.query.toLowerCase(),
+                (item) => queryTokens.every(
+                  (token) => item.name.toLowerCase().contains(token),
                 ),
               )
               .toList();
@@ -269,6 +317,27 @@ extension _CinemaPageSeries on _CinemaPageState {
               children: <Widget>[
                 const Icon(Icons.auto_awesome_rounded, size: 18),
                 Text('TMDB 自动刮削', style: theme.textTheme.titleSmall),
+                if (status != null &&
+                    status.tmdbConfigured &&
+                    status.processed > 0)
+                  IsleDonutGauge(
+                    fraction: (status.matched / status.processed).clamp(
+                      0.0,
+                      1.0,
+                    ),
+                    color: const Color(0xFFF97316),
+                    size: 30,
+                    strokeWidth: 3.5,
+                    centerText:
+                        '${((status.matched / status.processed).clamp(0.0, 1.0) * 100).round()}%',
+                    centerStyle: theme.textTheme.labelSmall?.copyWith(
+                      fontSize: 8.5,
+                      fontWeight: FontWeight.w700,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                    semanticsLabel:
+                        'TMDB 刮削已匹配 ${status.matched}/${status.processed}',
+                  ),
                 if (status == null)
                   TextButton(
                     onPressed: _refreshScrape,

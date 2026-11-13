@@ -7,6 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:lightisle/core/lightisle_api.dart';
 import 'package:lightisle/main.dart';
+import 'package:lightisle/features/media/photos_page.dart';
 import 'package:lightisle/features/overview/overview_page.dart';
 import 'package:lightisle/features/settings/settings_page.dart';
 
@@ -469,6 +470,175 @@ void main() {
       await tester.pumpAndSettle();
     },
   );
+
+  testWidgets(
+    'offstage tabs do not hijack Back from dashboard files subfolder, and delayed storage policy updates cached pages',
+    (tester) async {
+      final api = _ShellBackAndPolicyApi();
+      addTearDown(api.close);
+      tester.view.physicalSize = const Size(390, 844);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: isleTheme(Brightness.light),
+          home: ClientShell(
+            api: api,
+            identity: const {'id': 7, 'username': 'viewer', 'role': 'member'},
+            onLogout: () async {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      // Switch to Photos tab, activate search (which sets Photos' IsleChildPopScope.canPop=false),
+      // then switch back to Dashboard -> Photos becomes Offstage.
+      await tester.tap(find.widgetWithText(NavigationDestination, '相册'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byTooltip('搜索照片'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(NavigationDestination, '仪表盘'));
+      await tester.pumpAndSettle();
+
+      // Open embedded Dashboard Files and drill into Docs subfolder.
+      await tester.tap(find.byKey(const ValueKey('headerOpenFilesButton')));
+      await tester.pumpAndSettle();
+      expect(find.text('Docs'), findsOneWidget);
+      await tester.tap(find.text('Docs'));
+      await tester.pumpAndSettle();
+      expect(find.text('note.txt'), findsOneWidget);
+
+      // First system Back steps from Docs back to root (.), NOT blocked by offstage Photos!
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(find.text('Docs'), findsOneWidget);
+      expect(find.text('note.txt'), findsNothing);
+
+      // Second system Back exits Dashboard Files back to Overview.
+      await tester.binding.handlePopRoute();
+      await tester.pumpAndSettle();
+      expect(
+        find.byKey(const ValueKey('backToDashboardFromFiles')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey('headerOpenFilesButton')),
+        findsOneWidget,
+      );
+
+      // Simulate personal storage policy arriving after root refresh -> re-keys cached pages.
+      api.assignPersonalRoots();
+      await tester.tap(find.byKey(const ValueKey('shellRootPickerSurface')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.widgetWithText(NavigationDestination, '相册'));
+      await tester.pumpAndSettle();
+      expect(api.photosQueries, hasLength(2));
+      final rebuiltPhotos = tester.widget<PhotosPage>(find.byType(PhotosPage));
+      expect(rebuiltPhotos.canBackup, isTrue);
+      expect(rebuiltPhotos.uploadDirectory, 'Users/u7/photos');
+      expect(rebuiltPhotos.backupDirectory, 'Users/u7/photos');
+
+      await tester.pumpWidget(const SizedBox());
+      await tester.pumpAndSettle();
+    },
+  );
+}
+
+class _ShellBackAndPolicyApi extends FixtureApi {
+  bool _assigned = false;
+  final photosQueries = <String?>[];
+
+  void assignPersonalRoots() {
+    _assigned = true;
+    selectRoot(
+      const LightIsleRoot(
+        id: 'disk-1',
+        name: '家庭主盘',
+        generation: 1,
+        online: true,
+      ),
+    );
+  }
+
+  @override
+  Future<Map<String, dynamic>> get(String path, {Map<String, String>? query}) {
+    if (path == '/api/v2/roots') {
+      return Future.value({
+        'roots': _assigned
+            ? [
+                {
+                  'rootID': 'disk-1',
+                  'name': '家庭主盘',
+                  'generation': 1,
+                  'online': true,
+                },
+              ]
+            : <Map<String, dynamic>>[],
+      });
+    }
+    if (path == '/api/v2/me/storage') {
+      return Future.value({
+        'userId': 7,
+        'locations': _assigned
+            ? [
+                {
+                  'category': 'files',
+                  'rootID': 'disk-1',
+                  'rootGeneration': 1,
+                  'relativePath': 'Users/u7/files',
+                },
+                {
+                  'category': 'photos',
+                  'rootID': 'disk-1',
+                  'rootGeneration': 1,
+                  'relativePath': 'Users/u7/photos',
+                },
+              ]
+            : <Map<String, dynamic>>[],
+        'enforcement': 'pending',
+        'usageComplete': false,
+      });
+    }
+    if (path == '/api/v2/files') {
+      final p = query?['path'] ?? '.';
+      if (p == 'Docs') {
+        return Future.value({
+          'entries': [
+            {
+              'name': 'note.txt',
+              'path': 'Docs/note.txt',
+              'type': 'file',
+              'size': 12,
+              'modified': '2026-01-01T00:00:00Z',
+              'canWrite': true,
+            },
+          ],
+          'nextCursor': '',
+          'canWrite': true,
+        });
+      }
+      return Future.value({
+        'entries': [
+          {
+            'name': 'Docs',
+            'path': 'Docs',
+            'type': 'folder',
+            'size': 0,
+            'modified': '2026-01-01T00:00:00Z',
+            'canWrite': true,
+          },
+        ],
+        'nextCursor': '',
+        'canWrite': true,
+      });
+    }
+    if (path == '/api/v2/photos') {
+      photosQueries.add(query?['directory']);
+    }
+    return super.get(path, query: query);
+  }
 }
 
 class _CountingHttpOverrides extends HttpOverrides {

@@ -5,53 +5,9 @@ import 'isle_theme.dart';
 
 enum IslePillVariant { primary, tonal, glass, danger }
 
-/// Subtle iOS tactile press-scale wrapper.
-class IslePressable extends StatefulWidget {
-  const IslePressable({
-    super.key,
-    required this.child,
-    this.onTap,
-    this.scale = IsleMotion.pressScale,
-  });
-
-  final Widget child;
-  final VoidCallback? onTap;
-  final double scale;
-
-  @override
-  State<IslePressable> createState() => _IslePressableState();
-}
-
-class _IslePressableState extends State<IslePressable> {
-  bool _pressed = false;
-
-  @override
-  Widget build(BuildContext context) {
-    final animate =
-        widget.onTap != null && !MediaQuery.disableAnimationsOf(context);
-    if (!animate) {
-      return widget.onTap == null
-          ? widget.child
-          : GestureDetector(onTap: widget.onTap, child: widget.child);
-    }
-    return GestureDetector(
-      onTapDown: (_) => setState(() => _pressed = true),
-      onTapUp: (_) => setState(() => _pressed = false),
-      onTapCancel: () => setState(() => _pressed = false),
-      onTap: widget.onTap,
-      child: AnimatedScale(
-        scale: _pressed ? widget.scale : 1.0,
-        duration: IsleMotion.micro,
-        curve: IsleMotion.spring,
-        child: widget.child,
-      ),
-    );
-  }
-}
-
 /// Unified iOS capsule button for primary actions (+ 上传), selection toggles (选择/完成),
 /// navigation back pills (< 返回仪表盘), and semantic actions.
-class IslePillButton extends StatelessWidget {
+class IslePillButton extends StatefulWidget {
   const IslePillButton({
     super.key,
     required this.label,
@@ -74,20 +30,34 @@ class IslePillButton extends StatelessWidget {
   final String? tooltip;
 
   @override
+  State<IslePillButton> createState() => _IslePillButtonState();
+}
+
+class _IslePillButtonState extends State<IslePillButton> {
+  bool _pressed = false;
+
+  void _setPressed(bool value) {
+    if (_pressed != value) setState(() => _pressed = value);
+  }
+
+  @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final dark = theme.brightness == Brightness.dark;
-    final disabled = onPressed == null;
-    final isPrimary = variant == IslePillVariant.primary;
-    final isDanger = variant == IslePillVariant.danger;
-    final tone = isDanger ? colors.error : (accent ?? colors.primary);
+    final disabled = widget.onPressed == null;
+    final reducedMotion = IsleMotion.reducedMotion(context);
+    final isPrimary = widget.variant == IslePillVariant.primary;
+    final isDanger = widget.variant == IslePillVariant.danger;
+    final tone = isDanger ? colors.error : (widget.accent ?? colors.primary);
 
     final fg = disabled
         ? colors.onSurfaceVariant.withValues(alpha: 0.45)
         : isPrimary
         ? (dark ? const Color(0xff0b1324) : Colors.white)
-        : (isDanger || selected || variant == IslePillVariant.tonal)
+        : (isDanger ||
+              widget.selected ||
+              widget.variant == IslePillVariant.tonal)
         ? tone
         : colors.onSurface;
 
@@ -98,7 +68,8 @@ class IslePillButton extends StatelessWidget {
           )
         : IsleDecorations.capsuleControl(
             context,
-            selected: selected || variant == IslePillVariant.tonal,
+            selected:
+                widget.selected || widget.variant == IslePillVariant.tonal,
             accent: tone,
             prominent: isPrimary,
             danger: isDanger,
@@ -109,35 +80,36 @@ class IslePillButton extends StatelessWidget {
       borderRadius: IsleRadius.brPill,
       child: InkWell(
         borderRadius: IsleRadius.brPill,
-        onTap: onPressed == null
+        onHighlightChanged: disabled || reducedMotion ? null : _setPressed,
+        onTap: widget.onPressed == null
             ? null
             : () {
                 HapticFeedback.selectionClick();
-                onPressed!();
+                widget.onPressed!();
               },
         child: AnimatedContainer(
-          duration: IsleMotion.fast,
+          duration: reducedMotion ? Duration.zero : IsleMotion.fast,
           curve: IsleMotion.spring,
-          constraints: BoxConstraints(minHeight: compact ? 34 : 38),
+          constraints: BoxConstraints(minHeight: widget.compact ? 34 : 38),
           padding: EdgeInsets.symmetric(
-            horizontal: compact ? 11 : 14,
-            vertical: compact ? 6 : 8,
+            horizontal: widget.compact ? 11 : 14,
+            vertical: widget.compact ? 6 : 8,
           ),
           decoration: decoration,
           child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              if (icon != null) ...[
-                Icon(icon, size: compact ? 15.5 : 17, color: fg),
-                SizedBox(width: compact ? 5 : 6),
+              if (widget.icon != null) ...[
+                Icon(widget.icon, size: widget.compact ? 15.5 : 17, color: fg),
+                SizedBox(width: widget.compact ? 5 : 6),
               ],
               Flexible(
                 child: Text(
-                  label,
+                  widget.label,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: compact ? 12.5 : 13.5,
+                    fontSize: widget.compact ? 12.5 : 13.5,
                     fontWeight: FontWeight.w600,
                     letterSpacing: -0.15,
                     color: fg,
@@ -150,112 +122,20 @@ class IslePillButton extends StatelessWidget {
       ),
     );
 
-    if (tooltip != null && tooltip!.isNotEmpty) {
-      button = Tooltip(message: tooltip!, child: button);
+    if (!disabled && !reducedMotion) {
+      button = AnimatedScale(
+        scale: _pressed ? IsleMotion.pressScale : 1.0,
+        duration: IsleMotion.micro,
+        curve: IsleMotion.spring,
+        child: button,
+      );
+    }
+    button = RepaintBoundary(child: button);
+
+    if (widget.tooltip != null && widget.tooltip!.isNotEmpty) {
+      button = Tooltip(message: widget.tooltip!, child: button);
     }
     return button;
-  }
-}
-
-/// Unified iOS capsule filter & sub-navigation chip with spring selection animation.
-/// Used across Photos, Cinema, Files, and Settings filter bars.
-class IsleCapsuleChip extends StatelessWidget {
-  const IsleCapsuleChip({
-    super.key,
-    required this.label,
-    required this.selected,
-    required this.onSelected,
-    this.icon,
-    this.onDeleted,
-    this.deleteButtonTooltip,
-  });
-
-  final String label;
-  final bool selected;
-  final VoidCallback onSelected;
-  final IconData? icon;
-  final VoidCallback? onDeleted;
-  final String? deleteButtonTooltip;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-    final dark = theme.brightness == Brightness.dark;
-    final fg = selected ? colors.primary : colors.onSurfaceVariant;
-    final decoration = IsleDecorations.capsuleControl(
-      context,
-      selected: selected,
-      accent: colors.primary,
-    );
-
-    return Material(
-      color: Colors.transparent,
-      borderRadius: IsleRadius.brPill,
-      child: InkWell(
-        borderRadius: IsleRadius.brPill,
-        onTap: () {
-          HapticFeedback.selectionClick();
-          onSelected();
-        },
-        child: AnimatedContainer(
-          duration: IsleMotion.fast,
-          curve: IsleMotion.spring,
-          constraints: const BoxConstraints(minHeight: 36),
-          padding: EdgeInsets.fromLTRB(
-            icon != null ? 11 : 14,
-            6,
-            onDeleted != null ? 6 : 14,
-            6,
-          ),
-          decoration: decoration,
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (icon != null) ...[
-                Icon(
-                  icon,
-                  size: 16,
-                  color: selected
-                      ? colors.primary
-                      : colors.onSurfaceVariant.withValues(
-                          alpha: dark ? 0.85 : 0.78,
-                        ),
-                ),
-                const SizedBox(width: 6),
-              ],
-              Flexible(
-                child: Text(
-                  label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
-                    letterSpacing: -0.1,
-                    color: fg,
-                  ),
-                ),
-              ),
-              if (onDeleted != null) ...[
-                const SizedBox(width: 4),
-                SizedBox(
-                  width: 24,
-                  height: 24,
-                  child: IconButton(
-                    padding: EdgeInsets.zero,
-                    visualDensity: VisualDensity.compact,
-                    tooltip: deleteButtonTooltip ?? '移除',
-                    onPressed: onDeleted,
-                    icon: Icon(Icons.close_rounded, size: 15, color: fg),
-                  ),
-                ),
-              ],
-            ],
-          ),
-        ),
-      ),
-    );
   }
 }
 
@@ -268,6 +148,7 @@ class IsleSearchBar extends StatelessWidget {
     this.onSubmitted,
     this.onChanged,
     this.onClear,
+    this.focusNode,
     this.showClear = false,
     this.clearTooltip,
     this.maxLength,
@@ -280,6 +161,7 @@ class IsleSearchBar extends StatelessWidget {
   final ValueChanged<String>? onSubmitted;
   final ValueChanged<String>? onChanged;
   final VoidCallback? onClear;
+  final FocusNode? focusNode;
   final bool showClear;
   final String? clearTooltip;
   final int? maxLength;
@@ -294,6 +176,7 @@ class IsleSearchBar extends StatelessWidget {
 
     return TextField(
       controller: controller,
+      focusNode: focusNode,
       enabled: enabled,
       autofocus: autofocus,
       maxLength: maxLength,
@@ -369,56 +252,68 @@ class IsleSelectionBar extends StatelessWidget {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final dark = theme.brightness == Brightness.dark;
+    final reducedMotion = IsleMotion.reducedMotion(context);
 
-    return Padding(
-      padding: padding,
-      child: IsleSurface(
-        glass: true,
-        radius: IsleRadius.item,
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        tint: dark
-            ? colors.primaryContainer.withValues(alpha: 0.42)
-            : colors.primaryContainer.withValues(alpha: 0.68),
-        child: Wrap(
-          crossAxisAlignment: WrapCrossAlignment.center,
-          alignment: WrapAlignment.spaceBetween,
-          spacing: 8,
-          runSpacing: 8,
-          children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                color: colors.primary.withValues(alpha: dark ? 0.24 : 0.14),
-                borderRadius: IsleRadius.brPill,
-              ),
-              child: Row(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(
-                    Icons.check_circle_rounded,
-                    size: 15,
-                    color: colors.primary,
-                  ),
-                  const SizedBox(width: 6),
-                  Flexible(
-                    child: Text(
-                      label,
-                      style: theme.textTheme.labelLarge?.copyWith(
-                        fontWeight: FontWeight.w700,
-                        color: colors.onSurface,
+    return RepaintBoundary(
+      child: Padding(
+        padding: padding,
+        child: IsleSurface(
+          glass: true,
+          radius: IsleRadius.item,
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          tint: dark
+              ? colors.primaryContainer.withValues(alpha: 0.42)
+              : colors.primaryContainer.withValues(alpha: 0.68),
+          child: Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            alignment: WrapAlignment.spaceBetween,
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  color: colors.primary.withValues(alpha: dark ? 0.24 : 0.14),
+                  borderRadius: IsleRadius.brPill,
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.check_circle_rounded,
+                      size: 15,
+                      color: colors.primary,
+                    ),
+                    const SizedBox(width: 6),
+                    Flexible(
+                      child: AnimatedSwitcher(
+                        duration: reducedMotion
+                            ? Duration.zero
+                            : IsleMotion.micro,
+                        child: Text(
+                          label,
+                          key: ValueKey<String>(label),
+                          style: theme.textTheme.labelLarge?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            color: colors.onSurface,
+                          ),
+                        ),
                       ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
-            ),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              crossAxisAlignment: WrapCrossAlignment.center,
-              children: actions,
-            ),
-          ],
+              Wrap(
+                spacing: 8,
+                runSpacing: 8,
+                crossAxisAlignment: WrapCrossAlignment.center,
+                children: actions,
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -447,6 +342,7 @@ class IsleLoadingState extends StatelessWidget {
     final palette = IslePalette.of(context);
     final orbSize = compact ? 44.0 : 54.0;
     final indicatorSize = compact ? 20.0 : 24.0;
+    final reducedMotion = IsleMotion.reducedMotion(context);
 
     return Padding(
       padding: padding,
@@ -454,46 +350,51 @@ class IsleLoadingState extends StatelessWidget {
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Container(
-              width: orbSize,
-              height: orbSize,
-              decoration: BoxDecoration(
-                shape: BoxShape.circle,
-                gradient: RadialGradient(
-                  center: const Alignment(-0.3, -0.4),
-                  radius: 1.1,
-                  colors: [
-                    palette['cardTop'].withValues(alpha: dark ? 0.92 : 0.96),
-                    Color.lerp(
-                      palette['cardBottom'],
-                      colors.primary,
-                      dark ? 0.14 : 0.06,
-                    )!,
+            RepaintBoundary(
+              child: Container(
+                width: orbSize,
+                height: orbSize,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  gradient: RadialGradient(
+                    center: const Alignment(-0.3, -0.4),
+                    radius: 1.1,
+                    colors: [
+                      palette['cardTop'].withValues(alpha: dark ? 0.92 : 0.96),
+                      Color.lerp(
+                        palette['cardBottom'],
+                        colors.primary,
+                        dark ? 0.14 : 0.06,
+                      )!,
+                    ],
+                  ),
+                  border: Border.all(
+                    color: IsleGlass.rimBorderColor(dark, isGlass: true),
+                    width: 0.9,
+                  ),
+                  boxShadow: [
+                    BoxShadow(
+                      color: colors.primary.withValues(
+                        alpha: dark ? 0.22 : 0.12,
+                      ),
+                      blurRadius: 20,
+                      spreadRadius: 1,
+                    ),
+                    ...IsleShadows.card(dark),
                   ],
                 ),
-                border: Border.all(
-                  color: IsleGlass.rimBorderColor(dark, isGlass: true),
-                  width: 0.9,
-                ),
-                boxShadow: [
-                  BoxShadow(
-                    color: colors.primary.withValues(alpha: dark ? 0.22 : 0.12),
-                    blurRadius: 20,
-                    spreadRadius: 1,
-                  ),
-                  ...IsleShadows.card(dark),
-                ],
-              ),
-              child: Center(
-                child: SizedBox(
-                  width: indicatorSize,
-                  height: indicatorSize,
-                  child: CircularProgressIndicator(
-                    strokeWidth: 2.6,
-                    strokeCap: StrokeCap.round,
-                    color: colors.primary,
-                    backgroundColor: colors.primary.withValues(
-                      alpha: dark ? 0.18 : 0.12,
+                child: Center(
+                  child: SizedBox(
+                    width: indicatorSize,
+                    height: indicatorSize,
+                    child: CircularProgressIndicator(
+                      value: reducedMotion ? 0.72 : null,
+                      strokeWidth: 2.6,
+                      strokeCap: StrokeCap.round,
+                      color: colors.primary,
+                      backgroundColor: colors.primary.withValues(
+                        alpha: dark ? 0.18 : 0.12,
+                      ),
                     ),
                   ),
                 ),

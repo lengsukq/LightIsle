@@ -120,12 +120,12 @@ class _FolderAlbumsPageState extends State<FolderAlbumsPage> {
         '/api/v2/photos/folder-albums',
         body: {'name': name},
       );
+      if (mounted && _sameRoot) await _load();
     } catch (error) {
       if (mounted && _sameRoot) setState(() => _error = userFacingError(error));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
-    if (mounted && _sameRoot && _error == null) await _load();
   }
 
   bool get _isPickingDestination =>
@@ -170,21 +170,29 @@ class _FolderAlbumsPageState extends State<FolderAlbumsPage> {
         '/api/v2/photos/folder-albums/${Uri.encodeComponent(name)}/shares/$memberSegment',
         query: {if (ownerId > 0) 'ownerUserId': '$ownerId'},
       );
+      if (mounted && _sameRoot) await _load();
     } catch (error) {
       if (mounted && _sameRoot) setState(() => _error = userFacingError(error));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
-    if (mounted && _sameRoot && _error == null) await _load();
   }
 
   Future<void> _manageShares(Map<String, dynamic> item) async {
     if (_busy || !_sameRoot) return;
     final name = item['name']?.toString() ?? '';
     final shares = objectList(item['shares']);
-    int selectedMemberId = _shareTargets.isNotEmpty
-        ? (int.tryParse(_shareTargets.first['userId']?.toString() ?? '') ?? 0)
-        : 0;
+    final validTargets = <Map<String, dynamic>>[];
+    final seenMemberIds = <int>{};
+    for (final target in _shareTargets) {
+      final uid = int.tryParse(target['userId']?.toString() ?? '') ?? 0;
+      if (uid > 0 && seenMemberIds.add(uid)) {
+        validTargets.add(target);
+      }
+    }
+    int? selectedMemberId = validTargets.isNotEmpty
+        ? int.tryParse(validTargets.first['userId']?.toString() ?? '')
+        : null;
     bool canWrite = false;
     await showDialog<void>(
       context: context,
@@ -198,25 +206,23 @@ class _FolderAlbumsPageState extends State<FolderAlbumsPage> {
               children: [
                 const Text('在所选家庭成员的照片目录中创建受控软链接；对方无需复制文件即可浏览。'),
                 const SizedBox(height: 12),
-                if (_shareTargets.isEmpty)
+                if (validTargets.isEmpty)
                   const Text('暂无其他已分配照片目录的家庭成员。')
                 else ...[
                   DropdownButtonFormField<int>(
-                    initialValue: selectedMemberId,
+                    initialValue: seenMemberIds.contains(selectedMemberId)
+                        ? selectedMemberId
+                        : null,
                     decoration: const InputDecoration(labelText: '选择家庭成员'),
                     items: [
-                      for (final target in _shareTargets)
+                      for (final target in validTargets)
                         DropdownMenuItem<int>(
-                          value:
-                              int.tryParse(
-                                target['userId']?.toString() ?? '',
-                              ) ??
-                              0,
+                          value: int.parse(target['userId'].toString()),
                           child: Text(target['username']?.toString() ?? ''),
                         ),
                     ],
                     onChanged: (val) =>
-                        setDialogState(() => selectedMemberId = val ?? 0),
+                        setDialogState(() => selectedMemberId = val),
                   ),
                   CheckboxListTile(
                     contentPadding: EdgeInsets.zero,
@@ -257,13 +263,14 @@ class _FolderAlbumsPageState extends State<FolderAlbumsPage> {
               onPressed: () => Navigator.pop(dialogContext),
               child: const Text('关闭'),
             ),
-            if (_shareTargets.isNotEmpty)
+            if (validTargets.isNotEmpty)
               FilledButton(
-                onPressed: selectedMemberId <= 0
+                onPressed: (selectedMemberId ?? 0) <= 0
                     ? null
                     : () async {
+                        final targetId = selectedMemberId!;
                         Navigator.pop(dialogContext);
-                        await _setShare(name, selectedMemberId, canWrite);
+                        await _setShare(name, targetId, canWrite);
                       },
                 child: const Text('确认共享'),
               ),
@@ -285,12 +292,12 @@ class _FolderAlbumsPageState extends State<FolderAlbumsPage> {
         '/api/v2/photos/folder-albums/${Uri.encodeComponent(name)}/shares',
         body: {'memberUserId': memberId, 'canWrite': canWrite},
       );
+      if (mounted && _sameRoot) await _load();
     } catch (error) {
       if (mounted && _sameRoot) setState(() => _error = userFacingError(error));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
-    if (mounted && _sameRoot && _error == null) await _load();
   }
 
   Future<void> _removeShare(String name, int memberId) async {
@@ -304,12 +311,12 @@ class _FolderAlbumsPageState extends State<FolderAlbumsPage> {
         'DELETE',
         '/api/v2/photos/folder-albums/${Uri.encodeComponent(name)}/shares/$memberId',
       );
+      if (mounted && _sameRoot) await _load();
     } catch (error) {
       if (mounted && _sameRoot) setState(() => _error = userFacingError(error));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
-    if (mounted && _sameRoot && _error == null) await _load();
   }
 
   Future<void> _delete(Map<String, dynamic> item) async {
@@ -333,12 +340,12 @@ class _FolderAlbumsPageState extends State<FolderAlbumsPage> {
         'DELETE',
         '/api/v2/photos/folder-albums/${Uri.encodeComponent(name)}',
       );
+      if (mounted && _sameRoot) await _load();
     } catch (error) {
       if (mounted && _sameRoot) setState(() => _error = userFacingError(error));
     } finally {
       if (mounted) setState(() => _busy = false);
     }
-    if (mounted && _sameRoot && _error == null) await _load();
   }
 
   Future<void> _select(Map<String, dynamic> item) async {
@@ -454,84 +461,107 @@ class _FolderAlbumsPageState extends State<FolderAlbumsPage> {
         ),
         if (!_sameRoot) const Notice('硬盘已变化或尚未选择，请返回后选择原硬盘。', error: true),
         if (_error != null) Notice(_error!, error: true, onRetry: _load),
-        if (_loading) const LinearProgressIndicator(),
-        if (_sameRoot &&
-            _loaded &&
-            _items.isEmpty &&
-            _cursor.isEmpty &&
-            _error == null)
-          const IsleEmptyStateCard(
-            '照片目录中还没有文件夹相册。',
-            icon: Icons.folder_special_outlined,
-          ),
-        if (_sameRoot && _items.isNotEmpty) ...[
-          IsleSectionHeader(title: '相册列表（${_items.length}）'),
-          IsleResponsiveGrid(
-            minItemWidth: 280,
-            maxColumns: 3,
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              for (final item in _items)
-                if (!_isPickingDestination || item['canWrite'] != false)
-                  IsleSurface(
-                    padding: EdgeInsets.zero,
-                    radius: 14,
-                    margin: EdgeInsets.zero,
-                    child: ListTile(
-                      visualDensity: VisualDensity.compact,
-                      contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 4,
-                      ),
-                      leading: IsleSquircleBadge(
-                        icon: item['shared'] == true
-                            ? Icons.folder_shared_outlined
-                            : Icons.folder_outlined,
-                        color: item['shared'] == true
-                            ? const Color(0xff0ea5e9)
-                            : const Color(0xffec4899),
-                        size: 34,
-                        iconSize: 18,
-                      ),
-                      title: Text(
-                        item['name']?.toString() ?? '',
-                        style: const TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                      subtitle: Text(_albumSubtitle(item)),
-                      onTap: _busy ? null : () => _select(item),
-                      trailing: _isPickingDestination
-                          ? null
-                          : item['shared'] == true
-                          ? IconButton(
-                              tooltip: '退出共享',
-                              onPressed: _busy
-                                  ? null
-                                  : () => _leaveShared(item),
-                              icon: const Icon(Icons.logout_rounded),
-                            )
-                          : Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                IconButton(
-                                  tooltip: '共享给家人',
+        if (_loading && _items.isEmpty)
+          const IsleLoadingState(label: '正在加载文件夹相册…')
+        else if (_loading)
+          const LinearProgressIndicator(),
+        Builder(
+          builder: (context) {
+            final visibleItems = _isPickingDestination
+                ? _items
+                      .where((item) => item['canWrite'] != false)
+                      .toList(growable: false)
+                : _items;
+            if (_sameRoot &&
+                _loaded &&
+                !_loading &&
+                visibleItems.isEmpty &&
+                _cursor.isEmpty &&
+                _error == null) {
+              return IsleEmptyStateCard(
+                _isPickingDestination
+                    ? '当前没有可写入的目标相册。可先新建相册，或选择非只读共享相册。'
+                    : '照片目录中还没有文件夹相册。',
+                icon: Icons.folder_special_outlined,
+              );
+            }
+            if (!_sameRoot || visibleItems.isEmpty) {
+              return const SizedBox.shrink();
+            }
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                IsleSectionHeader(title: '相册列表（${visibleItems.length}）'),
+                IsleResponsiveGrid(
+                  minItemWidth: 280,
+                  maxColumns: 3,
+                  spacing: 10,
+                  runSpacing: 10,
+                  children: [
+                    for (final item in visibleItems)
+                      IsleSurface(
+                        padding: EdgeInsets.zero,
+                        radius: 14,
+                        margin: EdgeInsets.zero,
+                        child: ListTile(
+                          visualDensity: VisualDensity.compact,
+                          contentPadding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 4,
+                          ),
+                          leading: IsleSquircleBadge(
+                            icon: item['shared'] == true
+                                ? Icons.folder_shared_outlined
+                                : Icons.folder_outlined,
+                            color: item['shared'] == true
+                                ? const Color(0xff0ea5e9)
+                                : const Color(0xffec4899),
+                            size: 34,
+                            iconSize: 18,
+                          ),
+                          title: Text(
+                            item['name']?.toString() ?? '',
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                          subtitle: Text(_albumSubtitle(item)),
+                          onTap: _busy ? null : () => _select(item),
+                          trailing: _isPickingDestination
+                              ? null
+                              : item['shared'] == true
+                              ? IconButton(
+                                  tooltip: '退出共享',
                                   onPressed: _busy
                                       ? null
-                                      : () => _manageShares(item),
-                                  icon: const Icon(Icons.share_outlined),
+                                      : () => _leaveShared(item),
+                                  icon: const Icon(Icons.logout_rounded),
+                                )
+                              : Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    IconButton(
+                                      tooltip: '共享给家人',
+                                      onPressed: _busy
+                                          ? null
+                                          : () => _manageShares(item),
+                                      icon: const Icon(Icons.share_outlined),
+                                    ),
+                                    IconButton(
+                                      tooltip: '删除空相册',
+                                      onPressed: _busy
+                                          ? null
+                                          : () => _delete(item),
+                                      icon: const Icon(Icons.delete_outline),
+                                    ),
+                                  ],
                                 ),
-                                IconButton(
-                                  tooltip: '删除空相册',
-                                  onPressed: _busy ? null : () => _delete(item),
-                                  icon: const Icon(Icons.delete_outline),
-                                ),
-                              ],
-                            ),
-                    ),
-                  ),
-            ],
-          ),
-        ],
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+            );
+          },
+        ),
         if (_sameRoot && _cursor.isNotEmpty)
           TextButton(
             onPressed: _loading ? null : () => _load(more: true),

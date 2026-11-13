@@ -159,25 +159,27 @@ class _DesktopFolderBackupPageState extends State<DesktopFolderBackupPage> {
                     iconSize: 20,
                   ),
                   const SizedBox(width: 12),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        '本机文件夹单向增量备份',
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
+                  Flexible(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '本机文件夹单向增量备份',
+                          style: theme.textTheme.titleMedium?.copyWith(
+                            fontWeight: FontWeight.w700,
+                          ),
                         ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(
-                        tasks.isEmpty
-                            ? '尚未添加文件夹 · 支持断网续传与 SHA-256 落盘核验'
-                            : '已配置 ${tasks.length} 个文件夹任务 · 只读扫描本地源文件',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: colors.onSurfaceVariant,
+                        const SizedBox(height: 2),
+                        Text(
+                          tasks.isEmpty
+                              ? '尚未添加文件夹 · 支持断网续传与 SHA-256 落盘核验'
+                              : '已配置 ${tasks.length} 个文件夹任务 · 只读扫描本地源文件',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: colors.onSurfaceVariant,
+                          ),
                         ),
-                      ),
-                    ],
+                      ],
+                    ),
                   ),
                 ],
               ),
@@ -216,14 +218,56 @@ class _DesktopFolderBackupPageState extends State<DesktopFolderBackupPage> {
           ),
           if (running && progress != null) ...[
             const SizedBox(height: 14),
-            LinearProgressIndicator(
-              value: progress.totalFiles > 0
-                  ? (progress.completedFiles / progress.totalFiles).clamp(
-                      0.0,
-                      1.0,
-                    )
-                  : null,
-            ),
+            if (progress.totalFiles > 0) ...[
+              Row(
+                children: [
+                  IsleDonutGauge(
+                    fraction: (progress.completedFiles / progress.totalFiles)
+                        .clamp(0.0, 1.0),
+                    color: colors.primary,
+                    size: 38,
+                    strokeWidth: 4,
+                    centerText:
+                        '${((progress.completedFiles / progress.totalFiles).clamp(0.0, 1.0) * 100).round()}%',
+                    centerStyle: theme.textTheme.labelSmall?.copyWith(
+                      fontSize: 9,
+                      fontWeight: FontWeight.w700,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                    semanticsLabel:
+                        '桌面备份进度 ${progress.completedFiles}/${progress.totalFiles}',
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: IsleSegmentedBar(
+                      height: 8,
+                      showPercentInLegend: true,
+                      legendGap: 5,
+                      legendSpacing: 10,
+                      legendRunSpacing: 2,
+                      segments: [
+                        IsleChartSegment(
+                          label: '已同步',
+                          value: progress.completedFiles.toDouble(),
+                          color: colors.primary,
+                          detail: '${progress.completedFiles} 项',
+                        ),
+                        IsleChartSegment(
+                          label: '待处理',
+                          value: (progress.totalFiles - progress.completedFiles)
+                              .clamp(0, progress.totalFiles)
+                              .toDouble(),
+                          color: colors.surfaceContainerHighest,
+                          detail:
+                              '${(progress.totalFiles - progress.completedFiles).clamp(0, progress.totalFiles)} 项',
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ] else
+              const LinearProgressIndicator(),
             const SizedBox(height: 6),
             Text(
               progress.currentFile.isEmpty

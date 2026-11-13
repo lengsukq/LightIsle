@@ -46,10 +46,16 @@ class AdminVolumeBrowser extends StatelessWidget {
     final used = total > 0
         ? (1 - free / total).clamp(0.0, 1.0).toDouble()
         : 0.0;
+    final usedBytes = (total - free).clamp(0.0, total);
     final isSystemVolume =
         mount == '/' ||
         (mount is String &&
             (mount.contains('/Recovery') || mount.contains('/Preboot')));
+    final gaugeColor = used >= 0.9
+        ? const Color(0xffef4444)
+        : used >= 0.78
+        ? const Color(0xfff59e0b)
+        : (isSystemVolume ? const Color(0xff64748b) : const Color(0xff0ea5e9));
     return IsleSurface(
       key: ValueKey('physicalVolume:${volume['mount'] ?? volume['name']}'),
       radius: 16,
@@ -70,10 +76,6 @@ class AdminVolumeBrowser extends StatelessWidget {
                 color: isSystemVolume
                     ? const Color(0xff64748b)
                     : const Color(0xff0ea5e9),
-                gradient: isSystemVolume
-                    ? const [Color(0xff94a3b8), Color(0xff64748b)]
-                    : const [Color(0xff38bdf8), Color(0xff0284c7)],
-                shadow: true,
                 size: 32,
                 iconSize: 17,
               ),
@@ -89,6 +91,23 @@ class AdminVolumeBrowser extends StatelessWidget {
                   ),
                 ),
               ),
+              if (total > 0) ...[
+                IsleDonutGauge(
+                  fraction: used,
+                  color: gaugeColor,
+                  size: 30,
+                  strokeWidth: 3.5,
+                  centerText: '${(used * 100).round()}%',
+                  centerStyle: text.labelSmall?.copyWith(
+                    fontSize: 9,
+                    fontWeight: FontWeight.w700,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
+                  semanticsLabel:
+                      '${volume['name'] ?? '存储卷'} 已使用 ${(used * 100).round()}%',
+                ),
+                const SizedBox(width: 8),
+              ],
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
@@ -151,16 +170,30 @@ class AdminVolumeBrowser extends StatelessWidget {
             ],
           ),
           const SizedBox(height: 6),
-          ClipRRect(
-            borderRadius: BorderRadius.circular(999),
-            child: LinearProgressIndicator(
-              value: used,
-              minHeight: 5,
-              backgroundColor: Theme.of(context)
-                  .colorScheme
-                  .surfaceContainerHighest
-                  .withValues(alpha: 0.45),
-            ),
+          IsleSegmentedBar(
+            height: 7,
+            showLegend: total > 0,
+            legendGap: 5,
+            legendSpacing: 10,
+            legendRunSpacing: 2,
+            segments: total > 0
+                ? [
+                    IsleChartSegment(
+                      label: '已用',
+                      value: usedBytes,
+                      color: gaugeColor,
+                      detail: formatBytes(usedBytes),
+                    ),
+                    IsleChartSegment(
+                      label: '可用',
+                      value: free.clamp(0.0, total),
+                      color: Theme.of(context)
+                          .colorScheme
+                          .surfaceContainerHighest,
+                      detail: formatBytes(free),
+                    ),
+                  ]
+                : const [],
           ),
           if (matches.isNotEmpty) ...[
             const SizedBox(height: 6),

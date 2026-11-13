@@ -25,11 +25,37 @@ class CinemaPlaybackSessionState {
   bool directLocalActive = false;
 
   double playbackSpeed = 1.0;
+  double volume = 1.0;
   double? seekDraft;
   double lastNonZeroVolume = 1.0;
 
   String? playbackMessage;
   String? progressSaveMessage;
+
+  // Coalesce high-frequency video tick notifications so non-timeline UI only
+  // rebuilds when transport state or active subtitle text actually changes.
+  bool lastPlaying = false;
+  bool lastInitialized = false;
+  int lastDisplayedSecond = -1;
+  String? lastSubtitleText;
+
+  bool consumeShouldRebuild(
+    VideoPlayerValue value, {
+    required bool playerOnly,
+    required String? subtitleText,
+  }) {
+    final second = value.position.inSeconds;
+    final dirty =
+        value.isPlaying != lastPlaying ||
+        value.isInitialized != lastInitialized ||
+        subtitleText != lastSubtitleText ||
+        (!playerOnly && second != lastDisplayedSecond);
+    lastPlaying = value.isPlaying;
+    lastInitialized = value.isInitialized;
+    lastSubtitleText = subtitleText;
+    lastDisplayedSecond = second;
+    return dirty;
+  }
 
   bool get isVideoReady {
     final active = controller;
@@ -98,6 +124,7 @@ class CinemaMetadataMatchState {
 /// Encapsulates player overlay chrome visibility, draggable dock position,
 /// fullscreen flags, and active modal sheets for [CinemaDetailDialog].
 class CinemaPlayerChromeState {
+  final FocusNode playerFocusNode = FocusNode();
   bool visible = true;
   bool dockManuallyCollapsed = false;
   Offset dockDragOffset = Offset.zero;
@@ -113,6 +140,30 @@ class CinemaPlayerChromeState {
   void cancelTimer() {
     hideTimer?.cancel();
     hideTimer = null;
+  }
+
+  void dispose() {
+    cancelTimer();
+    playerFocusNode.dispose();
+  }
+}
+
+/// Encapsulates temporary shortcut HUD feedback and hold-to-fast-forward timer
+/// state for [CinemaDetailDialog].
+class CinemaShortcutHudState {
+  IconData? icon;
+  String? label;
+  Timer? hideTimer;
+  Timer? rightHoldTimer;
+  bool rightKeyDown = false;
+  bool rightHold2xActive = false;
+  double speedBeforeHold = 1.0;
+
+  void cancelTimers() {
+    hideTimer?.cancel();
+    hideTimer = null;
+    rightHoldTimer?.cancel();
+    rightHoldTimer = null;
   }
 }
 

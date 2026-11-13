@@ -35,19 +35,11 @@ extension _CinemaDetailPlayerMenus on _CinemaDetailDialogState {
     final lang = _subtitles.captionLanguage;
     return <PopupMenuEntry<String>>[
       _buildPopupChoice(value: 'off', label: '关闭字幕', selected: lang == 'off'),
-      _buildPopupChoice(
-        value: 'auto',
-        label: '同名字幕',
-        selected: lang == 'auto',
-      ),
+      _buildPopupChoice(value: 'auto', label: '同名字幕', selected: lang == 'auto'),
       _buildPopupChoice(value: 'zh', label: '中文字幕', selected: lang == 'zh'),
       _buildPopupChoice(value: 'en', label: '英文字幕', selected: lang == 'en'),
       if (lang == 'local')
-        _buildPopupChoice(
-          value: 'local',
-          label: '本机字幕（当前）',
-          selected: true,
-        ),
+        _buildPopupChoice(value: 'local', label: '本机字幕（当前）', selected: true),
       for (final track
           in _playback.tracks?.subtitles ?? const <CinemaSubtitleTrack>[])
         if (track.extractable)

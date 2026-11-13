@@ -345,7 +345,10 @@ class _AutomationPageState extends State<AutomationPage> {
           if (_error != null)
             Notice(_error!, error: true, onRetry: () => _reload(refresh: true)),
           if (_notice != null) Notice(_notice!),
-          if (_busy) const LinearProgressIndicator(),
+          if (_busy && !_loaded)
+            const IsleLoadingState(label: '正在扫描本地脚本…')
+          else if (_busy)
+            const LinearProgressIndicator(),
           if (_loaded && _tasks.isEmpty && !_busy)
             const IsleEmptyStateCard(
               '还没有本地自动化脚本。请在本机创建任务文件夹和 task.json，然后点击“刷新脚本”。',
@@ -413,9 +416,8 @@ class _AutomationPageState extends State<AutomationPage> {
                   Expanded(
                     child: Text(
                       name,
-                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
+                      style: Theme.of(context).textTheme.titleMedium
+                          ?.copyWith(fontWeight: FontWeight.w700),
                     ),
                   ),
                   IsleStatusBadge(
@@ -431,9 +433,8 @@ class _AutomationPageState extends State<AutomationPage> {
               const SizedBox(height: 4),
               Text(
                 '$id · $entry · $cron ($tz)',
-                style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                  color: colors.onSurfaceVariant,
-                ),
+                style: Theme.of(context).textTheme.bodySmall
+                    ?.copyWith(color: colors.onSurfaceVariant),
               ),
               if (nextRun is num && nextRun > 0)
                 Text('下次执行 ${_formatEpoch(nextRun)}（本机时间）'),
@@ -511,9 +512,8 @@ class _AutomationPageState extends State<AutomationPage> {
         const Divider(height: 24),
         Text(
           '仅修改任务启停、Cron 和通知事件/渠道；不会改动脚本代码、env.json 或本地邮件模板设置。',
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: colors.onSurfaceVariant,
-          ),
+          style: Theme.of(context).textTheme.bodySmall
+              ?.copyWith(color: colors.onSurfaceVariant),
         ),
         const SizedBox(height: 12),
         Row(
@@ -597,18 +597,18 @@ class _AutomationPageState extends State<AutomationPage> {
           ],
         ),
         const SizedBox(height: 12),
-        Row(
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
           children: [
             FilledButton(
               onPressed: _busy ? null : _saveEdit,
               child: const Text('保存设置'),
             ),
-            const SizedBox(width: 8),
             OutlinedButton(
               onPressed: _busy ? null : () => _reloadEditingTask(id),
               child: const Text('加载最新配置'),
             ),
-            const SizedBox(width: 8),
             TextButton(
               onPressed: _busy
                   ? null
@@ -638,9 +638,8 @@ class _AutomationPageState extends State<AutomationPage> {
             Expanded(
               child: Text(
                 '最近 30 次执行记录',
-                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.w700,
-                ),
+                style: Theme.of(context).textTheme.titleSmall
+                    ?.copyWith(fontWeight: FontWeight.w700),
               ),
             ),
             TextButton(
@@ -664,9 +663,8 @@ class _AutomationPageState extends State<AutomationPage> {
         else if (_runs.isEmpty)
           Text(
             '暂无执行记录；定时触发后会显示退出码和标准输出。',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: colors.onSurfaceVariant,
-            ),
+            style: Theme.of(context).textTheme.bodySmall
+                ?.copyWith(color: colors.onSurfaceVariant),
           )
         else
           for (final run in _runs)

@@ -105,7 +105,7 @@ class _OfflineVideosPageState extends State<OfflineVideosPage> {
       final file = await _store.fileFor(item);
       if (!mounted) return;
       await Navigator.of(context).push(
-        MaterialPageRoute<void>(
+        buildIslePageRoute<void>(
           builder: (_) => LocalVideoPage(path: file.path),
         ),
       );

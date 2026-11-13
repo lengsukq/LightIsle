@@ -8,14 +8,13 @@ import 'package:flutter/services.dart';
 
 import 'isle_theme.dart';
 
+export 'isle_charts.dart';
 export 'isle_controls.dart';
 export 'isle_style.dart';
 
 part 'widgets_sections.dart';
 part 'widgets_navigation.dart';
 part 'widgets_feedback.dart';
-
-enum IsleGlassVariant { regular, clear }
 
 /// A single guarded material treatment for dialogs and floating docks.
 /// High-contrast and reduced-animation modes get an opaque, unblurred surface.
@@ -29,14 +28,18 @@ class IsleGlassBackdrop extends StatelessWidget {
   final Widget child;
   final double blur;
 
+  ui.ImageFilter _resolveFilter() {
+    if (blur == IsleGlass.sigmaSubtle) return IsleGlass.filterSubtle;
+    if (blur == IsleGlass.sigmaRegular) return IsleGlass.filterRegular;
+    if (blur == IsleGlass.sigmaIntense) return IsleGlass.filterIntense;
+    return ui.ImageFilter.blur(sigmaX: blur, sigmaY: blur);
+  }
+
   @override
   Widget build(BuildContext context) => IsleLayout.opaqueNavigation(context)
       ? child
       : ClipRect(
-          child: BackdropFilter(
-            filter: ui.ImageFilter.blur(sigmaX: blur, sigmaY: blur),
-            child: child,
-          ),
+          child: BackdropFilter(filter: _resolveFilter(), child: child),
         );
 }
 
@@ -47,14 +50,12 @@ class IsleGlassSurface extends StatelessWidget {
     required this.child,
     this.radius = IsleRadius.hero,
     this.padding = EdgeInsets.zero,
-    this.variant = IsleGlassVariant.regular,
     this.elevated = true,
   });
 
   final Widget child;
   final double radius;
   final EdgeInsetsGeometry padding;
-  final IsleGlassVariant variant;
   final bool elevated;
 
   @override
@@ -63,7 +64,6 @@ class IsleGlassSurface extends StatelessWidget {
     final colors = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
     final isOpaque = IsleLayout.opaqueNavigation(context);
-    final isClear = variant == IsleGlassVariant.clear;
     final shape = IsleShapes.squircle(
       radius,
       side: BorderSide(
@@ -79,8 +79,6 @@ class IsleGlassSurface extends StatelessWidget {
         shape: shape,
         color: isOpaque
             ? colors.surface
-            : isClear
-            ? IsleGlass.clearTint(isDark)
             : IsleGlass.regularTint(isDark, colors.surface),
         shadows: elevated && !isOpaque ? IsleShadows.floating(isDark) : null,
       ),
@@ -91,10 +89,7 @@ class IsleGlassSurface extends StatelessWidget {
 
     return ClipPath(
       clipper: ShapeBorderClipper(shape: innerShape),
-      child: BackdropFilter(
-        filter: isClear ? IsleGlass.filterClear : IsleGlass.filterRegular,
-        child: body,
-      ),
+      child: BackdropFilter(filter: IsleGlass.filterRegular, child: body),
     );
   }
 }
@@ -300,6 +295,7 @@ class Notice extends StatelessWidget {
     this.error = false,
     this.diagnostic,
     this.icon,
+    this.leading,
     this.trailing,
   });
   final String message;
@@ -308,6 +304,7 @@ class Notice extends StatelessWidget {
   final bool error;
   final String? diagnostic;
   final IconData? icon;
+  final Widget? leading;
   final Widget? trailing;
 
   @override
@@ -329,24 +326,27 @@ class Notice extends StatelessWidget {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Container(
-                width: 28,
-                height: 28,
-                decoration: IsleDecorations.iconBadge(
-                  accentColor.withValues(alpha: isDark ? 0.20 : 0.12),
-                  radius: IsleRadius.xs,
-                ),
-                child: Center(
-                  child: Icon(
-                    icon ??
-                        (error
-                            ? Icons.error_outline_rounded
-                            : Icons.info_outline_rounded),
-                    color: accentColor,
-                    size: 17,
+              if (leading != null)
+                leading!
+              else
+                Container(
+                  width: 28,
+                  height: 28,
+                  decoration: IsleDecorations.iconBadge(
+                    accentColor.withValues(alpha: isDark ? 0.20 : 0.12),
+                    radius: IsleRadius.xs,
+                  ),
+                  child: Center(
+                    child: Icon(
+                      icon ??
+                          (error
+                              ? Icons.error_outline_rounded
+                              : Icons.info_outline_rounded),
+                      color: accentColor,
+                      size: 17,
+                    ),
                   ),
                 ),
-              ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
@@ -395,8 +395,6 @@ class Notice extends StatelessWidget {
     );
   }
 }
-
-typedef IsleBanner = Notice;
 
 Future<bool> confirmAction(
   BuildContext context,
@@ -562,13 +560,17 @@ class IsleStatusBadge extends StatelessWidget {
             ),
             const SizedBox(width: 6),
           ],
-          Text(
-            label,
-            style: TextStyle(
-              fontSize: 11.5,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.1,
-              color: colors.onSurface.withValues(alpha: 0.82),
+          Flexible(
+            child: Text(
+              label,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w600,
+                letterSpacing: 0.1,
+                color: colors.onSurface.withValues(alpha: 0.82),
+              ),
             ),
           ),
         ],

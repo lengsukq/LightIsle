@@ -26,10 +26,10 @@ class FilePdfPreviewDialog extends StatefulWidget {
   final String previewEndpoint;
 
   @override
-  State<FilePdfPreviewDialog> createState() => FilePdfPreviewDialogState();
+  State<FilePdfPreviewDialog> createState() => _FilePdfPreviewDialogState();
 }
 
-class FilePdfPreviewDialogState extends State<FilePdfPreviewDialog> {
+class _FilePdfPreviewDialogState extends State<FilePdfPreviewDialog> {
   PdfControllerPinch? _controller;
   String? _error;
   bool _disposed = false;

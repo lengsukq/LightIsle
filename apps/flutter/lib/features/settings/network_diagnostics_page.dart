@@ -106,9 +106,8 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
                       widget.api.uri('/').host,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: scheme.onSurfaceVariant,
-                      ),
+                      style: Theme.of(context).textTheme.bodySmall
+                          ?.copyWith(color: scheme.onSurfaceVariant),
                     ),
                   ],
                 ),
@@ -130,7 +129,11 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Icon(Icons.info_outline_rounded, size: 20, color: scheme.error),
+                  Icon(
+                    Icons.info_outline_rounded,
+                    size: 20,
+                    color: scheme.error,
+                  ),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Column(
@@ -138,9 +141,8 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
                       children: [
                         Text(
                           test.error ?? '测速过程中发生未知错误。',
-                          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                            fontWeight: FontWeight.w600,
-                          ),
+                          style: Theme.of(context).textTheme.bodyMedium
+                              ?.copyWith(fontWeight: FontWeight.w600),
                         ),
                         if (test.failureAdvice != null) ...[
                           const SizedBox(height: 6),
@@ -160,9 +162,8 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
           const SizedBox(height: 12),
           Text(
             '中断阶段：${test.failureStep ?? '连接检查'} · 已完成 ${test.completedSteps}/${test.totalSteps} 步',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: scheme.onSurfaceVariant,
-            ),
+            style: Theme.of(context).textTheme.bodySmall
+                ?.copyWith(color: scheme.onSurfaceVariant),
           ),
           const SizedBox(height: 15),
           SizedBox(
@@ -180,7 +181,9 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
   }
 
   String _gaugePrimaryText(NetworkDiagnosticsController test) {
-    if (test.stage == NetworkTestStage.download) return _value(test.downloadMbps);
+    if (test.stage == NetworkTestStage.download) {
+      return _value(test.downloadMbps);
+    }
     if (test.stage == NetworkTestStage.upload) return _value(test.uploadMbps);
     if (test.stage == NetworkTestStage.completed) {
       return test.mode == NetworkTestMode.observe
@@ -288,8 +291,9 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
     required bool wide,
   }) {
     return Column(
-      crossAxisAlignment:
-          wide ? CrossAxisAlignment.start : CrossAxisAlignment.center,
+      crossAxisAlignment: wide
+          ? CrossAxisAlignment.start
+          : CrossAxisAlignment.center,
       children: [
         Text(
           test.stage == NetworkTestStage.completed
@@ -301,9 +305,8 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
         const SizedBox(height: 8),
         Text(
           test.stageText,
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-            color: scheme.onSurfaceVariant,
-          ),
+          style: Theme.of(context).textTheme.bodyMedium
+              ?.copyWith(color: scheme.onSurfaceVariant),
         ),
         const SizedBox(height: 9),
         Row(
@@ -338,9 +341,8 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
               ? '检测步骤 ${test.completedSteps} / ${test.totalSteps}'
               : '只使用内存测试数据，不创建 NAS 文件',
           textAlign: wide ? TextAlign.start : TextAlign.center,
-          style: Theme.of(context).textTheme.bodySmall?.copyWith(
-            color: scheme.onSurfaceVariant,
-          ),
+          style: Theme.of(context).textTheme.bodySmall
+              ?.copyWith(color: scheme.onSurfaceVariant),
         ),
         const SizedBox(height: 19),
         SizedBox(

@@ -32,10 +32,10 @@ class FileShareDialog extends StatefulWidget {
   final bool isFolder;
 
   @override
-  State<FileShareDialog> createState() => FileShareDialogState();
+  State<FileShareDialog> createState() => _FileShareDialogState();
 }
 
-class FileShareDialogState extends State<FileShareDialog> {
+class _FileShareDialogState extends State<FileShareDialog> {
   static const _hourOptions = <int>[1, 6, 24, 72, 168];
   final TextEditingController _linkController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();

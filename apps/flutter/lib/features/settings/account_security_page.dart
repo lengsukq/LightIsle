@@ -149,7 +149,9 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
             newPassword,
           );
         } catch (error) {
-          debugPrint('AccountSecurityPage: saved password sync skipped: $error');
+          debugPrint(
+            'AccountSecurityPage: saved password sync skipped: $error',
+          );
         }
       }
       if (!mounted) return;
@@ -374,7 +376,8 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
                         ),
                       ),
                       title: Text(
-                        (session['deviceLabel']?.toString().trim().isNotEmpty ?? false)
+                        (session['deviceLabel']?.toString().trim().isNotEmpty ??
+                                false)
                             ? session['deviceLabel'].toString().trim()
                             : (isCurrent ? '当前设备' : '远程登录设备'),
                         style: Theme.of(context).textTheme.titleSmall
@@ -382,10 +385,15 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
                       ),
                       subtitle: Text(
                         [
-                          if ((session['clientIp']?.toString().trim().isNotEmpty ?? false))
+                          if ((session['clientIp']
+                                  ?.toString()
+                                  .trim()
+                                  .isNotEmpty ??
+                              false))
                             'IP：${session['clientIp']}',
                           '登录：${accountTime(session['createdAt'])}',
-                          if (session['lastSeenAt'] is num && (session['lastSeenAt'] as num) > 0)
+                          if (session['lastSeenAt'] is num &&
+                              (session['lastSeenAt'] as num) > 0)
                             '最近活跃：${accountTime(session['lastSeenAt'])}',
                           '到期：${accountTime(session['expiresAt'])}',
                         ].join('\n'),

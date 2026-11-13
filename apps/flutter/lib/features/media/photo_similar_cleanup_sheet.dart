@@ -206,10 +206,81 @@ class _PhotoSimilarCleanupPageState extends State<PhotoSimilarCleanupPage> {
                     ),
                   ),
                 )
-              else
+              else ...[
+                _buildCleanupComparisonCard(context),
                 for (final group in _groups) _buildGroupCard(context, group),
+              ],
             ],
           ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildCleanupComparisonCard(BuildContext context) {
+    final totalPhotos = _groups.fold<int>(0, (s, g) => s + g.items.length);
+    final trashCount = _groups.fold<int>(
+      0,
+      (s, g) => s + (_trashByGroup[g.groupId]?.length ?? 0),
+    );
+    final keepCount = (totalPhotos - trashCount).clamp(0, totalPhotos);
+    final reclaimBytes = _groups.fold<int>(0, (s, g) => s + g.reclaimableBytes);
+    final trashRatio = totalPhotos > 0
+        ? (trashCount / totalPhotos).clamp(0.0, 1.0)
+        : 0.0;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: IsleSurface(
+        margin: EdgeInsets.zero,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            IsleDonutGauge(
+              fraction: trashRatio,
+              color: const Color(0xFFEF4444),
+              size: 46,
+              strokeWidth: 4.5,
+              centerText: '${(trashRatio * 100).round()}%',
+              semanticsLabel:
+                  '共 ${_groups.length} 组 $totalPhotos 张，已选清理 $trashCount 张',
+            ),
+            const SizedBox(width: 12),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '待整理 ${_groups.length} 组 · 已选清理 $trashCount/$totalPhotos 张'
+                    '${reclaimBytes > 0 ? '（约可省 ${formatMediaSize(reclaimBytes)}）' : ''}',
+                    style: Theme.of(context).textTheme.bodySmall
+                        ?.copyWith(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 8),
+                  IsleSegmentedBar(
+                    height: 8,
+                    showPercentInLegend: true,
+                    legendGap: 6,
+                    legendSpacing: 12,
+                    legendRunSpacing: 4,
+                    segments: [
+                      IsleChartSegment(
+                        label: '保留精选',
+                        value: keepCount.toDouble(),
+                        color: const Color(0xFF10B981),
+                        detail: '$keepCount 张',
+                      ),
+                      IsleChartSegment(
+                        label: '待清理冗余',
+                        value: trashCount.toDouble(),
+                        color: const Color(0xFFEF4444),
+                        detail: '$trashCount 张',
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
         ),
       ),
     );

@@ -118,4 +118,29 @@ void main() {
     await tester.pumpAndSettle();
     expect(api.calls, isEmpty);
   });
+
+  testWidgets(
+    'picking destination hides read-only shared albums and shows empty card',
+    (tester) async {
+      final api = _FolderApi()
+        ..selectRoot(_rootA)
+        ..folders.clear()
+        ..folders.add({
+          'name': '父母共享',
+          'path': 'Users/u2/photos/父母共享',
+          'shared': true,
+          'canWrite': false,
+          'ownerUsername': 'mom',
+        });
+      addTearDown(api.close);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: FolderAlbumsPage(api: api, source: _photo, canMove: false),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(find.text('父母共享'), findsNothing);
+      expect(find.textContaining('当前没有可写入的目标相册'), findsOneWidget);
+    },
+  );
 }

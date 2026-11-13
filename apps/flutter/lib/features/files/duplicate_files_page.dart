@@ -389,6 +389,8 @@ class _DuplicateFilesPageState extends State<DuplicateFilesPage> {
                         '预计可释放物理空间 ${formatMediaSize(_snapshot.totalReclaimablePhysicalBytes)}',
                         style: Theme.of(context).textTheme.bodySmall,
                       ),
+                      if (_snapshot.groups.isNotEmpty)
+                        _buildSavingsComparison(context),
                     ],
                   ],
                 ),
@@ -433,6 +435,63 @@ class _DuplicateFilesPageState extends State<DuplicateFilesPage> {
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildSavingsComparison(BuildContext context) {
+    final keptBytes = _snapshot.groups.fold<int>(0, (sum, g) => sum + g.size);
+    final reclaimBytes = _snapshot.totalReclaimablePhysicalBytes > 0
+        ? _snapshot.totalReclaimablePhysicalBytes
+        : _snapshot.totalReclaimableBytes;
+    final total = keptBytes + reclaimBytes;
+    if (total <= 0) return const SizedBox.shrink();
+    final saveRatio = (reclaimBytes / total).clamp(0.0, 1.0);
+    return Padding(
+      padding: const EdgeInsets.only(top: 12),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.center,
+        children: [
+          IsleDonutGauge(
+            fraction: saveRatio,
+            color: const Color(0xFF10B981),
+            size: 46,
+            strokeWidth: 4.5,
+            centerText: '省${(saveRatio * 100).round()}%',
+            centerStyle: Theme.of(context).textTheme.labelSmall?.copyWith(
+              fontSize: 9.5,
+              fontWeight: FontWeight.w700,
+              fontFeatures: const [FontFeature.tabularFigures()],
+            ),
+            semanticsLabel: '清理重复文件预计可节省 ${(saveRatio * 100).round()}% 空间',
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: IsleSegmentedBar(
+              height: 8,
+              showPercentInLegend: true,
+              legendGap: 6,
+              legendSpacing: 10,
+              legendRunSpacing: 4,
+              segments: [
+                IsleChartSegment(
+                  label: '保留原件',
+                  value: keptBytes.toDouble(),
+                  color: const Color(0xFF0071E3),
+                  detail: formatMediaSize(keptBytes),
+                ),
+                IsleChartSegment(
+                  label: _snapshot.totalReclaimablePhysicalBytes > 0
+                      ? '可释放物理冗余'
+                      : '逻辑冗余空间',
+                  value: reclaimBytes.toDouble(),
+                  color: const Color(0xFF10B981),
+                  detail: formatMediaSize(reclaimBytes),
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }

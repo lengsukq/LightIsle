@@ -68,15 +68,12 @@ class _TailscaleStatusCardState extends State<TailscaleStatusCard> {
               Expanded(
                 child: Text(
                   'Tailscale 零配置异地组网',
-                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
+                  style: Theme.of(context).textTheme.titleMedium
+                      ?.copyWith(fontWeight: FontWeight.w700),
                 ),
               ),
               IsleStatusBadge(
-                label: connected
-                    ? '已组网在线'
-                    : (installed ? '已安装未连接' : '未安装'),
+                label: connected ? '已组网在线' : (installed ? '已安装未连接' : '未安装'),
                 color: connected
                     ? const Color(0xFF10B981)
                     : const Color(0xFF64748B),
@@ -94,9 +91,8 @@ class _TailscaleStatusCardState extends State<TailscaleStatusCard> {
             connected
                 ? '已自动识别本机虚拟组网接口${ipv4.isNotEmpty ? ' ($ipv4)' : ''}${magicDns.isNotEmpty ? ' · $magicDns' : ''}，无需公网 IP 即可异地加密直连。'
                 : '在宿主 Mac 与手机安装登录同一 Tailscale 账号后，开启局域网访问即可自动双栈监听组网网卡。',
-            style: Theme.of(
-              context,
-            ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
+            style: Theme.of(context).textTheme.bodySmall
+                ?.copyWith(color: colors.onSurfaceVariant),
           ),
           if (targetUrl.isNotEmpty) ...[
             const SizedBox(height: 10),
@@ -107,7 +103,10 @@ class _TailscaleStatusCardState extends State<TailscaleStatusCard> {
               children: [
                 SelectableText(
                   targetUrl,
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 12.5),
+                  style: const TextStyle(
+                    fontFamily: 'monospace',
+                    fontSize: 12.5,
+                  ),
                 ),
                 FilledButton.tonalIcon(
                   onPressed: () {

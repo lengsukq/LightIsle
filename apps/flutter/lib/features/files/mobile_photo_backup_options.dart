@@ -61,7 +61,8 @@ extension _MobilePhotoBackupOptions on _MobilePhotoBackupState {
     final prefs = _prefs;
     _updateState(() {
       _options.albumScope = nextScope;
-      _progress.pageCursor = prefs?.getString('$_scopedStatePrefix.cursor') ?? '';
+      _progress.pageCursor =
+          prefs?.getString('$_scopedStatePrefix.cursor') ?? '';
       _progress.nextCursor = '';
       _progress.visibleFailureCount = 50;
       _progress.lastVerifiedAt =
@@ -105,7 +106,8 @@ extension _MobilePhotoBackupOptions on _MobilePhotoBackupState {
             prefs.containsKey('$_scope.failures.videos');
         _options.albumScope = hasLegacyProgress ? 'all' : 'camera';
       }
-      _progress.pageCursor = prefs.getString('$_scopedStatePrefix.cursor') ?? '';
+      _progress.pageCursor =
+          prefs.getString('$_scopedStatePrefix.cursor') ?? '';
       _updateState(() {
         _options.onForeground = prefs.getBool('$_scope.onForeground') ?? false;
         _options.wifiOnly = prefs.getBool('$_scope.wifiOnly') ?? true;
@@ -113,7 +115,8 @@ extension _MobilePhotoBackupOptions on _MobilePhotoBackupState {
             [10, 30, 100].contains(prefs.getInt('$_scope.batchPages'))
             ? prefs.getInt('$_scope.batchPages')!
             : 10;
-        _options.includeVideos = prefs.getBool('$_scope.includeVideos') ?? false;
+        _options.includeVideos =
+            prefs.getBool('$_scope.includeVideos') ?? false;
         _options.organizeByYearMonth =
             prefs.getBool('$_scope.organizeByYearMonth') ?? false;
         _options.allowICloudDownload =

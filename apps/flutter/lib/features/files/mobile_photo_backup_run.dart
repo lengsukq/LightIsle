@@ -39,11 +39,7 @@ extension _MobilePhotoBackupRun on _MobilePhotoBackupState {
       _ensureActive();
       await preferences.remove(uploadKey);
       _ensureActive();
-      await _clearEntryFailure(
-        preferences,
-        failureStorageKey,
-        failureAssetKey,
-      );
+      await _clearEntryFailure(preferences, failureStorageKey, failureAssetKey);
       _progress.skipped++;
       return _EntryBackupOutcome.skipped;
     }
@@ -330,7 +326,8 @@ extension _MobilePhotoBackupRun on _MobilePhotoBackupState {
     _progress.checked++;
     if (mounted) {
       _updateState(
-        () => _progress.message = '正在检查第 ${_progress.checked} 张照片（第 $pageNumber 页）…',
+        () => _progress.message =
+            '正在检查第 ${_progress.checked} 张照片（第 $pageNumber 页）…',
       );
     }
 
