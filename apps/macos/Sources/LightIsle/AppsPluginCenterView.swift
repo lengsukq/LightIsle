@@ -10,6 +10,12 @@ struct AppsPluginCenterView: View {
     @State private var localNotice: String?
     @State private var selectedInstallLocationID = ""
 
+    private static let memoryFormatter: ByteCountFormatter = {
+        let f = ByteCountFormatter()
+        f.countStyle = .memory
+        return f
+    }()
+
     private var selectedApp: NativePublicApp? {
         guard let selectedAppID else { return nil }
         return appsCenter.apps.first(where: { $0.id == selectedAppID })
@@ -26,27 +32,11 @@ struct AppsPluginCenterView: View {
                     onRequestDelete: { deletingApp = $0 }
                 )
             } else {
-                VStack(alignment: .leading, spacing: 20) {
+                VStack(alignment: .leading, spacing: 24) {
                     overviewSection
+                    noticeBanners
                     AppStorageLocationsSection(appsCenter: appsCenter)
                     templatesSection
-                    if let err = appsCenter.errorMessage {
-                        AppleSettingsGroup(title: "操作提示") {
-                            AppleSettingsRow(title: "错误详情", icon: "exclamationmark.triangle.fill", iconTint: .orange) {
-                                Text(err)
-                                    .font(.caption)
-                                    .foregroundStyle(IsleTheme.warningText)
-                                    .textSelection(.enabled)
-                            }
-                        }
-                    }
-                    if let msg = localNotice ?? appsCenter.message {
-                        Text(msg)
-                            .font(.caption)
-                            .foregroundStyle(IsleTheme.successText)
-                            .textSelection(.enabled)
-                            .padding(.horizontal, 4)
-                    }
                     appsListSection
                 }
             }
@@ -63,12 +53,12 @@ struct AppsPluginCenterView: View {
             titleVisibility: .visible
         ) {
             if let app = deletingApp {
-                Button("仅卸载插件代码（保留 plugin-data 数据）", role: .destructive) {
+                Button("仅卸载应用代码（保留数据目录）", role: .destructive) {
                     if selectedAppID == app.id { selectedAppID = nil }
                     appsCenter.deleteApp(appID: app.id, deleteData: false)
                     deletingApp = nil
                 }
-                Button("彻底删除插件代码与 plugin-data 数据", role: .destructive) {
+                Button("彻底删除应用代码与数据", role: .destructive) {
                     if selectedAppID == app.id { selectedAppID = nil }
                     appsCenter.deleteApp(appID: app.id, deleteData: true)
                     deletingApp = nil
@@ -76,7 +66,7 @@ struct AppsPluginCenterView: View {
             }
             Button("取消", role: .cancel) { deletingApp = nil }
         } message: {
-            Text("卸载会停止正在运行的插件实例并移除 plugins/<id> 目录。如未来仍需恢复数据，请先导出备份或选择保留 plugin-data。")
+            Text("卸载会停止正在运行的实例并移除应用代码目录。如未来仍需恢复数据，请先导出备份或选择保留数据。")
         }
         .onChange(of: appsCenter.apps) { _, list in
             if let currentID = selectedAppID, !list.contains(where: { $0.id == currentID }) {
@@ -91,56 +81,109 @@ struct AppsPluginCenterView: View {
     }
 
     private var overviewSection: some View {
-        AppleSettingsGroup(
-            title: "轻应用与插件中心",
-            footer: "所有插件存储在 plugins/<id>，持久化数据存储在 plugin-data/<id>。支持静态 HTML 与 Python / Node / Go / Rust / Java / Shell 按需唤醒或常驻服务，并可通过本机或局域网 MCP 交给 AI Agent 开发调试。"
-        ) {
-            AppleSettingsRow(
-                title: "已安装插件",
-                subtitle: "包含内置示例与通过本地目录或 MCP 创建的轻应用",
-                icon: "square.grid.2x2.fill",
-                iconTint: .blue
-            ) {
+        let runningCount = appsCenter.apps.filter(\.isRunning).count
+        return LiquidCard {
+            HStack(alignment: .center, spacing: 18) {
+                IsleHeaderIconBadge(
+                    icon: "square.grid.2x2.fill",
+                    tint: IsleFluidPalette.brandIndigo,
+                    size: 52
+                )
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 8) {
+                        Text("家庭轻应用与插件")
+                            .font(.system(size: 18, weight: .semibold))
+                        IsleStatusPill(
+                            text: "\(appsCenter.apps.count) 个已安装",
+                            tone: .neutral
+                        )
+                        if runningCount > 0 {
+                            IsleStatusPill(
+                                text: "\(runningCount) 个运行中",
+                                tone: .success,
+                                showDot: true
+                            )
+                        }
+                    }
+                    Text("按需唤醒轻应用与定时助手，闲置自动休眠；支持本机与外置盘目录及 AI Agent (MCP) 开发。")
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(IsleTheme.secondaryText)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 12)
                 HStack(spacing: 8) {
-                    let runningCount = appsCenter.apps.filter(\.isRunning).count
-                    StatusBadge(
-                        isOnline: !appsCenter.apps.isEmpty,
-                        text: "\(appsCenter.apps.count) 个应用 · \(runningCount) 个运行中"
-                    )
-                    Button(appsCenter.busy ? "扫描中…" : "重新扫描") {
+                    Button {
                         appsCenter.reloadApps()
+                    } label: {
+                        Label(appsCenter.busy ? "扫描中…" : "重新扫描", systemImage: "arrow.clockwise")
                     }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .regular))
                     .disabled(appsCenter.busy)
-                    Button("新建插件脚手架…") {
+
+                    Button {
                         showingScaffoldSheet = true
+                    } label: {
+                        Label("新建轻应用…", systemImage: "plus")
                     }
-                    .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                    .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .regular))
                     .disabled(appsCenter.busy)
+
+                    Menu {
+                        Button {
+                            appsCenter.openPluginDirectory()
+                        } label: {
+                            Label("打开应用代码目录", systemImage: "folder")
+                        }
+                        Button {
+                            appsCenter.openPluginDataDirectory()
+                        } label: {
+                            Label("打开应用数据目录", systemImage: "externaldrive")
+                        }
+                        Divider()
+                        Button {
+                            appsCenter.workspaceSection = .mcp
+                        } label: {
+                            Label("打开 AI Agent (MCP) 配置与调试", systemImage: "cpu")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                            .font(.system(size: 14, weight: .medium))
+                    }
+                    .menuStyle(.borderlessButton)
+                    .frame(width: 30, height: 30)
+                    .help("目录入口与 AI Agent (MCP) 工具")
                 }
             }
-            IsleGroupSpacing(height: 4).padding(.leading, 14)
-            AppleSettingsRow(
-                title: "目录与 MCP 快捷入口",
-                subtitle: "在 Finder 中管理插件源码与数据，或切换到 MCP 调试台",
-                icon: "folder.badge.gearshape",
-                iconTint: .purple
-            ) {
-                HStack(spacing: 8) {
-                    Button("打开 plugins 目录") {
-                        appsCenter.openPluginDirectory()
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                    Button("打开 plugin-data 目录") {
-                        appsCenter.openPluginDataDirectory()
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                    Button("打开 MCP 调试与局域网配置") {
-                        appsCenter.workspaceSection = .mcp
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                }
+        }
+    }
+
+    @ViewBuilder
+    private var noticeBanners: some View {
+        if let err = appsCenter.errorMessage {
+            HStack(spacing: 10) {
+                Image(systemName: "exclamationmark.triangle.fill")
+                    .foregroundStyle(IsleTheme.warningText)
+                Text(err)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(IsleTheme.warningText)
+                    .textSelection(.enabled)
+                Spacer()
             }
+            .padding(14)
+            .modifier(IsleEmbossedSurface())
+        }
+        if let msg = localNotice ?? appsCenter.message {
+            HStack(spacing: 10) {
+                Image(systemName: "checkmark.circle.fill")
+                    .foregroundStyle(IsleTheme.successText)
+                Text(msg)
+                    .font(.system(size: 12.5))
+                    .foregroundStyle(.primary)
+                    .textSelection(.enabled)
+                Spacer()
+            }
+            .padding(14)
+            .modifier(IsleEmbossedSurface())
         }
     }
 
@@ -148,215 +191,221 @@ struct AppsPluginCenterView: View {
     private var templatesSection: some View {
         let templates = appsCenter.templates
         if !templates.isEmpty {
-            AppleSettingsGroup(
-                title: "官方精选家庭轻应用模板（0 MB 纯静态）",
-                footer: "可选择将模板安装到当前默认的内置盘或其他盘位置。"
-            ) {
-                if let locations = appsCenter.appStorage?.locations, locations.count > 1 {
-                    AppleSettingsRow(title: "模板安装位置", icon: "externaldrive.badge.checkmark", iconTint: .teal) {
-                        Picker("模板安装位置", selection: $selectedInstallLocationID) {
-                            Text("跟随默认（\(locations.first(where: { $0.isDefault })?.name ?? "Mac 内置盘")）").tag("")
-                            ForEach(locations) { loc in
-                                Text("\(loc.kind == "external" ? "其他盘" : "内置盘") · \(loc.name)\(loc.online ? "" : "（离线）")").tag(loc.id)
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .center, spacing: 8) {
+                    Text("精选家庭轻应用")
+                        .font(.system(size: 15, weight: .semibold))
+                    IsleStatusPill(text: "0 MB 纯静态 · 开箱即用", tone: .accent, icon: "sparkles")
+                    Spacer()
+                    if let locations = appsCenter.appStorage?.locations, locations.count > 1 {
+                        HStack(spacing: 6) {
+                            Text("安装到")
+                                .font(.system(size: 12))
+                                .foregroundStyle(IsleTheme.secondaryText)
+                            Picker("安装位置", selection: $selectedInstallLocationID) {
+                                Text("默认（\(locations.first(where: { $0.isDefault })?.name ?? "内置盘")）").tag("")
+                                ForEach(locations) { loc in
+                                    Text("\(loc.kind == "external" ? "其他盘" : "内置盘") · \(loc.name)\(loc.online ? "" : "（离线）")").tag(loc.id)
+                                }
                             }
+                            .labelsHidden()
+                            .frame(width: 210)
                         }
-                        .labelsHidden()
-                        .frame(width: 240)
                     }
                 }
-                ForEach(templates) { tpl in
-                    IsleGroupSpacing(height: 4).padding(.leading, 14)
-                    AppleSettingsRow(
-                        title: tpl.name,
-                        subtitle: tpl.description,
-                        icon: "sparkles",
-                        iconTint: .purple
-                    ) {
-                        Button(tpl.installed ? "已安装" : "一键安装") {
-                            appsCenter.installTemplate(
-                                id: tpl.id,
-                                locationID: selectedInstallLocationID.isEmpty ? nil : selectedInstallLocationID
-                            )
-                        }
-                        .buttonStyle(LiquidButtonStyle(variant: tpl.installed ? .secondary : .prominent, size: .small))
-                        .disabled(appsCenter.busy || tpl.installed)
+
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 250), spacing: 14)], spacing: 14) {
+                    ForEach(templates) { tpl in
+                        templateCard(tpl)
                     }
                 }
             }
         }
     }
 
+    private func templateCard(_ tpl: NativeOfficialAppTemplate) -> some View {
+        let visual = templateVisual(for: tpl.id)
+        return VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .center, spacing: 10) {
+                IsleHeaderIconBadge(icon: visual.icon, tint: visual.tint, size: 36)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(tpl.name)
+                        .font(.system(size: 14.5, weight: .semibold))
+                        .lineLimit(1)
+                    Text("v\(tpl.version) · 官方精选")
+                        .font(.system(size: 11))
+                        .foregroundStyle(IsleTheme.secondaryText)
+                }
+                Spacer(minLength: 4)
+                IsleStatusPill(
+                    text: tpl.installed ? "已安装" : "零依赖",
+                    tone: tpl.installed ? .success : .neutral,
+                    showDot: tpl.installed
+                )
+            }
+
+            Text(tpl.description)
+                .font(.system(size: 12.5))
+                .foregroundStyle(IsleTheme.secondaryText)
+                .lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Spacer(minLength: 0)
+
+            HStack {
+                Spacer()
+                Button(tpl.installed ? "已安装在列表中" : "一键安装") {
+                    appsCenter.installTemplate(
+                        id: tpl.id,
+                        locationID: selectedInstallLocationID.isEmpty ? nil : selectedInstallLocationID
+                    )
+                }
+                .buttonStyle(LiquidButtonStyle(variant: tpl.installed ? .secondary : .prominent, size: .small))
+                .disabled(appsCenter.busy || tpl.installed)
+            }
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .modifier(IsleItemCardSurface(interactive: !tpl.installed))
+    }
+
     @ViewBuilder
     private var appsListSection: some View {
-        if appsCenter.apps.isEmpty {
-            AppleSettingsGroup(title: "应用列表") {
-                AppleSettingsRow(
-                    title: "暂无已安装的轻应用",
-                    subtitle: "可点击上方「新建插件脚手架…」创建，或开启 MCP 后让 AI Agent 自动生成",
-                    icon: "puzzlepiece.extension",
-                    iconTint: .secondary
-                ) {
-                    Button("新建插件脚手架…") { showingScaffoldSheet = true }
-                        .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
-                }
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Text("已安装的轻应用")
+                    .font(.system(size: 15, weight: .semibold))
+                IsleStatusPill(text: "\(appsCenter.apps.count) 个", tone: .neutral)
+                Spacer()
             }
-        } else {
-            ForEach(appsCenter.apps) { app in
-                appCard(app)
+
+            if appsCenter.apps.isEmpty {
+                LiquidCard {
+                    VStack(spacing: 12) {
+                        IsleHeaderIconBadge(icon: "puzzlepiece.extension", tint: IsleFluidPalette.brandIndigo, size: 48)
+                        Text("还没有安装轻应用")
+                            .font(.system(size: 15, weight: .semibold))
+                        Text("可以先从上方一键安装精选家庭应用，或者新建空白轻应用并用 AI Agent (MCP) 生成功能。")
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(IsleTheme.secondaryText)
+                            .multilineTextAlignment(.center)
+                        Button("新建轻应用…") {
+                            showingScaffoldSheet = true
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .regular))
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 10)
+                }
+            } else {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: 14)], spacing: 14) {
+                    ForEach(appsCenter.apps) { app in
+                        appCard(app)
+                    }
+                }
             }
         }
     }
 
     private func appCard(_ app: NativePublicApp) -> some View {
-        AppleSettingsGroup(
-            title: "\(app.name) · \(app.id)",
-            footer: app.description ?? "轻应用插件"
-        ) {
-            appStatusRow(app)
-            if app.pendingActivation {
-                appPendingActivationRow(app)
-            }
-            appDiagnosticOrErrorSection(app)
-            appControlsRow(app)
-        }
-    }
+        let visual = appVisual(for: app)
+        let statusTone: IsleStatusTone = {
+            if !app.valid || app.diagnostic != nil { return .warning }
+            if app.pendingActivation { return .warning }
+            if app.isRunning || app.web.status == "static" { return .success }
+            return .neutral
+        }()
 
-    private func appStatusRow(_ app: NativePublicApp) -> some View {
-        let subtitleParts = [
-            "ID: \(app.id)",
-            "v\(app.version)",
-            app.locationKind == "external" ? "其他盘 · \(app.locationName)" : "内置盘 · \(app.locationName)",
-            app.web.enabled ? "Web: \(app.web.mode)" : "无 Web 界面",
-            app.web.runtime.map { "Runtime: \($0)" } ?? nil,
-            app.cron != nil ? "Cron: \(app.cron?.cron ?? "")" : nil
-        ].compactMap { $0 }
-
-        return AppleSettingsRow(
-            title: "运行状态与访问策略",
-            subtitle: subtitleParts.joined(separator: " · "),
-            icon: app.isRunning ? "bolt.horizontal.circle.fill" : "app.badge.checkmark",
-            iconTint: app.valid ? (app.isRunning ? .green : .blue) : .orange
-        ) {
-            HStack(spacing: 8) {
-                StatusBadge(
-                    isOnline: app.valid && !app.pendingActivation && (app.isRunning || app.web.status == "static"),
-                    text: app.statusLabel
+        return VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .top, spacing: 12) {
+                IsleHeaderIconBadge(icon: visual.icon, tint: visual.tint, size: 42)
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 6) {
+                        Text(app.name)
+                            .font(.system(size: 15.5, weight: .semibold))
+                            .lineLimit(1)
+                        Text("v\(app.version)")
+                            .font(.system(size: 11, weight: .medium, design: .monospaced))
+                            .foregroundStyle(IsleTheme.secondaryText)
+                    }
+                    Text("\(app.id) · \(accessPolicyText(app.access))")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(IsleTheme.secondaryText)
+                        .lineLimit(1)
+                }
+                Spacer(minLength: 6)
+                IsleStatusPill(
+                    text: app.statusLabel,
+                    tone: statusTone,
+                    showDot: statusTone == .success || statusTone == .warning
                 )
-                Text(accessPolicyText(app.access))
-                    .font(.caption)
+            }
+
+            if let desc = app.description, !desc.isEmpty {
+                Text(desc)
+                    .font(.system(size: 12.5))
                     .foregroundStyle(IsleTheme.secondaryText)
-                if let rss = app.web.rssBytes, rss > 0 {
-                    Text(ByteCountFormatter.string(fromByteCount: rss, countStyle: .memory))
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(IsleTheme.secondaryText)
-                }
-                if let port = app.web.port, port > 0 {
-                    Text(":\(port)")
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(IsleTheme.secondaryText)
-                }
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-        }
-    }
 
-    @ViewBuilder
-    private func appPendingActivationRow(_ app: NativePublicApp) -> some View {
-        IsleGroupSpacing(height: 4).padding(.leading, 14)
-        AppleSettingsRow(
-            title: "等待管理员首次激活确认",
-            subtitle: "该插件由外部或 MCP 新建/修改过可执行入口，确认安全后即可激活运行",
-            icon: "shield.lefthalf.filled.badge.checkmark",
-            iconTint: .orange
-        ) {
-            Button("确认激活") {
-                appsCenter.performAppAction(appID: app.id, action: "activate")
-            }
-            .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
-            .disabled(appsCenter.busy)
-        }
-    }
+            appMetadataStrip(app)
 
-    @ViewBuilder
-    private func appDiagnosticOrErrorSection(_ app: NativePublicApp) -> some View {
-        if let diag = app.diagnostic {
-            IsleGroupSpacing(height: 4).padding(.leading, 14)
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 6) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(.orange)
-                    Text(diag.summary)
-                        .font(.system(size: 12.5, weight: .semibold))
+            if app.pendingActivation {
+                HStack(spacing: 8) {
+                    Image(systemName: "shield.lefthalf.filled.badge.checkmark")
+                        .foregroundStyle(IsleTheme.warningText)
+                    Text("由外部或 MCP 更新过入口，需确认安全后激活运行。")
+                        .font(.system(size: 11.5))
                         .foregroundStyle(IsleTheme.warningText)
                     Spacer()
-                    Button("打开代码目录") {
+                }
+                .padding(10)
+                .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            } else if let diag = app.diagnostic {
+                HStack(spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .foregroundStyle(IsleTheme.warningText)
+                    Text(diag.summary)
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(IsleTheme.warningText)
+                        .lineLimit(2)
+                    Spacer()
+                    Button("代码目录") {
                         appsCenter.openPluginDirectory(appID: app.id)
                     }
                     .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                 }
-                Text("原因：" + diag.reason)
-                    .font(.caption)
-                    .foregroundStyle(.primary.opacity(0.88))
-                    .textSelection(.enabled)
-                if let excerpt = diag.logExcerpt, !excerpt.isEmpty {
-                    Text(excerpt)
-                        .font(.system(size: 11, design: .monospaced))
-                        .foregroundStyle(.primary.opacity(0.85))
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(8)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                                .fill(Color.primary.opacity(0.05))
-                        )
-                }
-                if let check = diag.checks.first {
-                    Text("排查：" + check)
-                        .font(.caption)
-                        .foregroundStyle(IsleTheme.secondaryText)
-                        .textSelection(.enabled)
-                }
-                if let fix = diag.solutions.first {
-                    Text("解决：" + fix)
-                        .font(.caption)
-                        .foregroundStyle(IsleTheme.secondaryText)
-                        .textSelection(.enabled)
-                }
-                Text(diag.dataSafe)
-                    .font(.caption2)
-                    .foregroundStyle(IsleTheme.successText)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 10)
-        } else if let err = app.error ?? app.lastError ?? app.web.lastError, !err.isEmpty {
-            IsleGroupSpacing(height: 4).padding(.leading, 14)
-            AppleSettingsRow(title: "最近错误提示", icon: "exclamationmark.triangle", iconTint: .orange) {
+                .padding(10)
+                .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            } else if let err = app.error ?? app.lastError ?? app.web.lastError, !err.isEmpty {
                 Text(err)
-                    .font(.caption)
+                    .font(.system(size: 11.5))
                     .foregroundStyle(IsleTheme.warningText)
-                    .textSelection(.enabled)
+                    .lineLimit(2)
             }
-        }
-    }
 
-    @ViewBuilder
-    private func appControlsRow(_ app: NativePublicApp) -> some View {
-        IsleGroupSpacing(height: 4).padding(.leading, 14)
-        AppleSettingsRow(
-            title: "应用控制与管理",
-            subtitle: "一键打开、启停，或进入二级页配置权限、查看日志与备份数据",
-            icon: "slider.horizontal.3",
-            iconTint: .teal
-        ) {
+            Spacer(minLength: 0)
+            Divider().opacity(0.45)
+
             HStack(spacing: 8) {
-                if app.web.enabled && app.valid {
-                    Button("在浏览器打开") {
+                if app.pendingActivation {
+                    Button("确认激活") {
+                        appsCenter.performAppAction(appID: app.id, action: "activate")
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                    .disabled(appsCenter.busy)
+                } else if app.web.enabled && app.valid {
+                    Button {
                         appsCenter.openAppInBrowser(appID: app.id)
+                    } label: {
+                        Label("打开应用", systemImage: "safari")
                     }
                     .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
                     .disabled(appsCenter.busy)
                 }
-                if app.web.enabled && app.web.mode != "static" && app.web.mode != "none" {
+
+                if !app.pendingActivation && app.web.enabled && app.web.mode != "static" && app.web.mode != "none" {
                     if app.isRunning {
                         Button("重启") {
                             appsCenter.performAppAction(appID: app.id, action: "restart")
@@ -369,19 +418,22 @@ struct AppsPluginCenterView: View {
                         .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         .disabled(appsCenter.busy)
                     } else {
-                        Button("唤醒启动") {
+                        Button("唤醒") {
                             appsCenter.performAppAction(appID: app.id, action: "wake")
                         }
                         .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         .disabled(appsCenter.busy)
                     }
                 }
+
+                Spacer(minLength: 4)
+
                 Button {
                     appsCenter.loadLogs(appID: app.id)
                     selectedAppID = app.id
                 } label: {
                     HStack(spacing: 4) {
-                        Text("管理与日志")
+                        Text("详情与设置")
                         Image(systemName: "chevron.right")
                             .font(.system(size: 10, weight: .semibold))
                     }
@@ -389,16 +441,88 @@ struct AppsPluginCenterView: View {
                 .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
             }
         }
+        .padding(18)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .modifier(IsleItemCardSurface(interactive: true))
+    }
+
+    private func appMetadataStrip(_ app: NativePublicApp) -> some View {
+        HStack(spacing: 6) {
+            compactMetaChip(
+                icon: app.locationKind == "external" ? "externaldrive.fill" : "internaldrive.fill",
+                text: app.locationName
+            )
+            if let runtime = app.web.runtime, !runtime.isEmpty {
+                compactMetaChip(icon: "cpu", text: runtime)
+            } else if app.web.enabled {
+                compactMetaChip(icon: "globe", text: app.web.mode == "static" ? "静态" : app.web.mode)
+            }
+            if let port = app.web.port, port > 0 {
+                compactMetaChip(icon: nil, text: ":\(port)")
+            }
+            if let rss = app.web.rssBytes, rss > 0 {
+                compactMetaChip(icon: nil, text: Self.memoryFormatter.string(fromByteCount: rss))
+            }
+            if let cron = app.cron, cron.enabled {
+                compactMetaChip(icon: "clock", text: cron.cron)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+
+    private func compactMetaChip(icon: String?, text: String) -> some View {
+        HStack(spacing: 4) {
+            if let icon {
+                Image(systemName: icon)
+                    .font(.system(size: 9.5, weight: .semibold))
+            }
+            Text(text)
+                .font(.system(size: 10.5, weight: .medium))
+                .lineLimit(1)
+        }
+        .foregroundStyle(IsleTheme.secondaryText)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3.5)
+        .background(Color.primary.opacity(0.05), in: Capsule())
+    }
+
+    private func templateVisual(for id: String) -> (icon: String, tint: Color) {
+        if id.contains("ledger") || id.contains("bill") {
+            return ("yensign.circle.fill", IsleFluidPalette.brandCyan)
+        }
+        if id.contains("calendar") || id.contains("duty") || id.contains("countdown") {
+            return ("calendar.badge.clock", IsleFluidPalette.brandBlue)
+        }
+        if id.contains("recipe") || id.contains("meal") || id.contains("kitchen") {
+            return ("fork.knife.circle.fill", .orange)
+        }
+        return ("sparkles", IsleFluidPalette.brandViolet)
+    }
+
+    private func appVisual(for app: NativePublicApp) -> (icon: String, tint: Color) {
+        if !app.valid || app.diagnostic != nil {
+            return ("exclamationmark.triangle.fill", .orange)
+        }
+        if app.pendingActivation {
+            return ("shield.lefthalf.filled", .orange)
+        }
+        if app.web.mode == "static" {
+            return ("safari.fill", IsleFluidPalette.brandCyan)
+        }
+        if app.cron != nil && !app.web.enabled {
+            return ("clock.badge.checkmark.fill", IsleFluidPalette.brandViolet)
+        }
+        return (app.isRunning ? "bolt.horizontal.circle.fill" : "app.badge.fill", app.isRunning ? .green : IsleFluidPalette.brandIndigo)
     }
 
     private func accessPolicyText(_ access: NativeAppAccessConfig) -> String {
         switch access.policy {
         case "all_members":
-            return "全体家庭成员可见"
+            return "全体家庭成员"
         case "selected_members":
-            return "指定成员 (\(access.allowedUserIDs.count) 人)"
+            return "指定 \(access.allowedUserIDs.count) 位成员"
         default:
-            return "仅管理员可见"
+            return "仅管理员"
         }
     }
 

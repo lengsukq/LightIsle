@@ -163,79 +163,92 @@ struct AppPluginDetailView: View {
     }
 
     private var runtimeControlSection: some View {
-        let subtitleParts = [
+        let statusTone: IsleStatusTone = {
+            if !app.valid || app.diagnostic != nil { return .warning }
+            if app.pendingActivation { return .warning }
+            if app.isRunning || app.web.status == "static" { return .success }
+            return .neutral
+        }()
+        let metaParts = [
             "ID: \(app.id)",
             "v\(app.version)",
+            app.locationKind == "external" ? "其他盘 · \(app.locationName)" : "内置盘 · \(app.locationName)",
             app.web.enabled ? "Web: \(app.web.mode)" : "无 Web 界面",
             app.web.runtime.map { "Runtime: \($0)" } ?? nil,
             app.cron != nil ? "Cron: \(app.cron?.cron ?? "")" : nil
         ].compactMap { $0 }
 
-        return AppleSettingsGroup(
-            title: "运行状态与快捷控制",
-            footer: app.description ?? "轻应用插件"
-        ) {
-            AppleSettingsRow(
-                title: "当前实例状态",
-                subtitle: subtitleParts.joined(separator: " · "),
-                icon: app.isRunning ? "bolt.horizontal.circle.fill" : "app.badge.checkmark",
-                iconTint: app.valid ? (app.isRunning ? .green : .blue) : .orange
-            ) {
-                HStack(spacing: 8) {
-                    StatusBadge(
-                        isOnline: app.valid && !app.pendingActivation && (app.isRunning || app.web.status == "static"),
-                        text: app.statusLabel
+        return LiquidCard {
+            VStack(alignment: .leading, spacing: 14) {
+                HStack(alignment: .center, spacing: 14) {
+                    IsleHeaderIconBadge(
+                        icon: app.isRunning ? "bolt.horizontal.circle.fill" : (app.web.mode == "static" ? "safari.fill" : "app.badge.fill"),
+                        tint: app.valid ? (app.isRunning ? .green : IsleFluidPalette.brandIndigo) : .orange,
+                        size: 48
                     )
-                    if let rss = app.web.rssBytes, rss > 0 {
-                        Text(ByteCountFormatter.string(fromByteCount: rss, countStyle: .memory))
-                            .font(.system(size: 11, design: .monospaced))
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(spacing: 8) {
+                            Text(app.name)
+                                .font(.system(size: 18, weight: .semibold))
+                            IsleStatusPill(
+                                text: app.statusLabel,
+                                tone: statusTone,
+                                showDot: statusTone == .success || statusTone == .warning
+                            )
+                            if let rss = app.web.rssBytes, rss > 0 {
+                                IsleStatusPill(
+                                    text: ByteCountFormatter.string(fromByteCount: rss, countStyle: .memory),
+                                    tone: .neutral
+                                )
+                            }
+                            if let port = app.web.port, port > 0 {
+                                IsleStatusPill(text: "127.0.0.1:\(port)", tone: .neutral)
+                            }
+                        }
+                        Text(app.description ?? "轻应用插件")
+                            .font(.system(size: 12.5))
                             .foregroundStyle(IsleTheme.secondaryText)
+                        Text(metaParts.joined(separator: " · "))
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(IsleTheme.secondaryText.opacity(0.85))
                     }
-                    if let port = app.web.port, port > 0 {
-                        Text("127.0.0.1:\(port)")
-                            .font(.system(size: 11, design: .monospaced))
-                            .foregroundStyle(IsleTheme.secondaryText)
-                    }
+                    Spacer(minLength: 8)
                 }
-            }
 
-            if app.pendingActivation {
-                IsleGroupSpacing(height: 4).padding(.leading, 14)
-                AppleSettingsRow(
-                    title: "等待管理员首次激活确认",
-                    subtitle: "该插件由外部或 MCP 新建/修改过可执行入口，确认安全后即可激活运行",
-                    icon: "shield.lefthalf.filled.badge.checkmark",
-                    iconTint: .orange
-                ) {
-                    Button("确认激活") {
-                        appsCenter.performAppAction(appID: app.id, action: "activate")
+                if app.pendingActivation {
+                    HStack(spacing: 10) {
+                        Image(systemName: "shield.lefthalf.filled.badge.checkmark")
+                            .foregroundStyle(IsleTheme.warningText)
+                        Text("该插件由外部或 MCP 新建/修改过可执行入口，确认安全后即可激活运行。")
+                            .font(.system(size: 12))
+                            .foregroundStyle(IsleTheme.warningText)
+                        Spacer()
+                        Button("确认激活") {
+                            appsCenter.performAppAction(appID: app.id, action: "activate")
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                        .disabled(appsCenter.busy)
                     }
-                    .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
-                    .disabled(appsCenter.busy)
-                }
-            }
-
-            if app.diagnostic == nil, let err = app.error ?? app.lastError ?? app.web.lastError, !err.isEmpty {
-                IsleGroupSpacing(height: 4).padding(.leading, 14)
-                AppleSettingsRow(title: "最近错误提示", icon: "exclamationmark.triangle", iconTint: .orange) {
+                    .padding(11)
+                    .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                } else if app.diagnostic == nil, let err = app.error ?? app.lastError ?? app.web.lastError, !err.isEmpty {
                     Text(err)
                         .font(.caption)
                         .foregroundStyle(IsleTheme.warningText)
                         .textSelection(.enabled)
+                        .padding(10)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
                 }
-            }
 
-            IsleGroupSpacing(height: 4).padding(.leading, 14)
-            AppleSettingsRow(
-                title: "生命周期与动作",
-                subtitle: "修改下方配置保存后，可在此直接唤醒或触发单次 Cron 验证输出",
-                icon: "play.circle.fill",
-                iconTint: .teal
-            ) {
+                Divider().opacity(0.45)
+
                 HStack(spacing: 8) {
                     if app.web.enabled && app.valid {
-                        Button("在浏览器打开") {
+                        Button {
                             appsCenter.openAppInBrowser(appID: app.id)
+                        } label: {
+                            Label("在浏览器打开", systemImage: "safari")
                         }
                         .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
                         .disabled(appsCenter.busy)
@@ -276,6 +289,7 @@ struct AppPluginDetailView: View {
                         .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         .disabled(appsCenter.busy)
                     }
+                    Spacer()
                 }
             }
         }
