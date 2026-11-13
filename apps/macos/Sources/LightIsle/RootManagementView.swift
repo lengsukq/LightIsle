@@ -5,6 +5,11 @@ import SwiftUI
 // separate owner actions: selecting a disk never starts a migration.
 struct RootManagementView: View {
     @ObservedObject var model: NativeRootsModel
+    @State private var probeResults: [String: StoragePermissionHelper.AccessProbeResult] = [:]
+
+    private var probeSignature: String {
+        model.additionalRoots.map { "\($0.rootID):\($0.online):\($0.path)" }.joined(separator: "|")
+    }
 
     var body: some View {
         AppleSettingsGroup(
@@ -62,13 +67,24 @@ struct RootManagementView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 12)
         }
+        .task(id: probeSignature) {
+            let onlineTargets = model.additionalRoots.filter(\.online).map { ($0.rootID, $0.path) }
+            let computed = await Task.detached(priority: .utility) {
+                var results: [String: StoragePermissionHelper.AccessProbeResult] = [:]
+                for (id, path) in onlineTargets {
+                    results[id] = StoragePermissionHelper.probeDirectoryReadWrite(
+                        at: URL(fileURLWithPath: path, isDirectory: true)
+                    )
+                }
+                return results
+            }.value
+            probeResults = computed
+        }
     }
 
     private func registeredRootRow(_ root: NativeSharedRoot) -> some View {
-        let probe = root.online
-            ? StoragePermissionHelper.probeDirectoryReadWrite(at: URL(fileURLWithPath: root.path, isDirectory: true))
-            : nil
-        let isWritable = probe?.isWritable == true
+        let probe = root.online ? probeResults[root.rootID] : nil
+        let isWritable = probe?.isWritable ?? root.online
 
         return VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .center, spacing: 8) {

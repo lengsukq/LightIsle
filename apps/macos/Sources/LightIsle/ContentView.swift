@@ -102,12 +102,17 @@ struct ContentView: View {
     @State var presentingSudoersGuide = false
     @State var sudoersGuideDevice = "disk0"
     @State var showingStatusPopover = false
+    @State var copiedPopoverKey: String?
+    @State var setupStorageProbeCache: StoragePermissionHelper.AccessProbeResult?
+    @State var settingsPermissionWritableCache = true
+    @State var showSetupAdvancedStorage = false
+    @AppStorage("lightisle.dismissedQuickReadyChecklist") var dismissedQuickReadyChecklist = false
     let settingsControlWidth: CGFloat = 320
 
     var body: some View {
         Group {
             if showingManualIntro {
-                IntroAnimationView { showingManualIntro = false }
+                IntroAnimationView(isReplay: true) { showingManualIntro = false }
             } else if model.isConfigured == false {
                 if !hasSeenIntro { IntroAnimationView { hasSeenIntro = true } }
                 else { nativeSetupView }
@@ -286,6 +291,7 @@ struct ContentView: View {
                     Text(section.rawValue).font(.system(size: 13, weight: selected ? .semibold : .medium))
                         .foregroundStyle(selected ? IsleTheme.onAccent : Color.primary)
                         .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
                         .transition(.opacity)
                     Spacer(minLength: 0)
                 }
@@ -293,6 +299,7 @@ struct ContentView: View {
             .padding(.horizontal, sidebarExpanded ? 12 : 0)
             .frame(maxWidth: .infinity)
             .frame(height: 44)
+            .clipped()
             .background {
                 if selected {
                     shape.fill(
@@ -370,7 +377,7 @@ struct ContentView: View {
             }
         case .settings:
             if settingsDetail == .tools && settingsTool == .diagnostics {
-                return ("工具", { settingsTool = nil },
+                return ("工具", { requestLocalNavigation { withAnimation(reduceMotion ? nil : IsleMotion.standard) { settingsTool = nil } } },
                         "高级诊断", "应用常驻内存、采样曲线与本机活动进程", "waveform.path.ecg")
             } else if let detail = settingsDetail {
                 return ("设置", { requestLocalNavigation { settingsDetail = nil; settingsTool = nil } },
@@ -394,6 +401,7 @@ struct ContentView: View {
             HStack(alignment: .center, spacing: 14) {
                 if let backAction = info.backAction, let parentTitle = info.parentTitle {
                     IsleBackButton(title: parentTitle, action: backAction)
+                        .keyboardShortcut("[", modifiers: .command)
                     IsleHeaderIconBadge(icon: info.icon, tint: tint, size: 36)
                 } else if model.selectedSidebarPage == .overview {
                     BrandMark(size: 38)
@@ -458,6 +466,8 @@ struct ContentView: View {
                 Image(systemName: "chevron.down")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(IsleTheme.secondaryText)
+                    .rotationEffect(.degrees(showingStatusPopover ? 180 : 0))
+                    .animation(reduceMotion ? nil : IsleMotion.quick, value: showingStatusPopover)
             }
             .padding(.horizontal, 12)
             .frame(minHeight: 34)
@@ -490,8 +500,17 @@ struct ContentView: View {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(endpoint, forType: .string)
                             showNotice("已复制本机访问地址")
-                            showingStatusPopover = false
-                        } label: { Image(systemName: "doc.on.doc") }
+                            withAnimation(reduceMotion ? nil : IsleMotion.quick) { copiedPopoverKey = "local" }
+                            Task { @MainActor in
+                                try? await Task.sleep(for: .milliseconds(1800))
+                                if copiedPopoverKey == "local" {
+                                    withAnimation(reduceMotion ? nil : IsleMotion.quick) { copiedPopoverKey = nil }
+                                }
+                            }
+                        } label: {
+                            Image(systemName: copiedPopoverKey == "local" ? "checkmark" : "doc.on.doc")
+                                .foregroundStyle(copiedPopoverKey == "local" ? IsleTheme.successText : .primary)
+                        }
                         .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         .help("复制本机地址")
                     }
@@ -506,12 +525,22 @@ struct ContentView: View {
                     }
                     Spacer()
                     if let lan = model.remoteAddress {
+                        ConnectionQRCodePopoverButton(urlString: lan, label: "局域网扫码直连")
                         Button {
                             NSPasteboard.general.clearContents()
                             NSPasteboard.general.setString(lan, forType: .string)
                             showNotice("已复制局域网地址")
-                            showingStatusPopover = false
-                        } label: { Image(systemName: "doc.on.doc") }
+                            withAnimation(reduceMotion ? nil : IsleMotion.quick) { copiedPopoverKey = "lan" }
+                            Task { @MainActor in
+                                try? await Task.sleep(for: .milliseconds(1800))
+                                if copiedPopoverKey == "lan" {
+                                    withAnimation(reduceMotion ? nil : IsleMotion.quick) { copiedPopoverKey = nil }
+                                }
+                            }
+                        } label: {
+                            Image(systemName: copiedPopoverKey == "lan" ? "checkmark" : "doc.on.doc")
+                                .foregroundStyle(copiedPopoverKey == "lan" ? IsleTheme.successText : .primary)
+                        }
                         .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         .help("复制局域网地址")
                     } else {

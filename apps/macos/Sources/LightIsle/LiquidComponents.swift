@@ -59,6 +59,7 @@ enum IsleTheme {
 
 enum IsleMotion {
     static let quick = Animation.easeOut(duration: IsleFluidPalette.hoverSeconds)
+    static let standard = Animation.spring(response: 0.30, dampingFraction: 0.86)
     static let fluid = Animation.spring(response: IsleFluidPalette.expandSeconds, dampingFraction: 0.86)
     static let navigation = Animation.spring(response: IsleFluidPalette.navigationSeconds, dampingFraction: 0.88)
     static let reveal = navigation
@@ -301,6 +302,7 @@ struct LiquidInputModifier: ViewModifier {
     @FocusState private var focused: Bool
     @Environment(\.isleContrast) private var contrast
     @Environment(\.isleAccent) private var accent
+    @Environment(\.isleReduceMotion) private var reduceMotion
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         content.textFieldStyle(.plain).focused($focused)
@@ -311,6 +313,62 @@ struct LiquidInputModifier: ViewModifier {
                 shape.strokeBorder(focused ? accent : (contrast == .increased ? Color.primary.opacity(0.5) : IsleFluidPalette.rim.opacity(0.8)), lineWidth: focused ? 1.8 : 1).allowsHitTesting(false)
             }
             .shadow(color: focused ? accent.opacity(0.14) : .clear, radius: 6, y: 2)
+            .animation(reduceMotion ? nil : IsleMotion.quick, value: focused)
+    }
+}
+struct LiquidSecureField: View {
+    let prompt: String
+    @Binding var text: String
+    var onSubmit: (() -> Void)? = nil
+    @State private var revealed = false
+    @FocusState private var fieldFocused: Bool
+    @Environment(\.isleContrast) private var contrast
+    @Environment(\.isleAccent) private var accent
+    @Environment(\.isleReduceMotion) private var reduceMotion
+    @Environment(\.isEnabled) private var isEnabled
+
+    var body: some View {
+        let shape = RoundedRectangle(cornerRadius: IsleTheme.smRadius, style: .continuous)
+        HStack(spacing: 6) {
+            Group {
+                if revealed {
+                    TextField(prompt, text: $text)
+                        .textFieldStyle(.plain)
+                        .focused($fieldFocused)
+                        .onSubmit { onSubmit?() }
+                } else {
+                    SecureField(prompt, text: $text)
+                        .textFieldStyle(.plain)
+                        .focused($fieldFocused)
+                        .onSubmit { onSubmit?() }
+                }
+            }
+            if !text.isEmpty && isEnabled {
+                Button {
+                    revealed.toggle()
+                } label: {
+                    Image(systemName: revealed ? "eye.slash" : "eye")
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(IsleTheme.secondaryText)
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help(revealed ? "隐藏密码" : "显示密码")
+                .accessibilityLabel(revealed ? "隐藏密码" : "显示密码")
+            }
+        }
+        .padding(.leading, 11)
+        .padding(.trailing, 7)
+        .padding(.vertical, 5)
+        .frame(minHeight: 30)
+        .background(LinearGradient(colors: [IsleFluidPalette.cardItemTop, IsleFluidPalette.cardTop], startPoint: .top, endPoint: .bottom), in: shape)
+        .overlay {
+            shape.strokeBorder(fieldFocused ? accent : (contrast == .increased ? Color.primary.opacity(0.5) : IsleFluidPalette.rim.opacity(0.8)), lineWidth: fieldFocused ? 1.8 : 1).allowsHitTesting(false)
+        }
+        .shadow(color: fieldFocused ? accent.opacity(0.14) : .clear, radius: 6, y: 2)
+        .opacity(isEnabled ? 1 : 0.55)
+        .animation(reduceMotion ? nil : IsleMotion.quick, value: fieldFocused)
     }
 }
 struct IsleTextFieldSurface: ViewModifier {
@@ -424,10 +482,11 @@ struct AppleSettingsRow<RightContent: View>: View {
     var subtitle: String? = nil
     var icon: String? = nil
     var iconTint: Color? = nil
+    var showsDivider: Bool = true
     @ViewBuilder var rightContent: RightContent
     @Environment(\.isleAccent) private var accent
-    init(title: String, subtitle: String? = nil, icon: String? = nil, iconTint: Color? = nil, @ViewBuilder rightContent: () -> RightContent) {
-        self.title = title; self.subtitle = subtitle; self.icon = icon; self.iconTint = iconTint; self.rightContent = rightContent()
+    init(title: String, subtitle: String? = nil, icon: String? = nil, iconTint: Color? = nil, showsDivider: Bool = true, @ViewBuilder rightContent: () -> RightContent) {
+        self.title = title; self.subtitle = subtitle; self.icon = icon; self.iconTint = iconTint; self.showsDivider = showsDivider; self.rightContent = rightContent()
     }
     private var resolvedTint: Color { iconTint ?? accent }
     private var label: some View {
@@ -455,8 +514,10 @@ struct AppleSettingsRow<RightContent: View>: View {
         }
         .padding(.horizontal, 16).padding(.vertical, 13)
         .overlay(alignment: .bottom) {
-            Rectangle().fill(IsleFluidPalette.rim.opacity(0.38)).frame(height: 0.75)
-                .padding(.leading, icon != nil ? 55 : 16).allowsHitTesting(false)
+            if showsDivider {
+                Rectangle().fill(IsleFluidPalette.rim.opacity(0.32)).frame(height: 0.75)
+                    .padding(.leading, icon != nil ? 55 : 16).padding(.bottom, 0.5).allowsHitTesting(false)
+            }
         }
         .accessibilityElement(children: .contain).accessibilityLabel(title)
     }
@@ -647,6 +708,7 @@ struct LiquidSanctuaryTile: View {
                     Image(systemName: "arrow.up.right").font(.system(size: 12, weight: .semibold)).foregroundStyle(IsleTheme.secondaryText)
                         .frame(width: 26, height: 26).background(Color.primary.opacity(0.045), in: Circle())
                         .offset(x: hovered && !reduceMotion ? 2 : 0, y: hovered && !reduceMotion ? -2 : 0)
+                        .animation(reduceMotion ? nil : IsleMotion.quick, value: hovered)
                 }
                 VStack(alignment: .leading, spacing: 5) {
                     Text(title).font(.system(size: 15, weight: .semibold)).foregroundStyle(.primary)
@@ -655,8 +717,6 @@ struct LiquidSanctuaryTile: View {
                 }
             }.padding(18).frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                 .modifier(IsleItemCardSurface(interactive: true))
-                .offset(y: hovered && !reduceMotion ? -2 : 0)
-                .animation(reduceMotion ? nil : IsleMotion.fluid, value: hovered)
         }.buttonStyle(IslePressStyle()).onHover { hovered = $0 }
             .help("在浏览器中打开" + title)
     }
@@ -668,6 +728,7 @@ struct LiquidHealthGauge: View {
     let progress: Double?
     let tint: Color
     let icon: String
+    @Environment(\.isleReduceMotion) private var reduceMotion
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 8) {
@@ -677,7 +738,14 @@ struct LiquidHealthGauge: View {
                 Spacer(minLength: 0)
                 IsleDetailInfo(title: title, rows: [("当前读数", valueText), ("说明", subtext), ("数据来源", "本机最新采样；未取得读数时显示等待采样")])
             }
-            Text(valueText).font(.system(size: 23, weight: .semibold, design: .rounded)).foregroundStyle(tint).monospacedDigit().lineLimit(1).minimumScaleFactor(0.8)
+            Text(valueText)
+                .font(.system(size: 23, weight: .semibold, design: .rounded))
+                .foregroundStyle(tint)
+                .monospacedDigit()
+                .contentTransition(.numericText())
+                .lineLimit(1)
+                .minimumScaleFactor(0.8)
+                .animation(reduceMotion ? nil : IsleMotion.quick, value: valueText)
             Text(subtext).font(.system(size: 12)).foregroundStyle(IsleTheme.secondaryText).lineLimit(2)
             if let progress {
                 let clamped = max(0, min(1, progress))
@@ -686,6 +754,7 @@ struct LiquidHealthGauge: View {
                         Capsule().fill(Color.primary.opacity(0.075))
                         Capsule().fill(LinearGradient(colors: [tint.opacity(0.82), tint], startPoint: .leading, endPoint: .trailing))
                             .frame(width: max(6, proxy.size.width * clamped))
+                            .animation(reduceMotion ? nil : IsleMotion.fluid, value: clamped)
                     }
                 }.frame(height: 7).accessibilityElement(children: .ignore).accessibilityLabel(title).accessibilityValue(String(format: "%.0f%%", clamped * 100))
             }

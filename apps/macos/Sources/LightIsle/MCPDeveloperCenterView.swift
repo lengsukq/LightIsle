@@ -5,6 +5,8 @@ struct MCPDeveloperCenterView: View {
     @ObservedObject var appsCenter: NativeAppsModel
     @State private var revealToken = false
     @State private var copiedBanner: String?
+    @State private var showingClientWizard = false
+    @State private var showCallTraceLogs = false
 
     // MCP Inspector State
     @State private var inspectorMode = "tools/call"
@@ -87,7 +89,9 @@ struct MCPDeveloperCenterView: View {
             }
             mcpInspectorSection
             gatewayProbeSection
-            callTraceSection
+        }
+        .sheet(isPresented: $showingClientWizard) {
+            MCPClientWizardSheet(appsCenter: appsCenter)
         }
         .onAppear {
             if probeAppID.isEmpty, let first = appsCenter.apps.first?.id {
@@ -104,108 +108,188 @@ struct MCPDeveloperCenterView: View {
     private var mcpConfigSection: some View {
         let snap = appsCenter.mcp
         return AppleSettingsGroup(
-            title: "全功能管理与开发 MCP 服务（本机 Stdio 与局域网 HTTP/SSE）",
-            footer: "本机 AI Agent 可通过 stdio (lightisled mcp) 桥接后台守护进程，局域网设备可通过 Streamable HTTP (/api/v2/mcp) 或 SSE (/api/v2/mcp/sse) 持 Bearer Token 接入，全面读取并管理磁盘存储、文件与安全回收站、相册影视、下载、家庭成员、定时脚本与轻应用。全部调用实时写入 SQLite 审计日志；格式化磁盘、注销存储根、物理粉碎文件与密钥导出已物理隔离禁止。"
+            title: "AI Agent (MCP) 服务",
+            footer: "关闭主开关将联动关闭本机桥接与局域网 / Cloud MCP 访问。全部调用实时写入 SQLite 审计日志；格式化磁盘、注销存储根、物理粉碎文件与密钥导出已物理隔离禁止。"
         ) {
             AppleSettingsRow(
-                title: "允许本机 AI Agent (Stdio MCP) 接入",
-                subtitle: "开启后允许本机 Claude Code / Antigravity / Codex / Cursor 调用 lightisled mcp",
+                title: "开启 AI Agent (MCP) 服务",
+                subtitle: "开启后默认启用本机免令牌直连（已内置 ~/.cache 与 /tmp 沙盒回环桥接），支持 Gemini 桌面端 / Claude Desktop / Cursor",
                 icon: "cpu.fill",
                 iconTint: .purple
             ) {
-                Toggle("", isOn: Binding(
-                    get: { snap.mcpEnabled },
-                    set: { appsCenter.setMCPConfig(mcpEnabled: $0) }
-                ))
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .disabled(appsCenter.busy)
-            }
-            IsleGroupSpacing(height: 4).padding(.leading, 14)
-            AppleSettingsRow(
-                title: "允许局域网远程 MCP (HTTP / SSE) 接入",
-                subtitle: "允许同一局域网 (192.168/10/172.16) 开发机持 Bearer Token 连接 /api/v2/mcp（需同时开启局域网监听）",
-                icon: "network.badge.shield.half.filled",
-                iconTint: .blue
-            ) {
-                Toggle("", isOn: Binding(
-                    get: { snap.mcpLanEnabled },
-                    set: { appsCenter.setMCPConfig(mcpLanEnabled: $0) }
-                ))
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .disabled(appsCenter.busy)
-            }
-            IsleGroupSpacing(height: 4).padding(.leading, 14)
-            AppleSettingsRow(
-                title: "本机 Stdio 命令",
-                subtitle: snap.command.isEmpty ? "lightisled mcp" : snap.command,
-                icon: "terminal",
-                iconTint: .teal
-            ) {
-                HStack(spacing: 6) {
-                    Button("复制命令") {
-                        copyText(snap.command, notice: "已复制本机 Stdio MCP 启动命令")
+                HStack(spacing: 10) {
+                    Button("客户端接入向导") {
+                        showingClientWizard = true
                     }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                    Button("复制本机接入提示词") {
+                    .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                    Button("复制接入提示词") {
                         if !snap.mcpEnabled { appsCenter.setMCPConfig(mcpEnabled: true) }
                         copyText(snap.mcpPrompt, notice: "已复制本机 MCP 接入提示词")
                     }
-                    .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                    Toggle("", isOn: Binding(
+                        get: { snap.mcpEnabled },
+                        set: { enabled in
+                            withAnimation(.easeInOut(duration: 0.22)) {
+                                appsCenter.setMCPConfig(
+                                    mcpEnabled: enabled,
+                                    mcpLanEnabled: enabled ? nil : false
+                                )
+                            }
+                        }
+                    ))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .disabled(appsCenter.busy)
                 }
             }
-            IsleGroupSpacing(height: 4).padding(.leading, 14)
-            AppleSettingsRow(
-                title: "局域网 MCP 端点",
-                subtitle: "HTTP: \(snap.lanHttpUrl ?? snap.localHttpUrl)  ·  SSE: \(snap.lanSseUrl ?? (snap.localHttpUrl + "/sse"))",
-                icon: "point.3.connected.trianglepath.dotted",
-                iconTint: .indigo
-            ) {
-                HStack(spacing: 6) {
-                    Button("复制 HTTP URL") {
-                        copyText(snap.lanHttpUrl ?? snap.localHttpUrl, notice: "已复制 MCP HTTP 端点 URL")
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                    Button("复制局域网接入提示词") {
-                        if !snap.mcpLanEnabled { appsCenter.setMCPConfig(mcpEnabled: true, mcpLanEnabled: true) }
-                        copyText(snap.lanMcpPrompt, notice: "已复制局域网 MCP 接入提示词")
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
-                    Button("复制 mcpServers JSON") {
-                        copyText(snap.mcpConfigJson, notice: "已复制 mcpServers JSON 配置")
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                }
-            }
+
             if snap.mcpEnabled {
                 IsleGroupSpacing(height: 4).padding(.leading, 14)
-                let tokenText = snap.mcpToken ?? ""
-                let masked = tokenText.count > 12
-                    ? "\(tokenText.prefix(6))••••••••••••\(tokenText.suffix(4))"
-                    : (tokenText.isEmpty ? "未生成" : "••••••••")
                 AppleSettingsRow(
-                    title: "MCP Bearer 鉴权 Token",
-                    subtitle: revealToken ? tokenText : masked,
-                    icon: "key.horizontal.fill",
-                    iconTint: .orange
+                    title: "本机命令",
+                    subtitle: snap.command.isEmpty ? "/Applications/LightIsle.app/Contents/Resources/core/lightisled mcp" : snap.command,
+                    icon: "terminal",
+                    iconTint: .teal
                 ) {
-                    HStack(spacing: 6) {
-                        Button(revealToken ? "隐藏" : "显示") {
-                            revealToken.toggle()
-                        }
-                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                        Button("复制 Token") {
-                            copyText(tokenText, notice: "已复制 MCP Bearer Token")
-                        }
-                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                        .disabled(tokenText.isEmpty)
-                        Button("轮换 Token") {
-                            appsCenter.rotateMCPToken()
-                        }
-                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                        .disabled(appsCenter.busy)
+                    Button("复制命令") {
+                        copyText(
+                            snap.command.isEmpty ? "/Applications/LightIsle.app/Contents/Resources/core/lightisled mcp" : snap.command,
+                            notice: "已复制本机 Stdio MCP 启动命令"
+                        )
                     }
+                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                }
+
+                IsleGroupSpacing(height: 4).padding(.leading, 14)
+                AppleSettingsRow(
+                    title: "允许局域网 / Cloud MCP 访问",
+                    subtitle: "开启后同一局域网设备或 Gemini Cloud MCP 可持鉴权 Token 连接 /api/v2/mcp",
+                    icon: "network.badge.shield.half.filled",
+                    iconTint: .blue
+                ) {
+                    Toggle("", isOn: Binding(
+                        get: { snap.mcpLanEnabled },
+                        set: { enabled in
+                            withAnimation(.easeInOut(duration: 0.22)) {
+                                appsCenter.setMCPConfig(mcpEnabled: true, mcpLanEnabled: enabled)
+                            }
+                        }
+                    ))
+                    .labelsHidden()
+                    .toggleStyle(.switch)
+                    .disabled(appsCenter.busy)
+                }
+
+                if snap.mcpLanEnabled {
+                    IsleGroupSpacing(height: 4).padding(.leading, 14)
+                    AppleSettingsRow(
+                        title: "远程端点（Streamable HTTP / SSE）",
+                        subtitle: "HTTP: \(snap.lanHttpUrl ?? snap.localHttpUrl)  ·  SSE: \(snap.lanSseUrl ?? (snap.localHttpUrl + "/sse"))",
+                        icon: "point.3.connected.trianglepath.dotted",
+                        iconTint: .indigo
+                    ) {
+                        HStack(spacing: 6) {
+                            Button("复制 /api/v2/mcp") {
+                                copyText(snap.lanHttpUrl ?? snap.localHttpUrl, notice: "已复制 MCP HTTP 端点 URL")
+                            }
+                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                            Button("复制接入提示词") {
+                                copyText(snap.lanMcpPrompt, notice: "已复制局域网 MCP 接入提示词")
+                            }
+                            .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                            Button("复制 JSON") {
+                                copyText(snap.mcpConfigJson, notice: "已复制 mcpServers JSON 配置")
+                            }
+                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        }
+                    }
+
+                    IsleGroupSpacing(height: 4).padding(.leading, 14)
+                    let tokenText = snap.mcpToken ?? ""
+                    let masked = tokenText.count > 12
+                        ? "\(tokenText.prefix(6))••••••••••••\(tokenText.suffix(4))"
+                        : (tokenText.isEmpty ? "未生成" : "••••••••")
+                    AppleSettingsRow(
+                        title: "鉴权 Token 管理",
+                        subtitle: revealToken ? tokenText : masked,
+                        icon: "key.horizontal.fill",
+                        iconTint: .orange
+                    ) {
+                        HStack(spacing: 6) {
+                            Button(revealToken ? "隐藏" : "显示") {
+                                revealToken.toggle()
+                            }
+                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                            Button("复制 Token") {
+                                copyText(tokenText, notice: "已复制 MCP Bearer Token")
+                            }
+                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                            .disabled(tokenText.isEmpty)
+                            Button("轮换 Token") {
+                                appsCenter.rotateMCPToken()
+                            }
+                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                            .disabled(appsCenter.busy)
+                        }
+                    }
+
+                    IsleGroupSpacing(height: 4).padding(.leading, 14)
+                    DisclosureGroup(isExpanded: $showCallTraceLogs) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(spacing: 8) {
+                                Text("自动记录最近 50 次本机 / 局域网 / Cloud MCP 调用与耗时")
+                                    .font(.caption)
+                                    .foregroundStyle(IsleTheme.secondaryText)
+                                Spacer()
+                                Button("刷新记录") {
+                                    appsCenter.refresh()
+                                }
+                                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                                Button("清空记录") {
+                                    appsCenter.clearMCPLogs()
+                                }
+                                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                                .disabled(appsCenter.mcpLogs.isEmpty || appsCenter.busy)
+                            }
+                            if appsCenter.mcpLogs.isEmpty {
+                                Text("暂无 MCP 调用记录，当 AI Agent 或调试器发起请求后会在此显示。")
+                                    .font(.caption)
+                                    .foregroundStyle(IsleTheme.secondaryText)
+                                    .padding(.vertical, 4)
+                            } else {
+                                ForEach(appsCenter.mcpLogs.prefix(20)) { entry in
+                                    HStack(spacing: 8) {
+                                        Image(systemName: entry.isError ? "xmark.circle.fill" : "checkmark.circle.fill")
+                                            .foregroundStyle(entry.isError ? .orange : .green)
+                                            .font(.caption)
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text("\(entry.method)\(entry.target.map { " · \($0)" } ?? "")")
+                                                .font(.caption.weight(.medium))
+                                            Text("[\(entry.transport)] \(entry.remoteAddr ?? "local") · \(entry.timestamp)")
+                                                .font(.caption2)
+                                                .foregroundStyle(IsleTheme.secondaryText)
+                                        }
+                                        Spacer()
+                                        Text("\(entry.durationMs) ms")
+                                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                                            .foregroundStyle(entry.isError ? IsleTheme.warningText : IsleTheme.secondaryText)
+                                    }
+                                    .padding(.vertical, 2)
+                                }
+                            }
+                        }
+                        .padding(.top, 8)
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "list.bullet.rectangle.portrait")
+                                .foregroundStyle(.orange)
+                            Text("调用日志（最近 \(appsCenter.mcpLogs.count) 条）")
+                                .font(.subheadline.weight(.medium))
+                        }
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 8)
                 }
             }
         }
@@ -400,50 +484,6 @@ struct MCPDeveloperCenterView: View {
                 }
                 .padding(.horizontal, 14)
                 .padding(.bottom, 8)
-            }
-        }
-    }
-
-    private var callTraceSection: some View {
-        AppleSettingsGroup(
-            title: "MCP 实时调用追踪日志 (最近 \(appsCenter.mcpLogs.count) 条)",
-            footer: "自动记录本机 stdio、局域网 lan-http / lan-sse 以及上方调试器的最近 50 次 MCP 请求耗时与结果摘要。"
-        ) {
-            AppleSettingsRow(title: "追踪记录控制", icon: "list.bullet.rectangle.portrait", iconTint: .orange) {
-                HStack(spacing: 8) {
-                    Button("刷新记录") {
-                        appsCenter.refresh()
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                    Button("清空记录") {
-                        appsCenter.clearMCPLogs()
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                    .disabled(appsCenter.mcpLogs.isEmpty || appsCenter.busy)
-                }
-            }
-
-            if appsCenter.mcpLogs.isEmpty {
-                IsleGroupSpacing(height: 4).padding(.leading, 14)
-                AppleSettingsRow(title: "暂无 MCP 调用记录", icon: "tray", iconTint: .secondary) {
-                    Text("当 AI Agent 或调试器发起 MCP 请求后会在此实时显示")
-                        .font(.caption)
-                        .foregroundStyle(IsleTheme.secondaryText)
-                }
-            } else {
-                ForEach(appsCenter.mcpLogs.prefix(20)) { entry in
-                    IsleGroupSpacing(height: 4).padding(.leading, 14)
-                    AppleSettingsRow(
-                        title: "\(entry.method)\(entry.target.map { " · \($0)" } ?? "")",
-                        subtitle: "[\(entry.transport)] \(entry.remoteAddr ?? "local") · \(entry.timestamp)",
-                        icon: entry.isError ? "xmark.circle.fill" : "checkmark.circle.fill",
-                        iconTint: entry.isError ? .orange : .green
-                    ) {
-                        Text("\(entry.durationMs) ms")
-                            .font(.system(size: 11, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(entry.isError ? IsleTheme.warningText : IsleTheme.secondaryText)
-                    }
-                }
             }
         }
     }

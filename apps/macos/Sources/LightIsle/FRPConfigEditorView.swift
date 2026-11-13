@@ -50,8 +50,12 @@ struct FRPConfigEditorView: View {
                     }
                     AppleSettingsRow(title: "保存设置", icon: "square.and.arrow.down", iconTint: .blue) {
                         HStack(spacing: 10) {
+                            if hasChanges {
+                                IsleStatusPill(text: "有未保存修改", tone: .warning, showDot: true)
+                            }
                             Button("保存配置") { save(document: document) }
                                 .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                                .keyboardShortcut("s", modifiers: .command)
                                 .disabled(!hasChanges)
                             Button("放弃修改") { draft = document.draft; savedMessage = nil; errorMessage = nil }
                                 .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))

@@ -231,7 +231,9 @@ struct PersonalSpacesManagementView: View {
     private func userSelectorChip(_ entry: NativeSpaceUserEntry) -> some View {
         let isSelected = entry.id == (spaces.selectedEntry?.id ?? 0)
         return Button {
-            spaces.selectedUserID = entry.id
+            withAnimation(IsleMotion.quick) {
+                spaces.selectedUserID = entry.id
+            }
         } label: {
             HStack(spacing: 8) {
                 Image(systemName: entry.user.isAdmin ? "crown.fill" : "person.fill")
@@ -248,7 +250,7 @@ struct PersonalSpacesManagementView: View {
                                 Capsule().fill(entry.user.isAdmin ? Color.orange.opacity(0.18) : (entry.user.enabled ? IsleTheme.accent.opacity(0.14) : Color.secondary.opacity(0.16)))
                             )
                     }
-                    Text("已绑定 \(entry.policy.locations.count)/3 类目录 · 已计费 \(formatBytes(entry.policy.accountedBytes))")
+                    Text("已绑定 \(entry.policy.locations.count)/3 类目录 · 已用 \(formatBytes(entry.policy.accountedBytes))")
                         .font(.system(size: 11))
                         .foregroundStyle(IsleTheme.secondaryText)
                 }
@@ -257,14 +259,15 @@ struct PersonalSpacesManagementView: View {
             .padding(.vertical, 8)
             .background(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .fill(isSelected ? IsleTheme.accent.opacity(0.15) : Color.primary.opacity(0.04))
+                    .fill(isSelected ? IsleTheme.accent.opacity(0.15) : Color.primary.opacity(0.045))
             )
             .overlay(
                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .strokeBorder(isSelected ? IsleTheme.accent : Color.primary.opacity(0.08), lineWidth: isSelected ? 1.5 : 1)
+                    .strokeBorder(isSelected ? IsleTheme.accent : IsleFluidPalette.rim.opacity(0.6), lineWidth: isSelected ? 1.6 : 1)
             )
+            .contentShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
-        .buttonStyle(.plain)
+        .buttonStyle(IslePressStyle())
     }
 
     @ViewBuilder
@@ -367,8 +370,8 @@ struct PersonalSpacesManagementView: View {
                         set: { editingQuotaGiB[key] = $0 }
                     )
                 )
-                .textFieldStyle(.roundedBorder)
-                .frame(width: 76)
+                .liquidInput()
+                .frame(width: 78)
                 Button(hasUnsavedChange ? "保存配额*" : "保存配额") {
                     guard let bytes = validation.quotaBytes else { return }
                     spaces.setRootQuota(
@@ -504,9 +507,8 @@ struct PersonalSpacesManagementView: View {
                             IsleStatusPill(text: "旧硬盘已移除登记", tone: .warning)
                         }
                         if loc.rootGeneration > 1 {
-                            Text("重连批次 #\(loc.rootGeneration)")
-                                .font(.caption2)
-                                .foregroundStyle(IsleTheme.secondaryText)
+                            IsleStatusPill(text: "已重连更新", tone: .neutral)
+                                .help("硬盘重连批次 #\(loc.rootGeneration)")
                         }
                     } else {
                         IsleStatusPill(text: "尚未分配", tone: .neutral)
@@ -663,10 +665,10 @@ struct PersonalSpacesManagementView: View {
     @ViewBuilder
     private func allocationFormContent(
         for entry: NativeSpaceUserEntry,
-        selectedRoot: NativeStorageRootInfo?,
+        selectedRoot: NativeSpaceRootInfo?,
         allocValidation: QuotaValidationResult,
         checkedCats: [String],
-        boundOnOtherDisk: [NativeSpaceLocation]
+        boundOnOtherDisk: [NativeStorageLocation]
     ) -> some View {
         allocationRootPickerRow(for: entry)
         if let rootMsg = appModel.rootManagement.message, !rootMsg.isEmpty {
@@ -684,7 +686,7 @@ struct PersonalSpacesManagementView: View {
         HStack(spacing: 10) {
             Text("新建子目录（可选，逗号分隔）：").font(.caption).foregroundStyle(IsleTheme.secondaryText)
             TextField("例如：files/工作文档, photos/2026家庭相册, videos/电影", text: $allocSubdirs)
-                .textFieldStyle(.roundedBorder)
+                .liquidInput()
         }
         if entry.policy.locations.isEmpty, spaces.roots.count > 1 {
             Text("提示：首次分配将在目标盘新建空白的 Users/u\(entry.user.id) 专属目录，不会自动搬移原存储目录根层或「图库 / PhonePhotos」中的既有照片与文件（原数据保留在原盘）。")

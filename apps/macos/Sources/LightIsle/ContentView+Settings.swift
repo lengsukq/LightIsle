@@ -52,6 +52,21 @@ extension ContentView {
                         }.modifier(IsleCascade(index: index))
                     }
                 }
+                .task(id: model.sharedFolderPath ?? "") {
+                    guard !model.isPresentationPreview else {
+                        settingsPermissionWritableCache = true
+                        return
+                    }
+                    let currentPath = model.sharedFolderPath ?? ""
+                    guard !currentPath.isEmpty else {
+                        settingsPermissionWritableCache = true
+                        return
+                    }
+                    let writable = await Task.detached(priority: .utility) {
+                        StoragePermissionHelper.probeDirectoryReadWrite(at: URL(fileURLWithPath: currentPath, isDirectory: true)).isWritable
+                    }.value
+                    settingsPermissionWritableCache = writable
+                }
             }
         }
     }
@@ -63,12 +78,8 @@ extension ContentView {
             if hasOfflineOrError {
                 return ("需检查权限", .warning)
             }
-            let currentPath = model.sharedFolderPath ?? ""
-            if !currentPath.isEmpty {
-                let probe = StoragePermissionHelper.probeDirectoryReadWrite(at: URL(fileURLWithPath: currentPath, isDirectory: true))
-                if !probe.isWritable {
-                    return ("无读写权限", .error)
-                }
+            if !settingsPermissionWritableCache {
+                return ("无读写权限", .error)
             }
             return ("权限就绪", .success)
         case .general:
@@ -297,48 +308,31 @@ extension ContentView {
         }
     }
     var mcpToolsSettingsGroup: some View {
-        AppleSettingsGroup(
+        let mcpSnap = model.appsCenter.mcp
+        let statusText: String = {
+            if !mcpSnap.mcpEnabled { return "未开启" }
+            return mcpSnap.mcpLanEnabled ? "已开启 · 本机与局域网/Cloud" : "已开启 · 仅本机免令牌直连"
+        }()
+        return AppleSettingsGroup(
             preferenceSection: .tools,
-            title: "本机脚本自动化与轻应用 (MCP)",
-            footer: "在 Mac 上通过本地编辑器或 AI Agent 维护脚本与多语言轻应用（Static HTML / Python / Node / Go / Java），也可在「Docker 与应用」中直接管理轻应用、开启局域网 MCP 并使用交互式调试器。"
+            title: "本机脚本自动化与 AI Agent (MCP)",
+            footer: "AI Agent (MCP) 开关、Gemini / Claude Desktop / Cursor 客户端接入向导、Token 管理与交互式调试器已统一收口至「Docker 与应用 → MCP 开发者与调试」。"
         ) {
             AppleSettingsRow(
-                title: "允许本地 AI Agent (Stdio MCP) 接入开发",
-                subtitle: "默认关闭；开启后允许本机 Claude Code / Antigravity / Codex 通过 stdio MCP 创建与热重载应用（新应用默认仅管理员可见）。",
-                icon: "cpu",
-                iconTint: .purple
+                title: "AI Agent (MCP) 服务",
+                subtitle: "当前状态：\(statusText)（可在统一面板配置本机接入向导与局域网/Cloud 访问）",
+                icon: "cpu.fill",
+                iconTint: mcpSnap.mcpEnabled ? .purple : .secondary
             ) {
-                Toggle(
-                    "允许本地 AI Agent (MCP) 接入开发",
-                    isOn: Binding(
-                        get: { model.appsCenter.mcp.mcpEnabled },
-                        set: { model.appsCenter.setMCPConfig(mcpEnabled: $0) }
-                    )
-                )
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .disabled(model.isPresentationPreview || !model.appsCenter.connected || model.appsCenter.busy)
+                Button("打开统一 MCP 面板") {
+                    model.appsCenter.workspaceSection = .mcp
+                    requestNavigation(.containers)
+                }
+                .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                .disabled(model.isPresentationPreview)
             }
             IsleGroupSpacing(height: 4).padding(.leading, 14)
-            AppleSettingsRow(
-                title: "允许局域网远程 MCP (HTTP / SSE) 接入开发",
-                subtitle: "开启后允许同一局域网开发机持 Bearer Token 连接 /api/v2/mcp 进行远程插件开发与调试。",
-                icon: "network.badge.shield.half.filled",
-                iconTint: .indigo
-            ) {
-                Toggle(
-                    "允许局域网远程 MCP 接入",
-                    isOn: Binding(
-                        get: { model.appsCenter.mcp.mcpLanEnabled },
-                        set: { model.appsCenter.setMCPConfig(mcpLanEnabled: $0) }
-                    )
-                )
-                .labelsHidden()
-                .toggleStyle(.switch)
-                .disabled(model.isPresentationPreview || !model.appsCenter.connected || model.appsCenter.busy)
-            }
-            IsleGroupSpacing(height: 4).padding(.leading, 14)
-            AppleSettingsRow(title: "目录、MCP 引导与调试台", icon: "folder.badge.gearshape", iconTint: .blue) {
+            AppleSettingsRow(title: "本地目录快捷入口", icon: "folder.badge.gearshape", iconTint: .blue) {
                 HStack(spacing: 8) {
                     Button("打开自动化脚本目录") { model.openAutomationScripts() }
                         .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
@@ -346,15 +340,6 @@ extension ContentView {
                     Button("打开应用插件目录") { model.appsCenter.openPluginDirectory() }
                         .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         .disabled(model.isPresentationPreview)
-                    Button("复制 MCP 接入提示词") { model.copyMCPBootstrapPrompt() }
-                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                        .disabled(model.isPresentationPreview)
-                    Button("打开应用与 MCP 调试台") {
-                        model.appsCenter.workspaceSection = .mcp
-                        requestNavigation(.containers)
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
-                    .disabled(model.isPresentationPreview)
                 }
             }
             if let msg = model.appsCenter.errorMessage ?? model.appsCenter.message {
@@ -590,16 +575,20 @@ extension ContentView {
                 }
 
                 AppleSettingsRow(title: "新密码", icon: "key.horizontal.fill", iconTint: .indigo) {
-                    SecureField("至少 12 位", text: $resetAdminPassword)
-                        .liquidInput()
+                    LiquidSecureField(prompt: "至少 12 位", text: $resetAdminPassword)
                         .frame(width: settingsControlWidth)
                 }
                 IsleGroupSpacing(height: 4).padding(.leading, 14)
 
                 AppleSettingsRow(title: "确认新密码", icon: "checkmark.shield.fill", iconTint: .teal) {
-                    SecureField("再次输入", text: $resetAdminConfirmation)
-                        .liquidInput()
-                        .frame(width: settingsControlWidth)
+                    LiquidSecureField(prompt: "再次输入", text: $resetAdminConfirmation) {
+                        if model.state == .online, model.isConfigured == true,
+                           !model.resettingAdmin, resetAdminPassword.utf8.count >= 12,
+                           resetAdminPassword == resetAdminConfirmation {
+                            savePasswordDraft()
+                        }
+                    }
+                    .frame(width: settingsControlWidth)
                 }
                 IsleGroupSpacing(height: 4).padding(.leading, 14)
 

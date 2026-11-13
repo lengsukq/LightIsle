@@ -48,27 +48,34 @@ struct LightIsleApp: App {
                     sidebarExpanded?.wrappedValue.toggle()
                 }
                 .keyboardShortcut("s", modifiers: [.control, .command])
-                .disabled(sidebarExpanded == nil)
+                .disabled(sidebarExpanded == nil || model.isConfigured != true)
                 Divider()
-                Button("概览") { model.navigate(to: .overview) }
-                    .keyboardShortcut(SidebarPage.overview.shortcut, modifiers: .command)
-                Button("私人文件") { model.navigate(to: .files) }
-                    .keyboardShortcut(SidebarPage.files.shortcut, modifiers: .command)
-                Button("时光相册") { model.navigate(to: .photos) }
-                    .keyboardShortcut(SidebarPage.photos.shortcut, modifiers: .command)
-                Button("私人影院") { model.navigate(to: .cinema) }
-                    .keyboardShortcut(SidebarPage.cinema.shortcut, modifiers: .command)
-                Button("Docker 与应用") { model.navigate(to: .containers) }
-                    .keyboardShortcut(SidebarPage.containers.shortcut, modifiers: .command)
-                Button("外部依赖") { model.navigate(to: .dependencies) }
-                    .keyboardShortcut(SidebarPage.dependencies.shortcut, modifiers: .command)
-                Divider()
-                Button("网络与连接") { model.navigate(to: .services) }
-                    .keyboardShortcut(SidebarPage.services.shortcut, modifiers: .command)
-                Button("数据与存储") { model.navigate(to: .storage) }
-                    .keyboardShortcut(SidebarPage.storage.shortcut, modifiers: .command)
-                Button("设置") { model.navigate(to: .settings) }
-                    .keyboardShortcut(SidebarPage.settings.shortcut, modifiers: .command)
+                Group {
+                    Button("概览") { model.navigate(to: .overview) }
+                        .keyboardShortcut(SidebarPage.overview.shortcut, modifiers: .command)
+                    Button("数据与存储") { model.navigate(to: .storage) }
+                        .keyboardShortcut(SidebarPage.storage.shortcut, modifiers: .command)
+                    Button("网络与连接") { model.navigate(to: .services) }
+                        .keyboardShortcut(SidebarPage.services.shortcut, modifiers: .command)
+                    Button("Docker 与应用") { model.navigate(to: .containers) }
+                        .keyboardShortcut(SidebarPage.containers.shortcut, modifiers: .command)
+                    Button("个人空间") { model.navigate(to: .spaces) }
+                        .keyboardShortcut(SidebarPage.spaces.shortcut, modifiers: .command)
+                    Button("设置") { model.navigate(to: .settings) }
+                        .keyboardShortcut(SidebarPage.settings.shortcut, modifiers: .command)
+                    Divider()
+                    Menu("空间与工具快捷直达") {
+                        Button("私人文件") { model.navigate(to: .files) }
+                            .keyboardShortcut(SidebarPage.files.shortcut, modifiers: .command)
+                        Button("时光相册") { model.navigate(to: .photos) }
+                            .keyboardShortcut(SidebarPage.photos.shortcut, modifiers: .command)
+                        Button("私人影院") { model.navigate(to: .cinema) }
+                            .keyboardShortcut(SidebarPage.cinema.shortcut, modifiers: .command)
+                        Divider()
+                        Button("外部依赖") { model.navigate(to: .dependencies) }
+                            .keyboardShortcut(SidebarPage.dependencies.shortcut, modifiers: .command)
+                    }
+                }
                 .disabled(model.isConfigured != true)
             }
         }
@@ -82,6 +89,7 @@ struct LightIsleApp: App {
 private struct LightIsleMenu: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.openWindow) private var openWindow
+    @State private var copiedAddress = false
 
     var body: some View {
         Text("轻屿 NAS · \(model.state.label)")
@@ -95,16 +103,28 @@ private struct LightIsleMenu: View {
         if !model.coreServiceWarnings.isEmpty {
             Text("有 \(model.coreServiceWarnings.count) 项服务需要检查")
         }
+        Divider()
         Button(model.corePortConflict != nil ? "处理端口冲突…" : model.isLightweightMode ? "恢复正常管理界面" : "打开管理窗口") {
             model.restoreNormalMode()
             openWindow(id: "main")
             NSApplication.shared.activate(ignoringOtherApps: true)
         }
+        Button("打开 Web 空间") { model.openUserWeb() }
+            .disabled(model.state != .online)
+        if let shareURL = model.remoteAddress ?? model.endpoint?.absoluteString, model.state == .online {
+            Button(copiedAddress ? "✓ 已复制访问地址" : (model.remoteAddress != nil ? "复制局域网访问地址" : "复制本机访问地址")) {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(shareURL, forType: .string)
+                copiedAddress = true
+                Task { @MainActor in
+                    try? await Task.sleep(for: .milliseconds(1800))
+                    copiedAddress = false
+                }
+            }
+        }
         if !model.isLightweightMode {
             Button("进入轻量模式") { model.enterLightweightMode() }
         }
-        Button("打开 Web 空间") { model.openUserWeb() }
-            .disabled(model.state != .online)
         Divider()
         Button("退出轻屿并停止 NAS") { NSApplication.shared.terminate(nil) }
     }

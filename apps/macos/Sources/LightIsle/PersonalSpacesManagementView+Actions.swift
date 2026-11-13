@@ -4,10 +4,10 @@ import SwiftUI
 extension PersonalSpacesManagementView {
     func allocationSubmitRow(
         for entry: NativeSpaceUserEntry,
-        selectedRoot: NativeStorageRootInfo?,
+        selectedRoot: NativeSpaceRootInfo?,
         allocValidation: QuotaValidationResult,
         checkedCats: [String],
-        boundOnOtherDisk: [NativeSpaceLocation]
+        boundOnOtherDisk: [NativeStorageLocation]
     ) -> some View {
         let isSwitchingDisk = selectedRoot != nil && !boundOnOtherDisk.isEmpty
         return HStack(spacing: 10) {
@@ -39,7 +39,7 @@ extension PersonalSpacesManagementView {
 
     func submitSpaceAllocation(
         for entry: NativeSpaceUserEntry,
-        selectedRoot: NativeStorageRootInfo?,
+        selectedRoot: NativeSpaceRootInfo?,
         allocValidation: QuotaValidationResult,
         checkedCats: [String]
     ) {

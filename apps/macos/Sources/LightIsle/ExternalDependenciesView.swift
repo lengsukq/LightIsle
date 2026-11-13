@@ -8,6 +8,7 @@ struct ExternalDependenciesView: View {
     let navigate: (SidebarPage) -> Void
     @State private var showInstallLog = false
     @State private var copiedGuideCommand: String?
+    @State private var pendingInstallDependency: ExternalDependency?
 
     private var isBusy: Bool { store.installing != nil }
 
@@ -142,6 +143,24 @@ struct ExternalDependenciesView: View {
                 .fixedSize(horizontal: false, vertical: true)
         }
         .onAppear { store.refresh() }
+        .confirmationDialog(
+            pendingInstallDependency.map { "安装 \($0.title)？" } ?? "安装外部组件？",
+            isPresented: Binding(get: { pendingInstallDependency != nil }, set: { if !$0 { pendingInstallDependency = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("确认安装") {
+                if let dep = pendingInstallDependency {
+                    showInstallLog = false
+                    store.install(dep)
+                }
+                pendingInstallDependency = nil
+            }
+            Button("取消", role: .cancel) { pendingInstallDependency = nil }
+        } message: {
+            if let dep = pendingInstallDependency, let brew = store.brewPath {
+                Text("将在当前 Mac 上执行：\(ExternalDependencyInstaller.command(for: dep, brewPath: brew).joined(separator: " "))\n\n安装由 Homebrew 下载并写入用户 Homebrew 目录，不使用 sudo。")
+            }
+        }
     }
 
     private var homebrewSetupGuide: some View {
@@ -263,20 +282,7 @@ struct ExternalDependenciesView: View {
 
     private func confirmInstall(_ dependency: ExternalDependency) {
         guard store.installed[dependency] == nil,
-              let brew = store.brewPath, !isBusy else { return }
-        let dialog = NSAlert()
-        dialog.messageText = "安装 \(dependency.title)？"
-        dialog.informativeText = """
-        将在当前 Mac 上执行：
-        \(ExternalDependencyInstaller.command(for: dependency, brewPath: brew).joined(separator: " "))
-
-        安装由 Homebrew 从第三方软件源下载并写入用户已有的 Homebrew 目录。LightIsle 不使用 sudo，也不会配置开机启动。
-        """
-        dialog.alertStyle = .informational
-        dialog.addButton(withTitle: "确认安装")
-        dialog.addButton(withTitle: "取消")
-        guard dialog.runModal() == .alertFirstButtonReturn else { return }
-        showInstallLog = false
-        store.install(dependency)
+              store.brewPath != nil, !isBusy else { return }
+        pendingInstallDependency = dependency
     }
 }

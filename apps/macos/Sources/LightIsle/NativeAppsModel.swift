@@ -373,7 +373,12 @@ final class NativeAppsModel: ObservableObject {
 
     func setMCPConfig(mcpEnabled: Bool? = nil, mcpLanEnabled: Bool? = nil) {
         var dict: [String: Any] = [:]
-        if let mcpEnabled { dict["mcpEnabled"] = mcpEnabled }
+        if let mcpEnabled {
+            dict["mcpEnabled"] = mcpEnabled
+            if !mcpEnabled && mcpLanEnabled == nil {
+                dict["mcpLanEnabled"] = false
+            }
+        }
         if let mcpLanEnabled { dict["mcpLanEnabled"] = mcpLanEnabled }
         sendRawDict(operation: "set-mcp", payload: dict)
     }

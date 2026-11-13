@@ -31,6 +31,8 @@ struct CreateMemberSpaceSheet: View {
     var onAddExternalRoot: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
 
+    private enum CreateField: Hashable { case username, password }
+    @FocusState private var focusedField: CreateField?
     @State private var flowState: CreationFlowState = .editing
     @State private var username = ""
     @State private var password = ""
@@ -101,6 +103,9 @@ struct CreateMemberSpaceSheet: View {
             selectedRootID = spaces.onlineRoots.first(where: \.isDefault)?.rootID
                 ?? spaces.onlineRoots.first?.rootID
                 ?? ""
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                focusedField = .username
+            }
         }
         .onChange(of: spaces.busy) { _, isBusy in
             guard !isBusy, flowState.isSubmitting else { return }
@@ -165,7 +170,9 @@ struct CreateMemberSpaceSheet: View {
             Text("1. 账号凭据").font(.system(size: 13, weight: .semibold))
             VStack(alignment: .leading, spacing: 4) {
                 TextField("用户名（3–32 位字母 / 数字 / . _ -）", text: $username)
-                    .textFieldStyle(.roundedBorder)
+                    .liquidInput()
+                    .focused($focusedField, equals: .username)
+                    .onSubmit { focusedField = .password }
                     .disabled(locked)
                 if let msg = usernameValidation.message {
                     Text(msg)
@@ -174,8 +181,8 @@ struct CreateMemberSpaceSheet: View {
                 }
             }
             VStack(alignment: .leading, spacing: 4) {
-                SecureField("登录密码（至少 12 位）", text: $password)
-                    .textFieldStyle(.roundedBorder)
+                LiquidSecureField(prompt: "登录密码（至少 12 位）", text: $password)
+                    .focused($focusedField, equals: .password)
                     .disabled(locked)
                 if let msg = passwordValidation.message {
                     Text(msg)
@@ -247,8 +254,8 @@ struct CreateMemberSpaceSheet: View {
                         }
                         Spacer(minLength: 4)
                         TextField("100", text: $quotaGiB)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 76)
+                            .liquidInput()
+                            .frame(width: 78)
                             .disabled(flowState.isSubmitting)
                     }
                     if let err = quotaValidation.errorMessage {
@@ -271,7 +278,7 @@ struct CreateMemberSpaceSheet: View {
                 .disabled(flowState.isSubmitting)
 
                 TextField("初始子目录（可选，逗号分隔，如 files/文档, photos/旅行）", text: $subdirectories)
-                    .textFieldStyle(.roundedBorder)
+                    .liquidInput()
                     .disabled(flowState.isSubmitting)
             }
         }
@@ -288,6 +295,7 @@ struct CreateMemberSpaceSheet: View {
                     dismiss()
                 }
                 .buttonStyle(LiquidButtonStyle(variant: .secondary))
+                .keyboardShortcut(.cancelAction)
                 .disabled(flowState.isSubmitting)
 
                 Button("仅重试空间分配") {
@@ -303,10 +311,12 @@ struct CreateMemberSpaceSheet: View {
                     )
                 }
                 .buttonStyle(LiquidButtonStyle(variant: .prominent))
+                .keyboardShortcut(.defaultAction)
                 .disabled(flowState.isSubmitting || selectedRoot == nil || !quotaValidation.isValid || (selectedCategories.isEmpty && parsedSubdirectories.isEmpty))
             } else {
                 Button("取消") { dismiss() }
                     .buttonStyle(LiquidButtonStyle(variant: .secondary))
+                    .keyboardShortcut(.cancelAction)
                     .disabled(flowState.isSubmitting)
 
                 Button(spaces.onlineRoots.isEmpty ? "仅创建成员账号" : "创建成员并分配空间") {
@@ -324,6 +334,7 @@ struct CreateMemberSpaceSheet: View {
                     )
                 }
                 .buttonStyle(LiquidButtonStyle(variant: .prominent))
+                .keyboardShortcut(.defaultAction)
                 .disabled(flowState.isSubmitting || !canSubmitInitialCreate)
             }
         }
@@ -659,7 +670,9 @@ struct SwitchUserRootSheet: View {
                 .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small)).disabled(busy)
 
             Spacer()
-            Button("关闭") { dismiss() }.buttonStyle(LiquidButtonStyle(variant: .secondary))
+            Button("关闭") { dismiss() }
+                .buttonStyle(LiquidButtonStyle(variant: .secondary))
+                .keyboardShortcut(.cancelAction)
 
             if let transfer, transfer.phase == "verified" {
                 Button("取消任务") {

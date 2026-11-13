@@ -15,6 +15,10 @@ struct TunnelManagementView: View {
     @State private var hostnameDraft = ""
     @State private var serviceDraft = "http://127.0.0.1:16666"
     @State private var selectedZoneID = ""
+    @State private var tunnelPendingDelete: TunnelEntry?
+    @State private var unbindPendingHostname: String?
+    @State private var unbindPendingZoneID: String?
+    @State private var confirmingForgetToken = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -99,8 +103,12 @@ struct TunnelManagementView: View {
         LiquidCard {
             VStack(alignment: .leading, spacing: 10) {
                 Text("填写 Cloudflare API Token").font(.system(size: 13, weight: .semibold))
-                SecureField("Cloudflare API Token", text: $tokenDraft)
-                    .liquidInput()
+                LiquidSecureField(prompt: "Cloudflare API Token", text: $tokenDraft) {
+                    if tokenDraft.trimmingCharacters(in: .whitespaces).count >= 16 && !model.tunnelAPIBusy {
+                        savingToken = true
+                        model.configureTunnelAPIToken(tokenDraft)
+                    }
+                }
                 Text("在 Cloudflare 控制台创建 Token，勾选权限：Account · Account Settings:Read、Account · Cloudflare Tunnel:Edit、Zone · Zone:Read、Zone · DNS:Edit。Token 保存在本机钥匙串，可随时撤销。")
                     .font(.caption).foregroundStyle(IsleTheme.secondaryText)
                 HStack(spacing: 8) {
@@ -191,15 +199,7 @@ struct TunnelManagementView: View {
                             .disabled(model.tunnelSelectedID == entry.id || !entry.remoteConfig)
                         if entry.remoteConfig {
                             Button("删除…") {
-                                let alert = NSAlert()
-                                alert.alertStyle = .warning
-                                alert.messageText = "删除隧道「\(entry.name)」？"
-                                alert.informativeText = "隧道上的所有公共主机名将立即失效。此操作通过 Cloudflare API 执行，不可撤销。"
-                                alert.addButton(withTitle: "删除")
-                                alert.addButton(withTitle: "取消")
-                                if alert.runModal() == .alertFirstButtonReturn {
-                                    model.deleteTunnel(entry.id)
-                                }
+                                tunnelPendingDelete = entry
                             }
                             .buttonStyle(LiquidButtonStyle(variant: .borderless, size: .small))
                         }
@@ -221,6 +221,19 @@ struct TunnelManagementView: View {
                     }
                 }
             }
+        }
+        .confirmationDialog(
+            tunnelPendingDelete.map { "删除隧道「\($0.name)」？" } ?? "删除隧道？",
+            isPresented: Binding(get: { tunnelPendingDelete != nil }, set: { if !$0 { tunnelPendingDelete = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("确认删除", role: .destructive) {
+                if let entry = tunnelPendingDelete { model.deleteTunnel(entry.id) }
+                tunnelPendingDelete = nil
+            }
+            Button("取消", role: .cancel) { tunnelPendingDelete = nil }
+        } message: {
+            Text("隧道上的所有公共主机名将立即失效。此操作通过 Cloudflare API 执行，不可撤销。")
         }
     }
 
@@ -264,21 +277,30 @@ struct TunnelManagementView: View {
                         Text(rule.service).font(.system(size: 12, design: .monospaced)).foregroundStyle(IsleTheme.secondaryText)
                         if !rule.isCatchAll, let hostname = rule.hostname, let zoneID = selectedZoneRecordID(hostname) {
                             Button("移除") {
-                                let alert = NSAlert()
-                                alert.alertStyle = .warning
-                                alert.messageText = "移除主机名 \(hostname)？"
-                                alert.informativeText = "将删除 Ingress 规则，并尝试删除由 LightIsle 创建的 CNAME 记录（不影响手动创建的其他记录）。"
-                                alert.addButton(withTitle: "移除")
-                                alert.addButton(withTitle: "取消")
-                                if alert.runModal() == .alertFirstButtonReturn {
-                                    model.unbindHostname(hostname, zoneID: zoneID)
-                                }
+                                unbindPendingHostname = hostname
+                                unbindPendingZoneID = zoneID
                             }
                             .buttonStyle(LiquidButtonStyle(variant: .borderless, size: .small))
                         }
                     }
                 }
             }
+        }
+        .confirmationDialog(
+            unbindPendingHostname.map { "移除主机名 \($0)？" } ?? "移除主机名？",
+            isPresented: Binding(get: { unbindPendingHostname != nil }, set: { if !$0 { unbindPendingHostname = nil; unbindPendingZoneID = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("确认移除", role: .destructive) {
+                if let host = unbindPendingHostname, let zID = unbindPendingZoneID {
+                    model.unbindHostname(host, zoneID: zID)
+                }
+                unbindPendingHostname = nil
+                unbindPendingZoneID = nil
+            }
+            Button("取消", role: .cancel) { unbindPendingHostname = nil; unbindPendingZoneID = nil }
+        } message: {
+            Text("将删除 Ingress 规则，并尝试删除由 LightIsle 创建的 CNAME 记录（不影响手动创建的其他记录）。")
         }
     }
 
@@ -292,18 +314,20 @@ struct TunnelManagementView: View {
                 }
                 Spacer()
                 Button("移除保存的 Token…") {
-                    let alert = NSAlert()
-                    alert.alertStyle = .warning
-                    alert.messageText = "移除保存的 Cloudflare API Token？"
-                    alert.informativeText = "之后将无法在应用内管理隧道，需要重新填写。正在运行的本地隧道不受影响。"
-                    alert.addButton(withTitle: "移除")
-                    alert.addButton(withTitle: "取消")
-                    if alert.runModal() == .alertFirstButtonReturn {
-                        model.forgetTunnelAPIToken()
-                    }
+                    confirmingForgetToken = true
                 }
                 .buttonStyle(LiquidButtonStyle(variant: .borderless, size: .small))
             }
+        }
+        .confirmationDialog(
+            "移除保存的 Cloudflare API Token？",
+            isPresented: $confirmingForgetToken,
+            titleVisibility: .visible
+        ) {
+            Button("确认移除", role: .destructive) { model.forgetTunnelAPIToken() }
+            Button("取消", role: .cancel) {}
+        } message: {
+            Text("之后将无法在应用内管理隧道，需要重新填写。正在运行的本地隧道不受影响。")
         }
     }
 

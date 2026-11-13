@@ -31,11 +31,14 @@ extension ContentView {
                 }
             } else {
                 connectionWorkbenchCard
+                let primaryDetails: [ConnectionDetail] = [.local, .lan, .sharing, .remote]
+                let advancedDetails: [ConnectionDetail] = [.cloudflare, .frp]
                 IsleDestinationGrid {
-                    ForEach(Array(ConnectionDetail.allCases.enumerated()), id: \.element.id) { index, detail in
+                    ForEach(Array(primaryDetails.enumerated()), id: \.element.id) { index, detail in
                         let status = connectionBadge(for: detail)
+                        let rowTitle = detail == .remote ? "主推方案 · \(detail.rawValue) (Tailscale)" : detail.rawValue
                         IsleDestinationRow(
-                            title: detail.rawValue,
+                            title: rowTitle,
                             subtitle: detail.subtitle,
                             icon: detail.icon,
                             badge: status.0,
@@ -46,6 +49,27 @@ extension ContentView {
                         }.modifier(IsleCascade(index: index))
                     }
                 }
+                DisclosureGroup("高级穿透选项（Cloudflare Tunnel / FRP）") {
+                    IsleDestinationGrid {
+                        ForEach(Array(advancedDetails.enumerated()), id: \.element.id) { index, detail in
+                            let status = connectionBadge(for: detail)
+                            IsleDestinationRow(
+                                title: detail.rawValue,
+                                subtitle: detail.subtitle,
+                                icon: detail.icon,
+                                badge: status.0,
+                                badgeTone: status.1,
+                                iconTint: connectionIconTint(for: detail)
+                            ) {
+                                requestLocalNavigation { connectionDetail = detail }
+                            }.modifier(IsleCascade(index: index))
+                        }
+                    }
+                    .padding(.top, 8)
+                }
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(IsleTheme.secondaryText)
+                .padding(.top, 4)
             }
         }
     }

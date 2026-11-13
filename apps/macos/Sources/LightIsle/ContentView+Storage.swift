@@ -130,6 +130,7 @@ extension ContentView {
                                 Capsule()
                                     .fill(LinearGradient(colors: [IsleFluidPalette.brandCyan, IsleFluidPalette.brandBlue], startPoint: .leading, endPoint: .trailing))
                                     .frame(width: max(6, min(proxy.size.width * CGFloat(max(0, min(1, ratio))), proxy.size.width)))
+                                    .animation(reduceMotion ? nil : IsleMotion.fluid, value: ratio)
                             }
                         }
                         .frame(height: 6)
@@ -232,12 +233,21 @@ extension ContentView {
                                 Button("挂载") { model.manageDisk(disk, action: "mount") }
                                     .disabled(model.diskOperationPending || disk.identity.isEmpty)
                             }
-                            Button(expandedDiskHealth.contains(disk.id) ? "收起健康详情" : "健康详情…") {
-                                if expandedDiskHealth.contains(disk.id) {
-                                    expandedDiskHealth.remove(disk.id)
-                                } else {
-                                    expandedDiskHealth.insert(disk.id)
-                                    model.refreshDiskHealth(disk)
+                            Button {
+                                withAnimation(reduceMotion ? nil : IsleMotion.standard) {
+                                    if expandedDiskHealth.contains(disk.id) {
+                                        expandedDiskHealth.remove(disk.id)
+                                    } else {
+                                        expandedDiskHealth.insert(disk.id)
+                                        model.refreshDiskHealth(disk)
+                                    }
+                                }
+                            } label: {
+                                HStack(spacing: 4) {
+                                    Text(expandedDiskHealth.contains(disk.id) ? "收起健康详情" : "健康详情…")
+                                    Image(systemName: "chevron.down")
+                                        .font(.system(size: 9, weight: .semibold))
+                                        .rotationEffect(.degrees(expandedDiskHealth.contains(disk.id) ? 180 : 0))
                                 }
                             }
                             if disk.identity.isEmpty {
@@ -248,6 +258,7 @@ extension ContentView {
                         .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         if expandedDiskHealth.contains(disk.id), let report = model.diskHealthReports[disk.parent] {
                             DiskHealthDetails(report: report, fallbackSMART: disk.smart)
+                                .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
                             if report.reason == "smartctl_permission_required" {
                                 HStack(spacing: 8) {
                                     Button(model.elevatingDisks.contains(disk.id) ? "正在授权读取…" : "使用管理员权限读取…") {

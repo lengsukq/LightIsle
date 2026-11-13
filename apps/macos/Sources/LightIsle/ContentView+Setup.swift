@@ -66,269 +66,29 @@ extension ContentView {
 
     // MARK: - Native Setup (First Run)
     var nativeSetupView: some View {
-        ZStack {
-            IsleBackdrop()
-
-            ScrollView {
-                VStack(spacing: 20) {
-                    if model.isPresentationPreview { Text("设计预览 · 模拟数据").font(.system(size: 12)).foregroundStyle(IsleTheme.secondaryText) }
-                    VStack(spacing: 12) {
-                        BrandMark(size: 70)
-
-
-                        Text("创建首任管理员")
-                            .font(.system(size: 24, weight: .bold))
-                        Text("轻屿管理本机服务和已授权的共享目录，不提供公网注册。请在当前设备上创建首位管理员账号。")
-                            .font(.system(size: 13))
-                            .foregroundStyle(IsleTheme.secondaryText)
-                            .multilineTextAlignment(.center)
-                            .frame(maxWidth: 420)
-                    }
-
-                    AppleSettingsGroup {
-                        VStack(alignment: .leading, spacing: 14) {
-                            VStack(alignment: .leading, spacing: 7) {
-                                HStack {
-                                    Label("1. 默认存储主目录与整盘读写权限", systemImage: "externaldrive.fill.badge.checkmark")
-                                        .font(.system(size: 12, weight: .semibold))
-                                    Spacer()
-                                    let probe = setupStorageProbe
-                                    IsleStatusPill(
-                                        text: probe.isWritable ? "读写权限就绪" : probe.statusSummary,
-                                        tone: probe.isWritable ? .success : .error,
-                                        showDot: true
-                                    )
-                                }
-
-                                HStack(spacing: 6) {
-                                    Button("使用 ~/LightIsle（推荐）") {
-                                        model.selectPresetSharedFolder(path: homeVisibleSharedFolderPath, name: "LightIsle")
-                                    }
-                                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                                    .disabled(model.isPresentationPreview || model.state != .online || model.rootManagement.busy)
-
-                                    Button("选择其他盘或目录…") {
-                                        model.selectSharedFolder()
-                                    }
-                                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                                    .disabled(model.isPresentationPreview || model.state != .online || model.rootManagement.busy)
-
-                                    if !setupStorageProbe.isWritable {
-                                        Button("一键获取读写权限") {
-                                            let path = model.sharedFolderPath ?? defaultSharedFolderPath
-                                            Task { @MainActor in
-                                                let access = await StoragePermissionHelper.requestReadWriteAccess(
-                                                    forPath: path,
-                                                    reason: "初始化默认主存储目录需要整盘与目录的持久读写权限，否则无法创建用户空间或迁移数据。",
-                                                    initialProbe: setupStorageProbe
-                                                )
-                                                if !access.ok {
-                                                    model.sharedFolderError = access.errorMessage
-                                                } else {
-                                                    model.sharedFolderError = nil
-                                                }
-                                            }
-                                        }
-                                        .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
-                                    }
-                                }
-
-                                Text("默认主存储位置（后续新建用户的默认空间）")
-                                    .font(.caption)
-                                    .foregroundStyle(IsleTheme.secondaryText)
-                                Text(model.sharedFolderPath ?? defaultSharedFolderPath)
-                                    .font(.system(size: 10, design: .monospaced))
-                                    .textSelection(.enabled)
-                                    .fixedSize(horizontal: false, vertical: true)
-
-                                if let currentPath = model.sharedFolderPath {
-                                    Text(currentPath == defaultSharedFolderPath
-                                         ? "当前正在使用系统 Application Support 默认目录（可一键切换至访达可见的 ~/LightIsle 或外置硬盘）"
-                                         : "当前默认主目录：\(currentPath)")
-                                        .font(.caption.monospaced())
-                                        .foregroundStyle(IsleTheme.secondaryText)
-                                        .textSelection(.enabled)
-                                        .fixedSize(horizontal: false, vertical: true)
-                                }
-                                if !setupStorageProbe.isWritable, let detail = setupStorageProbe.detailMessage {
-                                    HStack(alignment: .top, spacing: 6) {
-                                        Image(systemName: "exclamationmark.octagon.fill")
-                                            .font(.caption)
-                                        Text(detail)
-                                            .font(.caption)
-                                            .fixedSize(horizontal: false, vertical: true)
-                                    }
-                                    .foregroundStyle(IsleTheme.errorText)
-                                }
-                                if let error = model.sharedFolderError {
-                                    HStack(alignment: .top, spacing: 6) {
-                                        Image(systemName: "exclamationmark.triangle.fill")
-                                            .font(.caption)
-                                        Text("目录授权或设置失败：\(error)")
-                                            .font(.caption)
-                                            .fixedSize(horizontal: false, vertical: true)
-                                    }
-                                    .foregroundStyle(IsleTheme.errorText)
-                                }
-                                Text("添加或切换默认目录时将直接校验整盘与目录读写权限；若权限获取失败将视为添加失败，避免后续用户空间分配或跨盘迁移失败。")
-                                    .font(.caption)
-                                    .foregroundStyle(IsleTheme.secondaryText)
-                            }
-                            .padding(12)
-                            .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-
-                            IsleGroupSpacing(height: 4)
-
-                            VStack(alignment: .leading, spacing: 5) {
-                                HStack {
-                                    Text("管理员账号")
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .foregroundStyle(IsleTheme.secondaryText)
-                                    Spacer()
-                                    let usernameStatus = AccountInputValidator.validateUsername(firstUsername)
-                                    if let msg = usernameStatus.message {
-                                        Text(msg)
-                                            .font(.system(size: 10, weight: .medium))
-                                            .foregroundStyle(usernameStatus.isValid ? IsleTheme.successText : .orange)
-                                    }
-                                }
-                                TextField("3–32 位英文字母、数字或 . _ -", text: $firstUsername)
-                                    .liquidInput()
-                            }
-
-                            VStack(alignment: .leading, spacing: 5) {
-                                HStack {
-                                    Text("登录密码")
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .foregroundStyle(IsleTheme.secondaryText)
-                                    Spacer()
-                                    let passwordStatus = AccountInputValidator.validatePassword(firstPassword)
-                                    if let msg = passwordStatus.message {
-                                        Text(msg)
-                                            .font(.system(size: 10, weight: .medium))
-                                            .foregroundStyle(passwordStatus.isValid ? IsleTheme.successText : .orange)
-                                    }
-                                }
-                                SecureField("至少 12 位密码", text: $firstPassword)
-                                    .liquidInput()
-                            }
-
-                            VStack(alignment: .leading, spacing: 5) {
-                                HStack {
-                                    Text("确认密码")
-                                        .font(.system(size: 12, weight: .semibold))
-                                        .foregroundStyle(IsleTheme.secondaryText)
-                                    Spacer()
-                                    if !confirmPassword.isEmpty {
-                                        if firstPassword == confirmPassword {
-                                            Text("密码一致")
-                                                .font(.system(size: 10, weight: .medium))
-                                                .foregroundStyle(IsleTheme.successText)
-                                        } else {
-                                            Text("两次密码不一致")
-                                                .font(.system(size: 10, weight: .medium))
-                                                .foregroundStyle(IsleTheme.errorText)
-                                        }
-                                    }
-                                }
-                                SecureField("请再次输入相同密码", text: $confirmPassword)
-                                    .liquidInput()
-                            }
-
-                            if let error = model.initializationError {
-                                HStack(spacing: 6) {
-                                    Image(systemName: "exclamationmark.triangle.fill")
-                                        .font(.caption)
-                                    Text(error)
-                                        .font(.caption)
-                                }
-                                .foregroundStyle(IsleTheme.errorText)
-                            }
-
-                            Button {
-                                model.initializeAdministrator(username: firstUsername, password: firstPassword)
-
-                            } label: {
-                                HStack(spacing: 8) {
-                                    if model.initializing {
-                                        ProgressView().controlSize(.small)
-                                    }
-                                    Text(model.initializing ? "正在创建管理员…" : "创建管理员并进入轻屿")
-                                        .fontWeight(.semibold)
-                                }
-                                .frame(maxWidth: .infinity)
-                            }
-                            .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .large))
-                            .disabled(model.isPresentationPreview || !isFormValid || model.initializing || model.state != .online)
-
-                            if let disabledReason = setupDisabledReason {
-                                Text(disabledReason)
-                                    .font(.caption2)
-                                    .foregroundStyle(IsleTheme.secondaryText)
-                                    .frame(maxWidth: .infinity, alignment: .center)
-                            }
-                        }
-                        .padding(18)
-                    }
-                    .frame(width: 420)
-
-                    Button {
-                        showingManualIntro = true
-                    } label: {
-                        HStack(spacing: 5) {
-                            Image(systemName: "play.circle")
-                            Text("重新播放开场动画")
-                        }
-                        .font(.caption)
-                        .foregroundStyle(IsleTheme.secondaryText)
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .borderless, size: .small))
-                }
-                .padding(24)
-                .frame(maxWidth: .infinity)
-            }
-            .scrollIndicators(.never)
-        }
+        NativeFirstRunSetupContent(
+            model: model,
+            firstUsername: $firstUsername,
+            firstPassword: $firstPassword,
+            confirmPassword: $confirmPassword,
+            showingManualIntro: $showingManualIntro,
+            showAdvancedStorage: $showSetupAdvancedStorage,
+            probeCache: $setupStorageProbeCache,
+            defaultPath: defaultSharedFolderPath,
+            homeVisiblePath: homeVisibleSharedFolderPath
+        )
     }
 
-    var setupStorageProbe: StoragePermissionHelper.AccessProbeResult {
-        if model.isPresentationPreview {
-            return .writable
-        }
-        let targetPath = model.sharedFolderPath ?? defaultSharedFolderPath
-        let targetURL = URL(fileURLWithPath: targetPath, isDirectory: true)
-        if !FileManager.default.fileExists(atPath: targetPath), targetPath == defaultSharedFolderPath {
-            try? FileManager.default.createDirectory(at: targetURL, withIntermediateDirectories: true)
-        }
-        return StoragePermissionHelper.probeDirectoryReadWrite(at: targetURL)
+    var cachedSetupStorageProbe: StoragePermissionHelper.AccessProbeResult {
+        if model.isPresentationPreview { return .writable }
+        return setupStorageProbeCache ?? .writable
     }
 
     var isFormValid: Bool {
-        setupStorageProbe.isWritable &&
+        cachedSetupStorageProbe.isWritable &&
         AccountInputValidator.validateUsername(firstUsername).isValid &&
         AccountInputValidator.validatePassword(firstPassword).isValid &&
         firstPassword == confirmPassword
-    }
-
-    var setupDisabledReason: String? {
-        if !setupStorageProbe.isWritable {
-            return "当前默认主存储目录缺少整盘或目录读写权限，请先点击上方「一键获取读写权限」或更换可写目录"
-        }
-        guard !firstUsername.isEmpty || !firstPassword.isEmpty || !confirmPassword.isEmpty else {
-            return nil
-        }
-        let userStatus = AccountInputValidator.validateUsername(firstUsername)
-        if !userStatus.isValid {
-            return userStatus.message ?? "请填写 3–32 位合规的管理员账号名称"
-        }
-        let passStatus = AccountInputValidator.validatePassword(firstPassword)
-        if !passStatus.isValid {
-            return passStatus.message ?? "请填写至少 12 位的管理员登录密码"
-        }
-        if firstPassword != confirmPassword {
-            return confirmPassword.isEmpty ? "请再次输入确认密码" : "两次输入的密码不一致"
-        }
-        return nil
     }
 
     var defaultSharedFolderPath: String {
@@ -345,5 +105,336 @@ extension ContentView {
             .appendingPathComponent("LightIsle", isDirectory: true)
             .path
     }
+}
 
+private struct NativeFirstRunSetupContent: View {
+    private enum SetupField: Hashable { case username, password, confirm }
+
+    @ObservedObject var model: AppModel
+    @Binding var firstUsername: String
+    @Binding var firstPassword: String
+    @Binding var confirmPassword: String
+    @Binding var showingManualIntro: Bool
+    @Binding var showAdvancedStorage: Bool
+    @Binding var probeCache: StoragePermissionHelper.AccessProbeResult?
+    let defaultPath: String
+    let homeVisiblePath: String
+
+    @FocusState private var focusedField: SetupField?
+    @Environment(\.isleReduceMotion) private var reduceMotion
+
+    private var activePath: String { model.sharedFolderPath ?? defaultPath }
+    private var probe: StoragePermissionHelper.AccessProbeResult {
+        if model.isPresentationPreview { return .writable }
+        return probeCache ?? .writable
+    }
+    private var isUsingHomeVisible: Bool { activePath == homeVisiblePath }
+    private var isUsingCustomExternal: Bool { activePath != homeVisiblePath && activePath != defaultPath }
+
+    private var isFormValid: Bool {
+        probe.isWritable &&
+        AccountInputValidator.validateUsername(firstUsername).isValid &&
+        AccountInputValidator.validatePassword(firstPassword).isValid &&
+        firstPassword == confirmPassword
+    }
+
+    private var canSubmitNow: Bool {
+        !model.isPresentationPreview && isFormValid && !model.initializing && model.state == .online
+    }
+
+    var body: some View {
+        ZStack {
+            IsleBackdrop()
+            ScrollView {
+                VStack(spacing: 20) {
+                    if model.isPresentationPreview {
+                        Text("设计预览 · 模拟数据").font(.system(size: 12)).foregroundStyle(IsleTheme.secondaryText)
+                    }
+                    VStack(spacing: 10) {
+                        BrandMark(size: 68)
+                        Text("创建首任管理员")
+                            .font(.system(size: 24, weight: .bold))
+                        Text("轻屿的数据完全保存在这台 Mac 或你指定的外置硬盘上。完成存储位置确认与账号创建即可立即启用。")
+                            .font(.system(size: 13))
+                            .foregroundStyle(IsleTheme.secondaryText)
+                            .multilineTextAlignment(.center)
+                            .frame(maxWidth: 420)
+                    }
+
+                    AppleSettingsGroup {
+                        VStack(alignment: .leading, spacing: 16) {
+                            storageSelectionCard
+                            IsleGroupSpacing(height: 2)
+                            credentialsFormSection
+                        }
+                        .padding(18)
+                    }
+                    .frame(width: 440)
+
+                    Button {
+                        showingManualIntro = true
+                    } label: {
+                        HStack(spacing: 5) {
+                            Image(systemName: "play.circle")
+                            Text("重新播放欢迎介绍")
+                        }
+                        .font(.caption)
+                        .foregroundStyle(IsleTheme.secondaryText)
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: .borderless, size: .small))
+                }
+                .padding(24)
+                .frame(maxWidth: .infinity)
+            }
+            .scrollIndicators(.never)
+        }
+        .onAppear {
+            if focusedField == nil {
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                    focusedField = .username
+                }
+            }
+        }
+        .task(id: activePath) {
+            await refreshStorageProbe(for: activePath)
+        }
+    }
+
+    private var storageSelectionCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Label("1. 选择文件存放位置", systemImage: "externaldrive.fill.badge.checkmark")
+                    .font(.system(size: 12.5, weight: .semibold))
+                Spacer()
+                IsleStatusPill(
+                    text: probe.isWritable ? "可读写" : probe.statusSummary,
+                    tone: probe.isWritable ? .success : .error,
+                    showDot: true
+                )
+            }
+
+            HStack(spacing: 8) {
+                storageChoiceButton(
+                    title: "个人目录 LightIsle",
+                    subtitle: "推荐 · 在访达直接可见",
+                    icon: "folder.fill",
+                    selected: isUsingHomeVisible
+                ) {
+                    model.selectPresetSharedFolder(path: homeVisiblePath, name: "LightIsle")
+                }
+                storageChoiceButton(
+                    title: isUsingCustomExternal ? model.sharedFolderName : "外置硬盘 / 其他目录…",
+                    subtitle: isUsingCustomExternal ? "已选外置或自定义目录" : "适合大容量照片与影视",
+                    icon: "externaldrive.fill",
+                    selected: isUsingCustomExternal
+                ) {
+                    model.selectSharedFolder()
+                }
+            }
+            .disabled(model.isPresentationPreview || model.state != .online || model.rootManagement.busy)
+
+            DisclosureGroup(isExpanded: $showAdvancedStorage) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("当前生效路径：\(activePath)")
+                        .font(.system(size: 10.5, design: .monospaced))
+                        .foregroundStyle(IsleTheme.secondaryText)
+                        .textSelection(.enabled)
+                        .fixedSize(horizontal: false, vertical: true)
+                    Text("后续随时可在「数据与存储」中添加更多外置硬盘或迁移成员空间。")
+                        .font(.caption2)
+                        .foregroundStyle(IsleTheme.secondaryText)
+                }
+                .padding(.top, 6)
+            } label: {
+                Text(isUsingHomeVisible ? "已选个人主目录 LightIsle（点击查看路径详情）" : (isUsingCustomExternal ? "已选：\(activePath)" : "当前使用默认存储位置（推荐切换至上方两个直观位置）"))
+                    .font(.caption)
+                    .foregroundStyle(IsleTheme.secondaryText)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            if !probe.isWritable {
+                VStack(alignment: .leading, spacing: 8) {
+                    if let detail = probe.detailMessage {
+                        Label(detail, systemImage: "exclamationmark.octagon.fill")
+                            .font(.caption)
+                            .foregroundStyle(IsleTheme.errorText)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Button("一键获取读写权限") {
+                        let path = activePath
+                        Task { @MainActor in
+                            let access = await StoragePermissionHelper.requestReadWriteAccess(
+                                forPath: path,
+                                reason: "初始化主存储目录需要持久读写权限，用于创建个人文件、相册与影视空间。",
+                                initialProbe: probe
+                            )
+                            model.sharedFolderError = access.ok ? nil : access.errorMessage
+                            await refreshStorageProbe(for: path)
+                        }
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                }
+            }
+
+            if let error = model.sharedFolderError {
+                Label("目录授权提示：\(error)", systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(IsleTheme.errorText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(12)
+        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+    }
+
+    private func storageChoiceButton(title: String, subtitle: String, icon: String, selected: Bool, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 4) {
+                HStack(spacing: 6) {
+                    Image(systemName: icon)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(selected ? IsleTheme.accent : IsleTheme.secondaryText)
+                    Text(title)
+                        .font(.system(size: 12, weight: .semibold))
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    if selected {
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 12))
+                            .foregroundStyle(IsleTheme.accent)
+                    }
+                }
+                Text(subtitle)
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(IsleTheme.secondaryText)
+                    .lineLimit(1)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(selected ? IsleTheme.accent.opacity(0.11) : Color.primary.opacity(0.03))
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(selected ? IsleTheme.accent : IsleFluidPalette.rim.opacity(0.6), lineWidth: selected ? 1.4 : 0.9)
+            }
+        }
+        .buttonStyle(IslePressStyle())
+    }
+
+    private var credentialsFormSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Label("2. 设置管理员账号与密码", systemImage: "person.badge.key.fill")
+                .font(.system(size: 12.5, weight: .semibold))
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack {
+                    Text("管理员账号")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(IsleTheme.secondaryText)
+                    Spacer()
+                    let usernameStatus = AccountInputValidator.validateUsername(firstUsername)
+                    if let msg = usernameStatus.message {
+                        Text(msg)
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundStyle(usernameStatus.isValid ? IsleTheme.successText : (firstUsername.count < 3 ? IsleTheme.secondaryText : IsleTheme.warningText))
+                    }
+                }
+                TextField("例如 admin 或你的名字（3–32 位字母/数字）", text: $firstUsername)
+                    .liquidInput()
+                    .focused($focusedField, equals: .username)
+                    .onSubmit { focusedField = .password }
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack {
+                    Text("登录密码")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(IsleTheme.secondaryText)
+                    Spacer()
+                    if !firstPassword.isEmpty {
+                        let validLen = firstPassword.count >= AccountInputValidator.minPasswordLength
+                        let status = AccountInputValidator.validatePassword(firstPassword)
+                        Text(status.isValid ? "✓ 长度达标（\(firstPassword.count) 位）" : (validLen ? (status.message ?? "") : "已输入 \(firstPassword.count) / 12 位"))
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundStyle(status.isValid ? IsleTheme.successText : IsleTheme.secondaryText)
+                    }
+                }
+                LiquidSecureField(prompt: "至少 12 位密码（点击右侧眼睛可核对）", text: $firstPassword) {
+                    focusedField = .confirm
+                }
+                .focused($focusedField, equals: .password)
+            }
+
+            VStack(alignment: .leading, spacing: 5) {
+                HStack {
+                    Text("确认密码")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(IsleTheme.secondaryText)
+                    Spacer()
+                    if !confirmPassword.isEmpty {
+                        let matched = firstPassword == confirmPassword
+                        Text(matched ? "✓ 两次密码一致" : "两次输入尚未一致")
+                            .font(.system(size: 10.5, weight: .medium))
+                            .foregroundStyle(matched ? IsleTheme.successText : IsleTheme.warningText)
+                    }
+                }
+                LiquidSecureField(prompt: "再次输入相同密码", text: $confirmPassword) {
+                    if canSubmitNow {
+                        model.initializeAdministrator(username: firstUsername, password: firstPassword)
+                    }
+                }
+                .focused($focusedField, equals: .confirm)
+            }
+
+            if let error = model.initializationError {
+                Label(error, systemImage: "exclamationmark.triangle.fill")
+                    .font(.caption)
+                    .foregroundStyle(IsleTheme.errorText)
+            }
+
+            Button {
+                model.initializeAdministrator(username: firstUsername, password: firstPassword)
+            } label: {
+                HStack(spacing: 8) {
+                    if model.initializing {
+                        ProgressView().controlSize(.small)
+                    }
+                    Text(model.initializing ? "正在创建管理员…" : "创建管理员并进入轻屿")
+                        .fontWeight(.semibold)
+                }
+                .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .large))
+            .keyboardShortcut(.defaultAction)
+            .disabled(!canSubmitNow)
+
+            if !probe.isWritable {
+                Text("请先在上方完成存储目录读写授权后再创建管理员")
+                    .font(.caption2)
+                    .foregroundStyle(IsleTheme.warningText)
+                    .frame(maxWidth: .infinity, alignment: .center)
+            }
+        }
+    }
+
+    private func refreshStorageProbe(for targetPath: String) async {
+        if model.isPresentationPreview {
+            probeCache = .writable
+            return
+        }
+        let defPath = defaultPath
+        let result = await Task.detached(priority: .userInitiated) {
+            let targetURL = URL(fileURLWithPath: targetPath, isDirectory: true)
+            if !FileManager.default.fileExists(atPath: targetPath), targetPath == defPath {
+                try? FileManager.default.createDirectory(at: targetURL, withIntermediateDirectories: true)
+            }
+            return StoragePermissionHelper.probeDirectoryReadWrite(at: targetURL)
+        }.value
+        withAnimation(reduceMotion ? nil : IsleMotion.quick) {
+            probeCache = result
+        }
+    }
 }

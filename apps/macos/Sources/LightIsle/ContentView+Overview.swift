@@ -115,6 +115,46 @@ extension ContentView {
                 }
             }
             attentionView
+            if !dismissedQuickReadyChecklist && model.state == .online {
+                let storageReady = model.sharedFolderPath != nil
+                let memberReady = model.personalSpaces.users.count > 1
+                let lanReady = model.remoteAddress != nil
+                if !(storageReady && memberReady && lanReady) {
+                    LiquidCard {
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack {
+                                Label("新手 3 步快速上手向导", systemImage: "sparkles")
+                                    .font(.system(size: 13.5, weight: .semibold))
+                                Spacer()
+                                Button("收起引导") {
+                                    withAnimation(reduceMotion ? nil : IsleMotion.standard) {
+                                        dismissedQuickReadyChecklist = true
+                                    }
+                                }
+                                .buttonStyle(LiquidButtonStyle(variant: .borderless, size: .small))
+                            }
+                            HStack(spacing: 10) {
+                                quickReadyStepPill(
+                                    done: storageReady,
+                                    title: "1. 确认存储硬盘",
+                                    actionLabel: storageReady ? "已就绪" : "去选择"
+                                ) { requestNavigation(.storage); storageDetail = .locations }
+                                quickReadyStepPill(
+                                    done: lanReady,
+                                    title: "2. 开启局域网直连",
+                                    actionLabel: lanReady ? "已开启" : "去开启"
+                                ) { requestNavigation(.services); connectionDetail = .lan }
+                                quickReadyStepPill(
+                                    done: memberReady,
+                                    title: "3. 创建家人专属空间",
+                                    actionLabel: memberReady ? "已创建" : "去创建"
+                                ) { requestNavigation(.spaces) }
+                            }
+                        }
+                    }
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                }
+            }
             VStack(alignment: .leading, spacing: 12) {
                 Text("存储与连接").font(.system(size: 15, weight: .semibold))
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 340), spacing: 14)], spacing: 14) {
@@ -288,5 +328,34 @@ extension ContentView {
             }
             processMonitorView
         }.onAppear { model.setDiagnosticsVisible(true) }.onDisappear { model.setDiagnosticsVisible(false) }
+    }
+
+    func quickReadyStepPill(done: Bool, title: String, actionLabel: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: done ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(done ? IsleTheme.successText : IsleTheme.accent)
+                Text(title)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                Text(actionLabel)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(done ? IsleTheme.secondaryText : IsleTheme.accent)
+            }
+            .padding(.horizontal, 11)
+            .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .fill(done ? IsleTheme.successText.opacity(0.08) : Color.primary.opacity(0.035))
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    .strokeBorder(done ? IsleTheme.successText.opacity(0.24) : IsleFluidPalette.rim.opacity(0.55), lineWidth: 0.9)
+            }
+        }
+        .buttonStyle(IslePressStyle())
     }
 }
