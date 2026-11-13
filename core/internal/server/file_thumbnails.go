@@ -4,7 +4,6 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
-	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/gallery"
 )
@@ -60,13 +59,10 @@ func (a *API) fileThumbnail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
-	if _, err := file.Stat(); err != nil {
+	st, err := file.Stat()
+	if err != nil {
 		jsonReply(w, 404, map[string]string{"error": "thumbnail_unavailable"})
 		return
 	}
-	modTime := time.Time{}
-	if srcInfo, serr := a.files.Stat(path); serr == nil {
-		modTime = srcInfo.ModTime()
-	}
-	serveCachedJPEG(w, r, "thumbnail.jpg", modTime, file)
+	serveCachedJPEG(w, r, "thumbnail.jpg", st.ModTime(), file)
 }

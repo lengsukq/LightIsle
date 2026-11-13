@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"strings"
 
 	"github.com/lengsukq/lightisle/core/internal/cinema"
 	"github.com/lengsukq/lightisle/core/internal/ffmpegbin"
@@ -281,8 +282,9 @@ func (a *API) cinemaSeriesList(w http.ResponseWriter, r *http.Request) {
 	if userID == 0 {
 		return
 	}
+	q := r.URL.Query()
 	limit := 60
-	if raw := r.URL.Query().Get("limit"); raw != "" {
+	if raw := q.Get("limit"); raw != "" {
 		n, err := strconv.Atoi(raw)
 		if err != nil || n < 1 || n > 120 {
 			jsonReply(w, 400, map[string]string{"error": "invalid_limit"})
@@ -290,7 +292,28 @@ func (a *API) cinemaSeriesList(w http.ResponseWriter, r *http.Request) {
 		}
 		limit = n
 	}
-	result, err := a.cinema.ListSeriesMatching(userID, limit, roots, r.URL.Query().Get("query"))
+	watched := strings.TrimSpace(q.Get("watched"))
+	if !cinema.ValidWatchFilter(watched) {
+		jsonReply(w, 400, map[string]string{"error": "invalid_watched"})
+		return
+	}
+	sortBy := strings.TrimSpace(q.Get("sort"))
+	if !cinema.ValidSortOrder(sortBy) {
+		jsonReply(w, 400, map[string]string{"error": "invalid_sort"})
+		return
+	}
+	searchTerm := q.Get("query")
+	if searchTerm == "" {
+		searchTerm = q.Get("search")
+	}
+	if searchTerm == "" {
+		searchTerm = q.Get("q")
+	}
+	result, err := a.cinema.ListSeriesFiltered(userID, cinema.SeriesFilter{
+		Query:   searchTerm,
+		Watched: watched,
+		Sort:    sortBy,
+	}, limit, roots)
 	if err != nil {
 		cinemaError(w, err)
 		return
@@ -319,6 +342,9 @@ func (a *API) cinemaSeriesGet(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		cinemaError(w, err)
 		return
+	}
+	for i := range films {
+		films[i].CanWrite = a.canAccess(token(r), films[i].Path, true, false)
 	}
 	jsonReply(w, 200, map[string]any{"series": series, "films": films})
 }
@@ -465,7 +491,7 @@ func (a *API) cinemaClearHistory(w http.ResponseWriter, r *http.Request) {
 }
 
 // cinemaMarkWatched flips the per-user completed flag; marking unwatched
-// also resets the stored position.
+// deletes the progress record so Continue Watching stops offering it.
 func (a *API) cinemaMarkWatched(w http.ResponseWriter, r *http.Request) {
 	if !a.cinemaReady(w) {
 		return
@@ -489,7 +515,8 @@ func (a *API) cinemaMarkWatched(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 128)
 	defer r.Body.Close()
 	var payload struct {
-		Completed bool `json:"completed"`
+		Completed *bool `json:"completed"`
+		Watched   *bool `json:"watched"`
 	}
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
@@ -497,7 +524,13 @@ func (a *API) cinemaMarkWatched(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, 400, map[string]string{"error": "invalid_request"})
 		return
 	}
-	if err := a.cinema.MarkWatched(user, id, payload.Completed); err != nil {
+	completed := false
+	if payload.Completed != nil {
+		completed = *payload.Completed
+	} else if payload.Watched != nil {
+		completed = *payload.Watched
+	}
+	if err := a.cinema.MarkWatched(user, id, completed); err != nil {
 		cinemaError(w, err)
 		return
 	}
@@ -506,5 +539,34 @@ func (a *API) cinemaMarkWatched(w http.ResponseWriter, r *http.Request) {
 		cinemaError(w, err)
 		return
 	}
+	updated.CanWrite = a.canAccess(token(r), updated.Path, true, false)
 	jsonReply(w, 200, updated)
+}
+
+// cinemaClearProgress removes the caller's playback progress for a single film.
+func (a *API) cinemaClearProgress(w http.ResponseWriter, r *http.Request) {
+	if !a.cinemaReady(w) {
+		return
+	}
+	id, ok := a.filmID(w, r)
+	if !ok {
+		return
+	}
+	user := a.viewerID(w, r)
+	if user == 0 {
+		return
+	}
+	film, err := a.cinema.Get(id, user)
+	if err != nil {
+		cinemaError(w, err)
+		return
+	}
+	if !a.allowMediaAsset(w, r, film.Path, false, "film_not_found") {
+		return
+	}
+	if err := a.cinema.ClearFilmProgress(user, id); err != nil {
+		cinemaError(w, err)
+		return
+	}
+	jsonReply(w, 200, map[string]bool{"cleared": true})
 }

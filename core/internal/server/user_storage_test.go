@@ -61,13 +61,6 @@ func TestUserStorageQuotaAPIIsAdminOnlyAndExplicitlyUnenforced(t *testing.T) {
 		guard               bool
 		want                int
 	}{
-		{base + "/quota", "", `{"quotaBytes":1000}`, true, 401},
-		{base + "/quota", memberSession, `{"quotaBytes":1000}`, true, 403},
-		{base + "/quota", admin, `{"quotaBytes":1000}`, false, 403},
-		{base + "/quota", admin, `{}`, true, 409},
-		{base + "/quota", admin, `{"quotaBytes":-1}`, true, 409},
-		{base + "/quota", admin, `{"quotaBytes":1000,"unexpected":1}`, true, 409},
-		{"/api/v2/users/nope/storage/quota", admin, `{"quotaBytes":1000}`, true, 409},
 		{perRoot, "", `{"quotaBytes":1000,"generation":3}`, true, 401},
 		{perRoot, memberSession, `{"quotaBytes":1000,"generation":3}`, true, 403},
 		{perRoot, admin, `{"quotaBytes":1000,"generation":3}`, false, 403},

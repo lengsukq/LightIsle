@@ -4,8 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 
@@ -292,5 +295,89 @@ func TestMCPToolsWorkAcrossExternalStorageLocation(t *testing.T) {
 	}
 	if app.LocationID != AppStorageIDExternal {
 		t.Fatalf("expected app locationId external, got %q", app.LocationID)
+	}
+}
+
+func TestExternalAppRuntimeSwapGuardsWithoutReload(t *testing.T) {
+	dataDir := t.TempDir()
+	extRoot := t.TempDir()
+	extVol := filepath.Join(extRoot, "ExtLiveDisk")
+	extAppDir := filepath.Join(extVol, "LightIsleApps")
+	if err := os.MkdirAll(extVol, 0700); err != nil {
+		t.Fatal(err)
+	}
+
+	provider := &fakeStorageIdentityProvider{
+		uuids:   map[string]string{extAppDir: "live-uuid-1"},
+		offline: map[string]bool{},
+		changed: map[string]bool{},
+	}
+	mgr := NewManager(dataDir, "lightisled", nil)
+	defer mgr.Close()
+	mgr.SetStoragePolicyForTesting(provider, []string{extRoot})
+	if err := mgr.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mgr.MutateStorageLocation(AppStorageMutationRequest{
+		Action:     "add",
+		Kind:       AppStorageKindExternal,
+		Path:       extAppDir,
+		SetDefault: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mgr.InstallTemplateAt("family-board", AppStorageIDExternal); err != nil {
+		t.Fatalf("InstallTemplateAt external failed: %v", err)
+	}
+
+	// Verify ProtectedHostDirs and ProtectedVolumeUUIDs cover the external slot.
+	protectedDirs := mgr.ProtectedHostDirs()
+	foundExtDir := false
+	for _, d := range protectedDirs {
+		if d == filepath.Clean(extAppDir) {
+			foundExtDir = true
+			break
+		}
+	}
+	if !foundExtDir {
+		t.Fatalf("expected %s in ProtectedHostDirs, got %+v", extAppDir, protectedDirs)
+	}
+	if uuids := mgr.ProtectedVolumeUUIDs(); len(uuids) != 1 || uuids[0] != "live-uuid-1" {
+		t.Fatalf("expected [live-uuid-1] in ProtectedVolumeUUIDs, got %+v", uuids)
+	}
+
+	// Simulate runtime same-path disk swap WITHOUT calling Reload() yet:
+	// WakeApp, DeleteApp, ServeApp, and MCP write must immediately block with ErrStorageOffline,
+	// and DeleteApp must NEVER delete files on the swapped volume!
+	provider.mu.Lock()
+	provider.uuids[extAppDir] = "swapped-foreign-disk-uuid"
+	provider.mu.Unlock()
+
+	if _, err := mgr.WakeApp(context.Background(), "family-board"); !errors.Is(err, ErrStorageOffline) {
+		t.Fatalf("expected ErrStorageOffline on WakeApp after disk swap, got %v", err)
+	}
+	if err := mgr.DeleteApp("family-board", true); !errors.Is(err, ErrStorageOffline) {
+		t.Fatalf("expected ErrStorageOffline on DeleteApp after disk swap, got %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(extAppDir, "plugins", "family-board", "plugin.json")); err != nil {
+		t.Fatalf("DeleteApp must never remove files on swapped disk: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/apps/family-board/", nil)
+	mgr.ServeApp(rec, req, func(*http.Request) (UserIdentity, bool) {
+		return UserIdentity{ID: 1, Username: "owner", Role: "admin"}, true
+	})
+	if rec.Code != http.StatusServiceUnavailable || !strings.Contains(rec.Body.String(), "app_storage_offline") {
+		t.Fatalf("expected 503 app_storage_offline from ServeApp after disk swap, got %d %s", rec.Code, rec.Body.String())
+	}
+
+	writeArgs, _ := json.Marshal(map[string]any{
+		"id":      "family-board",
+		"path":    "ui/index.html",
+		"content": "<h1>Should Be Blocked</h1>",
+	})
+	if wres := toolWritePluginFile(dataDir, mgr, writeArgs); !wres.IsError {
+		t.Fatalf("expected MCP write to fail when external disk is swapped")
 	}
 }

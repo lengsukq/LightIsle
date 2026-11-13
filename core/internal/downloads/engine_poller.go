@@ -221,13 +221,6 @@ func (m *Manager) applyPolledStatus(id, gid string, apply func()) {
 	apply()
 }
 
-// importDownload synchronizes the journal and source staging with the
-// durable, root-bound publication flow in publish.go.
-func (m *Manager) importDownload(id, _ string) {
-	m.importMu.Lock()
-	defer m.importMu.Unlock()
-	m.importDownloadLocked(id)
-}
 func (m *Manager) failTask(id, reason, gid string) {
 	diagnostics.Emit(m.ctx, slog.LevelWarn, diagnostics.Event{
 		Component: "downloads", Operation: "task", Code: "download_task_failed", TaskID: id,

@@ -25,7 +25,7 @@ func WithAutomation(base http.Handler, store *auth.Store, manager *automation.Ma
 			automationFailure(w, automation.ErrUnavailable)
 			return
 		}
-		jsonReply(w, 200, map[string]any{"tasks": manager.PublicTasks()})
+		jsonReply(w, 200, map[string]any{"tasks": manager.PublicScriptTasks()})
 	}))
 	mux.HandleFunc("POST /api/v2/automation/refresh", a.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
 		if !automationMutation(w, r) {
@@ -36,7 +36,7 @@ func WithAutomation(base http.Handler, store *auth.Store, manager *automation.Ma
 			automationFailure(w, automation.ErrUnavailable)
 			return
 		}
-		jsonReply(w, 200, map[string]any{"tasks": manager.PublicTasks()})
+		jsonReply(w, 200, map[string]any{"tasks": manager.PublicScriptTasks()})
 	}))
 	mux.HandleFunc("PUT /api/v2/automation/tasks/{id}", a.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
 		if !automationMutation(w, r) {
@@ -64,7 +64,7 @@ func WithAutomation(base http.Handler, store *auth.Store, manager *automation.Ma
 			automationFailure(w, err)
 			return
 		}
-		jsonReply(w, 200, map[string]any{"tasks": manager.PublicTasks()})
+		jsonReply(w, 200, map[string]any{"tasks": manager.PublicScriptTasks()})
 	}))
 	mux.HandleFunc("DELETE /api/v2/automation/tasks/{id}", a.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
 		if !automationMutation(w, r) {
@@ -81,7 +81,7 @@ func WithAutomation(base http.Handler, store *auth.Store, manager *automation.Ma
 		jsonReply(w, 200, map[string]bool{"deleted": true})
 	}))
 	mux.HandleFunc("GET /api/v2/automation/tasks/{id}/runs", a.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
-		runs, err := manager.History(r.PathValue("id"))
+		runs, err := manager.ScriptTaskHistory(r.PathValue("id"))
 		if err != nil {
 			automationFailure(w, err)
 			return
@@ -111,13 +111,31 @@ func WithAutomation(base http.Handler, store *auth.Store, manager *automation.Ma
 		jsonReply(w, 200, map[string]any{"channels": channels})
 	}))
 	securedMux := securityHeaders(mux)
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/v2/automation" || strings.HasPrefix(r.URL.Path, "/api/v2/automation/") {
-			securedMux.ServeHTTP(w, r)
-			return
+	return &automationHandler{
+		base:       base,
+		automation: securedMux,
+	}
+}
+
+type automationHandler struct {
+	base       http.Handler
+	automation http.Handler
+}
+
+func (h *automationHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path == "/api/v2/automation" || strings.HasPrefix(r.URL.Path, "/api/v2/automation/") {
+		h.automation.ServeHTTP(w, r)
+		return
+	}
+	h.base.ServeHTTP(w, r)
+}
+
+func (h *automationHandler) SetProtectedHostDirsProvider(fn func() []string) {
+	if h != nil {
+		if protector, ok := h.base.(protectedHostDirsSetter); ok {
+			protector.SetProtectedHostDirsProvider(fn)
 		}
-		base.ServeHTTP(w, r)
-	})
+	}
 }
 func automationMutation(w http.ResponseWriter, r *http.Request) bool {
 	// A cross-site form must not be able to schedule arbitrary code execution.

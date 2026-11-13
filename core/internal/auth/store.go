@@ -448,6 +448,31 @@ func (s *Store) ListUsers(actorToken string) ([]User, error) {
 	return s.listUsers()
 }
 
+// ListEnabledPeerUsers returns all enabled accounts except the caller so
+// intra-family sharing pickers do not scan bounded ID ranges.
+func (s *Store) ListEnabledPeerUsers(actorToken string) ([]User, error) {
+	actor, ok := s.Identity(actorToken)
+	if !ok {
+		return nil, ErrForbidden
+	}
+	rows, err := s.readDB().Query("SELECT id,username,role,enabled,created_at FROM users WHERE enabled=1 AND id<>? ORDER BY id", actor.ID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	list := []User{}
+	for rows.Next() {
+		var u User
+		var enabled int
+		if err := rows.Scan(&u.ID, &u.Username, &u.Role, &enabled, &u.CreatedAt); err != nil {
+			return nil, err
+		}
+		u.Enabled = enabled == 1
+		list = append(list, u)
+	}
+	return list, rows.Err()
+}
+
 func (s *Store) listUsers() ([]User, error) {
 	rows, err := s.readDB().Query("SELECT id,username,role,enabled,created_at FROM users ORDER BY id")
 	if err != nil {

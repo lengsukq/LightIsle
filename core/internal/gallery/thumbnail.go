@@ -431,7 +431,7 @@ func thumbnailCacheError(err error) error {
 func (l *Library) verifyThumbnailAsset(id int64, share, assetPath string, size, modified int64) error {
 	var path string
 	var rowSize, rowModified int64
-	err := l.db.QueryRow("SELECT path,size,modified FROM assets WHERE share=? AND id=? AND missing_path=''", share, id).
+	err := l.readDB().QueryRow("SELECT path,size,modified FROM assets WHERE share=? AND id=? AND missing_path=''", share, id).
 		Scan(&path, &rowSize, &rowModified)
 	if errors.Is(err, sql.ErrNoRows) {
 		return errors.New("asset_changed_rescan_required")

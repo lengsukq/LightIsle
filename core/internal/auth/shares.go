@@ -188,7 +188,7 @@ func (s *Store) ListFileShares(session string) ([]FileShare, error) {
 	if !ok {
 		return nil, ErrForbidden
 	}
-	rows, err := s.db.Query(`SELECT id,file_path,COALESCE(kind,'file'),created_at,expires_at,
+	rows, err := s.readDB().Query(`SELECT id,file_path,COALESCE(kind,'file'),created_at,expires_at,
 		COALESCE(password_hash,'')<>'', COALESCE(max_downloads,0), COALESCE(download_count,0) FROM file_shares
 		WHERE user_id=? AND expires_at>? ORDER BY created_at DESC LIMIT 100`, user.ID, time.Now().Unix())
 	if err != nil {
@@ -238,7 +238,7 @@ func (s *Store) ResolveFileShare(token string) (ShareAccess, error) {
 		return item, ErrNotFound
 	}
 	digest := sha256.Sum256([]byte(token))
-	err := s.db.QueryRow(`SELECT shares.user_id,shares.file_path,COALESCE(shares.kind,'file'),shares.file_identity,shares.id,
+	err := s.readDB().QueryRow(`SELECT shares.user_id,shares.file_path,COALESCE(shares.kind,'file'),shares.file_identity,shares.id,
 		COALESCE(shares.password_hash,''), COALESCE(shares.max_downloads,0), COALESCE(shares.download_count,0), shares.expires_at FROM file_shares shares
 		JOIN users u ON u.id=shares.user_id
 		WHERE shares.id=? AND shares.expires_at>? AND u.enabled=1`, digest[:], time.Now().Unix()).

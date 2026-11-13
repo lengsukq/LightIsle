@@ -24,8 +24,11 @@ type Series struct {
 	EpisodeCount int     `json:"episodeCount"`
 	WatchedCount int     `json:"watchedCount"`
 	Year         int     `json:"year,omitempty"`
+	Rating       float64 `json:"rating,omitempty"`
 	NextFilmID   int64   `json:"nextFilmId,omitempty"`
 	NextTitle    string  `json:"nextTitle,omitempty"`
+	NextSeason   int     `json:"nextSeason,omitempty"`
+	NextEpisode  int     `json:"nextEpisode,omitempty"`
 	InProgress   bool    `json:"inProgress"`
 	Position     float64 `json:"position,omitempty"`
 	Duration     float64 `json:"duration,omitempty"`
@@ -117,70 +120,19 @@ func (l *Library) ListSeries(userID int64, limit int, roots []string) ([]Series,
 // applying the response limit. Filtering only an initial page in the client
 // would silently miss shows beyond the first 60 titles.
 func (l *Library) ListSeriesMatching(userID int64, limit int, roots []string, search string) ([]Series, error) {
-	share, err := l.share()
-	if err != nil {
-		return nil, err
-	}
-	if limit < 1 || limit > 120 {
-		return nil, ErrInvalid
-	}
-	q := `SELECT s.id,s.name,s.tmdb_id,s.overview,s.poster_path,
-		COUNT(f.id),
-		COALESCE(SUM(CASE WHEN COALESCE(p.completed,0)=1 THEN 1 ELSE 0 END),0),
-		MAX(f.year)
-		FROM series s JOIN films f ON f.series_id=s.id
-		LEFT JOIN watch_progress p ON p.film_id=f.id AND p.user_id=?
-		WHERE s.share=? AND f.missing_path=''`
-	args := []any{userID, share}
-	fragment, scopedArgs, err := mediascope.Clause("f.path", roots)
-	if err != nil {
-		return nil, ErrInvalid
-	}
-	q += fragment
-	args = append(args, scopedArgs...)
-	if search = strings.TrimSpace(search); search != "" {
-		if len([]rune(search)) > 120 {
-			return nil, ErrInvalid
-		}
-		q += " AND instr(lower(s.name), lower(?))>0"
-		args = append(args, search)
-	}
-	q += " GROUP BY s.id HAVING COUNT(f.id)>0 ORDER BY s.name COLLATE NOCASE LIMIT ?"
-	args = append(args, limit)
-	rows, err := l.db.Query(q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	result := []Series{}
-	for rows.Next() {
-		var s Series
-		var posterPath string
-		if err := rows.Scan(&s.ID, &s.Name, &s.TMDBID, &s.Overview, &posterPath,
-			&s.EpisodeCount, &s.WatchedCount, &s.Year); err != nil {
-			return nil, err
-		}
-		s.PosterURL = tmdbPosterURL(posterPath)
-		result = append(result, s)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	for i := range result {
-		l.fillSeriesProgress(userID, roots, &result[i])
-	}
-	return result, nil
+	return l.ListSeriesFiltered(userID, SeriesFilter{Query: search}, limit, roots)
 }
 
-// fillSeriesProgress locates the show's first unfinished episode. Episodes
-// the caller cannot read are skipped, so the continue point never leaks
-// another member's folder layout.
+// fillSeriesProgress locates the show's continue-watching episode across
+// authorized episodes only, prioritizing the most recently watched unfinished
+// episode, then the episode following the highest completed one, then the
+// first unfinished episode.
 func (l *Library) fillSeriesProgress(userID int64, roots []string, s *Series) {
 	share, err := l.share()
 	if err != nil {
 		return
 	}
-	q := `SELECT f.id,f.title,COALESCE(p.completed,0),COALESCE(p.position,0),COALESCE(p.duration,0)
+	q := `SELECT f.id,f.title,f.season,f.episode,COALESCE(p.position,0),COALESCE(p.duration,0),f.duration_seconds,COALESCE(p.completed,0),COALESCE(p.updated_at,0)
 		FROM films f LEFT JOIN watch_progress p ON p.film_id=f.id AND p.user_id=?
 		WHERE f.share=? AND f.series_id=? AND f.missing_path=''`
 	args := []any{userID, share, s.ID}
@@ -191,29 +143,25 @@ func (l *Library) fillSeriesProgress(userID int64, roots []string, s *Series) {
 	q += fragment
 	args = append(args, scopedArgs...)
 	q += " ORDER BY f.season,f.episode,f.id"
-	rows, err := l.db.Query(q, args...)
+	rows, err := l.readDB().Query(q, args...)
 	if err != nil {
 		return
 	}
 	defer rows.Close()
+	var episodes []seriesEpisodeCandidate
 	for rows.Next() {
-		var filmID int64
-		var title string
+		var ep seriesEpisodeCandidate
 		var completed int
-		var position, duration float64
-		if err := rows.Scan(&filmID, &title, &completed, &position, &duration); err != nil {
+		if err := rows.Scan(&ep.id, &ep.title, &ep.season, &ep.episode, &ep.position, &ep.duration, &ep.mediaDuration, &completed, &ep.updatedAt); err != nil {
 			return
 		}
-		if completed != 0 {
-			continue
-		}
-		s.NextFilmID = filmID
-		s.NextTitle = title
-		s.InProgress = position > 5
-		s.Position = position
-		s.Duration = duration
+		ep.completed = completed != 0
+		episodes = append(episodes, ep)
+	}
+	if rows.Err() != nil {
 		return
 	}
+	applySeriesContinuePoint(s, episodes)
 }
 
 // GetSeries returns one show with its authorized episodes in playback order.
@@ -224,7 +172,7 @@ func (l *Library) GetSeries(userID, seriesID int64, roots []string) (Series, []F
 	}
 	var s Series
 	var posterPath string
-	err = l.db.QueryRow(`SELECT s.id,s.name,s.tmdb_id,s.overview,s.poster_path FROM series s
+	err = l.readDB().QueryRow(`SELECT s.id,s.name,s.tmdb_id,s.overview,s.poster_path FROM series s
 		WHERE s.share=? AND s.id=?`, share, seriesID).Scan(&s.ID, &s.Name, &s.TMDBID, &s.Overview, &posterPath)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Series{}, nil, err
@@ -233,19 +181,44 @@ func (l *Library) GetSeries(userID, seriesID int64, roots []string) (Series, []F
 		return Series{}, nil, err
 	}
 	s.PosterURL = tmdbPosterURL(posterPath)
-	films, _, err := l.seriesFilms(userID, seriesID, 240, 0, roots)
+	films, nextOffset, err := l.seriesFilms(userID, seriesID, 240, 0, roots)
 	if err != nil {
 		return Series{}, nil, err
 	}
+	if len(films) == 0 {
+		return Series{}, nil, sql.ErrNoRows
+	}
 	watched := 0
+	candidates := make([]seriesEpisodeCandidate, 0, len(films))
 	for _, film := range films {
 		if film.Completed {
 			watched++
 		}
+		if film.Year > s.Year {
+			s.Year = film.Year
+		}
+		if film.Rating > s.Rating {
+			s.Rating = film.Rating
+		}
+		candidates = append(candidates, seriesEpisodeCandidate{
+			id:            film.ID,
+			title:         film.Title,
+			season:        film.Season,
+			episode:       film.Episode,
+			position:      film.Position,
+			duration:      film.Duration,
+			mediaDuration: film.MediaDuration,
+			completed:     film.Completed,
+			updatedAt:     film.UpdatedAt,
+		})
 	}
 	s.EpisodeCount = len(films)
 	s.WatchedCount = watched
-	l.fillSeriesProgress(userID, roots, &s)
+	if nextOffset > 0 {
+		l.fillSeriesProgress(userID, roots, &s)
+	} else {
+		applySeriesContinuePoint(&s, candidates)
+	}
 	return s, films, nil
 }
 
@@ -258,7 +231,7 @@ func (l *Library) seriesFilms(userID, seriesID int64, limit, offset int, roots [
 		return nil, 0, err
 	}
 	q := `SELECT f.id,f.title,f.path,f.kind,f.series,f.season,f.episode,f.year,f.size,f.modified,
-	 COALESCE(p.position,0),COALESCE(p.duration,0),COALESCE(p.completed,0),f.probe_status,f.browser_playback,f.container,f.video_codec,f.audio_codec,f.duration_seconds,f.width,f.height,f.captured_at,f.overview,f.rating,f.metadata_source,f.poster_path,f.title_source,f.year_source
+	 COALESCE(p.position,0),COALESCE(p.duration,0),COALESCE(p.completed,0),COALESCE(p.updated_at,0),f.probe_status,f.browser_playback,f.container,f.video_codec,f.audio_codec,f.duration_seconds,f.width,f.height,f.captured_at,f.overview,f.rating,f.metadata_source,f.poster_path,f.title_source,f.year_source,f.scrape_state
 	 FROM films f LEFT JOIN watch_progress p ON p.film_id=f.id AND p.user_id=?
 	 WHERE f.share=? AND f.series_id=? AND f.missing_path=''`
 	args := []any{userID, share, seriesID}
@@ -270,7 +243,7 @@ func (l *Library) seriesFilms(userID, seriesID int64, limit, offset int, roots [
 	args = append(args, scopedArgs...)
 	q += " ORDER BY f.season,f.episode,f.id LIMIT ? OFFSET ?"
 	args = append(args, limit+1, offset)
-	rows, err := l.db.Query(q, args...)
+	rows, err := l.readDB().Query(q, args...)
 	if err != nil {
 		return nil, 0, err
 	}
@@ -279,15 +252,11 @@ func (l *Library) seriesFilms(userID, seriesID int64, limit, offset int, roots [
 	for rows.Next() {
 		var f Film
 		var complete int
-		if err := rows.Scan(&f.ID, &f.Title, &f.Path, &f.Kind, &f.Series, &f.Season, &f.Episode, &f.Year, &f.Size, &f.Modified, &f.Position, &f.Duration, &complete,
-			&f.ProbeStatus, &f.BrowserPlayback, &f.Container, &f.VideoCodec, &f.AudioCodec, &f.MediaDuration, &f.Width, &f.Height, &f.CapturedAt, &f.Overview, &f.Rating, &f.MetadataSource, &f.PosterURL, &f.TitleSource, &f.YearSource); err != nil {
+		if err := rows.Scan(&f.ID, &f.Title, &f.Path, &f.Kind, &f.Series, &f.Season, &f.Episode, &f.Year, &f.Size, &f.Modified, &f.Position, &f.Duration, &complete, &f.UpdatedAt,
+			&f.ProbeStatus, &f.BrowserPlayback, &f.Container, &f.VideoCodec, &f.AudioCodec, &f.MediaDuration, &f.Width, &f.Height, &f.CapturedAt, &f.Overview, &f.Rating, &f.MetadataSource, &f.PosterURL, &f.TitleSource, &f.YearSource, &f.ScrapeState); err != nil {
 			return nil, 0, err
 		}
-		f.Completed = complete != 0
-		f.BrowserPlayback = normalizedPlayback(f.Path, f.BrowserPlayback)
-		f.Mime = filmMime(f.Path, f.ProbeStatus, f.BrowserPlayback, f.Container)
-		f.Playable = f.BrowserPlayback != "download-only"
-		f.PosterURL = tmdbPosterURL(f.PosterURL)
+		decorateLoadedFilm(&f, complete)
 		result = append(result, f)
 	}
 	if err := rows.Err(); err != nil {

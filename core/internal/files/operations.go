@@ -9,7 +9,6 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
-	"time"
 )
 
 // Move performs a same-share rename, refusing to replace existing user data.
@@ -201,18 +200,21 @@ func (s *Store) SearchKind(base, term, kind string, limit int) ([]Entry, bool, e
 	if err != nil {
 		return nil, false, err
 	}
-	if !ValidSearchKind(kind) {
+	if !ValidSearchKind(kind) || limit < 1 || limit > 200 {
 		return nil, false, ErrPath
 	}
-	term = strings.TrimSpace(term)
-	if len(term) < 2 || len(term) > 128 || limit < 1 || limit > 200 {
-		return nil, false, ErrPath
+	tokens, err := ParseSearchTokens(term)
+	if err != nil {
+		return nil, false, err
 	}
-	term = strings.ToLower(term)
+	candidateCap := limit * 4
+	if candidateCap < 400 {
+		candidateCap = 400
+	}
 	queue := []string{base}
-	result := []Entry{}
+	result := make([]Entry, 0, limit)
 	visited := 0
-	for len(queue) > 0 && visited < 30000 && len(result) < limit {
+	for len(queue) > 0 && visited < 30000 && len(result) < candidateCap {
 		dir := queue[len(queue)-1]
 		queue = queue[:len(queue)-1]
 		cursor := ""
@@ -223,9 +225,9 @@ func (s *Store) SearchKind(base, term, kind string, limit int) ([]Entry, bool, e
 			}
 			for _, entry := range entries {
 				visited++
-				if strings.Contains(strings.ToLower(entry.Name), term) && MatchesSearchKind(entry, kind) {
+				if MatchesSearchTokens(entry, tokens) && MatchesSearchKind(entry, kind) {
 					result = append(result, entry)
-					if len(result) >= limit {
+					if len(result) >= candidateCap {
 						break
 					}
 				}
@@ -236,13 +238,18 @@ func (s *Store) SearchKind(base, term, kind string, limit int) ([]Entry, bool, e
 					break
 				}
 			}
-			if next == "" || visited >= 30000 || len(result) >= limit {
+			if next == "" || visited >= 30000 || len(result) >= candidateCap {
 				break
 			}
 			cursor = next
 		}
 	}
-	return result, len(queue) > 0 || visited >= 30000 || len(result) >= limit, nil
+	truncated := len(queue) > 0 || visited >= 30000 || len(result) > limit
+	RankSearchEntries(result, term)
+	if len(result) > limit {
+		result = result[:limit]
+	}
+	return result, truncated, nil
 }
 
 func ValidSearchKind(kind string) bool {
@@ -278,12 +285,12 @@ func MatchesSearchKind(entry Entry, kind string) bool {
 		}
 	case "audio":
 		switch ext {
-		case ".mp3", ".m4a", ".flac", ".wav", ".aac", ".ogg", ".opus":
+		case ".mp3", ".m4a", ".flac", ".wav", ".aac", ".ogg", ".opus", ".ape", ".wma", ".aiff", ".aif", ".alac", ".m4b":
 			return true
 		}
 	case "document":
 		switch ext {
-		case ".pdf", ".txt", ".md", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".csv", ".json", ".pages", ".numbers", ".key":
+		case ".pdf", ".txt", ".md", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx", ".csv", ".json", ".pages", ".numbers", ".key", ".rtf", ".epub", ".odt", ".ods", ".odp":
 			return true
 		}
 	case "archive":
@@ -414,46 +421,4 @@ func applyWithConflict(from, to, conflict string, op func(string) error) (string
 // retry a conflicting operation themselves, such as upload staging.
 func NextRenameCandidate(pathValue string, attempt int) (string, error) {
 	return renameCandidate(pathValue, attempt)
-}
-
-// SweepTrashExpired permanently deletes trashed items whose deletion
-// timestamp precedes cutoff, up to limit items per round. It relies on the
-// journal-first trash design: a crashed round simply leaves the remaining
-// items for the next sweep. A disabled cutoff (zero time) is rejected so
-// callers cannot accidentally purge everything. Items whose purge fails are
-// skipped but reported in failed, so the sweeper can keep its cleanup alert
-// raised instead of silently clearing it on a healthy-looking round.
-func (m *Manager) SweepTrashExpired(cutoff time.Time, limit int) (purged, failed []string, scanned int, err error) {
-	if cutoff.IsZero() {
-		return nil, nil, 0, errors.New("trash_sweep_disabled")
-	}
-	if limit < 1 {
-		limit = 1
-	}
-	var candidates []string
-	scanErr := m.withRead(func(s *Store) error {
-		return s.forEachTrashEntry(func(entry TrashEntry) bool {
-			scanned++
-			if entry.DeletedAt.After(cutoff) {
-				return true
-			}
-			candidates = append(candidates, entry.ID)
-			// Enough candidates for this round; the next round continues.
-			return len(candidates) < limit
-		})
-	})
-	if scanErr != nil {
-		return nil, nil, scanned, scanErr
-	}
-	purged = make([]string, 0, len(candidates))
-	for _, id := range candidates {
-		if purgeErr := m.Purge(id); purgeErr != nil {
-			// One stuck item must not block the rest of the round; the
-			// failure is reported through the sweeper's alert channel.
-			failed = append(failed, id)
-			continue
-		}
-		purged = append(purged, id)
-	}
-	return purged, failed, scanned, nil
 }

@@ -288,10 +288,12 @@ func TestPendingActivationUniformEnforcement(t *testing.T) {
 		t.Fatalf("AUTH-01: expected ServeApp to return 403 app_pending_activation while pending, got %d %s", rec.Code, rec.Body.String())
 	}
 
-	// Explicit admin ActivateApp clears pendingActivation and unlocks access
-	mgr.ActivateApp("pending-all")
+	// Explicit admin ApproveApp clears pendingActivation and unlocks access
+	if _, err := mgr.ApproveApp("pending-all"); err != nil {
+		t.Fatalf("ApproveApp failed: %v", err)
+	}
 	if !mgr.CanAccess("pending-all", 2, "member") {
-		t.Fatal("expected CanAccess=true for member after admin ActivateApp")
+		t.Fatal("expected CanAccess=true for member after admin ApproveApp")
 	}
 }
 

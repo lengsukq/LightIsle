@@ -67,8 +67,8 @@ func TestStartupFailureDiagnosticsAndMemberIsolation(t *testing.T) {
 	if err := mgr.Reload(); err != nil {
 		t.Fatal(err)
 	}
-	mgr.ActivateApp("missing-deps")
-	mgr.ActivateApp("wrong-port")
+	_, _ = mgr.ApproveApp("missing-deps")
+	_, _ = mgr.ApproveApp("wrong-port")
 
 	// Verify validation diagnostic for bad-perm
 	badPermApp, err := mgr.GetForUser("bad-perm", 1, "admin")

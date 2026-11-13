@@ -83,13 +83,17 @@ func (s *RootServer) clearAllThumbnailCaches(ctx context.Context) (int, int64) {
 }
 
 func serveCachedJPEG(w http.ResponseWriter, r *http.Request, downloadName string, modTime time.Time, f *os.File) {
+	w.Header().Set("Cache-Control", "private, max-age=604800, stale-while-revalidate=86400")
 	base := filepath.Base(f.Name())
 	if strings.HasSuffix(base, ".jpg") && len(base) == 64+len(".jpg") {
-		key := strings.TrimSuffix(base, ".jpg")
-		w.Header().Set("ETag", `"`+key+`"`)
+		etag := `"` + strings.TrimSuffix(base, ".jpg") + `"`
+		w.Header().Set("ETag", etag)
+		if (r.Method == http.MethodGet || r.Method == http.MethodHead) && ifNoneMatchContains(r.Header.Get("If-None-Match"), etag) {
+			w.WriteHeader(http.StatusNotModified)
+			return
+		}
 	}
 	w.Header().Set("Content-Type", "image/jpeg")
-	w.Header().Set("Cache-Control", "private, max-age=604800, stale-while-revalidate=86400")
 	http.ServeContent(w, r, downloadName, modTime, f)
 }
 

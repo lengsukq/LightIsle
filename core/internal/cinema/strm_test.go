@@ -12,19 +12,19 @@ func TestParseAndValidateStrmContent(t *testing.T) {
 		name string
 		raw  string
 		want string
-		mime string
+		host string
 	}{
 		{
 			name: "lan openlist stream",
 			raw:  "# OpenList 4K mount\n" + lanURL + "\n",
 			want: lanURL,
-			mime: "video/x-matroska",
+			host: "192.168.31.10",
 		},
 		{
 			name: "utf8 bom m3u8",
 			raw:  "\xef\xbb\xbf" + hlsURL + "\r\n",
 			want: hlsURL,
-			mime: "application/vnd.apple.mpegurl",
+			host: "stream-cdn.invalid",
 		},
 	}
 	for _, tc := range validCases {
@@ -36,8 +36,8 @@ func TestParseAndValidateStrmContent(t *testing.T) {
 			if got != tc.want {
 				t.Fatalf("got %q, want %q", got, tc.want)
 			}
-			if m := InferStrmMime(got); m != tc.mime {
-				t.Fatalf("mime = %q, want %q", m, tc.mime)
+			if h := StrmHostSummary(got); h != tc.host {
+				t.Fatalf("host = %q, want %q", h, tc.host)
 			}
 		})
 	}
@@ -51,6 +51,12 @@ func TestParseAndValidateStrmContent(t *testing.T) {
 		{name: "relative path", raw: "../Movies/sample.mp4"},
 		{name: "loopback v4", raw: fmt.Sprintf("%s://%s:8080/video.mp4", "http", "127.0.0.1")},
 		{name: "localhost", raw: fmt.Sprintf("%s://%s:8080/video.mp4", "http", "localhost")},
+		{name: "localhost trailing dot", raw: fmt.Sprintf("%s://%s:8080/video.mp4", "http", "localhost.")},
+		{name: "loopback decimal integer", raw: fmt.Sprintf("%s://%s:8080/video.mp4", "http", "2130706433")},
+		{name: "loopback octal", raw: fmt.Sprintf("%s://%s:8080/video.mp4", "http", "0177.0.0.1")},
+		{name: "loopback hex", raw: fmt.Sprintf("%s://%s:8080/video.mp4", "http", "0x7f000001")},
+		{name: "ipv6 loopback zone", raw: fmt.Sprintf("%s://%s:8080/video.mp4", "http", "[::1%25lo0]")},
+		{name: "ipv6 link local zone", raw: fmt.Sprintf("%s://%s:8080/video.mp4", "http", "[fe80::1%25en0]")},
 		{name: "link local", raw: fmt.Sprintf("%s://%s/stream.mp4", "http", "169.254.10.20")},
 		{name: "multiple urls", raw: lanURL + "\n" + hlsURL},
 	}

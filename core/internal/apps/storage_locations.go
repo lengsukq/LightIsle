@@ -9,6 +9,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/storageidentity"
@@ -36,12 +37,6 @@ type storageScanRoot struct {
 	path       string
 	pluginsDir string
 	dataRoot   string
-}
-
-func (m *Manager) SetStorageProvider(p storageidentity.Provider) {
-	m.mu.Lock()
-	m.storageProviderFn = p
-	m.mu.Unlock()
 }
 
 func (m *Manager) SetExternalVolumesProvider(fn func() []ExternalVolumeInfo) {
@@ -108,7 +103,6 @@ func (m *Manager) getAvailableVolumes() []AppStorageVolumeOption {
 	}
 	raw := fn()
 	out := make([]AppStorageVolumeOption, 0, len(raw))
-	provider := m.getStorageProvider()
 	for _, v := range raw {
 		mount := filepath.Clean(strings.TrimSpace(v.Mount))
 		if mount == "" || mount == "/" || mount == "/System/Volumes/Data" {
@@ -118,10 +112,6 @@ func (m *Manager) getAvailableVolumes() []AppStorageVolumeOption {
 		if name == "" {
 			name = filepath.Base(mount)
 		}
-		volUUID := ""
-		if b, err := provider.Capture(context.Background(), mount); err == nil {
-			volUUID = b.VolumeUUID
-		}
 		out = append(out, AppStorageVolumeOption{
 			Name:       name,
 			Mount:      mount,
@@ -130,8 +120,25 @@ func (m *Manager) getAvailableVolumes() []AppStorageVolumeOption {
 			TotalBytes: v.TotalBytes,
 			FreeBytes:  v.FreeBytes,
 			ReadOnly:   v.ReadOnly,
-			VolumeUUID: volUUID,
 		})
+	}
+	provider := m.getStorageProvider()
+	if len(out) == 1 {
+		if b, err := provider.Capture(context.Background(), out[0].Mount); err == nil {
+			out[0].VolumeUUID = b.VolumeUUID
+		}
+	} else if len(out) > 1 {
+		var wg sync.WaitGroup
+		for i := range out {
+			wg.Add(1)
+			go func(idx int) {
+				defer wg.Done()
+				if b, err := provider.Capture(context.Background(), out[idx].Mount); err == nil {
+					out[idx].VolumeUUID = b.VolumeUUID
+				}
+			}(i)
+		}
+		wg.Wait()
 	}
 	sort.Slice(out, func(i, j int) bool {
 		return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name)
@@ -463,4 +470,97 @@ func (m *Manager) detachRunningByLocation(locationID string) []*Instance {
 		}
 	}
 	return list
+}
+
+func (m *Manager) verifyRecordStorageOnline(locationID, pluginDir string) error {
+	cfg, err := readSystemConfigFile(m.configPath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("%w: 读取应用存储配置失败: %v", ErrInvalid, err)
+	}
+	return m.verifyRecordStorageOnlineWithConfig(cfg, locationID, pluginDir)
+}
+
+func (m *Manager) verifyRecordStorageOnlineWithConfig(cfg AppsSystemConfig, locationID, pluginDir string) error {
+	if locationID == AppStorageIDExternal {
+		if cfg.Storage == nil || cfg.Storage.External == nil || strings.TrimSpace(cfg.Storage.External.Path) == "" {
+			return fmt.Errorf("%w: 其他盘应用存储位置尚未登记或已移除，原盘数据未受影响", ErrStorageOffline)
+		}
+		ext := *cfg.Storage.External
+		name := fallbackString(ext.Name, defaultExternalStorageName)
+		if ext.Binding != nil {
+			if err := m.getStorageProvider().Verify(context.Background(), *ext.Binding); err != nil {
+				return fmt.Errorf("%w: %s", ErrStorageOffline, describeStorageVerifyError(err, name))
+			}
+		}
+		cleanPath := filepath.Clean(ext.Path)
+		if info, err := os.Stat(cleanPath); err != nil || !info.IsDir() {
+			return fmt.Errorf("%w: 其他盘「%s」当前处于离线状态或目录不存在，原盘数据未受影响；请检查硬盘连接后重试", ErrStorageOffline, name)
+		}
+		return nil
+	}
+	if cfg.Storage != nil && cfg.Storage.Internal != nil && strings.TrimSpace(cfg.Storage.Internal.Path) != "" {
+		customClean := filepath.Clean(cfg.Storage.Internal.Path)
+		if pluginDir == "" || filepath.Clean(pluginDir) == customClean ||
+			strings.HasPrefix(filepath.Clean(pluginDir), customClean+string(filepath.Separator)) {
+			name := fallbackString(cfg.Storage.Internal.Name, defaultInternalStorageName)
+			if cfg.Storage.Internal.Binding != nil {
+				if err := m.getStorageProvider().Verify(context.Background(), *cfg.Storage.Internal.Binding); err != nil {
+					return fmt.Errorf("%w: %s", ErrStorageOffline, describeStorageVerifyError(err, name))
+				}
+			}
+			if info, err := os.Stat(customClean); err != nil || !info.IsDir() {
+				return fmt.Errorf("%w: 内置盘应用目录「%s」当前不可达，请检查目录是否存在及访问权限", ErrStorageOffline, name)
+			}
+		}
+	}
+	return nil
+}
+
+// ProtectedHostDirs returns host directories containing plugin secrets (env.json)
+// and private plugin data across both internal and external app storage slots.
+func (m *Manager) ProtectedHostDirs() []string {
+	if m == nil {
+		return nil
+	}
+	var dirs []string
+	addDir := func(raw string) {
+		trimmed := strings.TrimSpace(raw)
+		if trimmed == "" {
+			return
+		}
+		clean := filepath.Clean(trimmed)
+		if clean == "." || clean == "/" {
+			return
+		}
+		if !slices.Contains(dirs, clean) {
+			dirs = append(dirs, clean)
+		}
+	}
+	addDir(m.dataDir)
+	cfg, err := readSystemConfigFile(m.configPath)
+	if err == nil && cfg.Storage != nil {
+		if cfg.Storage.Internal != nil {
+			addDir(cfg.Storage.Internal.Path)
+		}
+		if cfg.Storage.External != nil {
+			addDir(cfg.Storage.External.Path)
+		}
+	}
+	return dirs
+}
+
+// ProtectedVolumeUUIDs returns physical volume UUIDs bound to external app storage.
+func (m *Manager) ProtectedVolumeUUIDs() []string {
+	if m == nil {
+		return nil
+	}
+	cfg, err := readSystemConfigFile(m.configPath)
+	if err != nil || cfg.Storage == nil || cfg.Storage.External == nil || cfg.Storage.External.Binding == nil {
+		return nil
+	}
+	uuid := strings.TrimSpace(cfg.Storage.External.Binding.VolumeUUID)
+	if uuid == "" {
+		return nil
+	}
+	return []string{uuid}
 }

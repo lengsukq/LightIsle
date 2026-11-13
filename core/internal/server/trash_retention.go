@@ -1,10 +1,6 @@
 package server
 
-import (
-	"net/http"
-
-	"github.com/lengsukq/lightisle/core/internal/tasks"
-)
+import "net/http"
 
 // Legacy app-trash automatic deletion is suspended during the transition to
 // the system Trash. Report the effective state, even if an older preference
@@ -17,5 +13,3 @@ func (a *API) trashRetention(w http.ResponseWriter, _ *http.Request) {
 	value := a.retention.Get()
 	jsonReply(w, 200, map[string]any{"enabled": false, "days": value.Days})
 }
-
-var _ = tasks.MinRetentionDays

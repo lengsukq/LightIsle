@@ -63,7 +63,7 @@ func (s *Store) FolderAlbumShareTargets(session, rootID string, generation uint6
 	if !validRootID(rootID) || generation == 0 || generation > math.MaxInt64 {
 		return nil, ErrInput
 	}
-	rows, err := s.db.Query(`SELECT u.id, u.username
+	rows, err := s.readDB().Query(`SELECT u.id, u.username
 		FROM users u
 		JOIN user_storage_locations l ON l.user_id = u.id
 		WHERE u.enabled = 1 AND u.id != ?
@@ -204,12 +204,6 @@ func (s *Store) ShareFolderAlbum(session, rootID string, generation uint64, albu
 	return item, nil
 }
 
-// UnshareFolderAlbum removes a folder album share. The owner, the recipient
-// member, or an administrator may remove the share.
-func (s *Store) UnshareFolderAlbum(session, rootID string, generation uint64, ownerUserID int64, albumName string, memberUserID int64) (SharedFolderAlbum, error) {
-	return s.UnshareFolderAlbumWithCleanup(session, rootID, generation, ownerUserID, albumName, memberUserID, nil)
-}
-
 // UnshareFolderAlbumWithCleanup removes the exact controlled link before
 // committing the revocation. A failed unlink keeps the database grant so
 // that the owner can retry, instead of hiding a leftover link indefinitely.
@@ -284,7 +278,7 @@ func (s *Store) ListOwnedFolderAlbumShares(session, rootID string, generation ui
 	if !validRootID(rootID) || generation == 0 || generation > math.MaxInt64 {
 		return nil, ErrInput
 	}
-	rows, err := s.db.Query(`SELECT s.id, s.album_name, s.member_user_id, mu.username,
+	rows, err := s.readDB().Query(`SELECT s.id, s.album_name, s.member_user_id, mu.username,
 			ml.relative_path, s.link_name, s.can_write, s.created_at, ol.relative_path
 		FROM shared_folder_albums s
 		JOIN users mu ON mu.id = s.member_user_id AND mu.enabled = 1
@@ -329,7 +323,7 @@ func (s *Store) ListReceivedFolderAlbums(session, rootID string, generation uint
 	if !validRootID(rootID) || generation == 0 || generation > math.MaxInt64 {
 		return nil, ErrInput
 	}
-	rows, err := s.db.Query(`SELECT s.id, s.owner_user_id, ou.username, ol.relative_path,
+	rows, err := s.readDB().Query(`SELECT s.id, s.owner_user_id, ou.username, ol.relative_path,
 			s.album_name, ml.relative_path, s.link_name, s.can_write, s.created_at
 		FROM shared_folder_albums s
 		JOIN users ou ON ou.id = s.owner_user_id AND ou.enabled = 1
@@ -370,7 +364,7 @@ func (s *Store) hasSharedFolderAlbumAccess(userID int64, rootID, relative string
 	if !isPersonalHomePath(relative) {
 		return false
 	}
-	rows, err := s.db.Query(`SELECT ol.relative_path, s.album_name, s.can_write
+	rows, err := s.readDB().Query(`SELECT ol.relative_path, s.album_name, s.can_write
 		FROM shared_folder_albums s
 		JOIN users ou ON ou.id = s.owner_user_id AND ou.enabled = 1
 		JOIN user_storage_locations ol ON ol.user_id = s.owner_user_id
@@ -400,7 +394,7 @@ func (s *Store) hasSharedFolderAlbumAccess(userID int64, rootID, relative string
 // sharedFolderAlbumSearchRoots returns active shared folder album subtrees on
 // rootID that intersect with base.
 func (s *Store) sharedFolderAlbumSearchRoots(userID int64, rootID, base string) ([]string, error) {
-	rows, err := s.db.Query(`SELECT ol.relative_path, s.album_name
+	rows, err := s.readDB().Query(`SELECT ol.relative_path, s.album_name
 		FROM shared_folder_albums s
 		JOIN users ou ON ou.id = s.owner_user_id AND ou.enabled = 1
 		JOIN user_storage_locations ol ON ol.user_id = s.owner_user_id

@@ -10,8 +10,8 @@ import (
 )
 
 var (
-	powerCacheMu sync.Mutex
-	powerCached  PowerStatus
+	powerCacheMu  sync.Mutex
+	powerCached   PowerStatus
 	powerCachedAt time.Time
 )
 

@@ -187,13 +187,14 @@ func (s *Store) StoragePendingReservations(adminSession string, userID int64, af
 		(after != "" && (len(after) != 32 || strings.Trim(after, "0123456789abcdef") != "")) {
 		return nil, "", ErrInput
 	}
+	rdb := s.readDB()
 	var exists int
-	if err := s.db.QueryRow("SELECT 1 FROM users WHERE id=?", userID).Scan(&exists); errors.Is(err, sql.ErrNoRows) {
+	if err := rdb.QueryRow("SELECT 1 FROM users WHERE id=?", userID).Scan(&exists); errors.Is(err, sql.ErrNoRows) {
 		return nil, "", ErrNotFound
 	} else if err != nil {
 		return nil, "", err
 	}
-	rows, err := s.db.Query(`SELECT r.id,r.root_id,r.root_generation,r.relative_path,r.size_bytes,COALESCE(r.upload_id,''),r.created_at,COALESCE(p.operation,'')
+	rows, err := rdb.Query(`SELECT r.id,r.root_id,r.root_generation,r.relative_path,r.size_bytes,COALESCE(r.upload_id,''),r.created_at,COALESCE(p.operation,'')
 		FROM user_storage_reservations r LEFT JOIN user_storage_publications p ON p.reservation_id=r.id
 		WHERE r.user_id=? AND r.id>? ORDER BY r.id LIMIT ?`, userID, after, limit+1)
 	if err != nil {
@@ -234,10 +235,11 @@ func (s *Store) StorageMeter(actorSession string, userID int64) (StorageMeter, e
 
 func (s *Store) storageMeter(userID int64) (StorageMeter, error) {
 	result := StorageMeter{}
-	if err := s.db.QueryRow("SELECT COALESCE(SUM(size_bytes),0) FROM user_storage_files WHERE user_id=?", userID).Scan(&result.UsedBytes); err != nil {
-		return StorageMeter{}, err
-	}
-	if err := s.db.QueryRow("SELECT COALESCE(SUM(size_bytes),0) FROM user_storage_reservations WHERE user_id=?", userID).Scan(&result.ReservedBytes); err != nil {
+	if err := s.readDB().QueryRow(
+		`SELECT COALESCE((SELECT SUM(size_bytes) FROM user_storage_files WHERE user_id=?),0),
+		        COALESCE((SELECT SUM(size_bytes) FROM user_storage_reservations WHERE user_id=?),0)`,
+		userID, userID,
+	).Scan(&result.UsedBytes, &result.ReservedBytes); err != nil {
 		return StorageMeter{}, err
 	}
 	// Inventory across all disks; there is intentionally no aggregate
@@ -533,7 +535,7 @@ func (s *Store) StorageFileIdentity(rootID string, generation uint64, name strin
 		return "", ErrInput
 	}
 	var identity string
-	err := s.db.QueryRow(`SELECT identity FROM user_storage_file_identities
+	err := s.readDB().QueryRow(`SELECT identity FROM user_storage_file_identities
 		WHERE root_id=? AND root_generation=? AND relative_path=?`, rootID, int64(generation), name).Scan(&identity)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", nil

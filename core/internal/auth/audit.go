@@ -87,7 +87,7 @@ func (s *Store) ListAudit(actorSession string, beforeID int64, limit int) ([]Aud
 	}
 	query += " ORDER BY id DESC LIMIT ?"
 	args = append(args, limit+1)
-	rows, err := s.db.Query(query, args...)
+	rows, err := s.readDB().Query(query, args...)
 	if err != nil {
 		return nil, 0, err
 	}

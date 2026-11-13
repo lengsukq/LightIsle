@@ -290,12 +290,12 @@ func (l *Library) ListPersonShareAssets(viewerID, shareID, cursor int64, limit i
 	return out, next, summary, nil
 }
 
-// AuthorizePersonShareAsset verifies that viewerID has access to assetID (or its
-// Live Photo companion) through person shareID and returns the verified Asset.
-func (l *Library) AuthorizePersonShareAsset(viewerID, shareID, assetID int64) (Asset, error) {
+// AuthorizePersonShareAssetWithOwner verifies that viewerID has access to assetID
+// through person shareID and returns both the Asset and the share owner's user ID.
+func (l *Library) AuthorizePersonShareAssetWithOwner(viewerID, shareID, assetID int64) (Asset, int64, error) {
 	share, err := l.share()
 	if err != nil {
-		return Asset{}, err
+		return Asset{}, 0, err
 	}
 	var ownerID, personID, sinceTakenAt int64
 	var rootsJSON string
@@ -305,15 +305,15 @@ func (l *Library) AuthorizePersonShareAsset(viewerID, shareID, assetID int64) (A
 		WHERE id=? AND share=? AND (owner_user_id=? OR member_user_id=?)`,
 		shareID, share, viewerID, viewerID).Scan(&ownerID, &personID, &sinceTakenAt, &rootsJSON)
 	if err != nil {
-		return Asset{}, err
+		return Asset{}, 0, err
 	}
 	var roots []string
 	if json.Unmarshal([]byte(rootsJSON), &roots) != nil || len(roots) == 0 {
-		return Asset{}, sql.ErrNoRows
+		return Asset{}, 0, sql.ErrNoRows
 	}
 	fragment, scopedArgs, err := mediascope.Clause("a.path", roots)
 	if err != nil {
-		return Asset{}, sql.ErrNoRows
+		return Asset{}, 0, sql.ErrNoRows
 	}
 	args := []any{assetID, share, sinceTakenAt, ownerID, personID}
 	args = append(args, scopedArgs...)
@@ -327,9 +327,13 @@ func (l *Library) AuthorizePersonShareAsset(viewerID, shareID, assetID int64) (A
 		    WHERE af.asset_id = a.id AND pfl.user_id = ? AND pfl.person_id = ?
 		  )`+fragment, args...).Scan(&matchedID)
 	if err != nil {
-		return Asset{}, err
+		return Asset{}, 0, err
 	}
-	return l.Asset(matchedID)
+	asset, err := l.Asset(matchedID)
+	if err != nil {
+		return Asset{}, 0, err
+	}
+	return asset, ownerID, nil
 }
 
 func basePathName(p string) string {

@@ -37,7 +37,6 @@ var (
 	ErrOffline                   = errors.New("share_offline")
 	ErrTooLarge                  = errors.New("backup_safety_limit")
 	ErrRootChanged               = errors.New("backup_root_binding_changed")
-	ErrRootSnapshotMismatch      = errors.New("backup_snapshot_root_mismatch")
 	ErrRootDestinationOverlap    = errors.New("backup_destination_overlaps_registered_root")
 	ErrPrivateDestinationOverlap = errors.New("backup_destination_overlaps_private_data")
 )

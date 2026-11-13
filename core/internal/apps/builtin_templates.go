@@ -118,12 +118,6 @@ func (m *Manager) ListTemplates() []OfficialAppTemplate {
 	return out
 }
 
-// InstallTemplate materializes an audited built-in static template into the default
-// configured storage location and activates it immediately without spawning any background process (0 MB RSS).
-func (m *Manager) InstallTemplate(templateID string) (PublicApp, error) {
-	return m.InstallTemplateAt(templateID, "")
-}
-
 // InstallTemplateAt installs an audited built-in static template into the specified
 // storage location ("internal", "external", or "" for default).
 func (m *Manager) InstallTemplateAt(templateID, locationID string) (PublicApp, error) {

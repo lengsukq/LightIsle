@@ -2,10 +2,8 @@ package tasks
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"sync"
-	"time"
 )
 
 // Retention holds the opt-in trash auto-cleanup policy. Auto-purge
@@ -20,8 +18,6 @@ const (
 	MinRetentionDays = 1
 	MaxRetentionDays = 365
 )
-
-var ErrInvalidRetention = errors.New("invalid_trash_retention")
 
 // RetentionStore persists the policy as a small JSON file in the private
 // data directory so the setting survives Core restarts.
@@ -56,16 +52,6 @@ func (s *RetentionStore) Get() Retention {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.value
-}
-
-// Cutoff reports the oldest deletion timestamp that should survive. A
-// disabled policy returns the zero time and the sweeper skips the round.
-func (s *RetentionStore) Cutoff(now time.Time) time.Time {
-	value := s.Get()
-	if !value.Enabled {
-		return time.Time{}
-	}
-	return now.AddDate(0, 0, -value.Days)
 }
 
 // Set validates, persists and returns the applied policy.

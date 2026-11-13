@@ -7,15 +7,7 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/ffmpegbin"
 )
 
-// StartHLSSession starts (or joins) an HLS session. verified-direct sources
-// are refused at the source quality — the plain stream endpoint is strictly
-// better for them — but an explicit lower quality tier is allowed for any
-// film, so directly playable sources can still be downscaled on demand.
-func (l *Library) StartHLSSession(filmID int64, requestedStart float64, audioTrack int, quality string) (SessionInfo, error) {
-	return l.StartHLSSessionReplacing(filmID, requestedStart, audioTrack, quality, "")
-}
-
-// StartHLSSessionReplacing behaves like StartHLSSession and, when
+// StartHLSSessionReplacing starts (or joins) an HLS session and, when
 // replaceSessionID names a distinct active session of the same film, cancels
 // that prior session immediately so scrubbing does not pin extra muxers.
 func (l *Library) StartHLSSessionReplacing(filmID int64, requestedStart float64, audioTrack int, quality, replaceSessionID string) (SessionInfo, error) {

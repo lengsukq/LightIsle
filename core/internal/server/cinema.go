@@ -284,9 +284,26 @@ func (a *API) cinemaList(w http.ResponseWriter, r *http.Request) {
 		offset = n
 	}
 	kind := q.Get("kind")
-	if kind != "" && kind != "movie" && kind != "series" && kind != "continue" && kind != "unmatched" && kind != "recent" {
+	if kind != "" && kind != "all" && kind != "movie" && kind != "series" && kind != "continue" && kind != "unmatched" && kind != "recent" {
 		jsonReply(w, 400, map[string]string{"error": "invalid_kind"})
 		return
+	}
+	watched := strings.TrimSpace(q.Get("watched"))
+	if !cinema.ValidWatchFilter(watched) {
+		jsonReply(w, 400, map[string]string{"error": "invalid_watched"})
+		return
+	}
+	sortBy := strings.TrimSpace(q.Get("sort"))
+	if !cinema.ValidSortOrder(sortBy) {
+		jsonReply(w, 400, map[string]string{"error": "invalid_sort"})
+		return
+	}
+	searchTerm := q.Get("query")
+	if searchTerm == "" {
+		searchTerm = q.Get("search")
+	}
+	if searchTerm == "" {
+		searchTerm = q.Get("q")
 	}
 	var (
 		result []cinema.Film
@@ -296,7 +313,12 @@ func (a *API) cinemaList(w http.ResponseWriter, r *http.Request) {
 	if dir := q.Get("dir"); dir != "" {
 		result, next, err = a.cinema.ListDirectoryScoped(userID, dir, limit, offset, roots)
 	} else {
-		result, next, err = a.cinema.ListScoped(userID, kind, q.Get("query"), limit, offset, roots)
+		result, next, err = a.cinema.ListScopedFiltered(userID, cinema.ListFilter{
+			Kind:    kind,
+			Query:   searchTerm,
+			Watched: watched,
+			Sort:    sortBy,
+		}, limit, offset, roots)
 	}
 	if err != nil {
 		cinemaError(w, err)
@@ -501,10 +523,6 @@ func (a *API) cinemaPoster(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer poster.Close()
-	if _, err := poster.Stat(); err != nil {
-		galleryError(w, err)
-		return
-	}
 	serveCachedJPEG(w, r, "poster.jpg", info.ModTime(), poster)
 }
 

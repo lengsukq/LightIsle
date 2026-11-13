@@ -100,13 +100,6 @@ func (s *RootServer) QueueMediaRefresh(rootID, relativePath string) {
 	}
 }
 
-// QueueNativeRootRefresh accepts an event from the local Mac process for a
-// particular registered generation. A delayed event must never be applied to
-// a later binding of the same root ID.
-func (s *RootServer) QueueNativeRootRefresh(rootID string, generation uint64) {
-	s.QueueNativeRootRefreshDirs(rootID, generation, []string{"."})
-}
-
 func (s *RootServer) QueueNativeRootRefreshDirs(rootID string, generation uint64, dirs []string) {
 	if s == nil || rootID == "" || generation == 0 {
 		return

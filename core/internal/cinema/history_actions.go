@@ -16,8 +16,9 @@ func (l *Library) ClearHistory(userID int64) (int64, error) {
 }
 
 // MarkWatched flips the completed flag for one film. Marking watched keeps
-// the stored position and duration; marking unwatched also resets the
-// position so "continue watching" stops offering it.
+// the stored position and falls back to the media duration when no playback
+// duration was recorded yet; marking unwatched resets position and duration to
+// zero so both "continue watching" and watch history drop the title cleanly.
 func (l *Library) MarkWatched(userID, filmID int64, completed bool) error {
 	if userID <= 0 {
 		return ErrInvalid
@@ -27,11 +28,12 @@ func (l *Library) MarkWatched(userID, filmID int64, completed bool) error {
 		return err
 	}
 	position, duration := 0.0, 0.0
-	if completed {
-		position, duration = current.Position, current.Duration
-	}
 	complete := 0
 	if completed {
+		position, duration = current.Position, current.Duration
+		if duration <= 0 && current.MediaDuration > 0 {
+			duration = current.MediaDuration
+		}
 		complete = 1
 	}
 	_, err = l.db.Exec(`INSERT INTO watch_progress(user_id,film_id,position,duration,completed,updated_at)
@@ -39,6 +41,19 @@ func (l *Library) MarkWatched(userID, filmID int64, completed bool) error {
 	ON CONFLICT(user_id,film_id) DO UPDATE SET position=excluded.position,
 	duration=excluded.duration,completed=excluded.completed,updated_at=excluded.updated_at`,
 		userID, filmID, position, duration, complete, time.Now().Unix())
+	return err
+}
+
+// ClearFilmProgress removes the caller's watch_progress record for a single
+// film so it is dropped from both Continue Watching and watched state.
+func (l *Library) ClearFilmProgress(userID, filmID int64) error {
+	if userID <= 0 {
+		return ErrInvalid
+	}
+	if _, err := l.Get(filmID, userID); err != nil {
+		return err
+	}
+	_, err := l.db.Exec("DELETE FROM watch_progress WHERE user_id=? AND film_id=?", userID, filmID)
 	return err
 }
 

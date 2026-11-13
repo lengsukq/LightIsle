@@ -22,7 +22,8 @@ func (l *Library) FacetsScoped(roots []string) (PhotoFacets, error) {
 	}
 	args := append([]any{share}, scopedArgs...)
 
-	camRows, err := l.db.Query(`SELECT DISTINCT trim(a.camera_model)
+	rdb := l.readDB()
+	camRows, err := rdb.Query(`SELECT DISTINCT trim(a.camera_model)
 		FROM assets a
 		WHERE a.share=? AND a.missing_path='' AND trim(a.camera_model)<>''`+fragment+`
 		ORDER BY trim(a.camera_model) LIMIT 50`, args...)
@@ -44,7 +45,7 @@ func (l *Library) FacetsScoped(roots []string) (PhotoFacets, error) {
 		return PhotoFacets{}, err
 	}
 
-	yearRows, err := l.db.Query(`SELECT DISTINCT CAST(strftime('%Y', a.taken_at, 'unixepoch', 'localtime') AS INTEGER) AS yr
+	yearRows, err := rdb.Query(`SELECT DISTINCT CAST(strftime('%Y', a.taken_at, 'unixepoch', 'localtime') AS INTEGER) AS yr
 		FROM assets a
 		WHERE a.share=? AND a.missing_path='' AND a.taken_at>0`+fragment+`
 		ORDER BY yr DESC LIMIT 100`, args...)

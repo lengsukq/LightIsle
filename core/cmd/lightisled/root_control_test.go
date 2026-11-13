@@ -7,7 +7,6 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -74,34 +73,6 @@ func TestRootControlDefaultSelectionByRootIdentity(t *testing.T) {
 	if len(listed) != 2 || len([]nativeRoot{listed[0], listed[1]}) != 2 ||
 		!((listed[0].ID == rootB.ID && listed[0].IsDefault) || (listed[1].ID == rootB.ID && listed[1].IsDefault)) {
 		t.Fatalf("native list lost default root: %+v", listed)
-	}
-}
-
-func TestDefaultShareCanSwitchAlongsideSeparateRegisteredRoots(t *testing.T) {
-	base := t.TempDir()
-	registered := filepath.Join(base, "disk-a", "photos")
-	separate := filepath.Join(base, "disk-b", "share")
-	child := filepath.Join(registered, "child")
-	for _, folder := range []string{registered, separate, child} {
-		if err := os.MkdirAll(folder, 0700); err != nil {
-			t.Fatal(err)
-		}
-	}
-	registeredRoots := []roots.Root{{Path: registered}}
-	if err := checkLegacyShareRootOverlap(separate, registeredRoots); err != nil {
-		t.Fatalf("independent default share rejected while multi-root is enabled: %v", err)
-	}
-	for _, target := range []string{registered, child, filepath.Dir(registered)} {
-		if err := checkLegacyShareRootOverlap(target, registeredRoots); !errors.Is(err, roots.ErrOverlap) {
-			t.Fatalf("overlapping default share %q: expected conflict, got %v", target, err)
-		}
-	}
-	alias := filepath.Join(base, "alias")
-	if err := os.Symlink(registered, alias); err != nil {
-		t.Fatal(err)
-	}
-	if err := checkLegacyShareRootOverlap(alias, registeredRoots); !errors.Is(err, roots.ErrOverlap) {
-		t.Fatalf("symlink alias of registered root was accepted: %v", err)
 	}
 }
 

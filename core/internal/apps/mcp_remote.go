@@ -208,11 +208,6 @@ func (m *Manager) GetSystemConfig() AppsSystemConfig {
 func (m *Manager) MCPEnabled() bool    { return m.GetSystemConfig().MCPEnabled }
 func (m *Manager) MCPLanEnabled() bool { return m.GetSystemConfig().MCPLanEnabled }
 
-func (m *Manager) SetMCPEnabled(enabled bool) error {
-	_, err := m.SetMCPConfig(&enabled, nil)
-	return err
-}
-
 func (m *Manager) SetMCPConfig(mcpEnabled, mcpLanEnabled *bool) (AppsSystemConfig, error) {
 	m.mutation.Lock()
 	defer m.mutation.Unlock()
@@ -454,6 +449,13 @@ func (m *Manager) ProbeApp(ctx context.Context, appID string, req AppProbeReques
 			Status: StatusStopped,
 			Error:  "该轻应用尚未经管理员首次激活确认",
 		}, ErrPendingActivation
+	}
+	if err := m.verifyRecordStorageOnline(snap.locationID, snap.pluginDir); err != nil {
+		return AppProbeResult{
+			AppID:  appID,
+			Status: StatusStopped,
+			Error:  err.Error(),
+		}, err
 	}
 	if snap.manifest.Web == nil || !snap.manifest.Web.Enabled {
 		return AppProbeResult{

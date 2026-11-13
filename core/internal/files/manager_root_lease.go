@@ -21,13 +21,6 @@ func (e *legacyTransitionError) Is(target error) bool {
 	return target == e.kind || errors.Is(e.cause, target)
 }
 
-// ForgetOfflineRoot is retained for callers that only know the old API. A
-// root replacement must use ForgetOfflineRootWithLegacyTransition so legacy
-// relative grants are revoked before the new root is published.
-func (m *Manager) ForgetOfflineRoot() (string, error) {
-	return "", ErrLegacyTransitionRequired
-}
-
 // ForgetOfflineRootWithLegacyTransition abandons a physically bound,
 // disconnected single-share root and reattaches the private local default
 // share. It never reads or modifies the old disk. The callbacks run while

@@ -88,6 +88,21 @@ type shareEligibleMember struct {
 	Username string `json:"username"`
 }
 
+func (a *API) ownerCanSharePersonAsset(ownerID int64, assetPath string) bool {
+	if a.auth == nil || ownerID <= 0 {
+		return false
+	}
+	if a.rootID != "" {
+		ok, err := a.auth.UserCanWriteRoot(ownerID, a.rootID, assetPath)
+		return err == nil && ok
+	}
+	if managedStorageName(assetPath) {
+		return false
+	}
+	ok, err := a.auth.UserCanWrite(ownerID, assetPath)
+	return err == nil && ok
+}
+
 func (a *API) galleryPersonSharesList(w http.ResponseWriter, r *http.Request) {
 	if !a.galleryReady(w) {
 		return
@@ -102,27 +117,28 @@ func (a *API) galleryPersonSharesList(w http.ResponseWriter, r *http.Request) {
 		galleryError(w, err)
 		return
 	}
+	filtered := make([]gallery.PersonShareView, 0, len(shares))
 	for i := range shares {
-		if owner, err := a.auth.GetUser(shares[i].OwnerUserID); err == nil {
+		owner, ownerErr := a.auth.GetUser(shares[i].OwnerUserID)
+		if ownerErr == nil {
 			shares[i].OwnerUsername = owner.Username
 		}
-		if member, err := a.auth.GetUser(shares[i].MemberUserID); err == nil {
+		if shares[i].Direction == "incoming" && (ownerErr != nil || !owner.Enabled) {
+			continue
+		}
+		if member, mErr := a.auth.GetUser(shares[i].MemberUserID); mErr == nil {
 			shares[i].MemberName = member.Username
 		}
+		filtered = append(filtered, shares[i])
 	}
 	members := make([]shareEligibleMember, 0)
-	for id := int64(1); id <= 128; id++ {
-		if id == viewer.ID {
-			continue
+	if peers, peerErr := a.auth.ListEnabledPeerUsers(token(r)); peerErr == nil {
+		for _, u := range peers {
+			members = append(members, shareEligibleMember{ID: u.ID, Username: u.Username})
 		}
-		u, err := a.auth.GetUser(id)
-		if err != nil || !u.Enabled {
-			continue
-		}
-		members = append(members, shareEligibleMember{ID: u.ID, Username: u.Username})
 	}
 	jsonReply(w, http.StatusOK, map[string]any{
-		"shares":  shares,
+		"shares":  filtered,
 		"members": members,
 	})
 }
@@ -233,15 +249,21 @@ func (a *API) galleryPersonShareAssets(w http.ResponseWriter, r *http.Request) {
 		galleryError(w, err)
 		return
 	}
-	if owner, uErr := a.auth.GetUser(summary.OwnerUserID); uErr == nil {
-		summary.OwnerUsername = owner.Username
+	owner, ownerErr := a.auth.GetUser(summary.OwnerUserID)
+	if ownerErr != nil || !owner.Enabled {
+		jsonReply(w, http.StatusNotFound, map[string]string{"error": "not_found"})
+		return
 	}
+	summary.OwnerUsername = owner.Username
 	if member, uErr := a.auth.GetUser(summary.MemberUserID); uErr == nil {
 		summary.MemberName = member.Username
 	}
-	decorated := make([]galleryAssetWithCapabilities, len(assets))
-	for i, asset := range assets {
-		decorated[i] = galleryAssetWithCapabilities{Asset: asset, CanWrite: false}
+	decorated := make([]galleryAssetWithCapabilities, 0, len(assets))
+	for _, asset := range assets {
+		if !a.ownerCanSharePersonAsset(summary.OwnerUserID, asset.Path) {
+			continue
+		}
+		decorated = append(decorated, galleryAssetWithCapabilities{Asset: asset, CanWrite: false})
 	}
 	jsonReply(w, http.StatusOK, map[string]any{
 		"share":      summary,
@@ -250,35 +272,39 @@ func (a *API) galleryPersonShareAssets(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (a *API) authorizeSharedPersonAssetRequest(w http.ResponseWriter, r *http.Request) (gallery.Asset, bool) {
+func (a *API) authorizeSharedPersonAssetRequest(w http.ResponseWriter, r *http.Request) (gallery.Asset, int64, bool) {
 	if !a.galleryReady(w) {
-		return gallery.Asset{}, false
+		return gallery.Asset{}, 0, false
 	}
 	shareID, err1 := strconv.ParseInt(r.PathValue("shareID"), 10, 64)
 	assetID, err2 := strconv.ParseInt(r.PathValue("assetID"), 10, 64)
 	if err1 != nil || err2 != nil || shareID <= 0 || assetID <= 0 {
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_id"})
-		return gallery.Asset{}, false
+		return gallery.Asset{}, 0, false
 	}
 	viewer, authenticated := a.auth.Identity(token(r))
 	if !authenticated {
 		jsonReply(w, http.StatusUnauthorized, map[string]string{"error": "authentication_required"})
-		return gallery.Asset{}, false
+		return gallery.Asset{}, 0, false
 	}
-	asset, err := a.gallery.AuthorizePersonShareAsset(viewer.ID, shareID, assetID)
+	asset, ownerID, err := a.gallery.AuthorizePersonShareAssetWithOwner(viewer.ID, shareID, assetID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			jsonReply(w, http.StatusNotFound, map[string]string{"error": "not_found"})
-			return gallery.Asset{}, false
+			return gallery.Asset{}, 0, false
 		}
 		galleryError(w, err)
-		return gallery.Asset{}, false
+		return gallery.Asset{}, 0, false
 	}
-	return asset, true
+	if !a.ownerCanSharePersonAsset(ownerID, asset.Path) {
+		jsonReply(w, http.StatusNotFound, map[string]string{"error": "not_found"})
+		return gallery.Asset{}, 0, false
+	}
+	return asset, ownerID, true
 }
 
 func (a *API) galleryPersonShareThumbnail(w http.ResponseWriter, r *http.Request) {
-	asset, ok := a.authorizeSharedPersonAssetRequest(w, r)
+	asset, _, ok := a.authorizeSharedPersonAssetRequest(w, r)
 	if !ok {
 		return
 	}
@@ -306,7 +332,7 @@ func (a *API) galleryPersonShareContent(w http.ResponseWriter, r *http.Request) 
 		a.fileUnavailable(w)
 		return
 	}
-	asset, ok := a.authorizeSharedPersonAssetRequest(w, r)
+	asset, _, ok := a.authorizeSharedPersonAssetRequest(w, r)
 	if !ok {
 		return
 	}
@@ -330,13 +356,17 @@ func (a *API) galleryPersonShareLiveVideo(w http.ResponseWriter, r *http.Request
 		a.fileUnavailable(w)
 		return
 	}
-	asset, ok := a.authorizeSharedPersonAssetRequest(w, r)
+	asset, ownerID, ok := a.authorizeSharedPersonAssetRequest(w, r)
 	if !ok {
 		return
 	}
 	_, video, err := a.gallery.LiveVideoCompanion(asset.ID)
 	if err != nil {
 		galleryError(w, err)
+		return
+	}
+	if !a.ownerCanSharePersonAsset(ownerID, video.Path) {
+		jsonReply(w, http.StatusNotFound, map[string]string{"error": "not_found"})
 		return
 	}
 	f, info, err := a.files.Read(video.Path)

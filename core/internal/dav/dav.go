@@ -44,12 +44,8 @@ var (
 	davMetadataSlots = make(chan struct{}, 4)
 )
 
-// ErrUnavailable reports an offline share root; ErrDenied reports an
-// authorization failure.
-var (
-	ErrUnavailable = errors.New("share root offline")
-	ErrDenied      = errors.New("dav access denied")
-)
+// ErrUnavailable reports an offline share root.
+var ErrUnavailable = errors.New("share root offline")
 
 type Service struct {
 	store     *auth.Store
@@ -619,12 +615,6 @@ func (l *authLimiter) trim(now time.Time) {
 			delete(l.entries, ip)
 		}
 	}
-}
-
-// userFrom returns the authenticated account attached by the service.
-func userFrom(ctx context.Context) (auth.User, bool) {
-	user, ok := ctx.Value(userKey).(auth.User)
-	return user, ok
 }
 
 // relativePath converts a webdav name ("/a/b") into the grant/manager path

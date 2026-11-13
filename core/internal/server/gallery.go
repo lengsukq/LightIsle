@@ -251,8 +251,12 @@ func galleryListFilter(w http.ResponseWriter, q url.Values) (gallery.PhotoFilter
 		}
 		filter.Kind = kind
 	}
-	if term := strings.TrimSpace(q.Get("q")); term != "" {
-		if len(term) > 128 {
+	rawQuery := q.Get("q")
+	if rawQuery == "" {
+		rawQuery = q.Get("query")
+	}
+	if term := strings.TrimSpace(rawQuery); term != "" {
+		if len(term) > 128 || strings.ContainsRune(term, 0) {
 			jsonReply(w, 400, map[string]string{"error": "invalid_query"})
 			return filter, false
 		}
@@ -372,10 +376,6 @@ func (a *API) galleryThumbnail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer f.Close()
-	if _, e := f.Stat(); e != nil {
-		galleryError(w, e)
-		return
-	}
 	modTime := time.Time{}
 	if asset.Modified > 0 {
 		modTime = time.Unix(0, asset.Modified)

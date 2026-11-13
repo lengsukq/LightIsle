@@ -541,7 +541,8 @@ func TestMCPSwitchAndToolsEndToEnd(t *testing.T) {
 	}
 
 	// 2. Enable MCP and set up local-reload test listener
-	if err := mgr.SetMCPEnabled(true); err != nil {
+	mcpEnabled := true
+	if _, err := mgr.SetMCPConfig(&mcpEnabled, nil); err != nil {
 		t.Fatal(err)
 	}
 	if !mgr.MCPEnabled() {

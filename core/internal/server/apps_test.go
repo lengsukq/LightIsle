@@ -86,7 +86,8 @@ func TestAppsServerRoutesContractsAndSessionInvalidation(t *testing.T) {
 		return rec
 	}
 
-	// 1. Admin GET /api/v2/apps returns isAdmin, mcpEnabled, mcpPrompt, members, configuredChannels
+	// 1. Admin GET /api/v2/apps returns isAdmin, pluginsDir, appStorage, members, configuredChannels,
+	// while stripping all MCP fields (MCP management is exclusive to macOS native IPC).
 	resAdmin := call(http.MethodGet, "/api/v2/apps", adminTok, nil, nil)
 	if resAdmin.Code != http.StatusOK {
 		t.Fatalf("admin GET /api/v2/apps = %d %s", resAdmin.Code, resAdmin.Body.String())
@@ -95,8 +96,16 @@ func TestAppsServerRoutesContractsAndSessionInvalidation(t *testing.T) {
 	if err := json.Unmarshal(resAdmin.Body.Bytes(), &adminPayload); err != nil {
 		t.Fatal(err)
 	}
-	if adminPayload["isAdmin"] != true || adminPayload["mcpEnabled"] != false || adminPayload["mcpPrompt"] == "" {
+	if adminPayload["isAdmin"] != true || adminPayload["pluginsDir"] == "" || adminPayload["appStorage"] == nil {
 		t.Fatalf("missing top-level admin fields: %+v", adminPayload)
+	}
+	for _, secretKey := range []string{"mcpEnabled", "mcpLanEnabled", "mcpToken", "mcpPrompt", "lanMcpPrompt", "mcpConfigJson", "mcpLogs"} {
+		if _, exists := adminPayload[secretKey]; exists {
+			t.Fatalf("GET /api/v2/apps must not expose %q: %+v", secretKey, adminPayload)
+		}
+	}
+	if snap := appsMgr.BuildMCPConfigSnapshot(""); snap.Prompt == "" {
+		t.Fatal("expected non-empty MCP bootstrap prompt from native manager")
 	}
 
 	// 2. P0-3: Updating member access (selected_members) on static network-pulse (no Cron) succeeds
@@ -106,12 +115,43 @@ func TestAppsServerRoutesContractsAndSessionInvalidation(t *testing.T) {
 		t.Fatalf("PUT /api/v2/apps/network-pulse failed: %d %s", resUpdate.Code, resUpdate.Body.String())
 	}
 
-	// 3. P0-2: Both POST /api/v2/apps/{id}/action and /actions work
-	if resAct := call(http.MethodPost, "/api/v2/apps/cron-demo/action", adminTok, []byte(`{"action":"run_cron"}`), nil); resAct.Code != http.StatusOK {
-		t.Fatalf("POST /api/v2/apps/cron-demo/action failed: %d %s", resAct.Code, resAct.Body.String())
+	// Member redaction check: GET /api/v2/apps, /api/v2/apps/templates, and POST /launch strip host paths, templates, allowedUserIDs, and runtime details
+	resMemberList := call(http.MethodGet, "/api/v2/apps", memberTok, nil, nil)
+	if resMemberList.Code != http.StatusOK {
+		t.Fatalf("member GET /api/v2/apps = %d %s", resMemberList.Code, resMemberList.Body.String())
 	}
-	if resActs := call(http.MethodPost, "/api/v2/apps/cron-demo/actions", adminTok, []byte(`{"action":"stop"}`), nil); resActs.Code != http.StatusOK {
-		t.Fatalf("POST /api/v2/apps/cron-demo/actions failed: %d %s", resActs.Code, resActs.Body.String())
+	var memberListPayload map[string]any
+	if err := json.Unmarshal(resMemberList.Body.Bytes(), &memberListPayload); err != nil {
+		t.Fatal(err)
+	}
+	if memberListPayload["isAdmin"] != false {
+		t.Fatalf("expected isAdmin=false for member, got %+v", memberListPayload)
+	}
+	if tplSlice, ok := memberListPayload["templates"].([]any); !ok || len(tplSlice) != 0 {
+		t.Fatalf("expected empty templates for member, got %+v", memberListPayload["templates"])
+	}
+	for _, adminOnlyKey := range []string{"pluginsDir", "pluginDataDir", "appStorage", "members", "mcpEnabled", "mcpToken"} {
+		if _, exists := memberListPayload[adminOnlyKey]; exists {
+			t.Fatalf("member GET /api/v2/apps leaked admin key %q: %+v", adminOnlyKey, memberListPayload)
+		}
+	}
+	if strings.Contains(resMemberList.Body.String(), dataDir) ||
+		strings.Contains(resMemberList.Body.String(), `"pluginsDir"`) ||
+		strings.Contains(resMemberList.Body.String(), `"pluginDataDir"`) ||
+		strings.Contains(resMemberList.Body.String(), `"allowedUserIDs":[2]`) {
+		t.Fatalf("member GET /api/v2/apps leaked host path or allowedUserIDs: %s", resMemberList.Body.String())
+	}
+	resMemberTemplates := call(http.MethodGet, "/api/v2/apps/templates", memberTok, nil, nil)
+	if resMemberTemplates.Code != http.StatusOK || strings.Contains(resMemberTemplates.Body.String(), `"id"`) {
+		t.Fatalf("member GET /api/v2/apps/templates must return empty list, got %d %s", resMemberTemplates.Code, resMemberTemplates.Body.String())
+	}
+
+	// 3. P0-2: POST /api/v2/apps/{id}/action dispatches lifecycle & cron actions
+	if resAct := call(http.MethodPost, "/api/v2/apps/cron-demo/action", adminTok, []byte(`{"action":"run_cron"}`), nil); resAct.Code != http.StatusOK {
+		t.Fatalf("POST /api/v2/apps/cron-demo/action (run_cron) failed: %d %s", resAct.Code, resAct.Body.String())
+	}
+	if resStop := call(http.MethodPost, "/api/v2/apps/cron-demo/action", adminTok, []byte(`{"action":"stop"}`), nil); resStop.Code != http.StatusOK {
+		t.Fatalf("POST /api/v2/apps/cron-demo/action (stop) failed: %d %s", resStop.Code, resStop.Body.String())
 	}
 
 	// 4. P0-6: Member launches network-pulse -> exchanges ticket for app cookie -> after logout, cookie is immediately invalidated
@@ -253,10 +293,6 @@ func TestLANMCPEndpointsDebugProbeAndTokenRotation(t *testing.T) {
 	if err := accounts.Setup("owner", "owner-password-12345"); err != nil {
 		t.Fatal(err)
 	}
-	adminTok, err := accounts.Login("owner", "owner-password-12345")
-	if err != nil {
-		t.Fatal(err)
-	}
 
 	appsMgr := apps.NewManager(dataDir, "lightisled", nil)
 	defer appsMgr.Close()
@@ -296,10 +332,10 @@ func TestLANMCPEndpointsDebugProbeAndTokenRotation(t *testing.T) {
 		return rec
 	}
 
-	// 1. Enable local MCP only (mcpLanEnabled = false)
-	resMcpLocal := call(http.MethodPut, "/api/v2/apps/mcp", adminTok, "127.0.0.1:50000", []byte(`{"mcpEnabled":true,"mcpLanEnabled":false}`), nil)
-	if resMcpLocal.Code != http.StatusOK {
-		t.Fatalf("PUT /api/v2/apps/mcp failed: %d %s", resMcpLocal.Code, resMcpLocal.Body.String())
+	// 1. Enable local MCP only (mcpLanEnabled = false) via native manager API
+	tTrue, tFalse := true, false
+	if _, err := appsMgr.SetMCPConfig(&tTrue, &tFalse); err != nil {
+		t.Fatalf("SetMCPConfig(local only) failed: %v", err)
 	}
 	mcpToken := appsMgr.ReadMCPToken()
 	if mcpToken == "" {
@@ -316,9 +352,8 @@ func TestLANMCPEndpointsDebugProbeAndTokenRotation(t *testing.T) {
 	}
 
 	// 2. Enable LAN MCP
-	resMcpLan := call(http.MethodPut, "/api/v2/apps/mcp", adminTok, "127.0.0.1:50000", []byte(`{"mcpEnabled":true,"mcpLanEnabled":true}`), nil)
-	if resMcpLan.Code != http.StatusOK {
-		t.Fatalf("enable LAN MCP failed: %d %s", resMcpLan.Code, resMcpLan.Body.String())
+	if _, err := appsMgr.SetMCPConfig(&tTrue, &tTrue); err != nil {
+		t.Fatalf("SetMCPConfig(enable LAN) failed: %v", err)
 	}
 
 	// LAN client succeeds with valid Bearer token
@@ -338,13 +373,9 @@ func TestLANMCPEndpointsDebugProbeAndTokenRotation(t *testing.T) {
 	}
 
 	// 3. Rotate token -> old token rejected, new token accepted
-	resRotate := call(http.MethodPost, "/api/v2/apps/mcp/token/rotate", adminTok, "127.0.0.1:50000", []byte(`{}`), nil)
-	if resRotate.Code != http.StatusOK {
-		t.Fatalf("token rotate failed: %d %s", resRotate.Code, resRotate.Body.String())
-	}
-	newToken := appsMgr.ReadMCPToken()
-	if newToken == "" || newToken == mcpToken {
-		t.Fatalf("expected rotated token, got %q", newToken)
+	newToken, err := appsMgr.RotateMCPToken()
+	if err != nil || newToken == "" || newToken == mcpToken {
+		t.Fatalf("RotateMCPToken failed: token=%q err=%v", newToken, err)
 	}
 	resOldToken := call(http.MethodPost, "/api/v2/mcp", "", "192.168.1.50:54321", rpcInit, map[string]string{
 		"Authorization": "Bearer " + mcpToken,
@@ -352,26 +383,29 @@ func TestLANMCPEndpointsDebugProbeAndTokenRotation(t *testing.T) {
 	if resOldToken.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 with old token after rotation, got %d", resOldToken.Code)
 	}
+	resNewToken := call(http.MethodPost, "/api/v2/mcp", "", "192.168.1.50:54321", rpcInit, map[string]string{
+		"Authorization": "Bearer " + newToken,
+	})
+	if resNewToken.Code != http.StatusOK {
+		t.Fatalf("expected 200 with rotated token, got %d %s", resNewToken.Code, resNewToken.Body.String())
+	}
 
-	// 4. Scaffold, Probe, Debug, and Logs endpoints
-	resScaffold := call(http.MethodPost, "/api/v2/apps/scaffold", adminTok, "127.0.0.1:50000", []byte(`{"id":"probe-demo","name":"探针测试","mode":"static"}`), nil)
-	if resScaffold.Code != http.StatusOK {
-		t.Fatalf("POST /api/v2/apps/scaffold failed: %d %s", resScaffold.Code, resScaffold.Body.String())
+	// 4. Native manager Scaffold, Probe, Debug, and Logs capabilities
+	if _, err := appsMgr.ScaffoldApp([]byte(`{"id":"probe-demo","name":"探针测试","mode":"static"}`), true); err != nil {
+		t.Fatalf("ScaffoldApp failed: %v", err)
 	}
-	resProbe := call(http.MethodPost, "/api/v2/apps/probe-demo/probe", adminTok, "127.0.0.1:50000", []byte(`{"method":"GET","path":"/"}`), nil)
-	if resProbe.Code != http.StatusOK || !strings.Contains(resProbe.Body.String(), `"statusCode":200`) {
-		t.Fatalf("POST /api/v2/apps/probe-demo/probe failed: %d %s", resProbe.Code, resProbe.Body.String())
+	probeRes, err := appsMgr.ProbeApp(httptest.NewRequest(http.MethodGet, "/", nil).Context(), "probe-demo", apps.AppProbeRequest{Method: "GET", Path: "/"})
+	if err != nil || probeRes.StatusCode != http.StatusOK {
+		t.Fatalf("ProbeApp failed: %+v %v", probeRes, err)
 	}
-	resDebug := call(http.MethodPost, "/api/v2/apps/mcp/debug", adminTok, "127.0.0.1:50000", []byte(`{"method":"tools/list"}`), nil)
-	if resDebug.Code != http.StatusOK || !strings.Contains(resDebug.Body.String(), "lightisle_probe_app") {
-		t.Fatalf("POST /api/v2/apps/mcp/debug failed: %d %s", resDebug.Code, resDebug.Body.String())
+	debugRes := appsMgr.ExecuteDebugMCP(httptest.NewRequest(http.MethodGet, "/", nil).Context(), apps.MCPDebugExecRequest{Method: "tools/list"}, "127.0.0.1:50000")
+	if debugRes.IsError || !strings.Contains(debugRes.ResponseJSON, "lightisle_probe_app") {
+		t.Fatalf("ExecuteDebugMCP failed: %+v", debugRes)
 	}
-	resLogs := call(http.MethodGet, "/api/v2/apps/mcp/logs", adminTok, "127.0.0.1:50000", nil, nil)
-	if resLogs.Code != http.StatusOK || !strings.Contains(resLogs.Body.String(), `"logs":[`) {
-		t.Fatalf("GET /api/v2/apps/mcp/logs failed: %d %s", resLogs.Code, resLogs.Body.String())
+	if len(appsMgr.GetMCPCallLogs()) == 0 {
+		t.Fatal("expected non-empty MCP call logs after debug call")
 	}
-	resClearLogs := call(http.MethodDelete, "/api/v2/apps/mcp/logs", adminTok, "127.0.0.1:50000", nil, nil)
-	if resClearLogs.Code != http.StatusOK {
-		t.Fatalf("DELETE /api/v2/apps/mcp/logs failed: %d %s", resClearLogs.Code, resClearLogs.Body.String())
+	if err := appsMgr.ClearMCPCallLogs(); err != nil || len(appsMgr.GetMCPCallLogs()) != 0 {
+		t.Fatalf("ClearMCPCallLogs failed: %v", err)
 	}
 }

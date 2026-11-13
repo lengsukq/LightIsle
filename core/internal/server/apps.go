@@ -18,6 +18,11 @@ func WithApps(next http.Handler, dataDir string, store *auth.Store, appsMgr *app
 		appsMgr = apps.NewManager(dataDir, "", nil)
 		_ = appsMgr.Reload()
 	}
+	if appsMgr != nil {
+		if protector, ok := next.(protectedHostDirsSetter); ok {
+			protector.SetProtectedHostDirsProvider(appsMgr.ProtectedHostDirs)
+		}
+	}
 	if appsMgr != nil && store != nil {
 		appsMgr.SetUserVerifier(func(u apps.UserIdentity) (apps.UserIdentity, bool) {
 			if u.SessionToken != "" {
@@ -50,8 +55,6 @@ func WithApps(next http.Handler, dataDir string, store *auth.Store, appsMgr *app
 
 	mux := http.NewServeMux()
 	registerAppsManagementRoutes(mux, a, appsMgr, store, resolveSession)
-	registerAppsMCPRoutes(mux, a, appsMgr, store, resolveSession)
-	registerMCPConnections(mux, a, appsMgr)
 	securedAPIMux := securityHeaders(mux)
 	appsAndCore := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/v2/apps" || strings.HasPrefix(r.URL.Path, "/api/v2/apps/") {
@@ -88,22 +91,12 @@ func WithApps(next http.Handler, dataDir string, store *auth.Store, appsMgr *app
 			}
 		}
 
-		if path == mcpManagementPath {
-			managementMCP.ServeHTTP(w, r)
-			return
-		}
-
 		if handleLocalLoopbackMCPHelpers(w, r, appsMgr) {
 			return
 		}
 
 		if path == "/api/v2/mcp" || strings.HasPrefix(path, "/api/v2/mcp/") {
 			handleHTTPMCPEndpoint(w, r, appsMgr, managementMCP, resolveSession, sseHub)
-			return
-		}
-
-		if path == mcpConnectionsPath || strings.HasPrefix(path, mcpConnectionsPath+"/") {
-			securedAPIMux.ServeHTTP(w, r)
 			return
 		}
 
@@ -157,29 +150,30 @@ func isIsolatedAppOriginRequest(r *http.Request) bool {
 
 func replyAppsList(w http.ResponseWriter, appsMgr *apps.Manager, store *auth.Store, user apps.UserIdentity) {
 	isAdmin := user.Role == auth.RoleAdmin
+	templates := []apps.OfficialAppTemplate{}
+	if isAdmin {
+		templates = appsMgr.ListTemplates()
+	}
 	resp := map[string]any{
 		"apps":      appsMgr.ListForUser(user.ID, user.Role),
-		"templates": appsMgr.ListTemplates(),
+		"templates": templates,
 		"isAdmin":   isAdmin,
 	}
 	if isAdmin {
-		snap := appsMgr.BuildMCPConfigSnapshot("")
-		resp["mcpEnabled"] = snap.MCPEnabled
-		resp["mcpLanEnabled"] = snap.MCPLanEnabled
-		resp["mcpToken"] = snap.Token
-		resp["mcpPrompt"] = snap.Prompt
-		resp["lanMcpPrompt"] = snap.LanPrompt
-		resp["mcpConfigJson"] = snap.ClientConfigJSON
-		resp["localHttpUrl"] = snap.LocalHTTPURL
-		resp["lanHttpUrl"] = snap.LanHTTPURL
-		resp["lanSseUrl"] = snap.LanSSEURL
-		resp["mcpConfig"] = snap.Config
-		resp["pluginsDir"] = snap.PluginsDir
-		resp["pluginDataDir"] = snap.PluginDataDir
-		resp["mcpCommand"] = snap.Command
-		resp["mcpLogs"] = appsMgr.GetMCPCallLogs()
+		storageSnap := appsMgr.GetStorageSnapshot()
+		pluginsDir := appsMgr.PluginsDir()
+		pluginDataDir := appsMgr.PluginDataRoot()
+		for _, loc := range storageSnap.Locations {
+			if loc.IsDefault {
+				pluginsDir = loc.PluginsDir
+				pluginDataDir = loc.PluginDataDir
+				break
+			}
+		}
+		resp["pluginsDir"] = pluginsDir
+		resp["pluginDataDir"] = pluginDataDir
 		resp["configuredChannels"] = appsMgr.ConfiguredChannels()
-		resp["appStorage"] = appsMgr.GetStorageSnapshot()
+		resp["appStorage"] = storageSnap
 		members := make([]map[string]any, 0)
 		if store != nil && user.SessionToken != "" {
 			if users, err := store.ListUsers(user.SessionToken); err == nil {

@@ -246,28 +246,36 @@ func (s *Store) storagePolicy(targetUserID int64) (StoragePolicy, error) {
 	if targetUserID <= 0 {
 		return StoragePolicy{}, ErrInput
 	}
+	rdb := s.readDB()
 	var role string
-	if err := s.db.QueryRow("SELECT role FROM users WHERE id=?", targetUserID).Scan(&role); err != nil {
+	var accountedBytes, reservedBytes int64
+	if err := rdb.QueryRow(`SELECT u.role,
+		COALESCE((SELECT SUM(size_bytes) FROM user_storage_files WHERE user_id=u.id),0),
+		COALESCE((SELECT SUM(size_bytes) FROM user_storage_reservations WHERE user_id=u.id),0)
+		FROM users u WHERE u.id=?`, targetUserID).Scan(&role, &accountedBytes, &reservedBytes); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return StoragePolicy{}, ErrNotFound
 		}
 		return StoragePolicy{}, err
 	}
 	policy := StoragePolicy{
-		UserID:      targetUserID,
-		Role:        role,
-		Unlimited:   role == RoleAdmin,
-		Locations:   []StorageLocation{},
-		RootQuotas:  []StorageRootQuota{},
-		Enforcement: "pending",
+		UserID:         targetUserID,
+		Role:           role,
+		Unlimited:      role == RoleAdmin,
+		AccountedBytes: accountedBytes,
+		ReservedBytes:  reservedBytes,
+		Locations:      []StorageLocation{},
+		RootQuotas:     []StorageRootQuota{},
+		Enforcement:    "pending",
 	}
-	rows, err := s.db.Query("SELECT category,root_id,root_generation,relative_path FROM user_storage_locations WHERE user_id=? ORDER BY category", targetUserID)
+	rows, err := rdb.Query("SELECT category,root_id,root_generation,relative_path FROM user_storage_locations WHERE user_id=? ORDER BY category", targetUserID)
 	if err != nil {
 		return StoragePolicy{}, err
 	}
 	for rows.Next() {
 		var location StorageLocation
 		if err := rows.Scan(&location.Category, &location.RootID, &location.RootGeneration, &location.RelativePath); err != nil {
+			_ = rows.Close()
 			return StoragePolicy{}, err
 		}
 		policy.Locations = append(policy.Locations, location)
@@ -281,7 +289,7 @@ func (s *Store) storagePolicy(targetUserID int64) (StoragePolicy, error) {
 	}
 	// Preserve offline generations and unresolved crash reservations in the
 	// read model. A detached disk must not quietly release accounted bytes.
-	rootRows, err := s.db.Query(`SELECT roots.root_id,roots.root_generation,q.quota_bytes,
+	rootRows, err := rdb.Query(`SELECT roots.root_id,roots.root_generation,q.quota_bytes,
 		(SELECT COALESCE(SUM(size_bytes),0) FROM user_storage_files f WHERE f.user_id=? AND f.root_id=roots.root_id AND f.root_generation=roots.root_generation),
 		(SELECT COALESCE(SUM(size_bytes),0) FROM user_storage_reservations r WHERE r.user_id=? AND r.root_id=roots.root_id AND r.root_generation=roots.root_generation)
 		FROM (
@@ -323,12 +331,6 @@ func (s *Store) storagePolicy(targetUserID int64) (StoragePolicy, error) {
 		return StoragePolicy{}, err
 	}
 	if err := rootRows.Close(); err != nil {
-		return StoragePolicy{}, err
-	}
-	if err := s.db.QueryRow("SELECT COALESCE(SUM(size_bytes),0) FROM user_storage_files WHERE user_id=?", targetUserID).Scan(&policy.AccountedBytes); err != nil {
-		return StoragePolicy{}, err
-	}
-	if err := s.db.QueryRow("SELECT COALESCE(SUM(size_bytes),0) FROM user_storage_reservations WHERE user_id=?", targetUserID).Scan(&policy.ReservedBytes); err != nil {
 		return StoragePolicy{}, err
 	}
 	return policy, nil

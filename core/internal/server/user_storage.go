@@ -185,11 +185,6 @@ func (a *API) ownStoragePolicy(w http.ResponseWriter, r *http.Request) {
 	jsonReply(w, http.StatusOK, policy)
 }
 
-func (a *API) setUserStorageQuota(w http.ResponseWriter, r *http.Request) {
-	// Old app versions must not turn a removed global quota back on.
-	jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_quota_is_per_disk_upgrade_client"})
-}
-
 func (a *API) setUserStorageRootQuota(w http.ResponseWriter, r *http.Request) {
 	id, ok := storageUserID(w, r)
 	if !ok {

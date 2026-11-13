@@ -197,7 +197,7 @@ func buildValidationDiagnostic(appID, valErr string) *AppDiagnostic {
 		}
 		solutions = []string{
 			"按上述报错提示修正配置文件后，回到应用中心点击「重新扫描」即可恢复加载。",
-			"也可开启「允许本地 AI Agent (MCP) 接入」，交由 AI Agent 自动校验并修复插件清单。",
+			"也可在 Mac 客户端「Docker 与应用 → MCP 控制台与调试」开启「允许本地 AI Agent (MCP) 接入」，交由 AI Agent 自动校验并修复插件清单。",
 		}
 	}
 
@@ -319,7 +319,7 @@ func buildStartFailureDiagnostic(
 				},
 				Solutions: []string{
 					buildHint,
-					"也可开启「允许本地 AI Agent (MCP) 接入」，将插件交由本机 AI Agent 自动安装依赖并修复启动脚本。",
+					"也可在 Mac 客户端「Docker 与应用 → MCP 控制台与调试」开启「允许本地 AI Agent (MCP) 接入」，将插件交由本机 AI Agent 自动安装依赖并修复启动脚本。",
 				},
 				DataSafe: dataSafetyNote(appID),
 			}
@@ -368,7 +368,7 @@ func buildStartFailureDiagnostic(
 			},
 			Solutions: []string{
 				fmt.Sprintf("可在终端进入 plugins/%s 手动运行 PORT=18080 HOST=127.0.0.1 ./%s 复现并修复脚本报错，修复后点击「唤醒启动」。", appID, entry),
-				"若需自动排障，可开启 MCP 开发者开关并复制提示词交给本机 AI Agent 修复。",
+				"若需自动排障，可在 Mac 客户端「Docker 与应用 → MCP 控制台与调试」开启 MCP 开关并复制提示词交给本机 AI Agent 修复。",
 			},
 			DataSafe: dataSafetyNote(appID),
 		}

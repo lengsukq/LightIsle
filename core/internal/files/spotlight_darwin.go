@@ -19,26 +19,43 @@ import (
 // subtree. Unlike global mdfind queries, -onlyin never scans sibling shares.
 // Paths are rechecked through the pinned os.Root and safePath before return.
 func (m *Manager) SpotlightSearch(ctx context.Context, base, term string, limit int) ([]Entry, bool, error) {
+	return m.SpotlightSearchKind(ctx, base, term, "", limit)
+}
+
+func (m *Manager) SpotlightSearchKind(ctx context.Context, base, term, kind string, limit int) ([]Entry, bool, error) {
 	var out []Entry
 	var more bool
-	err := m.withRead(func(s *Store) (err error) { out, more, err = s.spotlightSearch(ctx, base, term, limit); return })
+	err := m.withRead(func(s *Store) (err error) {
+		out, more, err = s.spotlightSearchKind(ctx, base, term, kind, limit)
+		return
+	})
 	return out, more, err
 }
+
 func spotlightQuery(term string) (string, error) {
-	term = strings.TrimSpace(term)
-	if len(term) < 2 || len(term) > 128 || strings.ContainsRune(term, 0) {
-		return "", ErrPath
+	tokens, err := ParseSearchTokens(term)
+	if err != nil {
+		return "", err
 	}
-	// Only a literal, quoted search term: no shell or raw predicate fragments.
-	escaped := strings.NewReplacer("\\", "\\\\", "\"", "\\\"").Replace(term)
-	return `(kMDItemFSName == "*` + escaped + `*"cd || kMDItemTextContent == "*` + escaped + `*"cd)`, nil
+	escaper := strings.NewReplacer("\\", "\\\\", "\"", "\\\"")
+	if len(tokens) == 1 {
+		escaped := escaper.Replace(tokens[0])
+		return `(kMDItemFSName == "*` + escaped + `*"cd || kMDItemTextContent == "*` + escaped + `*"cd)`, nil
+	}
+	parts := make([]string, 0, len(tokens))
+	for _, tok := range tokens {
+		escaped := escaper.Replace(tok)
+		parts = append(parts, `(kMDItemFSName == "*`+escaped+`*"cd || kMDItemTextContent == "*`+escaped+`*"cd)`)
+	}
+	return "(" + strings.Join(parts, " && ") + ")", nil
 }
-func (s *Store) spotlightSearch(ctx context.Context, base, term string, limit int) ([]Entry, bool, error) {
+
+func (s *Store) spotlightSearchKind(ctx context.Context, base, term, kind string, limit int) ([]Entry, bool, error) {
 	base, err := s.safePath(base, true, false)
 	if err != nil {
 		return nil, false, err
 	}
-	if limit < 1 || limit > 200 {
+	if !ValidSearchKind(kind) || limit < 1 || limit > 200 {
 		return nil, false, ErrPath
 	}
 	query, err := spotlightQuery(term)
@@ -80,6 +97,10 @@ func (s *Store) spotlightSearch(ctx context.Context, base, term string, limit in
 		return nil, false, waitErr
 	}
 	tooLarge := len(content) > maxOutput
+	candidateCap := limit * 3
+	if candidateCap < 300 {
+		candidateCap = 300
+	}
 	result := make([]Entry, 0, limit)
 	rootAbs, err := filepath.Abs(s.root.Name())
 	if err != nil {
@@ -87,8 +108,9 @@ func (s *Store) spotlightSearch(ctx context.Context, base, term string, limit in
 	}
 	baseRelative := filepath.Clean(base)
 	for _, line := range bytes.Split(content, []byte{0}) {
-		if len(result) >= limit {
-			return result, true, nil
+		if len(result) >= candidateCap {
+			tooLarge = true
+			break
 		}
 		if len(line) == 0 {
 			continue
@@ -111,23 +133,60 @@ func (s *Store) spotlightSearch(ctx context.Context, base, term string, limit in
 		if err != nil || (!info.IsDir() && !info.Mode().IsRegular()) {
 			continue
 		}
-		result = append(result, Entry{Name: path.Base(safe), Path: safe, Type: typeOf(info), Size: info.Size(), Modified: info.ModTime()})
+		entry := Entry{Name: path.Base(safe), Path: safe, Type: typeOf(info), Size: info.Size(), Modified: info.ModTime()}
+		if !MatchesSearchKind(entry, kind) {
+			continue
+		}
+		result = append(result, entry)
+	}
+	RankSearchEntries(result, term)
+	if len(result) > limit {
+		result = result[:limit]
+		tooLarge = true
 	}
 	return result, tooLarge, nil
 }
 
 // A missing/disabled Spotlight index never prevents the existing safe
-// bounded filename traversal from working.
+// bounded filename traversal from working. Multi-token queries also merge
+// directory-path matches (e.g., "2026 合同" hitting "2026/租房合同.pdf").
 func (m *Manager) SearchSpotlightOrFallback(ctx context.Context, base, term string, limit int) ([]Entry, bool, error) {
-	items, more, err := m.SpotlightSearch(ctx, base, term, limit)
-	if err == nil && (len(items) > 0 || more) {
-		return items, more, nil
+	return m.SearchSpotlightKindOrFallback(ctx, base, term, "", limit)
+}
+
+func (m *Manager) SearchSpotlightKindOrFallback(ctx context.Context, base, term, kind string, limit int) ([]Entry, bool, error) {
+	items, more, err := m.SpotlightSearchKind(ctx, base, term, kind, limit)
+	if err != nil {
+		if errors.Is(err, ErrPath) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return nil, false, err
+		}
+		return m.SearchKind(base, term, kind, limit)
 	}
-	if err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
-		return m.Search(base, term, limit)
+	if len(items) == 0 && !more {
+		return m.SearchKind(base, term, kind, limit)
 	}
-	if err == nil {
-		return m.Search(base, term, limit)
+	tokens, _ := ParseSearchTokens(term)
+	if len(tokens) > 1 && len(items) < limit {
+		pathItems, pathMore, pathErr := m.SearchKind(base, term, kind, limit)
+		if pathErr == nil && len(pathItems) > 0 {
+			seen := make(map[string]struct{}, len(items)+len(pathItems))
+			for _, it := range items {
+				seen[it.Path] = struct{}{}
+			}
+			for _, it := range pathItems {
+				if _, dup := seen[it.Path]; !dup {
+					seen[it.Path] = struct{}{}
+					items = append(items, it)
+				}
+			}
+			RankSearchEntries(items, term)
+			if len(items) > limit {
+				items = items[:limit]
+				more = true
+			} else {
+				more = more || pathMore
+			}
+		}
 	}
-	return nil, false, err
+	return items, more, nil
 }

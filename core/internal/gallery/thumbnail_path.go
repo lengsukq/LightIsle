@@ -20,11 +20,6 @@ const (
 	ThumbnailSizePreview = 2048
 )
 
-var thumbnailPhotoExtensions = map[string]bool{
-	".jpg": true, ".jpeg": true, ".png": true, ".gif": true, ".webp": true,
-	".heic": true, ".heif": true,
-}
-
 var thumbnailVideoExtensions = map[string]bool{
 	".mp4": true, ".mov": true, ".m4v": true,
 }

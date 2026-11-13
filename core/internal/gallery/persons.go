@@ -80,31 +80,43 @@ func (l *Library) ListPersonsScoped(userID int64, includeHidden bool, roots []st
 	args := append([]any{}, scopedArgs...)
 	args = append(args, userID, share, userID)
 	args = append(args, scopedArgs...)
-	rows, err := l.db.Query(`
+	rows, err := l.readDB().Query(`
 		SELECT
-			p.id,
-			p.name,
-			p.is_hidden,
-			COUNT(DISTINCT a.id) AS photo_cnt,
-			COUNT(af.id) AS face_cnt,
-			COALESCE((
-				SELECT af2.id FROM person_face_links pfl2
-				JOIN asset_faces af2 ON af2.id = pfl2.face_id
-				JOIN assets a2 ON a2.id = af2.asset_id
-				WHERE pfl2.user_id = p.user_id AND pfl2.person_id = p.id
-				  AND a2.share = p.share AND a2.missing_path = ''`+strings.ReplaceAll(fragment, "a.path", "a2.path")+`
-				ORDER BY (af2.quality * (0.5 + 0.5 * af2.eye_openness)) DESC, af2.id ASC
-				LIMIT 1
-			), 0) AS best_face_id
-		FROM persons p
-		JOIN person_face_links pfl ON pfl.person_id = p.id AND pfl.user_id = ?
-		JOIN asset_faces af ON af.id = pfl.face_id
-		JOIN assets a ON a.id = af.asset_id
-		WHERE p.share = ? AND p.user_id = ? AND a.share = p.share AND a.missing_path = ''`+hiddenFilter+fragment+`
-		GROUP BY p.id
-		HAVING photo_cnt > 0
-		ORDER BY (CASE WHEN p.name<>'' THEN 0 ELSE 1 END) ASC, photo_cnt DESC, p.id ASC
-		LIMIT 200`, args...)
+			sub.id,
+			sub.name,
+			sub.is_hidden,
+			sub.photo_cnt,
+			sub.face_cnt,
+			sub.best_face_id,
+			COALESCE(cf.asset_id, 0)
+		FROM (
+			SELECT
+				p.id,
+				p.name,
+				p.is_hidden,
+				COUNT(DISTINCT a.id) AS photo_cnt,
+				COUNT(af.id) AS face_cnt,
+				COALESCE((
+					SELECT af2.id FROM person_face_links pfl2
+					JOIN asset_faces af2 ON af2.id = pfl2.face_id
+					JOIN assets a2 ON a2.id = af2.asset_id
+					WHERE pfl2.user_id = p.user_id AND pfl2.person_id = p.id
+					  AND a2.share = p.share AND a2.missing_path = ''`+strings.ReplaceAll(fragment, "a.path", "a2.path")+`
+					ORDER BY (af2.quality * (0.5 + 0.5 * af2.eye_openness)) DESC, af2.id ASC
+					LIMIT 1
+				), 0) AS best_face_id
+			FROM persons p
+			JOIN person_face_links pfl ON pfl.person_id = p.id AND pfl.user_id = ?
+			JOIN asset_faces af ON af.id = pfl.face_id
+			JOIN assets a ON a.id = af.asset_id
+			WHERE p.share = ? AND p.user_id = ? AND a.share = p.share AND a.missing_path = ''`+hiddenFilter+fragment+`
+			GROUP BY p.id
+			HAVING photo_cnt > 0
+			ORDER BY (CASE WHEN p.name<>'' THEN 0 ELSE 1 END) ASC, photo_cnt DESC, p.id ASC
+			LIMIT 200
+		) sub
+		LEFT JOIN asset_faces cf ON cf.id = sub.best_face_id
+		ORDER BY (CASE WHEN sub.name<>'' THEN 0 ELSE 1 END) ASC, sub.photo_cnt DESC, sub.id ASC`, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -114,7 +126,7 @@ func (l *Library) ListPersonsScoped(userID int64, includeHidden bool, roots []st
 	for rows.Next() {
 		var item PersonSummary
 		var hiddenInt int
-		if err := rows.Scan(&item.ID, &item.Name, &hiddenInt, &item.PhotoCount, &item.FaceCount, &item.CoverFaceID); err != nil {
+		if err := rows.Scan(&item.ID, &item.Name, &hiddenInt, &item.PhotoCount, &item.FaceCount, &item.CoverFaceID, &item.CoverAssetID); err != nil {
 			return nil, err
 		}
 		item.Hidden = hiddenInt != 0
@@ -122,11 +134,6 @@ func (l *Library) ListPersonsScoped(userID int64, includeHidden bool, roots []st
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
-	}
-	for i := range out {
-		if out[i].CoverFaceID > 0 {
-			_ = l.db.QueryRow(`SELECT asset_id FROM asset_faces WHERE id=?`, out[i].CoverFaceID).Scan(&out[i].CoverAssetID)
-		}
 	}
 	return out, nil
 }
@@ -138,7 +145,7 @@ func (l *Library) syncUserPersons(share string, userID int64, roots []string) er
 	}
 	queryArgs := append([]any{share}, scopedArgs...)
 	queryArgs = append(queryArgs, userID)
-	rows, err := l.db.Query(`
+	rows, err := l.readDB().Query(`
 		SELECT af.id, af.asset_id, af.quality, af.eye_openness, af.model_version, af.embedding
 		FROM asset_faces af
 		JOIN assets a ON a.id = af.asset_id
@@ -346,7 +353,7 @@ func (l *Library) MergePersons(userID, sourcePersonID, targetPersonID int64) err
 func (l *Library) FaceAssetAndBox(faceID int64) (Asset, [4]float32, error) {
 	var assetID int64
 	var box [4]float32
-	err := l.db.QueryRow(`SELECT asset_id, box_x, box_y, box_w, box_h FROM asset_faces WHERE id=?`, faceID).
+	err := l.readDB().QueryRow(`SELECT asset_id, box_x, box_y, box_w, box_h FROM asset_faces WHERE id=?`, faceID).
 		Scan(&assetID, &box[0], &box[1], &box[2], &box[3])
 	if err != nil {
 		return Asset{}, box, err

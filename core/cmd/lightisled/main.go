@@ -200,7 +200,7 @@ func main() {
 
 	var externalTransferRunning atomic.Bool
 	configureSMBRootProvider(rootRegistry)
-	installDiskProtectionGuard(rootRegistry, backupService, backupSchedule, &externalTransferRunning)
+	installDiskProtectionGuard(rootRegistry, backupService, backupSchedule, appsManager, &externalTransferRunning)
 
 	downloadPublisher := downloads.NewRegistryPublisher(rootRegistry, accountStore)
 	downloadCenter := openOptionalDownloadCenter(
@@ -237,11 +237,16 @@ func main() {
 		cancel()
 		monitors.Wait()
 	}()
-	monitors.Go(func() { monitorAlerts(ctx, rootRegistry, rootServer, taskJournal, alertThresholds, accountStore, dispatchAlert) })
+	monitors.Go(func() {
+		monitorAlerts(ctx, rootRegistry, rootServer, taskJournal, alertThresholds, accountStore, dispatchAlert)
+	})
 	if taskJournal != nil {
 		monitors.Go(func() { monitorMetricHistory(ctx, taskJournal) })
 	}
 	monitors.Go(func() { newRootMediaMaintenance(rootRegistry, rootServer, taskJournal).Run(ctx) })
+	// Preserve any legacy LightIsle trash during the transition to the macOS
+	// Trash, including when an older installation enabled automatic purging.
+	// The existing restore/inspection endpoints remain available.
 	startUploadSweeper(ctx, rootRegistry, rootServer, accountStore)
 
 	var remote atomic.Pointer[server.Remote]
@@ -278,7 +283,6 @@ func main() {
 		automationManager:       automationManager,
 		taskJournal:             taskJournal,
 		alertThresholds:         alertThresholds,
-		trashRetention:          trashRetention,
 		notifyHub:               notifyHub,
 		backupService:           backupService,
 		backupSchedule:          backupSchedule,
@@ -408,6 +412,7 @@ func installDiskProtectionGuard(
 	rootRegistry *roots.Registry,
 	backupService *backup.Service,
 	backupSchedule *backup.Scheduler,
+	appsManager *apps.Manager,
 	externalTransferRunning *atomic.Bool,
 ) {
 	diskmgmt.Shared().SetGuard(func(d diskmgmt.Disk, action string) error {
@@ -417,11 +422,19 @@ func installDiskProtectionGuard(
 		if action == "mount" {
 			return nil
 		}
-		paths := make([]string, 0, len(rootRegistry.List())+1)
+		paths := make([]string, 0, len(rootRegistry.List())+4)
 		for _, root := range rootRegistry.List() {
 			paths = append(paths, root.Path)
 			if diskmgmt.MatchesVolumeUUID(d, root.Binding.VolumeUUID) {
 				return diskmgmt.ErrProtected
+			}
+		}
+		if appsManager != nil {
+			paths = append(paths, appsManager.ProtectedHostDirs()...)
+			for _, volUUID := range appsManager.ProtectedVolumeUUIDs() {
+				if diskmgmt.MatchesVolumeUUID(d, volUUID) {
+					return diskmgmt.ErrProtected
+				}
 			}
 		}
 		if backupSchedule == nil {
@@ -586,7 +599,6 @@ type ipcCommandDispatcher struct {
 	automationManager       *automation.Manager
 	taskJournal             *tasks.Journal
 	alertThresholds         *tasks.ThresholdStore
-	trashRetention          *tasks.RetentionStore
 	notifyHub               *notify.Hub
 	backupService           *backup.Service
 	backupSchedule          *backup.Scheduler
@@ -650,7 +662,6 @@ func (d *ipcCommandDispatcher) dispatch(ctx context.Context, command string) {
 	case handleDiskIPC(ctx, command):
 	case d.handleMediaRefresh(command):
 	case handleAlertSettings(command, d.taskJournal, d.alertThresholds):
-	case handleTrashRetentionSettings(command, d.trashRetention):
 	case handleRootCinemaTokenSettings(command, d.rootServer):
 	case handleNotificationIPC(command, d.notifyHub, &d.notifyTestActive, d.notifyTestDone):
 	case handleExportIPC(ctx, command, d.rootRegistry, d.rootServer, &d.exportCancel, d.externalTransferRunning, d.exportDone):

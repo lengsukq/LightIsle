@@ -44,11 +44,11 @@ type Asset struct {
 	CapturedAt       string  `json:"capturedAt,omitempty"`
 	// Capture location (nil when absent) and camera metadata for the map and
 	// the viewer info panel.
-	Latitude        *float64 `json:"latitude,omitempty"`
-	Longitude       *float64 `json:"longitude,omitempty"`
-	CameraMake      string   `json:"cameraMake,omitempty"`
-	CameraModel     string   `json:"cameraModel,omitempty"`
-	LensModel       string   `json:"lensModel,omitempty"`
+	Latitude         *float64 `json:"latitude,omitempty"`
+	Longitude        *float64 `json:"longitude,omitempty"`
+	CameraMake       string   `json:"cameraMake,omitempty"`
+	CameraModel      string   `json:"cameraModel,omitempty"`
+	LensModel        string   `json:"lensModel,omitempty"`
 	ISO              int      `json:"iso,omitempty"`
 	FNumber          float64  `json:"fNumber,omitempty"`
 	ExposureSeconds  float64  `json:"exposureSeconds,omitempty"`

@@ -114,7 +114,7 @@ func TestLivePhotoPairingMemoriesAndPersonShare(t *testing.T) {
 	if err != nil || len(sharedAssets) != 1 || sharedAssets[0].ID != assets[0].ID {
 		t.Fatalf("expected 1 shared asset for member 2, got %+v (err=%v)", sharedAssets, err)
 	}
-	if _, err := lib.AuthorizePersonShareAsset(3, ps.ID, assets[0].ID); err == nil {
+	if _, _, err := lib.AuthorizePersonShareAssetWithOwner(3, ps.ID, assets[0].ID); err == nil {
 		t.Fatal("unauthorized user 3 must not access person share")
 	}
 	_ = context.Background()

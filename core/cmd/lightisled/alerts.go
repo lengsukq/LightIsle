@@ -85,7 +85,7 @@ func monitorAlerts(ctx context.Context, storage *roots.Registry, rootServer *ser
 		}
 		pwr := system.CollectPowerStatus()
 		if journal == nil {
-			 scratch := map[string]bool{}
+			scratch := map[string]bool{}
 			upsGuard.evaluate(pwr, rootServer, accounts, nil, scratch)
 			return
 		}

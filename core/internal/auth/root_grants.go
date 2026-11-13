@@ -44,7 +44,7 @@ func denyPersonalHomeForMember(name string, userID int64, write bool) bool {
 // grant or public folder traversal must not restore that member's access.
 func (s *Store) detachedHomeIntersects(rootID, name string, includeDescendants bool) bool {
 	var detached bool
-	err := s.db.QueryRow(`SELECT EXISTS(
+	err := s.readDB().QueryRow(`SELECT EXISTS(
 		SELECT 1 FROM user_storage_detached_paths d WHERE d.root_id=?
 		 AND (lower(d.path)=lower(?) OR substr(lower(?),1,length(d.path)+1)=lower(d.path)||'/'
 		      OR (? AND (?='.' OR substr(lower(d.path),1,length(?)+1)=lower(?)||'/')))
@@ -168,7 +168,7 @@ func (s *Store) RootGrants(session string, userID int64, rootID string) ([]RootG
 	return s.rootGrants(userID, rootID)
 }
 func (s *Store) rootGrants(userID int64, rootID string) ([]RootGrant, error) {
-	rows, err := s.db.Query(`SELECT path,can_write FROM root_file_grants
+	rows, err := s.readDB().Query(`SELECT path,can_write FROM root_file_grants
  WHERE user_id=? AND root_id=? ORDER BY path`, userID, rootID)
 	if err != nil {
 		return nil, err
@@ -272,7 +272,7 @@ func (s *Store) SearchRootsRoot(session, rootID, base string) ([]string, error) 
 	// readers use this list directly for timelines/counts and cannot subtract
 	// individual private files after aggregation.
 	var hasPersonalHomes bool
-	if err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM user_storage_locations WHERE root_id=?
+	if err := s.readDB().QueryRow(`SELECT EXISTS(SELECT 1 FROM user_storage_locations WHERE root_id=?
 		UNION ALL SELECT 1 FROM user_storage_detached_paths WHERE root_id=?)`, rootID, rootID).
 		Scan(&hasPersonalHomes); err != nil {
 		return nil, err

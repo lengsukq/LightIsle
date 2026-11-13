@@ -153,8 +153,6 @@ type Tunnel struct {
 	RemoteConfig bool   `json:"-"`
 }
 
-func (t Tunnel) Healthy() bool { return t.Status == "healthy" }
-
 type tunnelRaw struct {
 	ID          string `json:"id"`
 	Name        string `json:"name"`

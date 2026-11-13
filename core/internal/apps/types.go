@@ -29,7 +29,6 @@ var (
 	ErrChanged           = errors.New("app_changed")
 	ErrUnavailable       = errors.New("app_unavailable")
 	ErrPendingActivation = errors.New("app_pending_activation")
-	ErrMCPDisabled       = errors.New("mcp_disabled")
 	ErrStorageSlotLimit  = errors.New("app_storage_slot_limit")
 	ErrStorageOffline    = errors.New("app_storage_offline")
 
@@ -39,7 +38,7 @@ var (
 )
 
 const (
-	MCPDisabledMessage = "LightIsle 开发者 MCP 当前处于关闭状态。请先在 LightIsle 管理端（macOS 客户端设置页、Web 应用中心或 Flutter 应用中心）打开「允许 AI Agent (MCP) 接入」开关后再试。"
+	MCPDisabledMessage = "LightIsle 开发者 MCP 当前处于关闭状态。请先在 Mac 客户端「Docker 与应用 → MCP 控制台与调试」打开「允许本地 AI Agent (MCP) 接入」开关后再试。"
 
 	AccessAdminOnly       = "admin_only"
 	AccessSelectedMembers = "selected_members"
@@ -238,8 +237,8 @@ type PublicApp struct {
 	LocationID        string         `json:"locationId"`
 	LocationKind      string         `json:"locationKind"`
 	LocationName      string         `json:"locationName"`
-	PluginsDir        string         `json:"pluginsDir"`
-	PluginDataDir     string         `json:"pluginDataDir"`
+	PluginsDir        string         `json:"pluginsDir,omitempty"`
+	PluginDataDir     string         `json:"pluginDataDir,omitempty"`
 	Access            AccessConfig   `json:"access"`
 	Web               PublicWebView  `json:"web"`
 	Cron              PublicCronView `json:"cron"`

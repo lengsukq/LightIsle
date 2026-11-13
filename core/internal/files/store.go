@@ -48,26 +48,6 @@ type Entry struct {
 	SingleLink bool   `json:"-"`
 }
 
-// OpenPinnedStore clones an already identity-verified os.Root. Unlike Open,
-// it never re-resolves a mount path, so a disk replaced at the same pathname
-// cannot redirect native migration or maintenance writes to a new volume.
-// The caller keeps its original directory lease alive for the Store lifetime.
-func OpenPinnedStore(verified *os.Root) (*Store, error) {
-	if verified == nil {
-		return nil, ErrPath
-	}
-	clone, err := verified.OpenRoot(".")
-	if err != nil {
-		return nil, err
-	}
-	s := &Store{root: clone}
-	if err := s.ensureTrashDirectory(); err != nil {
-		_ = clone.Close()
-		return nil, err
-	}
-	return s, nil
-}
-
 // safePath rejects symbolic links at *every* component rather than relying
 // on os.Root's share-wide confinement. In particular a granted directory
 // cannot alias a private sibling through a relative symlink.

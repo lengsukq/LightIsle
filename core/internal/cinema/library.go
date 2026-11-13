@@ -492,75 +492,7 @@ func (l *Library) List(userID int64, kind, query string, limit, offset int) ([]F
 }
 
 func (l *Library) ListScoped(userID int64, kind, query string, limit, offset int, roots []string) ([]Film, int, error) {
-	share, err := l.share()
-	if err != nil {
-		return nil, 0, err
-	}
-	if limit < 1 || limit > 120 || offset < 0 || offset > 1000000 || len(query) > 120 {
-		return nil, 0, ErrInvalid
-	}
-	q := `SELECT f.id,f.title,f.path,f.kind,f.series,f.season,f.episode,f.year,f.size,f.modified,
- COALESCE(p.position,0),COALESCE(p.duration,0),COALESCE(p.completed,0),COALESCE(p.updated_at,0),f.probe_status,f.browser_playback,f.container,f.video_codec,f.audio_codec,f.duration_seconds,f.width,f.height,f.captured_at,f.overview,f.rating,f.metadata_source,f.poster_path,f.title_source,f.year_source,f.scrape_state
- FROM films f LEFT JOIN watch_progress p ON p.film_id=f.id AND p.user_id=?
- WHERE f.share=? AND f.missing_path=''`
-	args := []any{userID, share}
-	if kind == "movie" || kind == "series" {
-		q += " AND f.kind=?"
-		args = append(args, kind)
-	}
-	if kind == "unmatched" {
-		q += " AND f.metadata_source='' AND f.kind IN ('movie','series')"
-	}
-	if kind == "continue" {
-		q += " AND p.position>5 AND p.completed=0"
-	}
-	if query != "" {
-		q += " AND (instr(lower(f.title),lower(?))>0 OR instr(lower(f.series),lower(?))>0)"
-		args = append(args, query, query)
-	}
-	fragment, scopedArgs, err := mediascope.Clause("f.path", roots)
-	if err != nil {
-		return nil, 0, ErrInvalid
-	}
-	q += fragment
-	args = append(args, scopedArgs...)
-	// A media home needs two independent shelves: genuinely recent imports
-	// (database insertion order) and last-watched unfinished titles.
-	// Ordinary library browsing keeps its alphabetical stable ordering.
-	switch kind {
-	case "recent":
-		q += " ORDER BY f.id DESC LIMIT ? OFFSET ?"
-	case "continue":
-		q += " ORDER BY p.updated_at DESC, f.id LIMIT ? OFFSET ?"
-	default:
-		q += " ORDER BY f.title COLLATE NOCASE, f.season, f.episode, f.id LIMIT ? OFFSET ?"
-	}
-	args = append(args, limit+1, offset)
-	rows, err := l.readDB().Query(q, args...)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer rows.Close()
-	result := []Film{}
-	for rows.Next() {
-		var f Film
-		var complete int
-		if err := rows.Scan(&f.ID, &f.Title, &f.Path, &f.Kind, &f.Series, &f.Season, &f.Episode, &f.Year, &f.Size, &f.Modified, &f.Position, &f.Duration, &complete, &f.UpdatedAt,
-			&f.ProbeStatus, &f.BrowserPlayback, &f.Container, &f.VideoCodec, &f.AudioCodec, &f.MediaDuration, &f.Width, &f.Height, &f.CapturedAt, &f.Overview, &f.Rating, &f.MetadataSource, &f.PosterURL, &f.TitleSource, &f.YearSource, &f.ScrapeState); err != nil {
-			return nil, 0, err
-		}
-		decorateLoadedFilm(&f, complete)
-		result = append(result, f)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, 0, err
-	}
-	next := 0
-	if len(result) > limit {
-		result = result[:limit]
-		next = offset + limit
-	}
-	return result, next, nil
+	return l.ListScopedFiltered(userID, ListFilter{Kind: kind, Query: query}, limit, offset, roots)
 }
 
 // ListDirectoryScoped returns the caller's authorized films that reside

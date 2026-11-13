@@ -40,6 +40,9 @@ func (s *Store) CreateRootFileShare(ctx context.Context, session, rootID string,
 	if !ok || !s.CanAccessRoot(session, rootID, name, false, false) {
 		return FileShare{}, "", ErrForbidden
 	}
+	if user.Role != RoleAdmin && denyPersonalHomeForMember(name, user.ID, false) {
+		return FileShare{}, "", ErrForbidden
+	}
 	if s.afterShareAuthorization != nil {
 		s.afterShareAuthorization()
 	}
@@ -105,7 +108,7 @@ func (s *Store) ListRootFileShares(session, rootID string) ([]FileShare, error) 
 		return nil, ErrForbidden
 	}
 	sessionID := sha256.Sum256([]byte(session))
-	rows, err := s.db.Query(`SELECT id,file_path,COALESCE(kind,'file'),created_at,expires_at,root_generation,
+	rows, err := s.readDB().Query(`SELECT id,file_path,COALESCE(kind,'file'),created_at,expires_at,root_generation,
 		COALESCE(password_hash,'')<>'', COALESCE(max_downloads,0), COALESCE(download_count,0) FROM root_file_shares
 		WHERE user_id=? AND root_id=? AND expires_at>? AND EXISTS(
 			SELECT 1 FROM sessions ss JOIN users u ON u.id=ss.user_id
@@ -175,7 +178,8 @@ func (s *Store) ResolveRootFileShare(token string) (ShareAccess, error) {
 		return item, ErrNotFound
 	}
 	digest := sha256.Sum256([]byte(token))
-	err = s.db.QueryRow(`SELECT shares.user_id,shares.root_id,shares.root_generation,shares.file_path,COALESCE(shares.kind,'file'),shares.file_identity,shares.id,
+	var role string
+	err = s.readDB().QueryRow(`SELECT shares.user_id,u.role,shares.root_id,shares.root_generation,shares.file_path,COALESCE(shares.kind,'file'),shares.file_identity,shares.id,
 		COALESCE(shares.password_hash,''), COALESCE(shares.max_downloads,0), COALESCE(shares.download_count,0), shares.expires_at
 		FROM root_file_shares shares JOIN users u ON u.id=shares.user_id
 		WHERE shares.id=? AND shares.expires_at>? AND u.enabled=1
@@ -184,8 +188,12 @@ func (s *Store) ResolveRootFileShare(token string) (ShareAccess, error) {
 			AND (g.path='.' OR g.path=shares.file_path
 				OR substr(shares.file_path,1,length(g.path)+1)=g.path||'/')))`,
 		digest[:], time.Now().Unix(), RoleAdmin).
-		Scan(&item.UserID, &item.RootID, &item.RootGeneration, &item.Path, &item.Kind, &item.Identity, &item.Digest, &item.PasswordHash, &item.MaxDownloads, &item.DownloadCount, &item.ExpiresAt)
+		Scan(&item.UserID, &role, &item.RootID, &item.RootGeneration, &item.Path, &item.Kind, &item.Identity, &item.Digest, &item.PasswordHash, &item.MaxDownloads, &item.DownloadCount, &item.ExpiresAt)
 	if errors.Is(err, sql.ErrNoRows) || err == nil && (!validRootID(item.RootID) || item.RootGeneration == 0) {
+		return ShareAccess{}, ErrNotFound
+	}
+	if err == nil && role != RoleAdmin &&
+		(denyPersonalHomeForMember(item.Path, item.UserID, false) || s.detachedHomeIntersects(item.RootID, item.Path, false)) {
 		return ShareAccess{}, ErrNotFound
 	}
 	return item, err

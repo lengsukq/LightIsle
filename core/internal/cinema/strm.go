@@ -7,7 +7,6 @@ import (
 	"net/netip"
 	"net/url"
 	"os"
-	"path"
 	"path/filepath"
 	"strings"
 )
@@ -79,20 +78,39 @@ func ParseAndValidateStrmContent(content string) (string, error) {
 }
 
 func isBlockedStrmHost(host string) bool {
-	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+	clean := strings.TrimRight(strings.ToLower(strings.TrimSpace(host)), ".")
+	if clean == "" || clean == "localhost" || strings.HasSuffix(clean, ".localhost") {
 		return true
 	}
-	if addr, err := netip.ParseAddr(host); err == nil {
+	if idx := strings.IndexByte(clean, '%'); idx >= 0 {
+		clean = clean[:idx]
+	}
+	if addr, err := netip.ParseAddr(clean); err == nil {
 		addr = addr.Unmap()
 		if addr.IsLoopback() || addr.IsUnspecified() || addr.IsMulticast() || addr.IsLinkLocalUnicast() || addr.IsLinkLocalMulticast() {
 			return true
 		}
 		return false
 	}
-	if ip := net.ParseIP(host); ip != nil {
-		return ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
+	if ip := net.ParseIP(clean); ip != nil {
+		return ip.IsLoopback() || ip.IsUnspecified() || ip.IsMulticast() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast()
 	}
-	return false
+	// Reject non-canonical integer, octal, or hex IPv4 literals (e.g. 2130706433, 0177.0.0.1, 0x7f000001).
+	lastLabel := clean
+	if idx := strings.LastIndexByte(clean, '.'); idx >= 0 {
+		lastLabel = clean[idx+1:]
+	}
+	if lastLabel == "" || strings.HasPrefix(lastLabel, "0x") {
+		return true
+	}
+	allDigits := true
+	for i := 0; i < len(lastLabel); i++ {
+		if lastLabel[i] < '0' || lastLabel[i] > '9' {
+			allDigits = false
+			break
+		}
+	}
+	return allDigits
 }
 
 // StrmHostSummary extracts the display hostname for UI badges without exposing
@@ -103,26 +121,4 @@ func StrmHostSummary(rawURL string) string {
 		return ""
 	}
 	return strings.ToLower(parsed.Hostname())
-}
-
-// InferStrmMime infers a browser-friendly media MIME type from the URL path.
-func InferStrmMime(rawURL string) string {
-	parsed, err := url.Parse(rawURL)
-	if err != nil {
-		return "video/mp4"
-	}
-	switch strings.ToLower(path.Ext(parsed.Path)) {
-	case ".m3u8":
-		return "application/vnd.apple.mpegurl"
-	case ".webm":
-		return "video/webm"
-	case ".mkv":
-		return "video/x-matroska"
-	case ".mov":
-		return "video/quicktime"
-	case ".ts":
-		return "video/mp2t"
-	default:
-		return "video/mp4"
-	}
 }

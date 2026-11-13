@@ -11,12 +11,6 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/automation"
 )
 
-// ActivateApp explicitly marks a plugin as administrator-approved, clearing
-// PendingActivation in memory and persisting the approval to apps-config.json.
-func (m *Manager) ActivateApp(appID string) {
-	_, _ = m.ApproveApp(appID)
-}
-
 // ApproveApp explicitly clears PendingActivation for appID, persists the approval
 // in apps-config.json (refusing to overwrite a corrupted config file), enables
 // configured Cron schedules, and starts persistent Web processes.
@@ -115,6 +109,10 @@ func (m *Manager) WakeApp(ctx context.Context, appID string) (PublicApp, error) 
 	if snap.pendingActivation {
 		return m.toPublicApp(&snap), ErrPendingActivation
 	}
+	if err := m.verifyRecordStorageOnline(snap.locationID, snap.pluginDir); err != nil {
+		_ = snap.instance.Stop(false)
+		return m.toPublicApp(&snap), err
+	}
 	if _, _, err := snap.instance.Wake(ctx); err != nil {
 		return m.toPublicApp(&snap), err
 	}
@@ -142,6 +140,10 @@ func (m *Manager) RestartApp(ctx context.Context, appID string) (PublicApp, erro
 	}
 	if snap.pendingActivation {
 		return m.toPublicApp(&snap), ErrPendingActivation
+	}
+	if err := m.verifyRecordStorageOnline(snap.locationID, snap.pluginDir); err != nil {
+		_ = snap.instance.Stop(false)
+		return m.toPublicApp(&snap), err
 	}
 	if err := snap.instance.Restart(ctx); err != nil {
 		return m.toPublicApp(&snap), err
@@ -185,6 +187,9 @@ func (m *Manager) TriggerCron(appID string) error {
 	if snap.pendingActivation {
 		return ErrPendingActivation
 	}
+	if err := m.verifyRecordStorageOnline(snap.locationID, snap.pluginDir); err != nil {
+		return err
+	}
 	if m.automation == nil {
 		return ErrUnavailable
 	}
@@ -198,7 +203,8 @@ func (m *Manager) UpdateApp(appID string, req AppUpdateRequest) (PublicApp, erro
 	err := func() error {
 		m.mutation.Lock()
 		defer m.mutation.Unlock()
-		if _, err := readSystemConfigFile(m.configPath); err != nil {
+		cfg, err := readSystemConfigFile(m.configPath)
+		if err != nil {
 			return err
 		}
 		snap, ok := m.snapshotApp(appID)
@@ -207,6 +213,9 @@ func (m *Manager) UpdateApp(appID string, req AppUpdateRequest) (PublicApp, erro
 		}
 		if req.RequireApproved && snap.pendingActivation {
 			return ErrPendingActivation
+		}
+		if err := m.verifyRecordStorageOnlineWithConfig(cfg, snap.locationID, snap.pluginDir); err != nil {
+			return err
 		}
 		root, err := os.OpenRoot(snap.pluginDir)
 		if err != nil {
@@ -273,6 +282,14 @@ func (m *Manager) DeleteApp(appID string, deleteData bool) error {
 		return ErrNotFound
 	}
 	snap := *rec
+	m.mu.Unlock()
+
+	if err := m.verifyRecordStorageOnlineWithConfig(cfg, snap.locationID, snap.pluginDir); err != nil {
+		m.mutation.Unlock()
+		return err
+	}
+
+	m.mu.Lock()
 	delete(m.apps, appID)
 	m.mu.Unlock()
 

@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"strings"
 
-	"github.com/lengsukq/lightisle/core/internal/cinema"
 	"github.com/lengsukq/lightisle/core/internal/maptiles"
 	"github.com/lengsukq/lightisle/core/internal/server"
 	"github.com/lengsukq/lightisle/core/internal/tasks"
@@ -100,56 +99,6 @@ func handleAlertSettings(command string, journal *tasks.Journal, thresholds *tas
 	}
 	if payload, err := json.Marshal(thresholds.Get()); err == nil {
 		writeStdoutLine("LIGHTISLE_ALERTS_THRESHOLD " + base64.RawURLEncoding.EncodeToString(payload))
-	}
-	return true
-}
-
-func handleCinemaTokenSettings(command string, library *cinema.Library) bool {
-	if !strings.HasPrefix(command, "cinema tmdb ") {
-		return false
-	}
-	switch {
-	case strings.HasPrefix(command, "cinema tmdb set "):
-		raw, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(strings.TrimPrefix(command, "cinema tmdb set ")))
-		if err != nil || library.SetTMDBToken(string(raw)) != nil {
-			writeStdoutLine("LIGHTISLE_TMDB_ERROR invalid_tmdb_token")
-			return true
-		}
-	case command == "cinema tmdb clear":
-		library.ClearTMDBToken()
-	}
-	if payload, err := json.Marshal(map[string]bool{"configured": library.TMDBTokenConfigured()}); err == nil {
-		writeStdoutLine("LIGHTISLE_TMDB_STATE " + base64.RawURLEncoding.EncodeToString(payload))
-	}
-	return true
-}
-
-func handleTrashRetentionSettings(command string, retention *tasks.RetentionStore) bool {
-	if !strings.HasPrefix(command, "trash retention") {
-		return false
-	}
-	if encoded := strings.TrimPrefix(command, "trash retention"); strings.TrimSpace(encoded) != "" {
-		raw, decodeErr := base64.RawURLEncoding.DecodeString(strings.TrimSpace(encoded))
-		var request tasks.Retention
-		if decodeErr != nil || len(raw) == 0 || len(raw) > 256 || json.Unmarshal(raw, &request) != nil {
-			writeStdoutLine("LIGHTISLE_TRASH_RETENTION_ERROR invalid_trash_retention")
-			return true
-		}
-		if !request.Enabled && request.Days != 0 {
-			writeStdoutLine("LIGHTISLE_TRASH_RETENTION_ERROR invalid_trash_retention")
-			return true
-		}
-		if request.Enabled && (request.Days < tasks.MinRetentionDays || request.Days > tasks.MaxRetentionDays) {
-			writeStdoutLine("LIGHTISLE_TRASH_RETENTION_ERROR invalid_trash_retention")
-			return true
-		}
-		if _, err := retention.Set(request); err != nil {
-			writeStdoutLine("LIGHTISLE_TRASH_RETENTION_ERROR " + sanitizeIPCText(err.Error()))
-			return true
-		}
-	}
-	if payload, err := json.Marshal(retention.Get()); err == nil {
-		writeStdoutLine("LIGHTISLE_TRASH_RETENTION " + base64.RawURLEncoding.EncodeToString(payload))
 	}
 	return true
 }

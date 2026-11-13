@@ -7,7 +7,6 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
-	"sort"
 	"strconv"
 	"strings"
 
@@ -17,6 +16,10 @@ import (
 
 type spotlightSearchProvider interface {
 	SearchSpotlightOrFallback(context.Context, string, string, int) ([]files.Entry, bool, error)
+}
+
+type spotlightSearchKindProvider interface {
+	SearchSpotlightKindOrFallback(context.Context, string, string, string, int) ([]files.Entry, bool, error)
 }
 
 // The quota ledger must reserve the FINAL destination, not the name initially
@@ -270,23 +273,22 @@ func (a *API) searchFiles(w http.ResponseWriter, r *http.Request) {
 		roots = roots[:maxRoots]
 		truncated = true
 	}
+	query := r.URL.Query().Get("query")
+	seen := make(map[string]struct{}, limit)
 	for _, root := range roots {
-		if len(visible) >= limit {
-			truncated = true
-			break
-		}
 		var results []files.Entry
 		var more bool
 		var err error
-		query := r.URL.Query().Get("query")
-		if spotlight, ok := a.files.(spotlightSearchProvider); ok && engine == "spotlight" {
-			results, more, err = spotlight.SearchSpotlightOrFallback(r.Context(), root, query, limit-len(visible))
+		if spotlightKind, ok := a.files.(spotlightSearchKindProvider); ok && engine == "spotlight" {
+			results, more, err = spotlightKind.SearchSpotlightKindOrFallback(r.Context(), root, query, kind, limit)
+		} else if spotlight, ok := a.files.(spotlightSearchProvider); ok && engine == "spotlight" {
+			results, more, err = spotlight.SearchSpotlightOrFallback(r.Context(), root, query, limit)
 		} else if kindSearcher, ok := a.files.(interface {
 			SearchKind(string, string, string, int) ([]files.Entry, bool, error)
 		}); ok && kind != "" && kind != "all" {
-			results, more, err = kindSearcher.SearchKind(root, query, kind, limit-len(visible))
+			results, more, err = kindSearcher.SearchKind(root, query, kind, limit)
 		} else {
-			results, more, err = a.files.Search(root, query, limit-len(visible))
+			results, more, err = a.files.Search(root, query, limit)
 		}
 		if errors.Is(err, fs.ErrNotExist) {
 			continue
@@ -297,12 +299,20 @@ func (a *API) searchFiles(w http.ResponseWriter, r *http.Request) {
 		}
 		truncated = truncated || more
 		for _, entry := range results {
+			if _, dup := seen[entry.Path]; dup {
+				continue
+			}
 			if files.MatchesSearchKind(entry, kind) && a.canAccess(token(r), entry.Path, false, false) {
+				seen[entry.Path] = struct{}{}
 				visible = append(visible, entry)
 			}
 		}
 	}
-	sort.Slice(visible, func(i, j int) bool { return visible[i].Path < visible[j].Path })
+	files.RankSearchEntries(visible, query)
+	if len(visible) > limit {
+		visible = visible[:limit]
+		truncated = true
+	}
 	withCapabilities, canWrite, ok := a.fileEntryCapabilities(w, r, base, visible)
 	if !ok {
 		return

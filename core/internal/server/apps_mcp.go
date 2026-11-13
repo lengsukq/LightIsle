@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -134,168 +133,6 @@ func (h *mcpSSEHub) send(id string, payload []byte) (found bool, delivered bool)
 	default:
 		return true, false
 	}
-}
-
-func registerAppsMCPRoutes(
-	mux *http.ServeMux,
-	a *API,
-	appsMgr *apps.Manager,
-	store *auth.Store,
-	resolveSession func(*http.Request) (apps.UserIdentity, bool),
-) {
-	_ = store
-	replyMCPState := func(w http.ResponseWriter, r *http.Request) {
-		snap := appsMgr.BuildMCPConfigSnapshot(inferRequestLanOrigin(r))
-		jsonReply(w, http.StatusOK, map[string]any{
-			"mcpEnabled":    snap.MCPEnabled,
-			"mcpLanEnabled": snap.MCPLanEnabled,
-			"mcpToken":      snap.Token,
-			"mcpPrompt":     snap.Prompt,
-			"lanMcpPrompt":  snap.LanPrompt,
-			"mcpConfigJson": snap.ClientConfigJSON,
-			"localHttpUrl":  snap.LocalHTTPURL,
-			"lanHttpUrl":    snap.LanHTTPURL,
-			"lanSseUrl":     snap.LanSSEURL,
-			"updatedAt":     snap.UpdatedAt,
-			"config":        snap.Config,
-			"pluginsDir":    snap.PluginsDir,
-			"pluginDataDir": snap.PluginDataDir,
-			"command":       snap.Command,
-			"mcpLogs":       appsMgr.GetMCPCallLogs(),
-		})
-	}
-
-	handleGetMCP := a.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
-		replyMCPState(w, r)
-	})
-	mux.HandleFunc("GET /api/v2/apps/mcp", handleGetMCP)
-	mux.HandleFunc("GET /api/v2/apps/config", handleGetMCP)
-
-	handleSetMCP := a.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
-		defer r.Body.Close()
-		var body struct {
-			MCPEnabled    *bool `json:"mcpEnabled"`
-			Enabled       *bool `json:"enabled"`
-			MCPLanEnabled *bool `json:"mcpLanEnabled"`
-			LanEnabled    *bool `json:"lanEnabled"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
-			return
-		}
-		mcpEnabled := body.MCPEnabled
-		if mcpEnabled == nil {
-			mcpEnabled = body.Enabled
-		}
-		mcpLan := body.MCPLanEnabled
-		if mcpLan == nil {
-			mcpLan = body.LanEnabled
-		}
-		if mcpEnabled == nil && mcpLan == nil {
-			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
-			return
-		}
-		if _, err := appsMgr.SetMCPConfig(mcpEnabled, mcpLan); err != nil {
-			appsErrorReply(w, err)
-			return
-		}
-		replyMCPState(w, r)
-	})
-	mux.HandleFunc("PUT /api/v2/apps/mcp", handleSetMCP)
-	mux.HandleFunc("POST /api/v2/apps/mcp", handleSetMCP)
-	mux.HandleFunc("PUT /api/v2/apps/config", handleSetMCP)
-
-	mux.HandleFunc("POST /api/v2/apps/mcp/token/rotate", a.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
-		if _, err := appsMgr.RotateMCPToken(); err != nil {
-			appsErrorReply(w, err)
-			return
-		}
-		replyMCPState(w, r)
-	}))
-
-	mux.HandleFunc("POST /api/v2/apps/mcp/debug", a.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, 512<<10)
-		defer r.Body.Close()
-		var req apps.MCPDebugExecRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
-			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
-			return
-		}
-		res := appsMgr.ExecuteDebugMCP(r.Context(), req, r.RemoteAddr)
-		jsonReply(w, http.StatusOK, res)
-	}))
-
-	mux.HandleFunc("GET /api/v2/apps/mcp/logs", a.requireAdmin(func(w http.ResponseWriter, _ *http.Request) {
-		jsonReply(w, http.StatusOK, map[string]any{
-			"logs": appsMgr.GetMCPCallLogs(),
-		})
-	}))
-
-	mux.HandleFunc("DELETE /api/v2/apps/mcp/logs", a.requireAdmin(func(w http.ResponseWriter, _ *http.Request) {
-		_ = appsMgr.ClearMCPCallLogs()
-		jsonReply(w, http.StatusOK, map[string]any{
-			"cleared": true,
-			"logs":    []apps.MCPCallLogEntry{},
-		})
-	}))
-
-	mux.HandleFunc("POST /api/v2/apps/scaffold", a.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
-		user, _ := resolveSession(r)
-		r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
-		defer r.Body.Close()
-		raw, err := io.ReadAll(r.Body)
-		if err != nil || len(raw) == 0 {
-			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
-			return
-		}
-		app, err := appsMgr.ScaffoldApp(raw, true)
-		if err != nil {
-			appsErrorReply(w, err)
-			return
-		}
-		jsonReply(w, http.StatusOK, map[string]any{
-			"app":        app,
-			"apps":       appsMgr.ListForUser(user.ID, user.Role),
-			"appStorage": appsMgr.GetStorageSnapshot(),
-		})
-	}))
-
-	mux.HandleFunc("POST /api/v2/apps/{id}/probe", a.requireAdmin(func(w http.ResponseWriter, r *http.Request) {
-		id := r.PathValue("id")
-		r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
-		defer r.Body.Close()
-		var req apps.AppProbeRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
-			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
-			return
-		}
-		res, err := appsMgr.ProbeApp(r.Context(), id, req)
-		if err != nil {
-			appsErrorReply(w, err)
-			return
-		}
-		jsonReply(w, http.StatusOK, map[string]any{"probe": res})
-	}))
-}
-
-func inferRequestLanOrigin(r *http.Request) string {
-	if r == nil || r.Host == "" {
-		return ""
-	}
-	host, _, err := net.SplitHostPort(r.Host)
-	if err != nil {
-		host = r.Host
-	}
-	ip := net.ParseIP(strings.Trim(host, "[]"))
-	if ip == nil || ip.IsLoopback() {
-		return ""
-	}
-	scheme := "http"
-	if r.TLS != nil {
-		scheme = "https"
-	}
-	return scheme + "://" + r.Host
 }
 
 func extractMCPTokenFromRequest(r *http.Request) string {
@@ -499,7 +336,7 @@ func handleHTTPMCPEndpoint(
 	if !isLoop && !cfg.MCPLanEnabled {
 		jsonReply(w, http.StatusForbidden, map[string]string{
 			"error":   "mcp_lan_disabled",
-			"message": "局域网 MCP 当前处于关闭状态，请先在 LightIsle 管理端开启「允许局域网 MCP 接入」开关",
+			"message": "局域网 MCP 当前处于关闭状态，请先在 Mac 客户端「Docker 与应用 → MCP 控制台与调试」开启「允许局域网 MCP 接入」开关",
 		})
 		return
 	}

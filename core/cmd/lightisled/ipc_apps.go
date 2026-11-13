@@ -594,7 +594,7 @@ func handleAppsIPC(
 			return true
 		}
 		id := strings.TrimSpace(req.AutomationTaskID)
-		runs, err := autoMgr.ListRuns(id, 30)
+		runs, err := autoMgr.ListScriptRuns(id, 30)
 		if err == nil && runs == nil {
 			runs = []automation.TaskRun{}
 		}

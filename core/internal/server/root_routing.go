@@ -68,6 +68,18 @@ func (s *RootServer) ClearTMDBToken() {
 	}
 }
 
+func (s *RootServer) SetProtectedHostDirsProvider(fn func() []string) {
+	if s == nil {
+		return
+	}
+	if s.baseAPI != nil {
+		s.baseAPI.protectedHostDirs = fn
+	}
+	if s.rootAPI != nil {
+		s.rootAPI.protectedHostDirs = fn
+	}
+}
+
 func (s *RootServer) TMDBTokenConfigured() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -351,9 +351,10 @@ func (l *Library) setAIRunning(running bool) {
 }
 
 func (l *Library) refreshAIStatus(share string, running bool) {
+	rdb := l.readDB()
 	var total, remaining int
-	_ = l.db.QueryRow(`SELECT COUNT(*) FROM assets WHERE share=? AND missing_path='' AND type='photo'`, share).Scan(&total)
-	_ = l.db.QueryRow(`
+	_ = rdb.QueryRow(`SELECT COUNT(*) FROM assets WHERE share=? AND missing_path='' AND type='photo'`, share).Scan(&total)
+	_ = rdb.QueryRow(`
 		SELECT COUNT(*) FROM assets a
 		LEFT JOIN ai_index_state s ON s.asset_id=a.id
 		WHERE a.share=? AND a.missing_path='' AND a.type='photo'

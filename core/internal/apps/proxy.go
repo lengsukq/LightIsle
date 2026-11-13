@@ -236,6 +236,10 @@ func (m *Manager) ServeIcon(w http.ResponseWriter, r *http.Request, appID string
 		http.NotFound(w, r)
 		return
 	}
+	if err := m.verifyRecordStorageOnline(rec.locationID, rec.pluginDir); err != nil {
+		http.NotFound(w, r)
+		return
+	}
 	root, err := os.OpenRoot(rec.pluginDir)
 	if err != nil {
 		http.NotFound(w, r)
@@ -272,10 +276,30 @@ func (m *Manager) ServeIcon(w http.ResponseWriter, r *http.Request, appID string
 			w.Header().Set("Content-Type", ct)
 		}
 	}
-	w.Header().Set("Cache-Control", "private, max-age=60")
+	w.Header().Set("Cache-Control", "private, max-age=300, stale-while-revalidate=86400")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
+	etag := `"` + strconv.FormatInt(st.Size(), 16) + `-` + strconv.FormatInt(st.ModTime().UnixNano(), 16) + `"`
+	w.Header().Set("ETag", etag)
+	if (r.Method == http.MethodGet || r.Method == http.MethodHead) && appIfNoneMatchContains(r.Header.Get("If-None-Match"), etag) {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
 	http.ServeContent(w, r, st.Name(), st.ModTime(), f)
+}
+
+func appIfNoneMatchContains(headerValue, etag string) bool {
+	if headerValue == "" {
+		return false
+	}
+	for _, raw := range strings.Split(headerValue, ",") {
+		cand := strings.TrimSpace(raw)
+		cand = strings.TrimPrefix(cand, "W/")
+		if cand == "*" || cand == etag {
+			return true
+		}
+	}
+	return false
 }
 
 // ServeApp handles all /apps/{id} and /apps/{id}/{rest...} gateway traffic.
@@ -377,6 +401,17 @@ func (m *Manager) ServeApp(w http.ResponseWriter, r *http.Request, resolveSessio
 	}
 	if !m.CanAccess(appID, user.ID, user.Role) {
 		writeAppError(w, http.StatusForbidden, "app_access_forbidden", "当前账号无权访问该轻应用。")
+		return
+	}
+	if err := m.verifyRecordStorageOnline(rec.locationID, rec.pluginDir); err != nil {
+		if rec.instance != nil {
+			_ = rec.instance.Stop(false)
+		}
+		msg := "该轻应用当前离线（所在存储设备未连接），你的个人数据不受影响，请联系管理员检查连接。"
+		if user.Role == "admin" {
+			msg = err.Error()
+		}
+		writeAppError(w, http.StatusServiceUnavailable, "app_storage_offline", msg)
 		return
 	}
 

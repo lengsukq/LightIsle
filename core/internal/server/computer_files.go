@@ -21,11 +21,19 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+type protectedHostDirsSetter interface {
+	SetProtectedHostDirsProvider(func() []string)
+}
+
 func (a *API) isProtectedComputerPath(clean string) bool {
+	var dirs []string
 	if a != nil && a.auth != nil && a.auth.DataDir() != "" {
-		return computerfiles.IsProtectedHostPath(clean, a.auth.DataDir())
+		dirs = append(dirs, a.auth.DataDir())
 	}
-	return computerfiles.IsProtectedHostPath(clean)
+	if a != nil && a.protectedHostDirs != nil {
+		dirs = append(dirs, a.protectedHostDirs()...)
+	}
+	return computerfiles.IsProtectedHostPath(clean, dirs...)
 }
 
 func registerComputerFiles(mux *http.ServeMux, a *API) {

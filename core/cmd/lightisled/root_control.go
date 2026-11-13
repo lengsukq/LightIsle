@@ -660,19 +660,6 @@ func rootPathsOverlap(a, b string) bool {
 	return a == b || strings.HasPrefix(a, b+string(filepath.Separator)) || strings.HasPrefix(b, a+string(filepath.Separator))
 }
 
-func checkLegacyShareRootOverlap(target string, registered []roots.Root) error {
-	resolved, err := filepath.EvalSymlinks(target)
-	if err != nil {
-		return err
-	}
-	for _, root := range registered {
-		if rootPathsOverlap(resolved, root.Path) {
-			return roots.ErrOverlap
-		}
-	}
-	return nil
-}
-
 func canonicalPathForOverlap(name string) (string, error) {
 	if name == "" || !filepath.IsAbs(name) {
 		return "", roots.ErrInvalid

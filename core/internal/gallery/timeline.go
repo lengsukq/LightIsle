@@ -24,7 +24,7 @@ func (l *Library) TimelineScoped(roots []string) ([]TimelineMonth, error) {
 		return nil, err
 	}
 	args := append([]any{share}, scoped...)
-	rows, err := l.db.Query(
+	rows, err := l.readDB().Query(
 		"SELECT CAST(strftime('%Y',a.taken_at,'unixepoch','localtime') AS INTEGER),"+
 			"CAST(strftime('%m',a.taken_at,'unixepoch','localtime') AS INTEGER),"+
 			"COUNT(*) FROM assets a WHERE a.share=? AND a.missing_path='' AND a.taken_at>0"+fragment+

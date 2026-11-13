@@ -101,7 +101,7 @@ func (s *Store) FileGrants(actorToken string, userID int64) ([]FileGrant, error)
 }
 
 func (s *Store) grants(userID int64) ([]FileGrant, error) {
-	rows, err := s.db.Query("SELECT path,can_write FROM file_grants WHERE user_id=? ORDER BY path", userID)
+	rows, err := s.readDB().Query("SELECT path,can_write FROM file_grants WHERE user_id=? ORDER BY path", userID)
 	if err != nil {
 		return nil, err
 	}

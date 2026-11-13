@@ -99,7 +99,7 @@ func (s *Store) ListMCPConnections(browserSession string) ([]MCPConnection, erro
 	if !ok {
 		return nil, ErrForbidden
 	}
-	rows, err := s.db.Query(`SELECT ss.id,mc.label,mc.can_write,ss.created_at,ss.expires_at
+	rows, err := s.readDB().Query(`SELECT ss.id,mc.label,mc.can_write,ss.created_at,ss.expires_at
 		FROM mcp_connections mc JOIN sessions ss ON ss.id=mc.session_id
 		WHERE ss.user_id=? AND ss.expires_at>? AND substr(mc.label,1,2)<>'__' ORDER BY ss.created_at DESC, ss.rowid DESC LIMIT ?`,
 		owner.ID, time.Now().Unix(), maxMCPConnections)
@@ -120,29 +120,6 @@ func (s *Store) ListMCPConnections(browserSession string) ([]MCPConnection, erro
 	return items, rows.Err()
 }
 
-func (s *Store) RevokeMCPConnection(browserSession, id string) error {
-	if !IsBrowserSession(browserSession) {
-		return ErrForbidden
-	}
-	target, err := hex.DecodeString(id)
-	if err != nil || len(target) != sha256.Size {
-		return ErrInput
-	}
-	browserDigest := sha256.Sum256([]byte(browserSession))
-	result, err := s.db.Exec(`DELETE FROM sessions WHERE id=?
-		AND EXISTS(SELECT 1 FROM mcp_connections WHERE session_id=sessions.id)
-		AND user_id=(SELECT u.id FROM sessions ss JOIN users u ON u.id=ss.user_id
-			WHERE ss.id=? AND ss.expires_at>? AND u.enabled=1)`, target, browserDigest[:], time.Now().Unix())
-	if err != nil {
-		return err
-	}
-	count, err := result.RowsAffected()
-	if err == nil && count != 1 {
-		return ErrNotFound
-	}
-	return err
-}
-
 // The internal session is used only by the in-process allowlisted API
 // dispatcher. Neither the bearer nor this value is accepted as a Web cookie.
 func (s *Store) AuthenticateMCP(bearer string) (User, string, MCPConnection, bool) {
@@ -154,7 +131,7 @@ func (s *Store) AuthenticateMCP(bearer string) (User, string, MCPConnection, boo
 	digest := sha256.Sum256([]byte(session))
 	var user User
 	var item MCPConnection
-	err := s.db.QueryRow(`SELECT u.id,u.username,u.role,u.enabled,u.created_at,mc.label,mc.can_write
+	err := s.readDB().QueryRow(`SELECT u.id,u.username,u.role,u.enabled,u.created_at,mc.label,mc.can_write
 		FROM mcp_connections mc JOIN sessions ss ON ss.id=mc.session_id JOIN users u ON u.id=ss.user_id
 		WHERE ss.id=? AND ss.expires_at>? AND u.enabled=1 AND substr(mc.label,1,2)<>'__'`, digest[:], time.Now().Unix()).
 		Scan(&user.ID, &user.Username, &user.Role, &user.Enabled, &user.CreatedAt, &item.Label, &item.CanWrite)
@@ -183,7 +160,7 @@ func (s *Store) EnsureSystemMCPSession(systemKey, slotLabel string) (User, strin
 
 	var user User
 	var expiresAt int64
-	err := s.db.QueryRow(`SELECT u.id,u.username,u.role,u.enabled,u.created_at,ss.expires_at
+	err := s.readDB().QueryRow(`SELECT u.id,u.username,u.role,u.enabled,u.created_at,ss.expires_at
 		FROM mcp_connections mc JOIN sessions ss ON ss.id=mc.session_id JOIN users u ON u.id=ss.user_id
 		WHERE ss.id=? AND mc.label=? AND u.enabled=1 AND u.role=?`,
 		digest[:], internalLabel, RoleAdmin).

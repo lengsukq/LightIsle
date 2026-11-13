@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"strings"
 )
 
 const ipcEnvelopeSchemaVersion = 1
@@ -65,35 +64,4 @@ func writeIPCEnvelope(opts ipcEnvelopeOptions) {
 		}
 	}
 	_, _ = fmt.Fprintln(out, opts.Prefix+" "+base64.RawURLEncoding.EncodeToString(data))
-}
-
-func parseIPCSubcommand(command, defaultOperation string) (operation string, encodedPayload string) {
-	words := strings.Fields(command)
-	operation = defaultOperation
-	if len(words) > 1 {
-		operation = words[1]
-	}
-	if len(words) > 2 {
-		encodedPayload = words[2]
-	}
-	return operation, encodedPayload
-}
-
-func decodeBase64JSONPayload[T any](encoded string, maxEncodedLen int, errOnInvalid error) (T, error) {
-	var zero T
-	if encoded == "" {
-		return zero, nil
-	}
-	if maxEncodedLen > 0 && len(encoded) > maxEncodedLen {
-		return zero, errOnInvalid
-	}
-	raw, err := base64.RawURLEncoding.DecodeString(encoded)
-	if err != nil {
-		return zero, errOnInvalid
-	}
-	var decoded T
-	if err := json.Unmarshal(raw, &decoded); err != nil {
-		return zero, errOnInvalid
-	}
-	return decoded, nil
 }

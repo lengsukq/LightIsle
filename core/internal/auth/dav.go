@@ -44,8 +44,9 @@ func (s *Store) VerifyDAVCredential(username, password string) (User, error) {
 	if username == "" || password == "" {
 		return User{}, ErrForbidden
 	}
+	rdb := s.readDB()
 	var user User
-	err := s.db.QueryRow(
+	err := rdb.QueryRow(
 		"SELECT id,username,role,enabled FROM users WHERE username=? COLLATE NOCASE", username,
 	).Scan(&user.ID, &user.Username, &user.Role, &user.Enabled)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -58,33 +59,40 @@ func (s *Store) VerifyDAVCredential(username, password string) (User, error) {
 		return User{}, ErrForbidden
 	}
 	digest := sha256.Sum256([]byte(password))
-	rows, err := s.db.Query("SELECT id,digest FROM dav_credentials WHERE user_id=?", user.ID)
+	rows, err := rdb.Query("SELECT id,digest,last_used_at FROM dav_credentials WHERE user_id=?", user.ID)
 	if err != nil {
 		return User{}, err
 	}
-	defer rows.Close()
 	matched := int64(0)
+	matchedLastUsed := int64(0)
 	for rows.Next() {
-		var id int64
+		var id, lastUsed int64
 		var stored []byte
-		if err := rows.Scan(&id, &stored); err != nil {
+		if err := rows.Scan(&id, &stored, &lastUsed); err != nil {
+			_ = rows.Close()
 			return User{}, err
 		}
 		if subtle.ConstantTimeCompare(digest[:], stored) == 1 {
 			matched = id
+			matchedLastUsed = lastUsed
 		}
 	}
 	if err := rows.Err(); err != nil {
+		_ = rows.Close()
 		return User{}, err
 	}
+	_ = rows.Close()
 	if matched == 0 {
 		return User{}, ErrForbidden
 	}
-	if _, err := s.db.Exec(
-		"UPDATE dav_credentials SET last_used_at=? WHERE id=? AND last_used_at<?",
-		time.Now().Unix(), matched, time.Now().Unix()-davLastUsedGranularity,
-	); err != nil {
-		return User{}, err
+	now := time.Now().Unix()
+	if matchedLastUsed < now-davLastUsedGranularity {
+		if _, err := s.db.Exec(
+			"UPDATE dav_credentials SET last_used_at=? WHERE id=? AND last_used_at<?",
+			now, matched, now-davLastUsedGranularity,
+		); err != nil {
+			return User{}, err
+		}
 	}
 	return user, nil
 }
@@ -166,7 +174,7 @@ func (s *Store) ListDAVCredentials(session string) ([]DAVCredential, error) {
 	if !ok {
 		return nil, ErrForbidden
 	}
-	rows, err := s.db.Query(
+	rows, err := s.readDB().Query(
 		"SELECT id,label,created_at,last_used_at,digest FROM dav_credentials WHERE user_id=? ORDER BY id", actor.ID,
 	)
 	if err != nil {

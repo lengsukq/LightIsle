@@ -43,11 +43,8 @@ func (h *appsManagementHandler) register(mux *http.ServeMux) {
 
 	mux.HandleFunc("GET /api/v2/apps/storage", h.api.requireAdmin(h.handleGetStorage))
 	mux.HandleFunc("PUT /api/v2/apps/storage", h.api.requireAdmin(h.handleMutateStorage))
-	mux.HandleFunc("POST /api/v2/apps/storage", h.api.requireAdmin(h.handleMutateStorage))
 
-	reload := h.api.requireAdmin(h.handleReloadApps)
-	mux.HandleFunc("POST /api/v2/apps/refresh", reload)
-	mux.HandleFunc("POST /api/v2/apps/reload", reload)
+	mux.HandleFunc("POST /api/v2/apps/refresh", h.api.requireAdmin(h.handleReloadApps))
 
 	mux.HandleFunc("GET /api/v2/apps/{id}", h.api.requireLogin(h.handleGetApp))
 
@@ -57,17 +54,13 @@ func (h *appsManagementHandler) register(mux *http.ServeMux) {
 
 	mux.HandleFunc("DELETE /api/v2/apps/{id}", h.api.requireAdmin(h.handleDeleteApp))
 
-	issueTicket := h.api.requireLogin(h.handleIssueTicketOrLaunch)
-	mux.HandleFunc("POST /api/v2/apps/{id}/ticket", issueTicket)
-	mux.HandleFunc("POST /api/v2/apps/{id}/launch", issueTicket)
+	mux.HandleFunc("POST /api/v2/apps/{id}/launch", h.api.requireLogin(h.handleLaunchApp))
 
-	for _, action := range []string{"start", "wake", "stop", "restart", "approve", "activate"} {
+	for _, action := range []string{"start", "wake", "stop", "restart"} {
 		mux.HandleFunc("POST /api/v2/apps/{id}/"+action, h.handleDirectAction(action))
 	}
 
-	dispatchAction := h.api.requireAdmin(h.handleAppAction)
-	mux.HandleFunc("POST /api/v2/apps/{id}/action", dispatchAction)
-	mux.HandleFunc("POST /api/v2/apps/{id}/actions", dispatchAction)
+	mux.HandleFunc("POST /api/v2/apps/{id}/action", h.api.requireAdmin(h.handleAppAction))
 
 	mux.HandleFunc("GET /api/v2/apps/{id}/logs", h.api.requireAdmin(h.handleGetAppLogs))
 	mux.HandleFunc("GET /api/v2/apps/{id}/runs", h.api.requireAdmin(h.handleGetAppRuns))
@@ -90,7 +83,16 @@ func (h *appsManagementHandler) handleListApps(w http.ResponseWriter, r *http.Re
 	replyAppsList(w, h.appsMgr, h.store, user)
 }
 
-func (h *appsManagementHandler) handleListTemplates(w http.ResponseWriter, _ *http.Request) {
+func (h *appsManagementHandler) handleListTemplates(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.resolveSession(r)
+	if !ok {
+		jsonReply(w, http.StatusUnauthorized, map[string]string{"error": "authentication_required"})
+		return
+	}
+	if user.Role != auth.RoleAdmin {
+		jsonReply(w, http.StatusOK, map[string]any{"templates": []apps.OfficialAppTemplate{}})
+		return
+	}
 	jsonReply(w, http.StatusOK, map[string]any{"templates": h.appsMgr.ListTemplates()})
 }
 
@@ -222,7 +224,7 @@ func parseDeleteAppDataFlag(w http.ResponseWriter, r *http.Request) bool {
 	return json.NewDecoder(r.Body).Decode(&body) == nil && body.DeleteData
 }
 
-func (h *appsManagementHandler) handleIssueTicketOrLaunch(w http.ResponseWriter, r *http.Request) {
+func (h *appsManagementHandler) handleLaunchApp(w http.ResponseWriter, r *http.Request) {
 	user, ok := h.resolveSession(r)
 	if !ok {
 		jsonReply(w, http.StatusUnauthorized, map[string]string{"error": "authentication_required"})
@@ -242,11 +244,17 @@ func (h *appsManagementHandler) handleIssueTicketOrLaunch(w http.ResponseWriter,
 		appsErrorReply(w, apps.ErrPendingActivation)
 		return
 	}
-	isLaunch := strings.HasSuffix(r.URL.Path, "/launch")
-	if isLaunch && app.Web.Enabled && app.Web.Mode != apps.WebModeStatic && app.Web.Mode != "none" {
+	if app.Web.Enabled && app.Web.Mode != apps.WebModeStatic && app.Web.Mode != "none" {
 		woken, wakeErr := h.appsMgr.WakeApp(r.Context(), id)
 		if wakeErr != nil {
 			if user.Role != auth.RoleAdmin {
+				if errors.Is(wakeErr, apps.ErrStorageOffline) {
+					jsonReply(w, http.StatusServiceUnavailable, map[string]string{
+						"error":   "app_storage_offline",
+						"message": "该轻应用当前离线（所在存储设备未连接），你的个人数据不受影响，请联系管理员检查连接。",
+					})
+					return
+				}
 				jsonReply(w, http.StatusBadGateway, map[string]string{
 					"error":   "app_operation_failed",
 					"message": "该轻应用暂时无法启动，你的个人数据不受影响，请联系管理员处理。",
@@ -256,7 +264,7 @@ func (h *appsManagementHandler) handleIssueTicketOrLaunch(w http.ResponseWriter,
 			appsErrorReply(w, wakeErr)
 			return
 		}
-		app = woken
+		app = apps.RedactPublicAppForRole(woken, user.Role)
 	}
 	ticket := h.appsMgr.IssueTicket(id, user)
 	jsonReply(w, http.StatusOK, map[string]any{

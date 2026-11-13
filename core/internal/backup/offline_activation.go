@@ -734,4 +734,3 @@ func stageActivationInstallFiles(
 	closeOnErr = false
 	return installRoot, nil
 }
-

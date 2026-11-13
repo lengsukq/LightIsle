@@ -22,7 +22,7 @@ func (l *Library) MissingMedia(roots []string, after int64, limit int) ([]mediap
 	}
 	args := append([]any{share, after}, scope...)
 	args = append(args, limit+1)
-	rows, err := l.db.Query(`SELECT f.id,f.missing_path,f.missing_reason,
+	rows, err := l.readDB().Query(`SELECT f.id,f.missing_path,f.missing_reason,
 		EXISTS(SELECT 1 FROM watch_progress p WHERE p.film_id=f.id),
 		(f.manual_title<>0 OR f.title_source<>'' OR f.year_source<>'' OR f.metadata_source<>''),
 		EXISTS(SELECT 1 FROM series s WHERE s.id=f.series_id AND (s.tmdb_id<>0 OR s.metadata_source<>''))
@@ -158,10 +158,6 @@ func mergeMissingFilmMetadataAndProgress(tx *sql.Tx, share string, sourceID, tar
 	}
 	_, err := tx.Exec(`DELETE FROM films WHERE share=? AND id=? AND missing_path<>''`, share, sourceID)
 	return err
-}
-
-func (l *Library) DiscardMissing(id int64, roots []string) error {
-	return l.DiscardMissingGuarded(id, roots, nil)
 }
 
 func (l *Library) DiscardMissingGuarded(id int64, roots []string, guard mediapending.Guard) error {

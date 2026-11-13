@@ -96,9 +96,10 @@ func NewManager(dataDir, execPath string, autoMgr *automation.Manager) *Manager 
 	return m
 }
 
-func (m *Manager) DataDir() string    { return m.dataDir }
-func (m *Manager) PluginsDir() string { return m.pluginsDir }
-func (m *Manager) ExecPath() string   { return m.execPath }
+func (m *Manager) DataDir() string        { return m.dataDir }
+func (m *Manager) PluginsDir() string     { return m.pluginsDir }
+func (m *Manager) PluginDataRoot() string { return m.pluginDataRoot }
+func (m *Manager) ExecPath() string       { return m.execPath }
 
 func (m *Manager) SetConfiguredChannels(fn func() []string) {
 	m.mu.Lock()
@@ -157,11 +158,20 @@ func (m *Manager) reapLoop() {
 }
 
 func (m *Manager) reapOnce(now time.Time) {
+	type runningItem struct {
+		inst       *Instance
+		locationID string
+		pluginDir  string
+	}
 	m.mu.Lock()
-	var instances []*Instance
+	var instances []runningItem
 	for _, rec := range m.apps {
 		if rec.instance != nil && rec.instance.IsRunning() {
-			instances = append(instances, rec.instance)
+			instances = append(instances, runningItem{
+				inst:       rec.instance,
+				locationID: rec.locationID,
+				pluginDir:  rec.pluginDir,
+			})
 		}
 	}
 	for k, t := range m.tickets {
@@ -175,8 +185,16 @@ func (m *Manager) reapOnce(now time.Time) {
 		}
 	}
 	m.mu.Unlock()
-	for _, inst := range instances {
-		inst.ReapIfIdle(now)
+
+	cfg, cfgErr := readSystemConfigFile(m.configPath)
+	for _, item := range instances {
+		if cfgErr == nil {
+			if offErr := m.verifyRecordStorageOnlineWithConfig(cfg, item.locationID, item.pluginDir); offErr != nil {
+				_ = item.inst.Stop(false)
+				continue
+			}
+		}
+		item.inst.ReapIfIdle(now)
 	}
 }
 
@@ -600,6 +618,41 @@ func (m *Manager) toPublicApp(rec *appRecord) PublicApp {
 	return pub
 }
 
+// RedactPublicAppForRole strips host filesystem paths, process telemetry,
+// peer member allowlists, and cron execution logs for non-admin accounts.
+func RedactPublicAppForRole(pub PublicApp, role string) PublicApp {
+	if role == "admin" {
+		return pub
+	}
+	pub.Revision = ""
+	pub.ValidationError = ""
+	pub.LastError = ""
+	pub.Diagnostic = nil
+	pub.PluginsDir = ""
+	pub.PluginDataDir = ""
+	if pub.LocationKind == AppStorageKindExternal {
+		pub.LocationName = defaultExternalStorageName
+	} else {
+		pub.LocationName = defaultInternalStorageName
+	}
+	pub.Access = AccessConfig{
+		Policy:         pub.Access.Policy,
+		AllowedUserIDs: []int64{},
+	}
+	pub.Web.Runtime = ""
+	pub.Web.Port = 0
+	pub.Web.PID = 0
+	pub.Web.RSSBytes = 0
+	pub.Web.ActiveStreams = 0
+	pub.Web.LastActiveAt = 0
+	pub.Web.LastError = ""
+	pub.Cron = PublicCronView{
+		Events:   []string{},
+		Channels: []string{},
+	}
+	return pub
+}
+
 func (m *Manager) ListForUser(userID int64, role string) []PublicApp {
 	m.mu.RLock()
 	records := make([]appRecord, 0, len(m.apps))
@@ -613,14 +666,7 @@ func (m *Manager) ListForUser(userID int64, role string) []PublicApp {
 		if role != "admin" && (!rec.valid || rec.manifest.Web == nil || !rec.manifest.Web.Enabled || !canAccessRecord(*rec, userID, role)) {
 			continue
 		}
-		pub := m.toPublicApp(rec)
-		if role != "admin" {
-			pub.ValidationError = ""
-			pub.LastError = ""
-			pub.Web.LastError = ""
-			pub.Diagnostic = nil
-		}
-		out = append(out, pub)
+		out = append(out, RedactPublicAppForRole(m.toPublicApp(rec), role))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out
@@ -634,12 +680,5 @@ func (m *Manager) GetForUser(appID string, userID int64, role string) (PublicApp
 	if role != "admin" && !canAccessRecord(snap, userID, role) {
 		return PublicApp{}, ErrForbidden
 	}
-	pub := m.toPublicApp(&snap)
-	if role != "admin" {
-		pub.ValidationError = ""
-		pub.LastError = ""
-		pub.Web.LastError = ""
-		pub.Diagnostic = nil
-	}
-	return pub, nil
+	return RedactPublicAppForRole(m.toPublicApp(&snap), role), nil
 }

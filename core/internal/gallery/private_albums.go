@@ -23,7 +23,7 @@ func (l *Library) PrivateAlbumsScoped(userID int64, roots []string) ([]Album, er
 	if err != nil {
 		return nil, err
 	}
-	rows, err := l.db.Query(`SELECT pa.id,pa.name,COUNT(a.id),COALESCE(MAX(a.id),0)
+	rows, err := l.readDB().Query(`SELECT pa.id,pa.name,COUNT(a.id),COALESCE(MAX(a.id),0)
   FROM private_albums pa
   LEFT JOIN private_album_items pai ON pai.album_id=pa.id
   LEFT JOIN assets a ON a.id=pai.asset_id AND a.share=pa.share AND a.missing_path=''`+clause+`

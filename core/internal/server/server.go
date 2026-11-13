@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -52,6 +53,7 @@ type API struct {
 	// lookup to exercise the verified-but-unusable-session path.
 	afterLogin        func()
 	tailscaleBoundURL func() (string, bool)
+	protectedHostDirs func() []string
 	rootID            string
 	rootLease         *roots.Lease
 	rootRuntime       *rootRuntime
@@ -158,7 +160,6 @@ func newWithDownloadsAndAPI(webRoot string, store *auth.Store, fileStore files.A
 	mux.HandleFunc("GET /api/v2/me/storage", a.requireLogin(a.ownStoragePolicy))
 	mux.HandleFunc("GET /api/v2/users/{id}/storage", a.requireAdmin(a.userStoragePolicy))
 	mux.HandleFunc("GET /api/v2/users/{id}/storage/reservations", a.requireAdmin(a.userStoragePendingReservations))
-	mux.HandleFunc("PUT /api/v2/users/{id}/storage/quota", a.requireAdmin(a.setUserStorageQuota))
 	mux.HandleFunc("PUT /api/v2/users/{id}/storage/roots/{rootID}/quota", a.requireAdmin(a.setUserStorageRootQuota))
 	mux.HandleFunc("POST /api/v2/users", a.requireAdmin(a.addUser))
 	mux.HandleFunc("PATCH /api/v2/users/{id}", a.requireAdmin(a.changeUser))
@@ -279,10 +280,10 @@ func newWithDownloadsAndAPI(webRoot string, store *auth.Store, fileStore files.A
 	mux.HandleFunc("HEAD /api/v2/cinema/{id}/poster", a.requireMedia(a.cinemaPoster))
 	mux.HandleFunc("GET /api/v2/cinema/{id}/stream", a.requireMedia(a.cinemaStream))
 	mux.HandleFunc("HEAD /api/v2/cinema/{id}/stream", a.requireMedia(a.cinemaStream))
-	mux.HandleFunc("GET /api/v2/cinema/{id}/strm-target", a.requireMedia(a.cinemaStrmTarget))
 	mux.HandleFunc("GET /api/v2/cinema/{id}/subtitles", a.requireMedia(a.cinemaSubtitle))
 	mux.HandleFunc("GET /api/v2/cinema/{id}/progress", a.requireMedia(a.cinemaProgress))
 	mux.HandleFunc("PUT /api/v2/cinema/{id}/progress", a.requireMedia(a.cinemaSaveProgress))
+	mux.HandleFunc("DELETE /api/v2/cinema/{id}/progress", a.requireMedia(a.cinemaClearProgress))
 	// Transcode-backed playback: availability status plus per-film HLS
 	// sessions, track listings and embedded-subtitle extraction.
 	mux.HandleFunc("GET /api/v2/cinema/transcode/status", a.requireMedia(a.cinemaTranscodeStatus))
@@ -315,7 +316,21 @@ func newWithDownloadsAndAPI(webRoot string, store *auth.Store, fileStore files.A
 	mux.HandleFunc("POST /api/v2/dav/credentials/{id}/rotate", a.requireLogin(a.davCredentialRotate))
 	mux.HandleFunc("DELETE /api/v2/dav/credentials/{id}", a.requireLogin(a.davCredentialDelete))
 	mux.HandleFunc("/", a.static)
-	return securityHeaders(a.auditMiddleware(legacyRootTransitionGate(fileStore, mux))), a
+	return &apiHandler{
+		Handler: securityHeaders(a.auditMiddleware(legacyRootTransitionGate(fileStore, mux))),
+		api:     a,
+	}, a
+}
+
+type apiHandler struct {
+	http.Handler
+	api *API
+}
+
+func (h *apiHandler) SetProtectedHostDirsProvider(fn func() []string) {
+	if h != nil && h.api != nil {
+		h.api.protectedHostDirs = fn
+	}
 }
 
 type legacyRequestGateProvider interface {
@@ -499,6 +514,17 @@ func (a *API) static(w http.ResponseWriter, r *http.Request) {
 	s, err := f.Stat()
 	if err != nil || !s.Mode().IsRegular() {
 		http.NotFound(w, r)
+		return
+	}
+	etag := `"` + strconv.FormatInt(s.Size(), 16) + `-` + strconv.FormatInt(s.ModTime().UnixNano(), 16) + `"`
+	w.Header().Set("ETag", etag)
+	if strings.HasPrefix(relative, "assets/") && relative != "assets/index.html" {
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	} else {
+		w.Header().Set("Cache-Control", "no-cache")
+	}
+	if ifNoneMatchContains(r.Header.Get("If-None-Match"), etag) {
+		w.WriteHeader(http.StatusNotModified)
 		return
 	}
 	http.ServeContent(w, r, s.Name(), s.ModTime(), f)

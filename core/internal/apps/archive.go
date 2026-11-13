@@ -194,13 +194,14 @@ func (m *Manager) ExportAppData(ctx context.Context, appID string, w io.Writer) 
 	if !ValidPluginID(appID) {
 		return ErrInvalid
 	}
-	m.mu.Lock()
-	rec, ok := m.apps[appID]
-	m.mu.Unlock()
+	snap, ok := m.snapshotApp(appID)
 	if !ok {
 		return ErrNotFound
 	}
-	if err := os.MkdirAll(rec.dataDir, 0700); err != nil {
+	if err := m.verifyRecordStorageOnline(snap.locationID, snap.pluginDir); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(snap.dataDir, 0700); err != nil {
 		return err
 	}
 
@@ -214,11 +215,11 @@ func (m *Manager) ExportAppData(ctx context.Context, appID string, w io.Writer) 
 		manifestEntries: make([]PluginBackupFileEntry, 0, 16),
 	}
 	for _, cfgName := range []string{"plugin.json", "env.json"} {
-		if err := builder.addFile(path.Join("config", cfgName), filepath.Join(rec.pluginDir, cfgName), 0600, false); err != nil {
+		if err := builder.addFile(path.Join("config", cfgName), filepath.Join(snap.pluginDir, cfgName), 0600, false); err != nil {
 			return err
 		}
 	}
-	if err := builder.exportDataDirectory(ctx, rec.dataDir); err != nil {
+	if err := builder.exportDataDirectory(ctx, snap.dataDir); err != nil {
 		return err
 	}
 	if err := builder.writeManifest(appID); err != nil {
@@ -305,14 +306,15 @@ func (m *Manager) RestoreAppData(ctx context.Context, appID string, r io.Reader)
 // only if the live plugin instance was actually stopped prior to a failed swap so
 // the caller can wake it back up after releasing m.mutation.
 func (m *Manager) stageAndSwapAppRestore(ctx context.Context, appID string, r io.Reader) (bool, error) {
-	m.mu.Lock()
-	rec, ok := m.apps[appID]
-	m.mu.Unlock()
+	snap, ok := m.snapshotApp(appID)
 	if !ok {
 		return false, ErrNotFound
 	}
+	if err := m.verifyRecordStorageOnline(snap.locationID, snap.pluginDir); err != nil {
+		return false, err
+	}
 
-	stageDir := fmt.Sprintf("%s.restore-%d", rec.dataDir, time.Now().UnixNano())
+	stageDir := fmt.Sprintf("%s.restore-%d", snap.dataDir, time.Now().UnixNano())
 	if err := os.MkdirAll(stageDir, 0700); err != nil {
 		return false, err
 	}
@@ -328,12 +330,12 @@ func (m *Manager) stageAndSwapAppRestore(ctx context.Context, appID string, r io
 		return false, err
 	}
 
-	wasRunning := rec.instance != nil && rec.instance.Snapshot().Status == StatusRunning
-	if rec.instance != nil {
-		_ = rec.instance.Stop(false)
+	wasRunning := snap.instance != nil && snap.instance.Snapshot().Status == StatusRunning
+	if snap.instance != nil {
+		_ = snap.instance.Stop(false)
 	}
 
-	if err := swapRestoredPluginDirectories(rec, stageDir, restoredEnv, &stageMoved); err != nil {
+	if err := swapRestoredPluginDirectories(&snap, stageDir, restoredEnv, &stageMoved); err != nil {
 		return wasRunning, err
 	}
 	return wasRunning, nil

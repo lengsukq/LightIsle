@@ -42,7 +42,7 @@ func (l *Library) Albums() ([]Album, error) {
 	if err != nil {
 		return nil, err
 	}
-	rows, err := l.db.Query(`SELECT al.id,al.name,COUNT(a.id),COALESCE(MAX(a.id),0)
+	rows, err := l.readDB().Query(`SELECT al.id,al.name,COUNT(a.id),COALESCE(MAX(a.id),0)
   FROM albums al LEFT JOIN album_items ai ON ai.album_id=al.id
   LEFT JOIN assets a ON a.id=ai.asset_id AND a.share=al.share AND a.missing_path=''
   WHERE al.share=? GROUP BY al.id ORDER BY al.name`, share)
@@ -78,7 +78,7 @@ func (l *Library) AlbumsScoped(roots []string) ([]Album, error) {
 	 JOIN assets a ON a.id=ai.asset_id
 	 WHERE al.share=? AND a.share=al.share AND a.missing_path=''` + fragment + ` GROUP BY al.id ORDER BY al.name`
 	parameters := append([]any{share}, args...)
-	rows, err := l.db.Query(q, parameters...)
+	rows, err := l.readDB().Query(q, parameters...)
 	if err != nil {
 		return nil, err
 	}

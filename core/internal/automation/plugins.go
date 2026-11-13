@@ -235,6 +235,23 @@ func (m *Manager) ListRuns(id string, limit int) ([]TaskRun, error) {
 	return runs, nil
 }
 
+// ScriptTaskHistory returns recent execution records for standalone local scripts only,
+// rejecting plugin-backed cron tasks managed inside App Center.
+func (m *Manager) ScriptTaskHistory(id string) ([]Record, error) {
+	if _, isPlugin := m.pluginMeta(id); isPlugin {
+		return nil, ErrNotFound
+	}
+	return m.History(id)
+}
+
+// ListScriptRuns returns recent execution records for a standalone local script task.
+func (m *Manager) ListScriptRuns(id string, limit int) ([]TaskRun, error) {
+	if _, isPlugin := m.pluginMeta(id); isPlugin {
+		return nil, ErrNotFound
+	}
+	return m.ListRuns(id, limit)
+}
+
 // RunSync executes a task synchronously (used by manual triggers and tests).
 func (m *Manager) RunSync(id string) error {
 	m.mu.Lock()

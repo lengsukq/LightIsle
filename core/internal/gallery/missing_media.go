@@ -25,7 +25,7 @@ func (l *Library) MissingMedia(roots []string, after int64, limit int) ([]mediap
 	}
 	args := append([]any{share, after}, scope...)
 	args = append(args, limit+1)
-	rows, err := l.db.Query(`SELECT a.id,a.missing_path,a.missing_reason,a.favorite<>0,
+	rows, err := l.readDB().Query(`SELECT a.id,a.missing_path,a.missing_reason,a.favorite<>0,
 		EXISTS(SELECT 1 FROM personal_favorites p WHERE p.asset_id=a.id),
 		EXISTS(SELECT 1 FROM album_items i WHERE i.asset_id=a.id),
 		EXISTS(SELECT 1 FROM private_album_items i WHERE i.asset_id=a.id)
@@ -125,12 +125,8 @@ func (l *Library) AttachMissingGuarded(id int64, roots []string, guard mediapend
 	return tx.Commit()
 }
 
-// DiscardMissing deletes retained application metadata only, never a file.
+// DiscardMissingGuarded deletes retained application metadata only, never a file.
 // The scope predicate is evaluated by SQLite in the same delete operation.
-func (l *Library) DiscardMissing(id int64, roots []string) error {
-	return l.DiscardMissingGuarded(id, roots, nil)
-}
-
 func (l *Library) DiscardMissingGuarded(id int64, roots []string, guard mediapending.Guard) error {
 	share, err := l.share()
 	if err != nil {

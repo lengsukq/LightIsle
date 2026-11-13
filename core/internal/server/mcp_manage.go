@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -21,7 +20,6 @@ import (
 )
 
 const (
-	mcpManagementPath     = "/api/v2/mcp/manage"
 	mcpServerName         = "lightisle-mcp"
 	mcpServerVersion      = "2.0.0"
 	mcpServerInstructions = "LightIsle 全功能管理与控制 MCP：1) 涉及存储根写操作前先调用 lightisle_list_roots 获取当前在线状态与 generation；2) 修改定时脚本或轻应用运行策略前先读取当前配置及 revision；3) 所有文件删除仅走 lightisle_move_to_trash 安全移入回收站，严禁格式化磁盘、注销存储根、清空回收站、执行任意 Shell 或读取密钥凭据；4) 全部工具调用均实时记入 SQLite 审计日志。"
@@ -65,83 +63,6 @@ func hasReverseProxyHeaders(r *http.Request) bool {
 		r.Header.Get("X-Forwarded-For") != "" ||
 		r.Header.Get("CF-Connecting-IP") != "" ||
 		r.Header.Get("X-Real-IP") != ""
-}
-
-func (m *mcpManagement) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Cache-Control", "no-store")
-	w.Header().Set("X-Content-Type-Options", "nosniff")
-	loopback, local := isPrivateOrLoopbackAddr(r.RemoteAddr)
-	if !local || !localMCPHost(r.Host) || hasReverseProxyHeaders(r) {
-		jsonReply(w, 403, map[string]string{"error": "mcp_lan_only"})
-		return
-	}
-	origins := r.Header.Values("Origin")
-	if len(origins) > 1 || (len(origins) == 1 && !originMatchesHost(origins[0], r.Host)) {
-		jsonReply(w, 403, map[string]string{"error": "cross_origin_request_rejected"})
-		return
-	}
-	cfg := m.apps.GetSystemConfig()
-	if !cfg.MCPEnabled {
-		jsonReply(w, 403, map[string]string{"error": "mcp_disabled"})
-		return
-	}
-	if !loopback && !cfg.MCPLanEnabled {
-		jsonReply(w, 403, map[string]string{"error": "mcp_lan_disabled"})
-		return
-	}
-
-	if m.store == nil {
-		jsonReply(w, 503, map[string]string{"error": "database_not_ready"})
-		return
-	}
-	tok := extractMCPTokenFromRequest(r)
-	user, session, connection, ok := m.authenticateBearerOrSystem(tok)
-	if !ok {
-		w.Header().Set("WWW-Authenticate", `Bearer realm="LightIsle Management MCP"`)
-		jsonReply(w, 401, map[string]string{"error": "mcp_connection_required"})
-		return
-	}
-	if r.Method != http.MethodPost {
-		w.Header().Set("Allow", http.MethodPost)
-		w.WriteHeader(http.StatusMethodNotAllowed)
-		return
-	}
-	if version := r.Header.Get("MCP-Protocol-Version"); version != "" && !managementMCPVersion(version) {
-		jsonReply(w, 400, map[string]string{"error": "mcp_unsupported_protocol_version"})
-		return
-	}
-	if media, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || media != "application/json" {
-		jsonReply(w, 415, map[string]string{"error": "mcp_json_required"})
-		return
-	}
-
-	select {
-	case m.active <- struct{}{}:
-		defer func() { <-m.active }()
-	default:
-		jsonReply(w, 429, map[string]string{"error": "mcp_busy"})
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
-	defer r.Body.Close()
-	rawBody, err := io.ReadAll(r.Body)
-	if err != nil {
-		mcpRPCError(w, nil, -32700, "Parse error")
-		return
-	}
-	transport := "local-http"
-	if !loopback {
-		transport = "lan-http"
-	}
-	respBytes, hasResp := m.executeAuthorizedLocked(r.Context(), transport, r.RemoteAddr, user, session, connection, rawBody)
-	if !hasResp {
-		w.WriteHeader(http.StatusAccepted)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json; charset=utf-8")
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(respBytes)
 }
 
 func (m *mcpManagement) authenticateBearerOrSystem(tok string) (auth.User, string, auth.MCPConnection, bool) {
@@ -384,10 +305,6 @@ func validMCPRequestID(id json.RawMessage) bool {
 	var text string
 	var number int64
 	return string(id) != "null" && (json.Unmarshal(id, &text) == nil || json.Unmarshal(id, &number) == nil)
-}
-
-func mcpRPCError(w http.ResponseWriter, id json.RawMessage, code int, message string) {
-	jsonReply(w, 200, map[string]any{"jsonrpc": "2.0", "id": id, "error": map[string]any{"code": code, "message": message}})
 }
 
 type mcpManagementResult struct {

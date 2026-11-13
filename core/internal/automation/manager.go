@@ -32,6 +32,7 @@ var (
 	ErrUnavailable = errors.New("automation_unavailable")
 	ErrChanged     = errors.New("automation_task_changed")
 	taskID         = regexp.MustCompile(`^[a-z][a-z0-9-]{0,47}$`)
+	envKeyRule     = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,63}$`)
 	parser         = cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
 )
 
@@ -507,7 +508,7 @@ func readEnv(root *os.Root, file string) (map[string]string, error) {
 		return nil, ErrInvalid
 	}
 	for k, v := range values {
-		if !regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,63}$`).MatchString(k) || len(v) > 2048 || strings.ContainsRune(v, 0) {
+		if !envKeyRule.MatchString(k) || len(v) > 2048 || strings.ContainsRune(v, 0) {
 			return nil, ErrInvalid
 		}
 	}
@@ -521,6 +522,9 @@ func (m *Manager) Update(id string, enabled bool, schedule Schedule, notificatio
 func (m *Manager) UpdateRevision(id string, enabled bool, schedule Schedule, notification Notification, revision string) error {
 	if !taskID.MatchString(id) {
 		return ErrInvalid
+	}
+	if _, isPlugin := m.pluginMeta(id); isPlugin {
+		return ErrNotFound
 	}
 	if _, err := validateCron(schedule); err != nil {
 		return err
@@ -618,6 +622,9 @@ func (m *Manager) patchJSON(id string, directory os.FileInfo, revision string, m
 func (m *Manager) Delete(id string) error {
 	if !taskID.MatchString(id) {
 		return ErrInvalid
+	}
+	if _, isPlugin := m.pluginMeta(id); isPlugin {
+		return ErrNotFound
 	}
 	m.mutation.Lock()
 	defer m.mutation.Unlock()

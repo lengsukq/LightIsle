@@ -42,7 +42,7 @@ func isAcceptedIPCCommand(command string) bool {
 		strings.HasPrefix(command, "export start ") || command == "export cancel" || command == "export history" ||
 		strings.HasPrefix(command, "tunnel ") || strings.HasPrefix(command, "frp ") ||
 		strings.HasPrefix(command, "cinema tmdb ") || strings.HasPrefix(command, "map tianditu ") ||
-		strings.HasPrefix(command, "trash ") || strings.HasPrefix(command, "notify ")
+		strings.HasPrefix(command, "notify ")
 }
 
 func queueDefaultMediaRefresh(registry *roots.Registry, rootServer *server.RootServer, dirs []string) {

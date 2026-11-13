@@ -68,7 +68,8 @@ func TestMCPUnifiedManagementCapabilitiesRBACAndHighRiskGuardrails(t *testing.T)
 	if err := appsMgr.Reload(); err != nil {
 		t.Fatal(err)
 	}
-	if err := appsMgr.SetMCPEnabled(true); err != nil {
+	mcpTrue := true
+	if _, err := appsMgr.SetMCPConfig(&mcpTrue, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -348,7 +349,8 @@ func TestMCPStdioLoopbackBridgeAndSSERoundtrip(t *testing.T) {
 	if err := appsMgr.Reload(); err != nil {
 		t.Fatal(err)
 	}
-	if err := appsMgr.SetMCPEnabled(true); err != nil {
+	mcpTrue := true
+	if _, err := appsMgr.SetMCPConfig(&mcpTrue, nil); err != nil {
 		t.Fatal(err)
 	}
 

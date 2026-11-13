@@ -77,7 +77,7 @@ func (l *Library) FindSimilarGroupsScoped(roots []string, maxGroups int) ([]Simi
 	args := append([]any{share}, scopedArgs...)
 	args = append(args, maxSimilarScanRows)
 
-	rows, err := l.db.Query(`
+	rows, err := l.readDB().Query(`
 		SELECT
 			a.id, a.path, a.size, a.taken_at, a.modified, a.width, a.height, a.camera_model,
 			f.feature_print_f16, f.sharpness, f.aesthetics,

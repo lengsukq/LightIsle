@@ -130,7 +130,7 @@ func DetectTailscale(ctx context.Context, port int, httpsActive bool, boundTails
 
 func enrichTailscaleCLIJSON(status *TailscaleStatus, raw []byte) {
 	var doc struct {
-		BackendState string `json:"BackendState"`
+		BackendState   string `json:"BackendState"`
 		MagicDNSSuffix string `json:"MagicDNSSuffix"`
 		CurrentTailnet *struct {
 			Name string `json:"Name"`

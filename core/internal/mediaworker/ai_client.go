@@ -63,33 +63,6 @@ type AIAnalysis struct {
 	Error           string       `json:"error,omitempty"`
 }
 
-func (c *Client) AnalyzeOne(ctx context.Context, source *os.File, name string) (AIAnalysis, error) {
-	results, err := c.AnalyzeBatch(ctx, []AIBatchInput{{Source: source, Name: name}})
-	if err != nil {
-		return AIAnalysis{}, err
-	}
-	if len(results) != 1 {
-		return AIAnalysis{}, ErrInvalidResponse
-	}
-	res := results[0]
-	switch res.Status {
-	case "ok":
-		return res, nil
-	case "unsupported":
-		return res, ErrUnsupported
-	case "throttled":
-		return res, ErrThrottled
-	case "error":
-		msg := res.Error
-		if msg == "" {
-			msg = "media_worker_ai_failed"
-		}
-		return res, errors.New(msg)
-	default:
-		return AIAnalysis{}, ErrInvalidResponse
-	}
-}
-
 // AnalyzeBatch passes up to 16 already-open read-only file descriptors to a
 // single short-lived worker invocation (fd 3..fd 3+N-1), amortizing Apple
 // Vision / ANE model warmup while guaranteeing full memory release on exit.

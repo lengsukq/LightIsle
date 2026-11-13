@@ -36,7 +36,7 @@ func ensureUploadCleanupSettings(db *sql.DB) error {
 // automatic cleanup is disabled. A missing or damaged setting fails closed.
 func (s *Store) UploadRetentionDays() (int, error) {
 	var days int
-	if err := s.db.QueryRow(`SELECT retention_days FROM upload_cleanup_settings WHERE id=1`).Scan(&days); err != nil {
+	if err := s.readDB().QueryRow(`SELECT retention_days FROM upload_cleanup_settings WHERE id=1`).Scan(&days); err != nil {
 		return 0, err
 	}
 	if days < 0 || days > MaxUploadRetentionDays {

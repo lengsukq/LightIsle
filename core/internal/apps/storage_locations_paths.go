@@ -407,6 +407,9 @@ func resolveInstallTargetForMCP(dataDir string, mgr *Manager, requestedID string
 func findPluginAcrossScanRoots(dataDir string, mgr *Manager, appID string) (pluginDir string, dataRootDir string, scanRoot storageScanRoot, found bool) {
 	if mgr != nil {
 		if snap, ok := mgr.snapshotApp(appID); ok {
+			if err := mgr.verifyRecordStorageOnline(snap.locationID, snap.pluginDir); err != nil {
+				return "", "", storageScanRoot{}, false
+			}
 			return snap.pluginDir, snap.dataDir, storageScanRoot{
 				id:         fallbackString(snap.locationID, AppStorageIDInternal),
 				kind:       fallbackString(snap.locationKind, AppStorageKindInternal),

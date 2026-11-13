@@ -58,7 +58,6 @@ type uploadJournal struct {
 
 var ErrOffset = errors.New("offset_mismatch")
 var ErrOwner = errors.New("upload_owner_mismatch")
-var ErrPublished = errors.New("upload_already_published")
 var ErrUploadBusy = errors.New("upload_busy")
 var ErrInsufficientSpace = errors.New("insufficient_storage_space")
 var ErrStorageSync = errors.New("storage_durability_failure")
