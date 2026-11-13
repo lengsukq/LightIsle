@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ArrowUp, Film, FolderPlus, Heart, Images, Map as MapIcon, Plus, SlidersHorizontal, Sparkles, Star } from "lucide-vue-next";
+import { ArrowUp, ChevronDown, Film, FolderPlus, Heart, Images, Plus, SlidersHorizontal, Sparkles, Star, X } from "lucide-vue-next";
 import AppleSelect from "./AppleSelect.vue";
 import IsleChip from "./IsleChip.vue";
 import { PHOTO_SEARCH_MODES, type PhotoSearchMode } from "./usePhotoAISearchAndPeople.ts";
@@ -69,6 +69,7 @@ const emit = defineEmits<{
   (e: "update:yearFilter", val: number): void;
   (e: "exif-filter-change"): void;
   (e: "reset-exif-filters"): void;
+  (e: "clear-all-filters"): void;
   (e: "open-map-view"): void;
 }>();
 
@@ -103,6 +104,7 @@ function closeAlbumMenu(event: Event) {
           <FolderPlus :size="15" />
           {{ activeFolderAlbum?.name || currentPrivateAlbum?.name || currentAlbum?.name || "相册" }}
           <small>({{ albums.length + privateAlbums.length + folderAlbums.length }})</small>
+          <ChevronDown :size="14" class="photo-albums-chevron" />
         </summary>
         <div class="photo-albums-menu-panel">
           <div class="album-tabs">
@@ -239,27 +241,20 @@ function closeAlbumMenu(event: Event) {
     <button v-if="hasActiveExif" type="button" class="refresh" @click="emit('reset-exif-filters')">清除筛选</button>
   </div>
 
-  <div v-if="showMemoriesStrip" class="photos-memories-strip" aria-label="回忆与精选">
-    <button type="button" class="memory-card" @click="emit('select-on-this-day')">
-      <span class="memory-card-icon pink"><Sparkles :size="18" /></span>
-      <div><strong>那年今天</strong><small>历史上的今天</small></div>
+  <div v-if="searchApplied || hasActiveExif || activePersonName || typeFilter" class="photos-filter-summary" role="region" aria-label="当前生效筛选条件">
+    <span class="filter-summary-label">已生效条件：</span>
+    <span v-if="searchApplied" class="filter-summary-chip">关键词「{{ searchApplied }}」</span>
+    <span v-if="typeFilter" class="filter-summary-chip">类型：{{ typeFilter === "video" ? "视频" : typeFilter === "live" ? "实况照片" : "照片" }}</span>
+    <span v-if="activePersonName" class="filter-summary-chip">人物：{{ activePersonName }}</span>
+    <span v-if="cameraFilter" class="filter-summary-chip">相机：{{ cameraFilter }}</span>
+    <span v-if="locationFilter" class="filter-summary-chip">定位：{{ locationFilter === "yes" ? "有定位" : locationFilter === "no" ? "无定位" : locationFilter }}</span>
+    <span v-if="yearFilter" class="filter-summary-chip">年份：{{ yearFilter }}</span>
+    <button type="button" class="filter-summary-clear" @click="emit('clear-all-filters')">
+      <X :size="12" /> 清除全部条件
     </button>
-    <button type="button" class="memory-card" @click="emit('select-personal')">
-      <span class="memory-card-icon amber"><Star :size="18" /></span>
-      <div><strong>我的收藏</strong><small>仅自己可见</small></div>
-    </button>
-    <button type="button" class="memory-card" @click="emit('select-favorites')">
-      <span class="memory-card-icon rose"><Heart :size="18" /></span>
-      <div><strong>共享精选</strong><small>家庭喜爱瞬间</small></div>
-    </button>
-    <button type="button" class="memory-card" @click="emit('set-type-filter', 'video')">
-      <span class="memory-card-icon blue"><Film :size="18" /></span>
-      <div><strong>动态视频</strong><small>家庭影像合集</small></div>
-    </button>
-    <button type="button" class="memory-card" @click="emit('open-map-view')">
-      <span class="memory-card-icon green"><MapIcon :size="18" /></span>
-      <div><strong>足迹地图</strong><small>按拍摄地回溯</small></div>
-    </button>
+  </div>
+
+  <div v-if="showMemoriesStrip && (smartMemories?.length ?? 0) > 0" class="photos-memories-strip" aria-label="智能回忆与精选">
     <button
       v-for="mem in (smartMemories ?? []).slice(0, 4)"
       :key="mem.id"
@@ -274,3 +269,47 @@ function closeAlbumMenu(event: Event) {
     </button>
   </div>
 </template>
+
+<style scoped>
+.photos-filter-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 8px;
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 28%, var(--fluid-card-border));
+  background: color-mix(in srgb, var(--accent-primary) 8%, var(--fluid-card-fill));
+  font-size: 12px;
+}
+.filter-summary-label {
+  font-weight: 650;
+  color: var(--text-secondary);
+}
+.filter-summary-chip {
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: var(--fluid-card-item-fill);
+  border: 1px solid var(--fluid-card-border);
+  color: var(--text-primary);
+  font-weight: 550;
+}
+.filter-summary-clear {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 38%, var(--fluid-card-border));
+  background: var(--fluid-card-fill);
+  color: var(--accent-primary);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+.filter-summary-clear:hover {
+  background: color-mix(in srgb, var(--accent-primary) 12%, var(--fluid-card-fill));
+}
+</style>

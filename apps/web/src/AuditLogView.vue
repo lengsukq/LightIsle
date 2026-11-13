@@ -7,6 +7,7 @@ import IsleBanner from "./IsleBanner.vue";
 import IsleEmpty from "./IsleEmpty.vue";
 import {describeUserFacingError} from "./userFacingError.ts";
 import {readApiFailure} from "./apiFailure.ts";
+import {formatDateTime} from "./dateTimeFormat.ts";
 
 type Event={id:number;actorId:number;action:string;target:string;outcome:"success"|"denied"|"failed";createdAt:number};
 const entries=ref<Event[]>([]);
@@ -48,7 +49,7 @@ onMounted(()=>void load(true));
   <section class="account-panel audit-panel" aria-label="安全操作审计">
     <div class="account-heading">
       <h3><ShieldCheck :size="18" aria-hidden="true"/> 安全审计</h3>
-      <IsleButton variant="ghost" size="sm" :loading="loading" @click="load(true)">
+      <IsleButton variant="glass" size="sm" :loading="loading" @click="load(true)">
         <template #icon><RefreshCw :size="14"/></template> 刷新
       </IsleButton>
     </div>
@@ -56,7 +57,7 @@ onMounted(()=>void load(true));
     <IsleBanner v-if="error" type="error" compact role="alert">
       {{ error }}
       <template #action>
-        <IsleButton variant="ghost" size="sm" @click="load(true)">重试</IsleButton>
+        <IsleButton variant="glass" size="sm" @click="load(true)">重试</IsleButton>
       </template>
     </IsleBanner>
     <p v-if="loading && !entries.length" class="footnote">正在读取操作审计…</p>
@@ -64,7 +65,7 @@ onMounted(()=>void load(true));
     <div v-for="item in entries" :key="item.id" class="account-row audit-entry">
       <div>
         <strong>{{ labels[item.action] || item.action }} · 用户 #{{ item.actorId }}</strong>
-        <small>{{ new Date(item.createdAt * 1000).toLocaleString("zh-CN") }} · {{ item.target }}</small>
+        <small>{{ formatDateTime(item.createdAt * 1000) }} · {{ item.target }}</small>
       </div>
       <IsleBadge
         :variant="item.outcome === 'success' ? 'online' : item.outcome === 'denied' ? 'danger' : 'warning'"
@@ -74,7 +75,7 @@ onMounted(()=>void load(true));
       </IsleBadge>
     </div>
     <div v-if="cursor" class="gallery-load">
-      <IsleButton variant="ghost" size="sm" :loading="loading" @click="load(false)">
+      <IsleButton variant="glass" size="sm" :loading="loading" @click="load(false)">
         {{ loading ? "加载中…" : "查看更多审计记录" }}
       </IsleButton>
     </div>
@@ -85,10 +86,10 @@ onMounted(()=>void load(true));
 .audit-panel{margin-bottom:20px}
 .audit-panel .account-heading h3{display:flex;align-items:center;gap:8px}
 .audit-panel p{font-size:12px;color:var(--text-secondary);line-height:1.55}
+.audit-entry {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 66px;
+}
 .audit-entry strong{font-size:13px}
 .audit-entry small{display:block;margin-top:4px;font-size:11px;color:var(--text-secondary);overflow-wrap:anywhere}
-.audit-status{font-size:11px;font-weight:650;padding:3px 9px;border-radius:9999px;white-space:nowrap}
-.audit-status.success{background:rgba(52,199,89,0.12);color:#34c759;border:1px solid rgba(52,199,89,0.25)}
-.audit-status.denied{background:rgba(255,59,48,0.12);color:#ff3b30;border:1px solid rgba(255,59,48,0.25)}
-.audit-status.failed{background:rgba(255,149,0,0.12);color:#ff9500;border:1px solid rgba(255,149,0,0.25)}
 </style>

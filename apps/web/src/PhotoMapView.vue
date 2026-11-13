@@ -11,6 +11,7 @@ import type { GeoCluster } from "./mapCluster.ts";
 import { clusterCellKey, expandBounds, planMarkerChanges, selectVisibleClusters } from "./mapViewport.ts";
 import { describePhotoMapFailure } from "./photoMapStatus.ts";
 import {describeUserFacingError} from "./userFacingError.ts";
+import { formatShortDate } from "./dateTimeFormat.ts";
 import type { GeoPointDTO, MapStripAsset, MapTransport } from "./photoMapTransport.ts";
 import AppleSelect from "./AppleSelect.vue";
 import IsleButton from "./IsleButton.vue";
@@ -390,10 +391,10 @@ onBeforeUnmount(()=>{
   <div class="photo-map">
     <div class="photo-map-toolbar">
       <span class="photo-map-status"><MapPin :size="14"/> {{geoStatusLabel}}</span>
-      <IsleButton variant="ghost" size="sm" :loading="geoLoading" @click="loadGeo">
+      <IsleButton variant="glass" size="sm" :loading="geoLoading" @click="loadGeo">
         <template #icon><RefreshCw :size="13"/></template> {{ geoLoading ? "读取中…" : "刷新位置" }}
       </IsleButton>
-      <IsleButton variant="ghost" size="sm" :class="{chosen:settingsOpen}" @click="settingsOpen=!settingsOpen">
+      <IsleButton variant="glass" size="sm" :class="{chosen:settingsOpen}" @click="settingsOpen=!settingsOpen">
         <template #icon><Settings2 :size="14"/></template> 地图设置
       </IsleButton>
     </div>
@@ -404,18 +405,18 @@ onBeforeUnmount(()=>{
       </span>
       <input v-if="mapSourceInput==='custom'" v-model="tileURLInput" placeholder="https://example.com/{z}/{x}/{y}.png" aria-label="瓦片服务地址">
       <IsleButton type="submit" variant="primary" size="sm">保存并应用</IsleButton>
-      <IsleButton v-if="mapSourceInput==='custom'" type="button" variant="ghost" size="sm" @click="tileURLInput=defaultTileURL">恢复默认</IsleButton>
+      <IsleButton v-if="mapSourceInput==='custom'" type="button" variant="glass" size="sm" @click="tileURLInput=defaultTileURL">恢复默认</IsleButton>
     </form>
     <IsleBanner v-if="mapSource==='tianditu'&&!tiandituConfigured" type="warning" compact role="status">
       {{mapStatusError?'无法获取地图设置，请检查连接。':'未配置天地图 Key，请在 Mac 端「设置 → 媒体服务」填写。'}}
       <template #action>
-        <IsleButton variant="ghost" size="sm" @click="refreshMapStatus">重新检查</IsleButton>
+        <IsleButton variant="glass" size="sm" @click="refreshMapStatus">重新检查</IsleButton>
       </template>
     </IsleBanner>
     <IsleBanner v-if="basemapFailed" type="warning" compact role="status">
       地图暂时无法加载，仍可查看照片位置。请检查网络、重新加载，或更换地图来源。
       <template #action>
-        <IsleButton variant="ghost" size="sm" :loading="basemapRetrying" @click="retryBasemap">
+        <IsleButton variant="glass" size="sm" :loading="basemapRetrying" @click="retryBasemap">
           <template #icon><RefreshCw :size="13"/></template> {{ basemapRetrying ? "正在重试…" : "重试底图" }}
         </IsleButton>
       </template>
@@ -423,7 +424,7 @@ onBeforeUnmount(()=>{
     <IsleBanner v-if="geoError&&geoLoaded" type="error" compact role="alert">
       <span>{{geoError}} 地图仍显示上次成功读取的位置数据。</span>
       <template #action>
-        <IsleButton variant="ghost" size="sm" :loading="geoLoading" @click="loadGeo">重新读取</IsleButton>
+        <IsleButton variant="glass" size="sm" :loading="geoLoading" @click="loadGeo">重新读取</IsleButton>
       </template>
     </IsleBanner>
     <IsleEmpty
@@ -461,8 +462,8 @@ onBeforeUnmount(()=>{
       </div>
       <div class="photo-map-strip-grid">
         <button v-for="asset in strip" :key="asset.id" type="button" class="photo-map-strip-tile" @click="emit('openAsset',asset,strip)">
-          <img :src="transport.thumbnail(asset.id)" :alt="asset.name" loading="lazy"/>
-          <small>{{new Date(asset.takenAt*1000).toLocaleDateString("zh-CN")}}</small>
+          <img :src="transport.thumbnail(asset.id)" :alt="asset.name" loading="lazy" decoding="async"/>
+          <small>{{formatShortDate(asset.takenAt)}}</small>
         </button>
       </div>
     </div>
@@ -473,21 +474,13 @@ onBeforeUnmount(()=>{
 .photo-map{display:flex;flex-direction:column;gap:10px;margin-bottom:16px}
 .photo-map-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;color:var(--text-secondary);font-size:12px}
 .photo-map-status{display:inline-flex;align-items:center;gap:6px}
-.photo-map-tool{display:inline-flex;align-items:center;gap:5px;border:1px solid var(--fluid-card-border);border-radius:var(--radius-sm);background:var(--fluid-card-fill);color:var(--text-secondary);padding:6px 10px;font-size:12px;font-weight:600}
 .photo-map-tile-form{display:flex;gap:8px;flex-wrap:wrap}
-.photo-map-tile-form input,.photo-map-tile-form select{flex:1;min-width:220px;border:1px solid var(--fluid-card-border);border-radius:var(--radius-sm);background:var(--fluid-card-fill);color:var(--text-primary);padding:8px 10px;font-size:12px}
+.photo-map-tile-form input{flex:1;min-width:220px;border:1px solid var(--fluid-card-border);border-radius:var(--radius-sm);background:var(--fluid-card-fill);color:var(--text-primary);padding:8px 10px;font-size:12px}
 .photo-map-tile-form button{border:1px solid var(--fluid-card-border);border-radius:var(--radius-sm);background:var(--fluid-card-fill);color:var(--text-primary);padding:8px 12px;font-size:12px}
-.photo-map-degraded{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border:1px solid var(--warning);border-radius:var(--radius-sm);color:var(--text-primary);font-size:12px}
-.photo-map-notice{padding:8px 12px;border:1px solid var(--fluid-card-border);border-radius:var(--radius-sm);color:var(--text-secondary);font-size:12px}
-.photo-map-fetch-error{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
-.photo-map-error-state{background:var(--fluid-card-fill);border-style:solid}
-.photo-map-error-state p{max-width:560px}
-.photo-map-empty{display:grid;justify-items:center;gap:6px;padding:42px 20px;border:1px dashed var(--fluid-card-border);border-radius:var(--radius-md);color:var(--text-secondary);text-align:center}
-.photo-map-empty h3{margin:0;color:var(--text-primary);font-size:16px}
-.photo-map-empty p{margin:0;font-size:13px;max-width:460px}
 .photo-map-canvas{height:min(64vh,620px);border-radius:var(--radius-md);border:1px solid var(--fluid-card-border);background:#0d1117;z-index:0}
 .photo-map-strip{border:1px solid var(--fluid-card-border);border-radius:var(--radius-md);background:var(--fluid-card-fill);overflow:hidden;box-shadow:0 8px 28px rgba(0,0,0,.18)}
 .photo-map-strip-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 14px;color:var(--text-primary);font-size:13px;font-weight:600;border-bottom:1px solid var(--fluid-card-border)}
+.photo-map-strip-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .photo-map-strip-actions{display:inline-flex;align-items:center;gap:6px}
 .photo-map-strip-btn{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--fluid-card-border);border-radius:var(--radius-sm);background:var(--fluid-card-fill);color:var(--text-secondary);padding:4px 8px;font-size:12px;cursor:pointer}
 .photo-map-strip-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:10px;max-height:280px;overflow-y:auto;padding:12px}
@@ -502,4 +495,7 @@ onBeforeUnmount(()=>{
 :global(.photo-map-pin.active .photo-map-pin-badge){background:#5865f2}
 :global(.photo-map-pin-tail){position:absolute;bottom:6px;width:10px;height:10px;background:#fff;border-radius:2px;transform:rotate(45deg);box-shadow:2px 2px 4px rgba(0,0,0,.22);z-index:-1}
 :global(.photo-map-pin.active .photo-map-pin-tail){background:#5865f2}
+@media(prefers-reduced-motion:reduce){
+ :global(.photo-map-pin-frame){transition:none}
+}
 </style>

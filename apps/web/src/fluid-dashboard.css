@@ -5,13 +5,22 @@
   gap: 18px;
   margin-bottom: 28px;
 }
+.sanctuary-grid.sanctuary-grid--four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+@media (max-width: 1200px) {
+  .sanctuary-grid.sanctuary-grid--four {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
 @media (max-width: 1024px) {
   .sanctuary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 @media (max-width: 640px) {
-  .sanctuary-grid {
+  .sanctuary-grid,
+  .sanctuary-grid.sanctuary-grid--four {
     grid-template-columns: minmax(0, 1fr);
   }
 }
@@ -75,8 +84,7 @@
   overflow: hidden;
   transition:
     transform var(--motion-normal) var(--motion-spring),
-    box-shadow var(--motion-normal) var(--motion-spring),
-    background var(--motion-normal) ease;
+    opacity var(--motion-normal) ease;
 }
 .sanctuary-card:hover {
   transform: translateY(-4px);
@@ -104,6 +112,10 @@
 .sanctuary-icon.cinema {
   background: linear-gradient(135deg, rgba(255, 149, 0, 0.16), rgba(255, 195, 0, 0.22));
   color: #FF9500;
+}
+.sanctuary-icon.downloads {
+  background: linear-gradient(135deg, rgba(50, 173, 230, 0.16), rgba(90, 200, 250, 0.24));
+  color: #0EA5E9;
 }
 .sanctuary-body {
   display: flex;
@@ -402,53 +414,29 @@
 /* =========================================================================
    Apple Fluid Spring Transitions & Staggered Cascade
    ========================================================================= */
-.ios-fade-enter-active,
-.isle-page-enter-active {
-  transition:
-    opacity 0.28s cubic-bezier(0.16, 1, 0.3, 1),
-    transform 0.28s cubic-bezier(0.16, 1, 0.3, 1);
-}
-.ios-fade-leave-active,
-.isle-page-leave-active {
-  transition:
-    opacity 0.15s ease,
-    transform 0.15s ease;
-}
-.ios-fade-enter-from,
-.isle-page-enter-from {
-  opacity: 0;
-  transform: translateY(12px);
-}
-.ios-fade-leave-to,
-.isle-page-leave-to {
-  opacity: 0;
-  transform: translateY(-8px);
-}
 
 /* Staggered Cascade for Cards */
 .isle-cascade > *,
-.sanctuary-grid > *,
-.stats-grid > *,
-.cards-grid > * {
-  animation: isle-cascade-in 0.36s cubic-bezier(0.16, 1, 0.3, 1) both;
+.sanctuary-grid > * {
+  animation: isle-cascade-in 0.26s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
-.isle-cascade > *:nth-child(1), .sanctuary-grid > *:nth-child(1), .stats-grid > *:nth-child(1) { animation-delay: 0ms; }
-.isle-cascade > *:nth-child(2), .sanctuary-grid > *:nth-child(2), .stats-grid > *:nth-child(2) { animation-delay: 35ms; }
-.isle-cascade > *:nth-child(3), .sanctuary-grid > *:nth-child(3), .stats-grid > *:nth-child(3) { animation-delay: 70ms; }
-.isle-cascade > *:nth-child(4), .sanctuary-grid > *:nth-child(4), .stats-grid > *:nth-child(4) { animation-delay: 105ms; }
-.isle-cascade > *:nth-child(5), .sanctuary-grid > *:nth-child(5), .stats-grid > *:nth-child(5) { animation-delay: 140ms; }
-.isle-cascade > *:nth-child(6), .sanctuary-grid > *:nth-child(6), .stats-grid > *:nth-child(6) { animation-delay: 175ms; }
-.isle-cascade > *:nth-child(7) { animation-delay: 210ms; }
-.isle-cascade > *:nth-child(8) { animation-delay: 245ms; }
+.isle-cascade > *:nth-child(1), .sanctuary-grid > *:nth-child(1) { animation-delay: 0ms; }
+.isle-cascade > *:nth-child(2), .sanctuary-grid > *:nth-child(2) { animation-delay: 28ms; }
+.isle-cascade > *:nth-child(3), .sanctuary-grid > *:nth-child(3) { animation-delay: 56ms; }
+.isle-cascade > *:nth-child(4), .sanctuary-grid > *:nth-child(4) { animation-delay: 84ms; }
+.isle-cascade > *:nth-child(5), .sanctuary-grid > *:nth-child(5) { animation-delay: 112ms; }
+.isle-cascade > *:nth-child(6), .sanctuary-grid > *:nth-child(6) { animation-delay: 140ms; }
+.isle-cascade > *:nth-child(7) { animation-delay: 168ms; }
+.isle-cascade > *:nth-child(8) { animation-delay: 196ms; }
 
 @keyframes isle-cascade-in {
   from {
     opacity: 0;
-    transform: translateY(12px);
+    transform: translate3d(0, 10px, 0);
   }
   to {
     opacity: 1;
-    transform: translateY(0);
+    transform: translate3d(0, 0, 0);
   }
 }
 
@@ -473,8 +461,7 @@
   border-radius: var(--radius-md);
   margin: 10px 0;
   transition: transform var(--motion-fast) var(--motion-spring),
-              background var(--motion-fast) ease,
-              box-shadow var(--motion-fast) ease;
+              opacity var(--motion-fast) ease;
 }
 .alert-item strong {
   display: flex;
@@ -482,47 +469,6 @@
   gap: 8px;
   font-size: 13.5px;
   color: var(--text-primary);
-}
-.alert-severity-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 8px;
-  border-radius: 9999px;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 0.2px;
-}
-.alert-severity-critical {
-  background: rgba(255, 59, 48, 0.14);
-  color: #ff3b30;
-  border: 1px solid rgba(255, 59, 48, 0.28);
-}
-.alert-severity-warning {
-  background: rgba(255, 149, 0, 0.14);
-  color: #ff9500;
-  border: 1px solid rgba(255, 149, 0, 0.28);
-}
-.alert-severity-ok {
-  background: rgba(52, 199, 89, 0.14);
-  color: #34c759;
-  border: 1px solid rgba(52, 199, 89, 0.28);
-}
-
-/* Status Dot: Pulsing live indicator */
-.live-status-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  display: inline-block;
-  flex-shrink: 0;
-}
-.live-status-dot.online {
-  background: #34c759;
-  box-shadow: 0 0 0 3px rgba(52, 199, 89, 0.22);
-}
-.live-status-dot.offline {
-  background: var(--text-disabled);
 }
 
 /* Disk Management Enhanced Metrics */
@@ -537,7 +483,7 @@
   border: 1px solid var(--fluid-card-border);
   box-shadow: var(--fluid-item-card-shadow);
   transition: transform var(--motion-fast) var(--motion-spring),
-              box-shadow var(--motion-fast) ease;
+              opacity var(--motion-fast) ease;
 }
 .disk-admin-item:hover {
   transform: translateY(-2px);
@@ -552,57 +498,20 @@
 .disk-admin-capacity .disk-admin-meter > div {
   height: 100%;
   border-radius: inherit;
-  background: linear-gradient(90deg, var(--accent-primary), var(--accent-secondary));
+  background: linear-gradient(90deg, var(--accent-primary), #32ade6);
   transition: width 0.4s var(--motion-spring);
 }
 
-/* Downloads Center Task Cards */
-.download-card-progress {
-  height: 6px;
-  border-radius: 9999px;
-  background: var(--stroke-subtle);
-  overflow: hidden;
-  margin-top: 8px;
-}
-.download-card-progress > div {
-  height: 100%;
-  border-radius: inherit;
-  background: linear-gradient(90deg, var(--accent-primary), #60a5fa);
-  transition: width 0.3s ease;
-}
-
-/* Monospace Code Chips */
-.mono-chip {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 12px;
-  background: var(--fluid-card-item-fill);
-  border: 1px solid var(--fluid-card-border);
-  padding: 6px 10px;
-  border-radius: 8px;
-  color: var(--text-primary);
-  user-select: all;
-}
-
 /* Fluid Card Hover Lift */
-.sanctuary-tile,
 .sanctuary-card,
-.stat-card,
-.feature-card,
-.metric-card,
-.account-panel,
-.setting-group {
+.account-panel {
   transition:
     transform var(--motion-fast) var(--motion-spring),
-    box-shadow 0.24s cubic-bezier(0.16, 1, 0.3, 1),
-    border-color 0.2s ease;
+    opacity var(--motion-fast) ease;
 }
 
 @media (hover: hover) {
-  .sanctuary-tile:hover,
-  .sanctuary-card:hover,
-  .stat-card:hover,
-  .feature-card:hover,
-  .metric-card:hover {
+  .sanctuary-card:hover {
     transform: translateY(-2px);
     box-shadow: var(--fluid-hover-shadow);
   }
@@ -610,33 +519,31 @@
 
 @media (prefers-reduced-motion: reduce) {
   .ios-fade-enter-active,
-  .ios-fade-leave-active,
-  .isle-page-enter-active,
-  .isle-page-leave-active {
+  .ios-fade-leave-active {
     transition: opacity 0.08s ease !important;
     transform: none !important;
   }
   .ios-fade-enter-from,
-  .ios-fade-leave-to,
-  .isle-page-enter-from,
-  .isle-page-leave-to {
+  .ios-fade-leave-to {
     transform: none !important;
   }
   .isle-cascade > *,
-  .sanctuary-grid > *,
-  .stats-grid > *,
-  .cards-grid > * {
+  .sanctuary-grid > * {
     animation: none !important;
     opacity: 1 !important;
     transform: none !important;
   }
-  .sidebar {
+  .sidebar,
+  .alert-item,
+  .disk-admin-item,
+  .sanctuary-card,
+  .account-panel {
     transition: none !important;
   }
 }
 
 @media (hover: none) {
-  .metric-card:hover, .feature-card:hover, .movie-card:hover, .photo-tile:hover,
+  .photo-tile:hover,
   .file-entry:hover, .account-row:hover { transform: none; }
   .side-nav button:hover { transform: none; }
 }
@@ -650,8 +557,8 @@
 }
 
 @media (prefers-contrast: more) {
-  :is(.metric-card, .feature-card, .account-panel, .files-panel, .auth-card,
-    .confirm-dialog, .topbar, .sidebar, .mobile-nav, .file-entry, .account-row) {
+  :is(.account-panel, .files-panel, .auth-card,
+    .topbar, .sidebar, .mobile-nav, .file-entry, .account-row) {
     border-color: var(--stroke-strong) !important;
   }
 }

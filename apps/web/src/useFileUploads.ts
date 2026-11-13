@@ -7,7 +7,6 @@ import {
   type UploadBatchContext, type UploadContinuation,
 } from "./filePageState.ts";
 import { rootApiPath } from "./rootApi.ts";
-import {readApiFailure} from "./apiFailure.ts";
 import {recoverUploadOffset} from "./uploadChunkRecovery.ts";
 
 type UploadDependencies = {
@@ -25,7 +24,7 @@ type UploadDependencies = {
   rootFetch: (path: string, init?: RequestInit, allowDuringRootSwitch?: boolean) => Promise<Response>;
   read: <T>(path: string, signal?: AbortSignal) => Promise<T>;
   write: <T>(path: string, method: "POST" | "PATCH", body?: object, signal?: AbortSignal) => Promise<T>;
-  loadFiles: () => Promise<void>;
+  loadFiles: () => Promise<unknown>;
   describeError: (error: unknown) => string;
 };
 

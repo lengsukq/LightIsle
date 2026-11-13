@@ -7,7 +7,6 @@ import type {
   AppLogsNormalizedResponse,
   AppMutationResult,
   AppStorageMutationPayload,
-  AppStorageSnapshot,
   AppWebDraft,
   AppsOverviewResponse,
 } from "./types/appsCenter.ts";
@@ -15,10 +14,10 @@ import type {
 export type { AccessPolicyType, AppCronDraft, AppWebDraft };
 
 export function normalizeAccessPolicy(policy?: string): AccessPolicyType {
-  if (policy === "selected_members" || policy === "allowlist") {
+  if (policy === "selected_members") {
     return "selected_members";
   }
-  if (policy === "all_members" || policy === "authenticated") {
+  if (policy === "all_members") {
     return "all_members";
   }
   return "admin_only";
@@ -99,7 +98,7 @@ export function buildConfigPutPayload(
 }
 
 export function normalizeLogsResponse(res: unknown): AppLogsNormalizedResponse {
-  const obj = res && typeof stalenessGuard(res) === "object" ? (res as Record<string, unknown>) : {};
+  const obj = res && typeof res === "object" ? (res as Record<string, unknown>) : {};
   const webOutput =
     typeof obj.webOutput === "string"
       ? obj.webOutput
@@ -112,10 +111,6 @@ export function normalizeLogsResponse(res: unknown): AppLogsNormalizedResponse {
       ? (obj.runs as AppCronRunEntry[])
       : [];
   return { webOutput, cronRuns };
-}
-
-function stalenessGuard(value: unknown): unknown {
-  return value;
 }
 
 export function getAppDataBackupUrl(id: string): string {
@@ -151,13 +146,6 @@ export function createAppsCenterClient(fetchImpl: typeof fetch = globalThis.fetc
         refresh ? { method: "POST" } : {},
       );
     },
-    scaffoldApp(payload: Record<string, unknown> = {}): Promise<AppMutationResult> {
-      return request<AppMutationResult>("/api/v2/apps/scaffold", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-    },
     installTemplate(id: string, locationId?: string): Promise<AppMutationResult> {
       const payload = locationId ? { locationId } : {};
       return request<AppMutationResult>(`/api/v2/apps/templates/${encodeURIComponent(id)}/install`, {
@@ -165,9 +153,6 @@ export function createAppsCenterClient(fetchImpl: typeof fetch = globalThis.fetc
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
       });
-    },
-    getAppStorage(): Promise<{ appStorage: AppStorageSnapshot }> {
-      return request<{ appStorage: AppStorageSnapshot }>("/api/v2/apps/storage");
     },
     mutateAppStorage(payload: AppStorageMutationPayload): Promise<AppMutationResult> {
       return request<AppMutationResult>("/api/v2/apps/storage", {

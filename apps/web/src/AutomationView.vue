@@ -3,6 +3,7 @@ import { ref, watch } from "vue";
 import { RefreshCcw, Trash2, Clock, Bell, FileTerminal, ScrollText } from "lucide-vue-next";
 import { apiRequest } from "./apiClient.ts";
 import { describeUserFacingError } from "./userFacingError.ts";
+import { copyTextToClipboard } from "./clipboard.ts";
 import { requestConfirm } from "./useConfirmDialog.ts";
 import IsleButton from "./IsleButton.vue";
 import IsleBanner from "./IsleBanner.vue";
@@ -38,26 +39,12 @@ const agentPrompt = `你是用户本地使用的外部 AI Agent，请在当前 M
 邮件支持 mode=builtin（品牌边框模板，不需要 file）、mode=content（自定义 HTML 片段替换内置边框中间内容）和 mode=custom（自定义完整 HTML 邮件，彻底替换内置模板）。content/custom 的 HTML 由 Agent 写到任务目录 email.html，task.json 用 notification.email.file 引用。
 HTML 安全占位符只有 {{task.name}}、{{task.id}}、{{run.state}}、{{run.message}}、{{run.finishedAt}}、{{run.exitCode}}。请不要输出密钥。env.json 可包含环境变量但应 chmod 600；通知 SMTP、企业微信、钉钉、Bark 和 Webhook 凭据只在 Mac 管理端 Keychain 配置，不可写入 task.json。
 脚本执行退出码 0 表示成功；其他表示失败。默认 enabled=false，最后告诉用户到 Web 自动化页点击刷新并手动启用。请只改本地任务文件，不修改 LightIsle 源代码，也不调用 Agent 插件或任务注册 API。`;
-async function copyAgentPrompt(){
- try{
-  if(navigator.clipboard && window.isSecureContext){
-   await navigator.clipboard.writeText(agentPrompt);
-  }else{
-   const editor=document.createElement("textarea");
-   editor.value=agentPrompt;
-   editor.readOnly=true;
-   editor.style.position="fixed";
-   editor.style.left="-9999px";
-   document.body.appendChild(editor);
-   editor.select();
-   const copied=document.execCommand("copy");
-   editor.remove();
-   if(!copied)throw Error("copy_not_available");
+async function copyAgentPrompt() {
+  if (await copyTextToClipboard(agentPrompt)) {
+    notice.value = "已复制任务目录、JSON 协议和 HTML 邮件模板指令，请粘贴给你本地使用的 AI Agent。";
+  } else {
+    error.value = "浏览器无法写入剪贴板。请从项目 docs/AUTOMATION_AGENT.md 复制完整指令。";
   }
-  notice.value="已复制任务目录、JSON 协议和 HTML 邮件模板指令，请粘贴给你本地使用的 AI Agent。";
- }catch{
-  error.value="浏览器无法写入剪贴板。请从项目 docs/AUTOMATION_AGENT.md 复制完整指令。";
- }
 }
 async function request(url:string, options:RequestInit={}) {
  return apiRequest<Record<string, any>>(url, options);
@@ -185,7 +172,7 @@ watch(()=>props.active, active=>{if(active)void reload(true)}, {immediate:true})
       <div v-if="editing===task.id" class="auto-editor">
         <p>这里只修改任务启停、Cron 和通知；不会编辑脚本代码或 env.json。</p>
         <div class="auto-inputs"><label>五段 Cron<input v-model.trim="cron" placeholder="0 2 * * *"/></label><label>时区<input v-model.trim="timezone" placeholder="Asia/Shanghai"/></label></div>
-        <label><input v-model="enabled" type="checkbox"/> 启用此任务</label>
+        <label><input v-model="enabled" type="checkbox" class="isle-checkbox"/> 启用此任务</label>
         <div class="auto-checks"><strong><Bell :size="15"/> 通知事件</strong>
           <label v-for="e in [{id:'failure',name:'执行失败'},{id:'timeout',name:'执行超时'},{id:'success',name:'执行成功'}]" :key="e.id">
             <input type="checkbox" class="isle-checkbox" :checked="events.includes(e.id)" @change="events=flip(events,e.id)"/>{{e.name}}
@@ -202,7 +189,7 @@ watch(()=>props.active, active=>{if(active)void reload(true)}, {immediate:true})
       <div v-if="selected===task.id" class="auto-logs">
         <div class="auto-actions">
           <strong>最近 30 次执行</strong>
-          <IsleButton variant="glass" size="sm" @click="loadRuns(task.id)">刷新日志</IsleButton>
+          <IsleButton variant="glass" size="sm" :disabled="busy" @click="loadRuns(task.id)">刷新日志</IsleButton>
           <IsleButton variant="glass" size="sm" @click="selected=''">收起</IsleButton>
         </div>
         <p v-if="runs.length===0">暂无执行记录；定时触发后会显示退出码和输出。</p>
@@ -221,23 +208,16 @@ watch(()=>props.active, active=>{if(active)void reload(true)}, {immediate:true})
 <style scoped>
 .automation{display:grid;gap:16px;max-width:1100px}
 .auto-header{display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap}
-.auto-header h2{font-size:22px;margin:0;font-weight:750}.auto-header p,.auto-hint,.auto-empty{color:var(--text-secondary);font-size:13px;line-height:1.6;margin:4px 0 0}
-.auto-card{border:1px solid var(--fluid-card-border);border-radius:20px;padding:20px;display:grid;gap:14px;background:var(--fluid-card-fill);box-shadow:var(--fluid-card-shadow);transition:transform var(--motion-fast) var(--motion-spring),box-shadow 0.24s ease}
+.auto-header h2{font-size:22px;margin:0;font-weight:750}.auto-header p{color:var(--text-secondary);font-size:13px;line-height:1.6;margin:4px 0 0}
+.auto-card{border:1px solid var(--fluid-card-border);border-radius:20px;padding:20px;display:grid;gap:14px;background:var(--fluid-card-fill);box-shadow:var(--fluid-card-shadow);transition:transform var(--motion-fast) var(--motion-spring),opacity var(--motion-fast) ease}
 .auto-card:hover{transform:translateY(-2px);box-shadow:var(--fluid-hover-shadow)}
-.auto-empty-card{justify-items:center;text-align:center;padding:38px 24px;gap:8px}
-.auto-empty-card:hover{transform:none}
-.auto-empty-card strong{font-size:16px;color:var(--text-primary)}
-.auto-empty-card code{font-size:12px;padding:2px 6px;border-radius:6px;background:var(--fluid-card-item-fill);border:1px solid var(--fluid-card-border)}
-.auto-security-note{margin:0;padding:10px 14px;border-radius:12px;background:var(--fluid-card-item-fill);border:1px solid var(--fluid-card-border);color:var(--text-secondary);font-size:12px}
 .auto-task{display:flex;align-items:center;gap:14px}.auto-icon{border-radius:14px;padding:10px;background:color-mix(in srgb,var(--accent-primary) 12%,transparent);color:var(--accent-primary)}
 .auto-main{display:grid;gap:3px;min-width:0}.auto-main strong{font-size:15px;color:var(--text-primary);font-weight:650}.auto-main small{font-size:12px;color:var(--text-secondary)}
 .auto-actions{display:flex;flex-wrap:wrap;align-items:center;gap:10px}
-.auto-btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--stroke-subtle);background:var(--surface-base);color:inherit;border-radius:10px;padding:7px 13px;cursor:pointer;font:inherit;font-size:12.5px;font-weight:600;box-shadow:none;transition:transform var(--motion-fast) var(--motion-spring),background var(--motion-fast) ease}
-.auto-btn:hover{background:var(--fluid-card-hover);border-color:var(--stroke-strong);transform:translateY(-1px)}
-.auto-btn:disabled{opacity:.45;cursor:not-allowed;transform:none}.auto-btn.primary{background:var(--accent-primary);color:white;border-color:var(--accent-primary)}.auto-btn.danger{color:var(--error)}
 .auto-error{color:var(--error);font-size:13px}.auto-editor,.auto-logs{padding:14px 0 0 0;border-top:1px solid var(--stroke-subtle);background:transparent;display:grid;gap:12px}
 .auto-editor p{font-size:12px;margin:0}.auto-inputs{display:flex;flex-wrap:wrap;gap:12px}.auto-inputs label{display:grid;gap:5px;font-size:12px;color:var(--text-secondary)}.auto-inputs input{padding:8px 12px;border-radius:9px;border:1px solid var(--stroke-subtle);background:var(--surface-base);color:inherit}
 .auto-checks{display:flex;gap:14px;flex-wrap:wrap;font-size:13px}.auto-checks strong{display:flex;align-items:center;gap:5px}.auto-checks label{display:flex;align-items:center;gap:5px}.auto-checks small{opacity:.6}
 .auto-logs details{border-top:1px solid var(--fluid-card-border);padding-top:10px}.auto-logs summary{cursor:pointer;font-size:12.5px;font-weight:600}.auto-logs pre{overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;max-height:260px;font-size:12px;border-radius:10px;padding:10px;background:rgba(0,0,0,0.18)}
-@media(max-width:600px){.auto-header{align-items:flex-start;flex-direction:column}.auto-inputs{display:grid}.auto-btn{font-size:12px}}
+@media(max-width:600px){.auto-header{align-items:flex-start;flex-direction:column}.auto-inputs{display:grid}}
+@media(prefers-reduced-motion:reduce){.auto-card{transition:none}}
 </style>

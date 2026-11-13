@@ -1,6 +1,7 @@
-import { nextTick, ref, type Ref } from "vue";
+import { nextTick, ref, watch, type Ref } from "vue";
 import type Hls from "hls.js";
 import type { ProgressSnapshot } from "./playbackProgressWriter.ts";
+import { useCinemaSubtitles } from "./cinemaSubtitles.ts";
 import {
   canSeekWithinHlsRanges,
   cinemaSeekTarget,
@@ -49,7 +50,6 @@ export function useCinemaPlayback({
   const playbackPosition = ref(0);
   const playbackDuration = ref(0);
   const playbackBuffered = ref(0);
-  const seekPreview = ref<number | null>(null);
   const pendingSeekTarget = ref<number | null>(null);
 
   let hls: Hls | null = null;
@@ -87,6 +87,33 @@ export function useCinemaPlayback({
     preferLocalDecode: controls.preferLocalDecode,
     directLocalOverride: controls.directLocalOverride,
     mediaPath,
+  });
+
+  const subtitles = useCinemaSubtitles({
+    caption,
+    player,
+    hlsPlayer,
+    changeCaption: options.changeCaption,
+    baseTrack: options.track,
+  });
+  const {
+    subtitleSize,
+    subtitleOffset,
+    localSubtitleName,
+    localSubtitleError,
+    applySubtitleCueOffsets,
+    loadLocalSubtitleFile,
+    clearLocalSubtitle,
+    setSubtitleSize,
+    adjustSubtitleOffset,
+    resetSubtitleOffset,
+    track: trackWithLocal,
+    captionLoaded,
+  } = subtitles;
+
+  watch([player, hlsPlayer], ([directEl, hlsEl]) => {
+    if (directEl) controls.applyMediaPreferencesTo(directEl);
+    if (hlsEl) controls.applyMediaPreferencesTo(hlsEl);
   });
 
   function clearSeekDebounce() {
@@ -181,12 +208,13 @@ export function useCinemaPlayback({
 
   function resetPlaybackForFilm(film: Movie | null) {
     clearSeekDebounce();
-    seekPreview.value = null;
     pendingSeekTarget.value = null;
     desiredHlsStart = null;
     pendingDirectSeek = null;
     playbackBuffered.value = 0;
     if (!film) {
+      clearLocalSubtitle();
+      subtitleOffset.value = 0;
       observedDurationScopeKey = "";
       maxObservedDuration = 0;
       playbackPosition.value = 0;
@@ -212,7 +240,6 @@ export function useCinemaPlayback({
     const target = cinemaSeekTarget(targetPosition, 0, total);
     const session = hlsSession.value;
     const video = activeVideo();
-    seekPreview.value = null;
 
     if (!session && !hlsStarting.value) {
       clearSeekDebounce();
@@ -514,9 +541,8 @@ export function useCinemaPlayback({
     const p = activeVideo();
     const session = hlsSession.value;
     if (!v || !p) return;
-    controls.applyPlaybackRate();
-    p.muted = controls.isMuted.value;
-    if (controls.volume.value > 0) p.volume = controls.volume.value;
+    controls.applyMediaPreferencesTo(p);
+    applySubtitleCueOffsets();
 
     if (!session && pendingDirectSeek !== null) {
       const target = pendingDirectSeek;
@@ -624,19 +650,23 @@ export function useCinemaPlayback({
     hlsStarting,
     hlsQuality,
     playbackRate: controls.playbackRate,
+    isSpeedBoosting: controls.isSpeedBoosting,
     autoplayNext: controls.autoplayNext,
     preferLocalDecode: controls.preferLocalDecode,
     directLocalOverride: controls.directLocalOverride,
+    subtitleSize,
+    subtitleOffset,
+    localSubtitleName,
+    localSubtitleError,
     playbackPosition,
     playbackDuration,
     playbackBuffered,
     canPictureInPicture: controls.canPictureInPicture,
-    seekPreview,
     progressSaveError: persistence.progressSaveError,
     retryProgress: persistence.retryProgress,
     currentFilmProgressUnsaved: persistence.currentFilmProgressUnsaved,
     stream: options.stream,
-    track: options.track,
+    track: trackWithLocal,
     download: options.download,
     playback: options.playback,
     canAttemptDirect: options.canAttemptDirect,
@@ -654,6 +684,8 @@ export function useCinemaPlayback({
     currentQuality: options.currentQuality,
     cinemaQualityOptions: options.cinemaQualityOptions,
     setPlaybackRate: controls.setPlaybackRate,
+    startHoldSpeedBoost: controls.startHoldSpeedBoost,
+    stopHoldSpeedBoost: controls.stopHoldSpeedBoost,
     setAutoplayNext: controls.setAutoplayNext,
     setPreferLocalDecode,
     activeVideo,
@@ -662,9 +694,16 @@ export function useCinemaPlayback({
     tick,
     resetProgressClock,
     changeCaption: options.changeCaption,
+    captionLoaded,
     captionSrclang: options.captionSrclang,
+    loadLocalSubtitleFile,
+    clearLocalSubtitle,
+    setSubtitleSize,
+    adjustSubtitleOffset,
+    resetSubtitleOffset,
     jumpPlayback,
     seekAbsolute,
+    exitCinemaFullscreen: controls.exitCinemaFullscreen,
     toggleCinemaFullscreen: controls.toggleCinemaFullscreen,
     toggleCinemaPictureInPicture: controls.toggleCinemaPictureInPicture,
     transcodeErrorMessage,
@@ -676,6 +715,7 @@ export function useCinemaPlayback({
     syncVideoMediaState: controls.syncVideoMediaState,
     togglePlayPause,
     setVolume: controls.setVolume,
+    adjustVolume: controls.adjustVolume,
     toggleMute: controls.toggleMute,
     toggleFillScreen: controls.toggleFillScreen,
     syncFullscreenState: controls.syncFullscreenState,

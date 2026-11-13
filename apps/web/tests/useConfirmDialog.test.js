@@ -1,7 +1,6 @@
-// @ts-nocheck
 import assert from "node:assert/strict";
 import test from "node:test";
-import { requestAlert, requestConfirm, useConfirmDialogState } from "./useConfirmDialog.ts";
+import { requestAlert, requestConfirm, useConfirmDialogState } from "../src/useConfirmDialog.ts";
 
 test("requestConfirm opens modal state and resolves true on acceptDialog", async () => {
   const { dialogState, acceptDialog } = useConfirmDialogState();

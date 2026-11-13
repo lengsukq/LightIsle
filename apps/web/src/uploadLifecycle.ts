@@ -12,7 +12,7 @@ export function adoptUploadTask<T extends UploadTaskState>(
 
 export async function refreshAfterPublishedUpload(
   completedCount: number,
-  refreshFiles: () => void | Promise<void>,
+  refreshFiles: () => void | Promise<unknown>,
 ): Promise<void> {
   if (completedCount > 0) await refreshFiles();
 }

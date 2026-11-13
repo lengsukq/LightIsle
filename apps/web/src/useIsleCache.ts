@@ -392,44 +392,6 @@ export function putMetadata<T = unknown>(
   }
 }
 
-export function invalidateMetadata(prefixOrKey: string): void {
-  hydrateLedgersIfNeeded()
-  for (const k of Array.from(memoryMetaStore.keys())) {
-    if (k === prefixOrKey || k.startsWith(prefixOrKey)) {
-      const entry = memoryMetaStore.get(k)
-      if (entry) {
-        memoryMetaBytes = Math.max(0, memoryMetaBytes - entry.bytes)
-      }
-      memoryMetaStore.delete(k)
-      memoryAssetLedgers.metadata.delete(k)
-      dirtyMetaWrites.delete(k)
-    }
-  }
-  const storage = safeStorage()
-  if (storage) {
-    try {
-      const toRemove: string[] = []
-      for (let i = 0; i < storage.length; i++) {
-        const fullKey = storage.key(i)
-        if (!fullKey || !fullKey.startsWith(META_STORAGE_PREFIX)) continue
-        const subKey = fullKey.slice(META_STORAGE_PREFIX.length)
-        if (subKey === prefixOrKey || subKey.startsWith(prefixOrKey)) {
-          toRemove.push(fullKey)
-        }
-      }
-      for (const fullKey of toRemove) {
-        storage.removeItem(fullKey)
-      }
-    } catch {
-      // Ignore storage error
-    }
-  }
-}
-
-/**
- * Clears session-scoped metadata caches from RAM (and persisted metadata snapshots)
- * on logout or 401 expiry so accounts never share stale metadata in memory.
- */
 export function clearRuntimeMemoryCache(): void {
   memoryMetaStore.clear()
   memoryMetaBytes = 0
@@ -620,7 +582,6 @@ export function useIsleCache() {
     recordAssetHit,
     getMetadata,
     putMetadata,
-    invalidateMetadata,
     clearRuntimeMemoryCache,
     flushLedgerNow,
     inspectLocalCache,

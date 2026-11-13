@@ -104,7 +104,7 @@ function submitEditor() {
   <section v-if="storage" class="apps-storage-card" aria-label="应用数据存储位置">
     <div class="apps-storage-header">
       <div>
-        <div class="mcp-title-row">
+        <div class="apps-section-title-row">
           <HardDrive :size="17" />
           <strong>应用数据存储位置</strong>
           <IsleBadge variant="accent" size="sm">
@@ -235,7 +235,7 @@ function submitEditor() {
     <div v-if="editorMode" class="apps-storage-editor">
       <div class="apps-storage-editor-head">
         <strong>{{ editorMode === "internal" ? "修改 Mac 内置盘应用目录" : (externalLocation ? "更换其他盘位置" : "添加其他盘位置（仅限 1 个）") }}</strong>
-        <button type="button" class="mcp-mini-btn" @click="editorMode = null">收起</button>
+        <IsleButton variant="glass" size="sm" @click="editorMode = null">收起</IsleButton>
       </div>
 
       <div v-if="editorMode === 'external' && volumes.length > 0" class="apps-storage-vol-picks">
@@ -250,6 +250,7 @@ function submitEditor() {
         >
           {{ vol.name }}
           <small v-if="vol.freeBytes">（余 {{ formatBytes(vol.freeBytes) }}）</small>
+          <small v-if="vol.readOnly">（只读）</small>
         </button>
       </div>
 
@@ -281,3 +282,43 @@ function submitEditor() {
     </div>
   </section>
 </template>
+
+<style scoped>
+.apps-storage-card {
+  border: 1px solid var(--fluid-card-border); border-radius: 20px; background: var(--fluid-card-fill);
+  box-shadow: var(--fluid-card-shadow); padding: 16px 18px; margin-bottom: 16px; display: grid; gap: 12px;
+}
+.apps-storage-header small { display: block; margin-top: 5px; color: var(--text-secondary); line-height: 1.5; }
+.apps-storage-slots { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.apps-storage-slot {
+  padding: 13px 14px; border-radius: 14px; background: var(--fluid-card-item-fill);
+  border: 1px solid var(--fluid-card-border); display: grid; gap: 8px;
+}
+.apps-storage-slot.default { border-color: color-mix(in srgb, var(--accent-primary) 42%, transparent); }
+.apps-storage-slot.offline { border-color: color-mix(in srgb, #f59e0b 45%, transparent); }
+.apps-storage-slot-empty { background: transparent; border-style: dashed; }
+.apps-storage-slot-empty small { color: var(--text-secondary); line-height: 1.5; }
+.apps-storage-slot-top { display: flex; justify-content: space-between; gap: 10px; }
+.apps-storage-slot-title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.apps-storage-path { display: block; margin-top: 4px; font-size: 12px; color: var(--text-secondary); word-break: break-all; }
+.apps-storage-meta { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--text-secondary); }
+.apps-storage-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.apps-storage-editor {
+  padding: 12px 14px; border-radius: 14px; background: var(--fluid-card-item-fill);
+  border: 1px solid var(--fluid-card-border); display: grid; gap: 10px;
+}
+.apps-storage-editor-head { display: flex; align-items: center; justify-content: space-between; }
+.apps-storage-vol-picks { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); }
+.apps-storage-vol-chip {
+  border: 1px solid var(--fluid-card-border); background: var(--fluid-card-fill); border-radius: 999px;
+  padding: 4px 10px; font-size: 12px; cursor: pointer; color: var(--text-primary);
+}
+.apps-storage-vol-chip:disabled { opacity: 0.45; cursor: not-allowed; }
+.apps-storage-editor-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.apps-storage-editor-fields label { display: grid; gap: 4px; font-size: 12px; color: var(--text-secondary); }
+.apps-storage-editor-fields input {
+  padding: 8px 10px; border-radius: 10px; border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-fill); color: var(--text-primary); font-size: 13px;
+}
+.apps-storage-editor-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+</style>

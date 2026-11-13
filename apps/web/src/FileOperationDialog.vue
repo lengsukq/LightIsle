@@ -91,6 +91,10 @@ async function loadFolders(more = false) {
   const path = dir.value;
   loading.value = true;
   error.value = "";
+  if (!more) {
+    folders.value = [];
+    nextCursor.value = "";
+  }
   try {
     const data = await props.listFolders(path, more ? nextCursor.value : "");
     if (request !== generation || path !== dir.value) return;
@@ -157,16 +161,16 @@ async function submit() {
       </div>
 
       <div class="file-operation-folder-list">
-        <p v-if="loading" class="file-operation-feedback"><LoaderCircle :size="15" class="spin-icon" /> 正在读取目录…</p>
+        <p v-if="loading && !folders.length" class="file-operation-feedback"><LoaderCircle :size="15" class="spin-icon" /> 正在读取目录…</p>
         <template v-else>
-          <button v-if="dir !== '.'" type="button" class="file-operation-folder" @click="dir = dir.split('/').slice(0, -1).join('/') || '.'">
+          <button v-if="dir !== '.'" type="button" class="file-operation-folder" :disabled="loading || busy" @click="dir = dir.split('/').slice(0, -1).join('/') || '.'">
             <ChevronLeft :size="17" /> 上一级
           </button>
-          <button v-for="folder in folders" :key="folder.path" type="button" class="file-operation-folder" @click="dir = folder.path">
+          <button v-for="folder in folders" :key="folder.path" type="button" class="file-operation-folder" :disabled="loading || busy" @click="dir = folder.path">
             <Folder :size="18" /> <span>{{ folder.name }}</span> <ChevronRight :size="15" />
           </button>
           <p v-if="!folders.length" class="file-operation-feedback">当前没有可浏览的子文件夹。</p>
-          <IsleButton v-if="nextCursor" variant="glass" size="sm" class="file-operation-more" @click="loadFolders(true)">
+          <IsleButton v-if="nextCursor" variant="glass" size="sm" :loading="loading" class="file-operation-more" @click="loadFolders(true)">
             加载更多文件夹
           </IsleButton>
         </template>
@@ -340,6 +344,17 @@ async function submit() {
 @keyframes spin {
   to {
     transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .file-operation-crumbs button,
+  .file-operation-folder,
+  .file-operation-label input {
+    transition: none;
+  }
+  .spin-icon {
+    animation: none;
   }
 }
 </style>

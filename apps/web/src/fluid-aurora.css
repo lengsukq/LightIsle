@@ -1,0 +1,135 @@
+/* =========================================================================
+   Dynamic Chromatic Rainbow Aurora Atmosphere (七彩动态极光背景)
+   ========================================================================= */
+.aurora-ambient {
+  position: fixed;
+  inset: -18vmax;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+  filter: blur(85px) saturate(100%);
+  opacity: 0.18;
+  transition: opacity 1.2s ease, filter 1.2s ease;
+}
+[data-theme="dark"] .aurora-ambient {
+  opacity: 0.24;
+  filter: blur(95px) saturate(110%);
+}
+
+.aurora-orb {
+  position: absolute;
+  border-radius: 50%;
+  mix-blend-mode: normal;
+  transition: background 1.4s ease, opacity 1.2s ease;
+}
+[data-theme="dark"] .aurora-orb {
+  mix-blend-mode: screen;
+}
+
+/* 1. Default: 七彩极光 (Rainbow Chromatic Aurora) */
+:root, [data-atmosphere="aurora"] {
+  --aurora-1: radial-gradient(circle, rgba(244, 63, 94, 0.46) 0%, rgba(236, 72, 153, 0.18) 50%, transparent 72%);
+  --aurora-2: radial-gradient(circle, rgba(124, 58, 237, 0.48) 0%, rgba(99, 102, 241, 0.22) 50%, transparent 72%);
+  --aurora-3: radial-gradient(circle, rgba(14, 165, 233, 0.44) 0%, rgba(37, 99, 235, 0.18) 50%, transparent 72%);
+  --aurora-4: radial-gradient(circle, rgba(16, 185, 129, 0.40) 0%, rgba(20, 184, 166, 0.16) 50%, transparent 72%);
+  --aurora-5: radial-gradient(circle, rgba(245, 158, 11, 0.38) 0%, rgba(249, 115, 22, 0.15) 50%, transparent 72%);
+}
+[data-theme="dark"], [data-theme="dark"][data-atmosphere="aurora"] {
+  --aurora-1: radial-gradient(circle, rgba(244, 63, 94, 0.58) 0%, rgba(236, 72, 153, 0.25) 50%, transparent 72%);
+  --aurora-2: radial-gradient(circle, rgba(139, 92, 246, 0.60) 0%, rgba(99, 102, 241, 0.28) 50%, transparent 72%);
+  --aurora-3: radial-gradient(circle, rgba(56, 189, 248, 0.54) 0%, rgba(59, 130, 246, 0.24) 50%, transparent 72%);
+  --aurora-4: radial-gradient(circle, rgba(52, 211, 153, 0.48) 0%, rgba(20, 184, 166, 0.22) 50%, transparent 72%);
+  --aurora-5: radial-gradient(circle, rgba(251, 191, 36, 0.48) 0%, rgba(249, 115, 22, 0.20) 50%, transparent 72%);
+}
+
+/* 2. 琉璃晴海 (Crystal Azure) */
+[data-atmosphere="azure"] {
+  --aurora-1: radial-gradient(circle, rgba(37, 99, 235, 0.45) 0%, rgba(59, 130, 246, 0.20) 50%, transparent 72%);
+  --aurora-2: radial-gradient(circle, rgba(14, 165, 233, 0.48) 0%, rgba(6, 182, 212, 0.22) 50%, transparent 72%);
+  --aurora-3: radial-gradient(circle, rgba(99, 102, 241, 0.42) 0%, rgba(129, 140, 248, 0.18) 50%, transparent 72%);
+  --aurora-4: radial-gradient(circle, rgba(20, 184, 166, 0.38) 0%, rgba(45, 212, 191, 0.16) 50%, transparent 72%);
+  --aurora-5: radial-gradient(circle, rgba(56, 189, 248, 0.36) 0%, rgba(186, 230, 253, 0.14) 50%, transparent 72%);
+}
+[data-theme="dark"][data-atmosphere="azure"] {
+  --aurora-1: radial-gradient(circle, rgba(59, 130, 246, 0.58) 0%, rgba(37, 99, 235, 0.26) 50%, transparent 72%);
+  --aurora-2: radial-gradient(circle, rgba(56, 189, 248, 0.60) 0%, rgba(6, 182, 212, 0.28) 50%, transparent 72%);
+  --aurora-3: radial-gradient(circle, rgba(129, 140, 248, 0.52) 0%, rgba(99, 102, 241, 0.24) 50%, transparent 72%);
+  --aurora-4: radial-gradient(circle, rgba(45, 212, 191, 0.46) 0%, rgba(20, 184, 166, 0.20) 50%, transparent 72%);
+  --aurora-5: radial-gradient(circle, rgba(2, 132, 199, 0.48) 0%, rgba(14, 165, 233, 0.22) 50%, transparent 72%);
+}
+
+/* 3. 落日晚霞 (Sunset Coral) */
+[data-atmosphere="sunset"] {
+  --aurora-1: radial-gradient(circle, rgba(244, 63, 94, 0.48) 0%, rgba(251, 113, 133, 0.20) 50%, transparent 72%);
+  --aurora-2: radial-gradient(circle, rgba(245, 158, 11, 0.45) 0%, rgba(251, 146, 60, 0.20) 50%, transparent 72%);
+  --aurora-3: radial-gradient(circle, rgba(236, 72, 153, 0.44) 0%, rgba(244, 114, 182, 0.18) 50%, transparent 72%);
+  --aurora-4: radial-gradient(circle, rgba(168, 85, 247, 0.38) 0%, rgba(192, 132, 252, 0.16) 50%, transparent 72%);
+  --aurora-5: radial-gradient(circle, rgba(253, 186, 116, 0.40) 0%, rgba(254, 215, 170, 0.15) 50%, transparent 72%);
+}
+[data-theme="dark"][data-atmosphere="sunset"] {
+  --aurora-1: radial-gradient(circle, rgba(244, 63, 94, 0.60) 0%, rgba(251, 113, 133, 0.28) 50%, transparent 72%);
+  --aurora-2: radial-gradient(circle, rgba(245, 158, 11, 0.58) 0%, rgba(251, 146, 60, 0.26) 50%, transparent 72%);
+  --aurora-3: radial-gradient(circle, rgba(236, 72, 153, 0.55) 0%, rgba(244, 114, 182, 0.25) 50%, transparent 72%);
+  --aurora-4: radial-gradient(circle, rgba(168, 85, 247, 0.48) 0%, rgba(192, 132, 252, 0.22) 50%, transparent 72%);
+  --aurora-5: radial-gradient(circle, rgba(234, 88, 12, 0.50) 0%, rgba(249, 115, 22, 0.24) 50%, transparent 72%);
+}
+
+/* 4. 幻紫星云 (Cosmic Nebula) */
+[data-atmosphere="nebula"] {
+  --aurora-1: radial-gradient(circle, rgba(124, 58, 237, 0.50) 0%, rgba(147, 51, 234, 0.22) 50%, transparent 72%);
+  --aurora-2: radial-gradient(circle, rgba(217, 70, 239, 0.46) 0%, rgba(192, 38, 211, 0.20) 50%, transparent 72%);
+  --aurora-3: radial-gradient(circle, rgba(79, 70, 229, 0.45) 0%, rgba(99, 102, 241, 0.20) 50%, transparent 72%);
+  --aurora-4: radial-gradient(circle, rgba(14, 165, 233, 0.40) 0%, rgba(56, 189, 248, 0.16) 50%, transparent 72%);
+  --aurora-5: radial-gradient(circle, rgba(236, 72, 153, 0.38) 0%, rgba(244, 114, 182, 0.15) 50%, transparent 72%);
+}
+[data-theme="dark"][data-atmosphere="nebula"] {
+  --aurora-1: radial-gradient(circle, rgba(147, 51, 234, 0.62) 0%, rgba(124, 58, 237, 0.30) 50%, transparent 72%);
+  --aurora-2: radial-gradient(circle, rgba(217, 70, 239, 0.58) 0%, rgba(192, 38, 211, 0.28) 50%, transparent 72%);
+  --aurora-3: radial-gradient(circle, rgba(99, 102, 241, 0.55) 0%, rgba(79, 70, 229, 0.25) 50%, transparent 72%);
+  --aurora-4: radial-gradient(circle, rgba(56, 189, 248, 0.50) 0%, rgba(14, 165, 233, 0.24) 50%, transparent 72%);
+  --aurora-5: radial-gradient(circle, rgba(236, 72, 153, 0.48) 0%, rgba(219, 39, 119, 0.22) 50%, transparent 72%);
+}
+
+.aurora-orb-1 {
+  width: 62vmax;
+  height: 56vmax;
+  top: -12vmax;
+  right: -8vmax;
+  background: var(--aurora-1);
+}
+.aurora-orb-2 {
+  width: 58vmax;
+  height: 52vmax;
+  bottom: -12vmax;
+  left: -10vmax;
+  background: var(--aurora-2);
+}
+.aurora-orb-3 {
+  width: 52vmax;
+  height: 50vmax;
+  top: 25vmax;
+  left: 20vmax;
+  background: var(--aurora-3);
+}
+.aurora-orb-4 {
+  width: 48vmax;
+  height: 46vmax;
+  bottom: 8vmax;
+  right: 18vmax;
+  background: var(--aurora-4);
+}
+.aurora-orb-5 {
+  width: 46vmax;
+  height: 44vmax;
+  top: 8vmax;
+  left: 8vmax;
+  background: var(--aurora-5);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aurora-ambient,
+  .aurora-orb {
+    transition: none;
+    animation: none !important;
+  }
+}

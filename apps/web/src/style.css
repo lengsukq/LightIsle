@@ -229,7 +229,7 @@ button:focus-visible {
   border-top: 0;
 }
 
-/* Pulsing Heartbeat Dot */
+/* Status Heartbeat Dot */
 .dot {
   width: 8px;
   height: 8px;
@@ -238,16 +238,10 @@ button:focus-visible {
   display: inline-block;
   box-shadow: 0 0 0 4px rgba(52, 199, 89, 0.2);
   flex-shrink: 0;
-  animation: pulseDot 2.4s ease-in-out infinite;
 }
 .dot.off {
   background: var(--error);
   box-shadow: 0 0 0 4px rgba(255, 59, 48, 0.2);
-  animation: none;
-}
-@keyframes pulseDot {
-  0%, 100% { transform: scale(1); opacity: 1; }
-  50% { transform: scale(1.15); opacity: 0.85; }
 }
 
 /* Main Content & Liquid Glass Topbar */
@@ -315,11 +309,6 @@ button:focus-visible {
   background: var(--surface-raised);
   color: var(--text-primary);
   font: inherit;
-}
-.root-context-embedded {
-  display: flex;
-  justify-content: flex-end;
-  padding: 10px clamp(18px, 4vw, 48px) 0;
 }
 .root-switching {
   margin: 10px clamp(18px, 4vw, 48px) 0;
@@ -457,7 +446,6 @@ button:focus-visible {
   right: 12%;
   top: 8%;
   opacity: 0.7;
-  animation: floatOrb 7s ease-in-out infinite alternate;
 }
 .orb-b {
   width: 160px;
@@ -466,7 +454,6 @@ button:focus-visible {
   right: -5%;
   bottom: -30px;
   opacity: 0.8;
-  animation: floatOrb 9s ease-in-out infinite alternate-reverse;
 }
 .orb-c {
   width: 100px;
@@ -475,10 +462,6 @@ button:focus-visible {
   right: 60%;
   top: -20px;
   opacity: 0.6;
-}
-@keyframes floatOrb {
-  0% { transform: translateY(0) scale(1); }
-  100% { transform: translateY(-16px) scale(1.08); }
 }
 
 /* Frosted 3D Compass Glass */
@@ -495,11 +478,6 @@ button:focus-visible {
   transform: rotate(-8deg);
   -webkit-backdrop-filter: blur(16px);
   backdrop-filter: blur(16px);
-  animation: glassTilt 8s ease-in-out infinite alternate;
-}
-@keyframes glassTilt {
-  0% { transform: rotate(-8deg) translateY(0); }
-  100% { transform: rotate(-4deg) translateY(-8px); }
 }
 
 /* Bento Grid System Metrics */
@@ -538,72 +516,6 @@ button:focus-visible {
   background: var(--accent-muted);
 }
 
-.stat-grid {
-  display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  gap: 16px;
-}
-.metric-card {
-  min-width: 0;
-  min-height: 185px;
-  background: var(--surface-raised);
-  border: 1px solid var(--stroke-subtle);
-  border-radius: var(--radius-lg);
-  padding: 22px;
-  display: flex;
-  flex-direction: column;
-  box-shadow: var(--shadow-elevated);
-  transition: transform var(--motion-fast) var(--motion-spring), box-shadow var(--motion-fast) ease, border-color var(--motion-fast) ease;
-}
-.metric-card:hover {
-  transform: translateY(-3px);
-  box-shadow: var(--shadow-float);
-  border-color: var(--accent-muted);
-}
-
-.metric-top {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-}
-.metric-icon {
-  width: 38px;
-  height: 38px;
-  border-radius: var(--radius-md);
-  display: grid;
-  place-items: center;
-}
-.metric-icon.violet { background: rgba(145, 113, 219, 0.14); color: #9171DB; }
-.metric-icon.blue   { background: rgba(0, 113, 227, 0.12); color: #0071E3; }
-.metric-icon.teal   { background: rgba(60, 175, 171, 0.14); color: #3CAFAB; }
-.metric-icon.orange { background: rgba(255, 149, 0, 0.14); color: #FF9500; }
-
-.metric-category {
-  font-size: 12px;
-  color: var(--text-secondary);
-  font-weight: 500;
-  white-space: nowrap;
-}
-.metric-value {
-  font-size: 32px;
-  font-weight: 750;
-  letter-spacing: -1px;
-  margin-top: 18px;
-}
-.metric-value.small {
-  font-size: 24px;
-  margin-top: 20px;
-}
-.metric-sub {
-  font-size: 12px;
-  color: var(--text-secondary);
-  margin-top: 4px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
 .progress-track {
   margin-top: auto;
   height: 6px;
@@ -621,60 +533,13 @@ button:focus-visible {
 .aqua        { background: linear-gradient(90deg, #6EE7B7, #10B981); }
 .amber       { background: linear-gradient(90deg, #FDE68A, #F59E0B); }
 
-/* Quick Feature Cards (Bento) */
-.feature-grid {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 16px;
-}
-.feature-card {
-  min-width: 0;
-  border: 1px solid var(--stroke-subtle);
-  background: var(--surface-raised);
-  border-radius: var(--radius-lg);
-  padding: 22px;
-  display: flex;
-  align-items: center;
-  gap: 16px;
-  text-align: left;
-  box-shadow: var(--shadow-elevated);
-  transition: transform var(--motion-fast) var(--motion-spring), box-shadow var(--motion-fast) ease, border-color var(--motion-fast) ease;
-}
-.feature-card:hover {
-  transform: translateY(-3px);
-  box-shadow: var(--shadow-float);
-  border-color: var(--accent-muted);
-}
-.feature-icon {
-  width: 52px;
-  height: 52px;
-  display: grid;
-  place-items: center;
-  border-radius: var(--radius-md);
-  flex-shrink: 0;
-}
-.feature-icon.file   { background: rgba(0, 113, 227, 0.12); color: #0071E3; }
-.feature-icon.photos { background: rgba(255, 45, 85, 0.12); color: #FF2D55; }
-.feature-icon.cinema { background: rgba(255, 149, 0, 0.12); color: #FF9500; }
-
-.feature-card h3 {
-  font-size: 15px;
-  font-weight: 650;
-  margin: 0 0 4px;
-}
-.feature-card p {
-  font-size: 12px;
-  color: var(--text-secondary);
-  margin: 0;
-  line-height: 1.5;
-}
 .feature-arrow {
   margin-left: auto;
   color: var(--text-tertiary);
   flex-shrink: 0;
   transition: transform var(--motion-fast) ease;
 }
-.feature-card:hover .feature-arrow {
+.sanctuary-card:hover .feature-arrow {
   transform: translateX(3px);
   color: var(--accent-primary);
 }
@@ -699,4 +564,13 @@ button:focus-visible {
   margin-bottom: 16px;
   font-size: 13px;
   box-shadow: var(--shadow-elevated);
+}
+@media (prefers-reduced-motion: reduce) {
+  .side-nav button,
+  .metric-card,
+  .feature-card,
+  .feature-arrow,
+  .refresh {
+    transition: none;
+  }
 }

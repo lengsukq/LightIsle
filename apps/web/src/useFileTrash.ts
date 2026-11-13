@@ -25,7 +25,9 @@ export function useFileTrash(deps: FileTrashDependencies) {
   const trashItems = ref<FileTrashEntry[]>([]);
   const trashRetention = ref<{ enabled: boolean; days: number } | null>(null);
   const trashLoading = ref(false);
+  const trashBusy = ref(false);
   const trashError = ref("");
+  const trashNotice = ref("");
   const showingTrash = ref(false);
   let generation = 0;
 
@@ -34,7 +36,9 @@ export function useFileTrash(deps: FileTrashDependencies) {
     trashItems.value = [];
     trashRetention.value = null;
     trashLoading.value = false;
+    trashBusy.value = false;
     trashError.value = "";
+    trashNotice.value = "";
     showingTrash.value = false;
   }
 
@@ -81,45 +85,60 @@ export function useFileTrash(deps: FileTrashDependencies) {
     } else {
       generation++;
       trashLoading.value = false;
+      trashNotice.value = "";
     }
   }
 
   async function restoreTrash(entry: FileTrashEntry) {
+    if (trashBusy.value) return;
     const epoch = deps.epoch();
     const request = generation;
+    trashBusy.value = true;
     trashError.value = "";
+    trashNotice.value = "";
     try {
       await deps.write(deps.path("/api/v2/files/trash/" +
         encodeURIComponent(entry.id) + "/restore"));
       if (!current(request, epoch)) return;
       await loadTrash();
       if (deps.epoch() === epoch) await deps.refreshFiles();
+      if (current(request, epoch)) trashNotice.value = "已恢复「" + entry.name + "」到原位置。";
     } catch (error) {
       if (current(request, epoch) && !deps.isAbort(error)) {
         trashError.value = "未能确认恢复结果：" + deps.errorLabel(error);
       }
+    } finally {
+      trashBusy.value = false;
     }
   }
 
   async function purgeTrashItem(entry: FileTrashEntry) {
+    if (trashBusy.value) return;
     const epoch = deps.epoch();
     if (!(await deps.confirm(`永久删除“${entry.name}”？此操作无法撤销。`))) return;
     if (epoch !== deps.epoch()) return;
     const request = generation;
+    trashBusy.value = true;
     trashError.value = "";
+    trashNotice.value = "";
     try {
       await deps.remove(deps.path("/api/v2/files/trash/" +
         encodeURIComponent(entry.id)));
-      if (current(request, epoch)) await loadTrash();
+      if (current(request, epoch)) {
+        await loadTrash();
+        if (current(request, epoch)) trashNotice.value = "已永久删除「" + entry.name + "」。";
+      }
     } catch (error) {
       if (current(request, epoch) && !deps.isAbort(error)) {
         trashError.value = "未能确认永久删除结果：" + deps.errorLabel(error);
       }
+    } finally {
+      trashBusy.value = false;
     }
   }
 
   return {
-    trashItems, trashRetention, trashLoading, trashError, showingTrash,
+    trashItems, trashRetention, trashLoading, trashBusy, trashError, trashNotice, showingTrash,
     loadTrash, openTrash, restoreTrash, purgeTrashItem, reset,
   };
 }

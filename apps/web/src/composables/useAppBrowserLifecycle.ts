@@ -1,5 +1,6 @@
 import { onMounted, onUnmounted, watch, type Ref } from "vue";
 import { installImageResourceObserver } from "../useIsleCache.ts";
+import { resolvePermittedPage, resolvePermittedSettingsGroup } from "../shellRouteGuard.ts";
 
 const FAST_POLL_INTERVAL_MS = 5_000;
 const SLOW_POLL_INTERVAL_MS = 30_000;
@@ -19,6 +20,8 @@ export interface AppBrowserLifecycleOptions<TPage extends string, TGroup extends
   fileDirectoryLoaded: () => boolean;
   isAuthenticated: () => boolean;
   isAdmin: () => boolean;
+  computerFilesAllowed?: () => boolean;
+  computerFilesResolved?: () => boolean;
   rootFeatureContextReady: () => boolean;
   rootDiscoveryLoading: () => boolean;
   getLastRootDiscoveryAt: () => number;
@@ -48,9 +51,47 @@ export function useAppBrowserLifecycle<TPage extends string, TGroup extends stri
   let lastHostCheck = 0;
   let lastOverviewTaskRefresh = 0;
 
+  function clampActivePageAndGroup() {
+    if (!opts.isAuthenticated()) return;
+    const isAdmin = opts.isAdmin();
+    const computerFilesAllowed = opts.computerFilesAllowed ? opts.computerFilesAllowed() : true;
+    const computerFilesResolved = opts.computerFilesResolved ? opts.computerFilesResolved() : false;
+    const permittedPage = resolvePermittedPage(opts.active.value, {
+      isAdmin,
+      computerFilesAllowed,
+      computerFilesResolved,
+    });
+    if (permittedPage !== opts.active.value) {
+      applyingBrowserNavigation = true;
+      opts.active.value = permittedPage;
+      const url = new URL(window.location.href);
+      url.searchParams.set("page", permittedPage);
+      window.history.replaceState({ ...window.history.state, page: permittedPage }, "", url.toString());
+      queueMicrotask(() => {
+        applyingBrowserNavigation = false;
+      });
+    }
+    const permittedGroup = resolvePermittedSettingsGroup(opts.settingsGroup.value, isAdmin);
+    if (permittedGroup !== opts.settingsGroup.value) {
+      opts.settingsGroup.value = permittedGroup;
+    }
+  }
+
   function handleBrowserPageNavigation() {
     const page = new URL(window.location.href).searchParams.get("page") ?? "overview";
-    const next = (opts.validPages.has(page as TPage) ? page : "overview") as TPage;
+    const candidate = (opts.validPages.has(page as TPage) ? page : "overview") as TPage;
+    const next = opts.isAuthenticated()
+      ? resolvePermittedPage(candidate, {
+          isAdmin: opts.isAdmin(),
+          computerFilesAllowed: opts.computerFilesAllowed ? opts.computerFilesAllowed() : true,
+          computerFilesResolved: opts.computerFilesResolved ? opts.computerFilesResolved() : false,
+        })
+      : candidate;
+    if (next !== candidate) {
+      const url = new URL(window.location.href);
+      url.searchParams.set("page", next);
+      window.history.replaceState({ ...window.history.state, page: next }, "", url.toString());
+    }
     if (next === opts.active.value) return;
     applyingBrowserNavigation = true;
     opts.active.value = next;
@@ -111,11 +152,32 @@ export function useAppBrowserLifecycle<TPage extends string, TGroup extends stri
   }
 
   watch(opts.settingsGroup, (group) => {
+    const safeGroup = opts.isAuthenticated()
+      ? resolvePermittedSettingsGroup(group, opts.isAdmin())
+      : group;
+    if (safeGroup !== group) {
+      opts.settingsGroup.value = safeGroup;
+      return;
+    }
     if (opts.active.value !== "settings") return;
     const url = new URL(window.location.href);
-    url.searchParams.set("group", group);
+    url.searchParams.set("group", safeGroup);
     window.history.replaceState(null, "", url.toString());
   });
+
+  watch(
+    [
+      opts.isAuthenticated,
+      opts.isAdmin,
+      () => (opts.computerFilesAllowed ? opts.computerFilesAllowed() : true),
+      () => (opts.computerFilesResolved ? opts.computerFilesResolved() : false),
+      opts.active,
+    ],
+    () => {
+      clampActivePageAndGroup();
+    },
+    { immediate: true },
+  );
 
   watch(
     [opts.active, opts.isAdmin, opts.rootViewKey, opts.rootFeatureContextReady],

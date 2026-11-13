@@ -11,6 +11,7 @@ export function useOverviewAndDisclosures(options: {
   searchViaSpotlight: Ref<boolean>;
   filesLoading: Ref<boolean>;
   searchingFiles: Ref<boolean>;
+  recentSearches?: Ref<string[]>;
   telemetry: {
     stats: Ref<ServerStats | null>;
     error: Ref<string | null>;
@@ -61,8 +62,6 @@ export function useOverviewAndDisclosures(options: {
   const advancedUploadsOpen = ref(false);
   const advancedDiagnosticsOpen = ref(false);
   const pendingUploadsOpen = ref(false);
-  const pendingReservationsOpen = ref(false);
-  const cleanupRulesOpen = ref(false);
   const pendingMediaOpen = ref(false);
   const adminPendingMediaOpen = ref(false);
 
@@ -74,14 +73,6 @@ export function useOverviewAndDisclosures(options: {
 
   function togglePendingUploads(event: Event) {
     pendingUploadsOpen.value = (event.target as HTMLDetailsElement)?.open === true;
-  }
-
-  function togglePendingReservations(event: Event) {
-    pendingReservationsOpen.value = (event.target as HTMLDetailsElement)?.open === true;
-  }
-
-  function toggleCleanupRules(event: Event) {
-    cleanupRulesOpen.value = (event.target as HTMLDetailsElement)?.open === true;
   }
 
   function toggleAdvanced(kind: "uploads" | "diagnostics", event: Event) {
@@ -100,7 +91,29 @@ export function useOverviewAndDisclosures(options: {
     spotlight: options.searchViaSpotlight.value,
     filesLoading: options.filesLoading.value,
     searchingFiles: options.searchingFiles.value,
+    recentQueries: options.recentSearches?.value ?? [],
   }));
+
+  const cpuHistory = ref<number[]>([]);
+  const memoryHistory = ref<number[]>([]);
+  watch(
+    [() => options.user.value?.role, () => options.telemetry.stats.value],
+    ([role, stats]) => {
+      if (role !== "admin" || !stats) {
+        cpuHistory.value = [];
+        memoryHistory.value = [];
+        return;
+      }
+      if (typeof stats.cpuPercent === "number" && Number.isFinite(stats.cpuPercent)) {
+        cpuHistory.value = [...cpuHistory.value.slice(-17), Math.min(100, Math.max(0, stats.cpuPercent))];
+      }
+      if (stats.memoryTotal > 0 && Number.isFinite(stats.memoryUsed)) {
+        const memPct = Math.min(100, Math.max(0, (stats.memoryUsed / stats.memoryTotal) * 100));
+        memoryHistory.value = [...memoryHistory.value.slice(-17), memPct];
+      }
+    },
+    { immediate: true },
+  );
 
   const overviewTelemetry = computed(() => ({
     error: options.telemetry.error.value,
@@ -110,6 +123,8 @@ export function useOverviewAndDisclosures(options: {
     usedMemory: options.telemetry.usedMemory.value,
     usedDisk: options.telemetry.usedDisk.value,
     diskActivity: options.telemetry.diskActivity.value,
+    cpuHistory: cpuHistory.value,
+    memoryHistory: memoryHistory.value,
     expanded: showHardwareSpecs.value,
     bytes: options.telemetry.bytes,
     percent: options.telemetry.percent,
@@ -119,6 +134,7 @@ export function useOverviewAndDisclosures(options: {
     summary: personalSpace.value,
     error: personalSpaceError.value,
     bytes: options.telemetry.bytes,
+    rootNames: Object.fromEntries(options.sharedRoots.value.map((root) => [root.rootID, root.name])),
   }));
 
   const overviewPending = computed(() => ({
@@ -132,6 +148,20 @@ export function useOverviewAndDisclosures(options: {
     failedTasks: isAdminDashboard.value ? options.tasks.value.filter((task) => !task.running && !!task.lastError).length : 0,
   }));
 
+  function resetOverviewAndDisclosures() {
+    personalSpaceRequest += 1;
+    personalSpace.value = null;
+    personalSpaceError.value = "";
+    cpuHistory.value = [];
+    memoryHistory.value = [];
+    showHardwareSpecs.value = false;
+    advancedUploadsOpen.value = false;
+    advancedDiagnosticsOpen.value = false;
+    pendingUploadsOpen.value = false;
+    pendingMediaOpen.value = false;
+    adminPendingMediaOpen.value = false;
+  }
+
   return {
     showHardwareSpecs,
     isAdminDashboard,
@@ -140,15 +170,12 @@ export function useOverviewAndDisclosures(options: {
     advancedUploadsOpen,
     advancedDiagnosticsOpen,
     pendingUploadsOpen,
-    pendingReservationsOpen,
-    cleanupRulesOpen,
     pendingMediaOpen,
     adminPendingMediaOpen,
     togglePendingMedia,
     togglePendingUploads,
-    togglePendingReservations,
-    toggleCleanupRules,
     toggleAdvanced,
+    resetOverviewAndDisclosures,
     overviewIdentity,
     overviewSearch,
     overviewTelemetry,

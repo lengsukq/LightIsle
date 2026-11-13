@@ -273,7 +273,7 @@ onMounted(() => {
           class="shared-asset-tile"
           @click="previewAsset = asset"
         >
-          <img :src="sharedThumbUrl(activeShare.id, asset.id)" :alt="asset.name" loading="lazy" />
+          <img :src="sharedThumbUrl(activeShare.id, asset.id)" :alt="asset.name" loading="lazy" decoding="async" />
           <span v-if="(asset.liveVideoAssetId ?? 0) > 0" class="shared-live-tag">LIVE</span>
         </button>
       </div>

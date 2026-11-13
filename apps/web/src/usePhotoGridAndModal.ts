@@ -21,6 +21,8 @@ export function usePhotoGridAndModal<TAsset extends BatchAsset>(options: {
   viewerAnimate: Ref<boolean>;
   viewerScale: Ref<number>;
   viewerOffset: Ref<{ x: number; y: number }>;
+  albumOrganizerOpen?: Ref<boolean>;
+  onShortcutFavorite?: (asset: TAsset) => void;
   bumpSelectionGeneration: () => number;
   startViewerStages: (asset: TAsset) => void;
   cancelViewerLoads: () => void;
@@ -66,7 +68,7 @@ export function usePhotoGridAndModal<TAsset extends BatchAsset>(options: {
       if (asset) {
         modalLayerHandle?.dispose();
         modalLayerHandle = pushModalLayer({
-          onEsc: () => closeModal(),
+          onEsc: () => dismissModalLayerStep(),
           lockScroll: true,
         });
       } else {
@@ -156,6 +158,15 @@ export function usePhotoGridAndModal<TAsset extends BatchAsset>(options: {
     options.viewerScale.value = 1;
     options.viewerOffset.value = { x: 0, y: 0 };
     options.startViewerStages(asset);
+    if (
+      options.viewMode.value !== "map" &&
+      options.nextCursor.value > 0 &&
+      !options.loading.value &&
+      !options.loadError.value &&
+      index >= modalAssets.value.length - 4
+    ) {
+      void options.load(false);
+    }
   }
 
   const { slideshow, stopSlideshow, toggleSlideshow } = usePhotoSlideshow({
@@ -281,12 +292,31 @@ export function usePhotoGridAndModal<TAsset extends BatchAsset>(options: {
     finishCloseModal(restoreFocus);
   }
 
+  function dismissModalLayerStep() {
+    if (!options.selected.value) return;
+    if (options.viewerScale.value > 1.01) {
+      options.viewerAnimate.value = true;
+      options.viewerScale.value = 1;
+      options.viewerOffset.value = { x: 0, y: 0 };
+      return;
+    }
+    if (viewerInfo.value) {
+      viewerInfo.value = false;
+      return;
+    }
+    if (options.albumOrganizerOpen?.value) {
+      options.albumOrganizerOpen.value = false;
+      return;
+    }
+    closeModal();
+  }
+
   function modalKeydown(event: KeyboardEvent) {
     if (!options.selected.value || event.defaultPrevented) return;
     if (modalLayerHandle && !modalLayerHandle.isTop()) return;
     if (event.key === "Escape") {
       event.preventDefault();
-      closeModal();
+      dismissModalLayerStep();
       return;
     }
     if (event.key === "Tab") {
@@ -323,8 +353,21 @@ export function usePhotoGridAndModal<TAsset extends BatchAsset>(options: {
     if (
       event.target instanceof HTMLInputElement ||
       event.target instanceof HTMLSelectElement ||
-      event.target instanceof HTMLTextAreaElement
+      event.target instanceof HTMLTextAreaElement ||
+      (event.target instanceof HTMLElement && event.target.isContentEditable)
     ) {
+      return;
+    }
+    if (event.ctrlKey || event.metaKey || event.altKey) return;
+    const lowerKey = event.key.toLowerCase();
+    if (lowerKey === "i") {
+      event.preventDefault();
+      viewerInfo.value = !viewerInfo.value;
+      return;
+    }
+    if (lowerKey === "f" && options.onShortcutFavorite && options.selected.value) {
+      event.preventDefault();
+      options.onShortcutFavorite(options.selected.value);
       return;
     }
     if (event.key === "ArrowLeft" && options.selectedIndex.value > 0) {

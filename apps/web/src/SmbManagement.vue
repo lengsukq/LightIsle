@@ -9,6 +9,7 @@ import IsleBadge from "./IsleBadge.vue";
 import IsleBanner from "./IsleBanner.vue";
 import IsleEmpty from "./IsleEmpty.vue";
 import { describeUserFacingError } from "./userFacingError.ts";
+import { copyTextToClipboard } from "./clipboard.ts";
 import { apiRequest } from "./apiClient.ts";
 
 type SharePoint = {
@@ -205,15 +206,12 @@ async function removeShare(share: SharePoint) {
   }
 }
 
-function copyText(text: string, label: string) {
-  navigator.clipboard
-    ?.writeText(text)
-    .then(() => {
-      notice.value = `已复制${label}：${text}`;
-    })
-    .catch(() => {
-      window.prompt(`复制${label}：`, text);
-    });
+async function copyText(text: string, label: string) {
+  if (await copyTextToClipboard(text)) {
+    notice.value = `已复制${label}：${text}`;
+  } else {
+    notice.value = `浏览器限制自动复制，请手动选择复制${label}：${text}`;
+  }
 }
 
 onMounted(() => {

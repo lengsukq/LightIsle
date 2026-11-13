@@ -2,34 +2,42 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
 
-async function readTemplate() {
-  return readFile(new URL("../src/AppShell.html", import.meta.url), "utf8");
+async function readTemplate(rel = "../src/AppShell.html") {
+  return readFile(new URL(rel, import.meta.url), "utf8");
 }
 
 test("the move/copy dialog renders inside the logged-in shell, not the auth splash", async () => {
-  const template = await readTemplate();
+  const [template, authScene] = await Promise.all([
+    readTemplate(),
+    readTemplate("../src/AuthScene.vue"),
+  ]);
 
-  const authBranch = template.indexOf('v-if="authChecking"');
-  const nextBranch = template.indexOf('v-else-if="authServiceError"');
+  const authBranch = authScene.indexOf('v-if="authChecking"');
+  const nextBranch = authScene.indexOf('v-else-if="authServiceError"');
   assert.ok(authBranch >= 0 && nextBranch > authBranch, "auth branch markers not found");
+  assert.equal(authScene.indexOf("<FileOperationDialog"), -1, "FileOperationDialog must not live in AuthScene");
+
+  const authHost = template.indexOf("<AuthScene");
+  const shell = template.indexOf('v-else class="shell"');
   const dialog = template.indexOf("<FileOperationDialog");
-  assert.ok(dialog >= 0, "FileOperationDialog has no render point");
-  assert.ok(
-    dialog < authBranch || dialog > nextBranch,
-    "FileOperationDialog must not live in the authChecking splash branch: it only renders while authChecking is true, so the move/copy button would silently do nothing after login",
-  );
+  assert.ok(authHost >= 0 && shell > authHost, "AuthScene must precede logged-in shell");
+  assert.ok(dialog > shell, "FileOperationDialog must render inside the logged-in shell");
 });
 
 test("the move/copy dialog renders alongside the other shell dialogs", async () => {
-  const template = await readTemplate();
+  const [template, mobileDrawer] = await Promise.all([
+    readTemplate(),
+    readTemplate("../src/MobileNavDrawer.vue"),
+  ]);
 
   const shell = template.indexOf('v-else class="shell"');
   const dialog = template.indexOf("<FileOperationDialog");
-  const mobileNav = template.indexOf('class="mobile-nav');
+  const mobileNavHost = template.indexOf("<MobileNavDrawer");
   assert.ok(shell >= 0, "shell branch not found");
-  assert.ok(mobileNav > shell, "mobile nav marker not found after shell");
+  assert.ok(mobileDrawer.includes('class="mobile-nav'), "mobile nav marker missing in MobileNavDrawer");
+  assert.ok(mobileNavHost > shell, "MobileNavDrawer marker not found after shell");
   assert.ok(
-    dialog > shell && dialog < mobileNav,
+    dialog > shell && dialog < mobileNavHost,
     "FileOperationDialog should be mounted in the shell dialog area (with trashTarget/previewItem/sharingFile), inside the logged-in branch",
   );
 });

@@ -13,6 +13,7 @@ import {readDownloadCenter,type DownloadTask} from "./downloadCenterTransport.ts
 import {createMediaStatusPoller} from "./mediaStatusPoller.ts";
 import {describeRootOperationFailure} from "./rootDiscovery.ts";
 import {describeUserFacingError} from "./userFacingError.ts";
+import {formatDateTime} from "./dateTimeFormat.ts";
 
 type FolderItem = { name: string; path: string; type: "file" | "folder"; canWrite?: boolean };
 type FolderListReply = { entries: FolderItem[]; nextCursor?: string; canWrite?: boolean };
@@ -223,16 +224,16 @@ onUnmounted(()=>{disposed=true;poller.dispose();syncPollTimer(false)});
     </button>
    </div>
    <div class="picker-folder-list">
-    <p v-if="pickerLoading" class="picker-feedback"><LoaderCircle :size="15" class="spin-icon" /> 正在读取文件夹…</p>
+    <p v-if="pickerLoading && !pickerFolders.length" class="picker-feedback"><LoaderCircle :size="15" class="spin-icon" /> 正在读取文件夹…</p>
     <template v-else>
-     <button v-if="pickerDir !== '.'" type="button" class="picker-folder-row" @click="navigatePicker(pickerDir.split('/').slice(0, -1).join('/') || '.')">
+     <button v-if="pickerDir !== '.'" type="button" class="picker-folder-row" :disabled="pickerLoading" @click="navigatePicker(pickerDir.split('/').slice(0, -1).join('/') || '.')">
       <ChevronLeft :size="16" /> <span>返回上一级</span>
      </button>
-     <button v-for="folder in pickerFolders" :key="folder.path" type="button" class="picker-folder-row" @click="navigatePicker(folder.path)">
+     <button v-for="folder in pickerFolders" :key="folder.path" type="button" class="picker-folder-row" :disabled="pickerLoading" @click="navigatePicker(folder.path)">
       <Folder :size="17" /> <span>{{ folder.name }}</span> <ChevronRight :size="14" />
      </button>
      <p v-if="!pickerFolders.length && !pickerError" class="picker-feedback">当前文件夹下没有子文件夹，可直接选择当前位置。</p>
-     <IsleButton v-if="pickerNextCursor" variant="glass" size="sm" style="margin:6px auto;display:flex" @click="loadPickerFolders(true)">加载更多文件夹</IsleButton>
+     <IsleButton v-if="pickerNextCursor" variant="glass" size="sm" :loading="pickerLoading" style="margin:6px auto;display:flex" @click="loadPickerFolders(true)">加载更多文件夹</IsleButton>
     </template>
    </div>
    <IsleBanner v-if="!pickerCanWrite && !pickerLoading" type="warning" compact message="当前目录为只读，请选择有写入权限的文件夹。" />
@@ -265,7 +266,7 @@ onUnmounted(()=>{disposed=true;poller.dispose();syncPollTimer(false)});
      <template v-if="task.totalBytes>0"> · {{bytes(task.completedBytes)}} / {{bytes(task.totalBytes)}}（{{progress(task)}}%）</template>
      <template v-else-if="task.completedBytes>0"> · {{bytes(task.completedBytes)}}</template>
      <template v-if="task.maxBytes>0"> · 上限 {{bytes(task.maxBytes)}}</template>
-     · {{new Date(task.createdAt*1000).toLocaleString()}}</small>
+     · {{formatDateTime(task.createdAt*1000)}}</small>
     <div v-if="task.status==='running'&&task.totalBytes>0" class="task-progress" role="progressbar" :aria-valuenow="progress(task)" aria-valuemin="0" aria-valuemax="100"><span :style="{width:progress(task)+'%'}"></span></div>
     <small v-if="task.status==='failed'&&describeError(task)" class="form-error">{{describeError(task)}}</small>
     <small v-if="task.partialPublish">部分文件已保存，任务尚未全部完成；重试会核对已有文件。</small>
@@ -331,36 +332,24 @@ onUnmounted(()=>{disposed=true;poller.dispose();syncPollTimer(false)});
 .picker-feedback{margin:0;padding:12px;font-size:13px;color:var(--text-secondary);display:flex;align-items:center;gap:8px}
 .spin-icon{animation:spin 1s linear infinite}
 @keyframes spin{to{transform:rotate(360deg)}}
-.download-submit{margin-top:0;white-space:nowrap;height:44px}
-@media(max-width:720px){.download-form-row{grid-template-columns:1fr}.download-submit{width:100%}}
+@media(max-width:720px){.download-form-row{grid-template-columns:1fr}}
 .download-row {
-  transition: transform var(--motion-fast) var(--motion-spring), box-shadow 0.2s ease;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 84px;
+  transition: transform var(--motion-fast) var(--motion-spring), opacity var(--motion-fast) ease;
 }
 .download-row:hover {
   transform: translateY(-1.5px);
 }
-.share-flag.flag-running {
-  background: color-mix(in srgb, var(--accent-primary) 14%, transparent);
-  color: var(--accent-primary);
-  border: 1px solid color-mix(in srgb, var(--accent-primary) 30%, transparent);
-}
-.share-flag.flag-completed {
-  background: rgba(52, 199, 89, 0.14);
-  color: #34c759;
-  border: 1px solid rgba(52, 199, 89, 0.28);
-}
-.share-flag.flag-failed {
-  background: rgba(255, 59, 48, 0.14);
-  color: #ff3b30;
-  border: 1px solid rgba(255, 59, 48, 0.28);
-}
-.share-flag.flag-paused {
-  background: rgba(255, 149, 0, 0.14);
-  color: #ff9500;
-  border: 1px solid rgba(255, 149, 0, 0.28);
+.download-row:active {
+  transform: scale(0.995);
 }
 details{margin-top:8px;font-size:var(--font-size-sm,13px)}
 summary{cursor:pointer;padding:8px 0}
 details ul{padding-inline-start:20px;margin:4px 0;line-height:1.7}
 @media(max-width:600px){.account-row{align-items:stretch;flex-direction:column;gap:12px}.task-empty-actions{flex-wrap:wrap}}
+@media(prefers-reduced-motion:reduce){
+ .dest-quick-chip,.dest-browse-btn,.picker-folder-row,.download-row{transition:none}
+ .spin-icon{animation:none}
+}
 </style>

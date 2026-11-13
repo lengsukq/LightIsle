@@ -2,6 +2,7 @@ import { computed, nextTick, ref, type Ref } from "vue";
 import { describeRootOperationFailure } from "./rootDiscovery.ts";
 import { readApiFailure } from "./apiFailure.ts";
 import { createPlaybackProgressWriter, type ProgressSnapshot } from "./playbackProgressWriter.ts";
+import type { SubtitleSizePreset } from "./cinemaSubtitles.ts";
 import type {
   BrowserPlayback,
   Movie,
@@ -20,7 +21,7 @@ export const playbackRateOptions = [
   { value: 2, label: "2x" },
 ];
 
-export function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
+function abortableDelay(ms: number, signal?: AbortSignal): Promise<void> {
   if (signal?.aborted) return Promise.reject(new Error("aborted"));
   return new Promise((resolve, reject) => {
     const onAbort = () => {
@@ -85,6 +86,34 @@ function writeBoolPreference(key: string, checked: boolean) {
   }
 }
 
+function readVolumePreference(): number {
+  try {
+    const raw = window.localStorage.getItem("lightisle-cinema-volume");
+    if (raw === null) return 1;
+    const val = Number(raw);
+    return Number.isFinite(val) ? Math.max(0, Math.min(1, val)) : 1;
+  } catch {
+    return 1;
+  }
+}
+
+export function readSubtitleSizePreference(): SubtitleSizePreset {
+  try {
+    const val = window.localStorage.getItem("lightisle-cinema-sub-size");
+    return val === "sm" || val === "lg" || val === "md" ? val : "md";
+  } catch {
+    return "md";
+  }
+}
+
+export function writeSubtitleSizePreference(size: SubtitleSizePreset) {
+  try {
+    window.localStorage.setItem("lightisle-cinema-sub-size", size);
+  } catch {
+    /* Ignore storage quota limits. */
+  }
+}
+
 export function useCinemaMediaControls({
   player,
   hlsPlayer,
@@ -96,32 +125,58 @@ export function useCinemaMediaControls({
   activeVideo: () => HTMLVideoElement | null;
   playError: Ref<string>;
 }) {
+  const initialVol = readVolumePreference();
   const isPlaying = ref(false);
-  const volume = ref(1);
-  const isMuted = ref(false);
+  const volume = ref(initialVol);
+  const isMuted = ref(readBoolPreference("lightisle-cinema-muted") || initialVol === 0);
   const fillScreen = ref(false);
   const isFullscreen = ref(false);
   const playbackRate = ref(readRatePreference());
+  const isSpeedBoosting = ref(false);
   const autoplayNext = ref(readBoolPreference("lightisle-cinema-autoplay-next"));
   const preferLocalDecode = ref(readBoolPreference("lightisle-cinema-prefer-local-decode"));
   const directLocalOverride = ref(preferLocalDecode.value);
   const canPictureInPicture = typeof document !== "undefined" && document.pictureInPictureEnabled;
-  let lastNonZeroVolume = 1;
+  let lastNonZeroVolume = initialVol > 0 ? initialVol : 1;
+  const hydratedVideos = new WeakSet<HTMLVideoElement>();
 
   function applyPlaybackRate() {
-    const p = activeVideo();
-    if (p) p.playbackRate = playbackRate.value;
+    const targetRate = isSpeedBoosting.value ? 2 : playbackRate.value;
+    for (const p of [player.value, hlsPlayer.value]) {
+      if (p) p.playbackRate = targetRate;
+    }
+  }
+
+  function applyMediaPreferencesTo(video: HTMLVideoElement | null) {
+    if (!video) return;
+    video.playbackRate = isSpeedBoosting.value ? 2 : playbackRate.value;
+    video.muted = isMuted.value || volume.value === 0;
+    if (volume.value > 0) video.volume = volume.value;
+    hydratedVideos.add(video);
   }
 
   function setPlaybackRate(rate: number) {
     if (![0.75, 1, 1.25, 1.5, 2].includes(rate)) return;
     playbackRate.value = rate;
+    isSpeedBoosting.value = false;
     applyPlaybackRate();
     try {
       window.localStorage.setItem("lightisle-cinema-playback-rate", String(rate));
     } catch {
       /* Private browsing or storage quota limits must not interrupt playback rate changes. */
     }
+  }
+
+  function startHoldSpeedBoost() {
+    if (isSpeedBoosting.value) return;
+    isSpeedBoosting.value = true;
+    applyPlaybackRate();
+  }
+
+  function stopHoldSpeedBoost() {
+    if (!isSpeedBoosting.value) return;
+    isSpeedBoosting.value = false;
+    applyPlaybackRate();
   }
 
   function setAutoplayNext(checked: boolean) {
@@ -133,9 +188,19 @@ export function useCinemaMediaControls({
     const p = activeVideo();
     if (!p) return;
     isPlaying.value = !p.paused && !p.ended;
+    if (!hydratedVideos.has(p)) {
+      applyMediaPreferencesTo(p);
+      return;
+    }
     isMuted.value = p.muted || p.volume === 0;
     volume.value = p.muted ? 0 : p.volume;
     if (p.volume > 0 && !p.muted) lastNonZeroVolume = p.volume;
+    try {
+      if (p.volume > 0) window.localStorage.setItem("lightisle-cinema-volume", String(p.volume));
+      writeBoolPreference("lightisle-cinema-muted", isMuted.value);
+    } catch {
+      /* Ignore storage write failure. */
+    }
   }
 
   function setVolume(next: number) {
@@ -147,14 +212,33 @@ export function useCinemaMediaControls({
       if (!v) continue;
       v.muted = clamped === 0;
       if (clamped > 0) v.volume = clamped;
+      hydratedVideos.add(v);
     }
+    try {
+      if (clamped > 0) window.localStorage.setItem("lightisle-cinema-volume", String(clamped));
+      writeBoolPreference("lightisle-cinema-muted", isMuted.value);
+    } catch {
+      /* Ignore storage failure. */
+    }
+  }
+
+  function adjustVolume(delta: number) {
+    const current = isMuted.value ? 0 : volume.value;
+    setVolume(Math.round((current + delta) * 100) / 100);
   }
 
   function toggleMute() {
     if (isMuted.value || volume.value === 0) {
       setVolume(lastNonZeroVolume > 0 ? lastNonZeroVolume : 1);
     } else {
-      setVolume(0);
+      isMuted.value = true;
+      for (const v of [player.value, hlsPlayer.value]) {
+        if (v) {
+          v.muted = true;
+          hydratedVideos.add(v);
+        }
+      }
+      writeBoolPreference("lightisle-cinema-muted", true);
     }
   }
 
@@ -164,6 +248,17 @@ export function useCinemaMediaControls({
 
   function syncFullscreenState() {
     isFullscreen.value = Boolean(document.fullscreenElement);
+  }
+
+  async function exitCinemaFullscreen() {
+    if (document.fullscreenElement) {
+      try {
+        await document.exitFullscreen();
+      } catch {
+        /* Ignore exit fullscreen denial. */
+      }
+      syncFullscreenState();
+    }
   }
 
   async function toggleCinemaFullscreen(container?: HTMLElement | null) {
@@ -206,19 +301,25 @@ export function useCinemaMediaControls({
     fillScreen,
     isFullscreen,
     playbackRate,
+    isSpeedBoosting,
     autoplayNext,
     preferLocalDecode,
     directLocalOverride,
     canPictureInPicture,
     writeBoolPreference,
     applyPlaybackRate,
+    applyMediaPreferencesTo,
     setPlaybackRate,
+    startHoldSpeedBoost,
+    stopHoldSpeedBoost,
     setAutoplayNext,
     syncVideoMediaState,
     setVolume,
+    adjustVolume,
     toggleMute,
     toggleFillScreen,
     syncFullscreenState,
+    exitCinemaFullscreen,
     toggleCinemaFullscreen,
     toggleCinemaPictureInPicture,
   };

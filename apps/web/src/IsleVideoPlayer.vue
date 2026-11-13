@@ -642,4 +642,19 @@ const {
     display: none;
   }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .player-center-status,
+  .player-transport-bar,
+  .timeline-rail,
+  .timeline-buffered,
+  .timeline-thumb,
+  .control-btn,
+  .volume-slider {
+    transition: none;
+  }
+  .spin-icon {
+    animation: none;
+  }
+}
 </style>

@@ -3,6 +3,7 @@ import { onMounted, ref } from "vue";
 import { FolderSync, Plus, Copy, Trash2, KeyRound, RefreshCw, HardDrive, ShieldCheck } from "lucide-vue-next";
 import { requestConfirm } from "./useConfirmDialog.ts";
 import { describeUserFacingError } from "./userFacingError.ts";
+import { copyTextToClipboard } from "./clipboard.ts";
 import { apiRequest } from "./apiClient.ts";
 import IsleCard from "./IsleCard.vue";
 import IsleButton from "./IsleButton.vue";
@@ -10,7 +11,6 @@ import IsleBadge from "./IsleBadge.vue";
 import IsleBanner from "./IsleBanner.vue";
 import IsleEmpty from "./IsleEmpty.vue";
 
-defineProps<{ admin?: boolean }>();
 type Credential = { id: number; label: string; createdAt: number; lastUsedAt: number };
 type MountRoot = { rootID: string; generation: number; name: string; online: boolean };
 
@@ -24,6 +24,7 @@ const label = ref("");
 const freshPassword = ref("");
 const freshCopied = ref(false);
 const tvCopiedRoot = ref("");
+const urlCopiedRoot = ref("");
 
 function mountUrl(root: MountRoot) {
   return `${location.origin}/dav-roots/${encodeURIComponent(root.rootID)}/${root.generation}/`;
@@ -154,19 +155,20 @@ async function revoke(item: Credential) {
   }
 }
 
-function copy(text: string, what: string) {
-  const showText = () => window.prompt("复制以下" + what + "：", text);
-  if (!navigator.clipboard) {
-    showText();
+async function copy(text: string, what: string) {
+  if (await copyTextToClipboard(text)) {
+    if (what === "密码") freshCopied.value = true;
+    else if (what.startsWith("TV:")) tvCopiedRoot.value = what.slice(3);
+    else if (what.startsWith("URL:")) {
+      const id = what.slice(4);
+      urlCopiedRoot.value = id;
+      window.setTimeout(() => {
+        if (urlCopiedRoot.value === id) urlCopiedRoot.value = "";
+      }, 2000);
+    }
     return;
   }
-  navigator.clipboard
-    .writeText(text)
-    .then(() => {
-      if (what === "密码") freshCopied.value = true;
-      if (what.startsWith("TV:")) tvCopiedRoot.value = what.slice(3);
-    })
-    .catch(showText);
+  error.value = "浏览器当前环境不支持一键写入剪贴板，请手动选中上方内容后复制。";
 }
 
 const formatDate = (unix: number) =>
@@ -213,9 +215,9 @@ onMounted(() => {
             </div>
             <div v-if="root.online" class="dav-url-actions">
               <code class="dav-url">{{ mountUrl(root) }}</code>
-              <IsleButton variant="tonal" size="sm" @click="copy(mountUrl(root), 'DAV 地址')">
+              <IsleButton variant="tonal" size="sm" @click="copy(mountUrl(root), 'URL:' + root.rootID)">
                 <template #icon><Copy :size="13" /></template>
-                复制地址
+                {{ urlCopiedRoot === root.rootID ? "已复制地址" : "复制地址" }}
               </IsleButton>
               <IsleButton variant="glass" size="sm" @click="copy(buildTvClientGuide(root), 'TV:' + root.rootID)">
                 <template #icon><Copy :size="13" /></template>
@@ -486,5 +488,10 @@ onMounted(() => {
 }
 .dav-guide strong {
   color: var(--text-primary);
+}
+@media (prefers-reduced-motion: reduce) {
+  .dav-create input {
+    transition: none;
+  }
 }
 </style>

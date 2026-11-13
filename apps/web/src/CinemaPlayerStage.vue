@@ -3,9 +3,11 @@ import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import {
   AudioLines, Check, ChevronDown, ChevronUp, EyeOff, GripHorizontal, ListVideo,
   Maximize2, Minimize2, Pause, PictureInPicture2, Play, RotateCcw, RotateCw,
-  Scan, SkipBack, SkipForward, Subtitles, Volume2, VolumeX, X,
+  Scan, SkipBack, SkipForward, Volume2, VolumeX, X,
 } from "lucide-vue-next";
+import CinemaSubtitlePopover from "./CinemaSubtitlePopover.vue";
 import { formatCinemaClock } from "./cinemaCatalogDisplay.ts";
+import type { SubtitleSizePreset } from "./cinemaSubtitles.ts";
 import { useCinemaDockDrag } from "./useCinemaDockDrag.ts";
 import { duration } from "./useCinemaMetadata.ts";
 import type { Movie, TranscodeSession } from "./cinemaTypes.ts";
@@ -27,7 +29,13 @@ const props = defineProps<{
   qualityOptions: SelectChoice[];
   currentQuality: string;
   playbackRate: number;
+  isSpeedBoosting?: boolean;
+  osdMessage?: string;
   playbackRateOptions: SelectChoice[];
+  subtitleSize: SubtitleSizePreset;
+  subtitleOffset: number;
+  localSubtitleName: string;
+  localSubtitleError: string;
   hlsSession: TranscodeSession | null;
   hlsStarting: boolean;
   playError: string;
@@ -40,7 +48,6 @@ const props = defineProps<{
   playbackPosition: number;
   playbackDuration: number;
   playbackBuffered?: number;
-  seekPreview: number | null;
   autoplayNext: boolean;
   preferLocalDecode: boolean;
   leavingPlayer: boolean;
@@ -60,8 +67,8 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: "update:controlsHidden", hidden: boolean): void;
-  (e: "update:seekPreview", val: number | null): void;
   (e: "update:showPlayerPlaylist", open: boolean): void;
+  (e: "update:menuOpen", open: boolean): void;
   (e: "loadedmetadata"): void;
   (e: "timeupdate"): void;
   (e: "buffer-progress"): void;
@@ -77,6 +84,11 @@ const emit = defineEmits<{
   (e: "set-volume", volume: number): void;
   (e: "toggle-mute"): void;
   (e: "select-caption", value: string): void;
+  (e: "select-local-subtitle", file: File): void;
+  (e: "clear-local-subtitle"): void;
+  (e: "update:subtitleSize", size: SubtitleSizePreset): void;
+  (e: "adjust-subtitle-offset", deltaSeconds: number): void;
+  (e: "reset-subtitle-offset"): void;
   (e: "select-audio", index: number): void;
   (e: "select-quality", quality: string): void;
   (e: "select-rate", rate: number): void;
@@ -131,7 +143,7 @@ const effectiveDuration = computed(() =>
 );
 
 const displayPosition = computed(() => {
-  const raw = localScrub.value ?? props.seekPreview ?? props.playbackPosition;
+  const raw = localScrub.value ?? props.playbackPosition;
   if (effectiveDuration.value > 0) return Math.max(0, Math.min(effectiveDuration.value, raw));
   return Math.max(0, raw);
 });
@@ -154,6 +166,7 @@ const volumePercent = computed(() => Math.round((props.isMuted ? 0 : props.volum
 
 const captionPillLabel = computed(() => {
   if (props.caption === "off") return "字幕";
+  if (props.caption === "local") return "本地字幕";
   return props.captionOptions.find((o) => String(o.value) === props.caption)?.label ?? "字幕";
 });
 
@@ -274,6 +287,12 @@ function closeMenus() {
   if (openMenu.value !== null) openMenu.value = null;
 }
 
+watch(openMenu, (val) => {
+  emit("update:menuOpen", val !== null);
+});
+
+defineExpose({ closeMenus });
+
 function handleStageClick(event: MouseEvent) {
   if (openMenu.value !== null) {
     openMenu.value = null;
@@ -372,11 +391,14 @@ onUnmounted(() => {
   <div
     ref="stageShellRef"
     class="cinema-stage-shell"
-    :class="{
-      'cinema-cursor-hidden': controlsHidden && isPlaying,
-      'cinema-dock-hidden': controlsHidden || manuallyCollapsed,
-      'cinema-dock-lifted-cues': !controlsHidden && !manuallyCollapsed && isDockNearBottom,
-    }"
+    :class="[
+      `cinema-sub-${subtitleSize}`,
+      {
+        'cinema-cursor-hidden': controlsHidden && isPlaying,
+        'cinema-dock-hidden': controlsHidden || manuallyCollapsed,
+        'cinema-dock-lifted-cues': !controlsHidden && !manuallyCollapsed && isDockNearBottom,
+      },
+    ]"
     @mousemove="onStageMouseMove"
     @mouseleave="onStageMouseLeave"
     @pointerdown="() => { if (!manuallyCollapsed) revealChrome(); }"
@@ -400,7 +422,7 @@ onUnmounted(() => {
         @ended="emit('media-state'); emit('ended')"
         @error="emit('direct-error')"
       >
-        <track v-if="caption !== 'off'" :key="caption" kind="subtitles" :src="trackUrl" :srclang="captionSrclang" label="字幕" default @load="emit('caption-load')" />
+        <track v-if="caption !== 'off'" :key="caption + ':' + trackUrl" kind="subtitles" :src="trackUrl" :srclang="captionSrclang" label="字幕" default @load="emit('caption-load')" />
       </video>
 
       <video
@@ -420,8 +442,12 @@ onUnmounted(() => {
         @ended="emit('media-state'); emit('ended')"
         @error="emit('hls-error')"
       >
-        <track v-if="caption !== 'off'" :key="caption" kind="subtitles" :src="trackUrl" :srclang="captionSrclang" label="字幕" default @load="emit('caption-load')" />
+        <track v-if="caption !== 'off'" :key="caption + ':' + trackUrl" kind="subtitles" :src="trackUrl" :srclang="captionSrclang" label="字幕" default @load="emit('caption-load')" />
       </video>
+
+      <div v-if="isSpeedBoosting || osdMessage" class="cinema-player-osd" role="status" aria-live="polite">
+        {{ isSpeedBoosting ? "⏩ 2.0x 倍速播放中（松开恢复）" : osdMessage }}
+      </div>
 
       <button
         v-if="!isPlaying && !hlsStarting && (canDirect || hlsSession) && !showPlayerPlaylist && !manuallyCollapsed"
@@ -461,6 +487,7 @@ onUnmounted(() => {
         >
           切换转码播放
         </button>
+        <button type="button" class="cinema-toast-action" @click.stop="emit('download')">下载原片</button>
       </div>
 
       <div
@@ -474,7 +501,7 @@ onUnmounted(() => {
               <strong>同目录播放列表</strong>
               <small class="cinema-playlist-sub">{{ playlistDirLabel }} · {{ sameDirectoryFilms.length }} 个视频</small>
             </div>
-            <button type="button" title="关闭播放列表" @click="emit('update:showPlayerPlaylist', false)">
+            <button type="button" title="关闭播放列表" aria-label="关闭播放列表" @click="emit('update:showPlayerPlaylist', false)">
               <X :size="18" />
             </button>
           </div>
@@ -621,19 +648,24 @@ onUnmounted(() => {
             <span>{{ sameDirectoryFilms.length > 1 ? `播放列表 ${Math.max(1, currentPlaylistIndex + 1)}/${sameDirectoryFilms.length}` : "播放列表" }}</span>
           </button>
 
-          <div class="cinema-menu-anchor">
-            <button type="button" class="cinema-pill-btn" :class="{ active: caption !== 'off' || openMenu === 'caption' }" title="字幕选择" :aria-expanded="openMenu === 'caption'" @click="toggleMenu('caption')">
-              <Subtitles :size="14" />
-              <span>{{ captionPillLabel }}</span>
-              <ChevronDown :size="13" class="cinema-pill-chevron" />
-            </button>
-            <div v-if="openMenu === 'caption'" class="cinema-popover-menu" role="menu">
-              <button v-for="opt in captionOptions" :key="String(opt.value)" type="button" class="cinema-popover-item" :class="{ selected: String(opt.value) === caption }" role="menuitemradio" :aria-checked="String(opt.value) === caption" @click="openMenu = null; emit('select-caption', String(opt.value))">
-                <Check :size="14" class="cinema-popover-check" />
-                <span>{{ opt.value === "off" ? "关闭字幕" : opt.label }}</span>
-              </button>
-            </div>
-          </div>
+          <CinemaSubtitlePopover
+            :open="openMenu === 'caption'"
+            :caption="caption"
+            :caption-pill-label="captionPillLabel"
+            :caption-options="captionOptions"
+            :subtitle-size="subtitleSize"
+            :subtitle-offset="subtitleOffset"
+            :local-subtitle-name="localSubtitleName"
+            :local-subtitle-error="localSubtitleError"
+            @toggle="toggleMenu('caption')"
+            @close="openMenu = null"
+            @select-caption="(val) => emit('select-caption', val)"
+            @select-local-file="(file) => emit('select-local-subtitle', file)"
+            @clear-local-file="emit('clear-local-subtitle')"
+            @update:subtitle-size="(s) => emit('update:subtitleSize', s)"
+            @adjust-offset="(d) => emit('adjust-subtitle-offset', d)"
+            @reset-offset="emit('reset-subtitle-offset')"
+          />
 
           <div v-if="(hlsSession || hlsStarting) && audioTrackOptions.length > 1" class="cinema-menu-anchor">
             <button type="button" class="cinema-pill-btn" :class="{ active: openMenu === 'audio' }" title="音轨切换" :aria-expanded="openMenu === 'audio'" @click="toggleMenu('audio')">
@@ -696,5 +728,3 @@ onUnmounted(() => {
     </footer>
   </div>
 </template>
-
-<style scoped src="./CinemaPlayerStage.css"></style>

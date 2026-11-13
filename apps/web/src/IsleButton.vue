@@ -101,11 +101,7 @@ function handleClick(event: MouseEvent) {
   cursor: pointer;
   border: 1px solid transparent;
   transition:
-    background 0.18s ease,
-    color 0.18s ease,
-    border-color 0.18s ease,
-    transform var(--motion-fast, 150ms) var(--motion-spring, cubic-bezier(0.16, 1, 0.3, 1)),
-    box-shadow 0.18s ease,
+    transform var(--motion-fast, 150ms) var(--motion-spring, cubic-bezier(0.22, 1, 0.36, 1)),
     opacity 0.18s ease;
   user-select: none;
   -webkit-tap-highlight-color: transparent;
@@ -157,18 +153,18 @@ function handleClick(event: MouseEvent) {
 
 /* Variants */
 .isle-btn.variant-primary {
-  background: linear-gradient(135deg, var(--accent-primary, #2563eb) 0%, var(--accent-secondary, #7c3aed) 100%);
+  background: linear-gradient(135deg, #1b86ff 0%, var(--accent-primary, #0071e3) 100%);
   color: #ffffff;
-  border-color: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.22);
   box-shadow:
-    0 3px 12px rgba(37, 99, 235, 0.3),
+    0 3px 12px color-mix(in srgb, var(--accent-primary, #0071e3) 30%, transparent),
     inset 0 1px 1px rgba(255, 255, 255, 0.28);
 }
 
 .isle-btn.variant-primary:hover:not(.is-disabled) {
-  filter: brightness(1.08);
+  filter: brightness(1.06);
   box-shadow:
-    0 5px 16px rgba(37, 99, 235, 0.42),
+    0 5px 16px color-mix(in srgb, var(--accent-primary, #0071e3) 38%, transparent),
     inset 0 1px 1px rgba(255, 255, 255, 0.32);
 }
 
@@ -197,8 +193,6 @@ function handleClick(event: MouseEvent) {
 .isle-btn.variant-glass,
 .isle-btn.variant-secondary {
   background: var(--fluid-card-fill, rgba(255, 255, 255, 0.7));
-  -webkit-backdrop-filter: blur(12px);
-  backdrop-filter: blur(12px);
   color: var(--text-primary, #1e293b);
   border-color: var(--fluid-card-border, rgba(120, 136, 165, 0.2));
   box-shadow: var(--fluid-item-card-shadow, 0 2px 6px rgba(0, 0, 0, 0.04));
@@ -247,6 +241,15 @@ function handleClick(event: MouseEvent) {
   }
   to {
     transform: rotate(360deg);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .isle-btn {
+    transition: none;
+  }
+  .isle-btn-spinner {
+    animation: none;
   }
 }
 </style>

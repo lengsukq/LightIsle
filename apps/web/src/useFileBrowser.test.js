@@ -136,3 +136,26 @@ test("unavailable roots never display or grant permissions to old files", async 
   assert.equal(browser.currentFolderCanWrite.value, false);
   assert.match(browser.filesError.value, /目录不可用/);
 });
+
+test("clearFileSearch returns to pre-search folder and ignores blank queries while supporting 1-char search", async t => {
+  const { app, browser, calls } = mountBrowser();
+  t.after(() => app.unmount());
+  await browser.loadFiles("Docs/2026");
+  assert.equal(browser.filesPath.value, "Docs/2026");
+  browser.fileSearch.value = "  ";
+  await browser.runFileSearch();
+  assert.equal(browser.searchingFiles.value, false);
+  assert.equal(browser.filesError.value, "");
+  browser.fileSearch.value = "周";
+  await browser.runFileSearch();
+  assert.equal(browser.searchingFiles.value, true);
+  browser.fileSearch.value = "report";
+  await browser.runFileSearch();
+  assert.equal(browser.searchingFiles.value, true);
+  assert.equal(browser.filesPath.value, ".");
+  await browser.clearFileSearch();
+  assert.equal(browser.searchingFiles.value, false);
+  assert.equal(browser.fileSearch.value, "");
+  assert.equal(browser.filesPath.value, "Docs/2026");
+  assert.match(calls.paths.at(-1), /path=Docs%2F2026/);
+});

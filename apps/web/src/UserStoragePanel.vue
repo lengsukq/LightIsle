@@ -8,6 +8,10 @@ import IsleBadge from "./IsleBadge.vue";
 import IsleCard from "./IsleCard.vue";
 import UserStorageModals from "./UserStorageModals.vue";
 import DuplicateFilesPanel from "./DuplicateFilesPanel.vue";
+import IsleCharts from "./IsleCharts.vue";
+import { ISLE_CHART_COLORS, ISLE_CHART_PALETTE, type ChartSegmentInput } from "./isleChartsMath.ts";
+import { buildQuotaSegments } from "./overviewPageModels.ts";
+import { bytes as formatByteSize } from "./useHostTelemetry.ts";
 import {
   STORAGE_CATEGORIES as categories,
   categoryShortLabel,
@@ -77,6 +81,103 @@ const {
   confirmMigrationCleanup,
   cancelMigration,
 } = useUserStoragePanel(() => props.admin);
+
+const memberBarPalette = [
+  ISLE_CHART_COLORS.blue,
+  ISLE_CHART_COLORS.purple,
+  ISLE_CHART_COLORS.cyan,
+  ISLE_CHART_COLORS.amber,
+];
+
+function rootPoolSegments(root: {
+  rootID: string;
+  generation: number;
+  filesystemTotalBytes?: number;
+  filesystemAvailableBytes?: number;
+}): ChartSegmentInput[] {
+  const total = Math.max(0, root.filesystemTotalBytes ?? 0);
+  const free = Math.min(total, Math.max(0, root.filesystemAvailableBytes ?? 0));
+  const diskUsed = Math.max(0, total - free);
+  const memberSlices: Array<{ label: string; bytes: number }> = [];
+
+  for (const policy of Object.values(policies.value)) {
+    const q = (policy.rootQuotas ?? []).find(
+      (item) => item.rootID === root.rootID && item.rootGeneration === root.generation,
+    );
+    if (!q) continue;
+    const accounted = Math.max(0, (q.accountedBytes ?? 0) + (q.reservedBytes ?? 0));
+    if (accounted <= 0) continue;
+    const uname = users.value.find((u) => u.id === policy.userId)?.username ?? `成员 ${policy.userId}`;
+    memberSlices.push({ label: `${uname} 已入账`, bytes: accounted });
+  }
+  memberSlices.sort((a, b) => b.bytes - a.bytes);
+
+  const segments: ChartSegmentInput[] = [];
+  let accountedTotal = 0;
+  let overflowBytes = 0;
+  memberSlices.forEach((slice, idx) => {
+    const capped = Math.max(0, Math.min(slice.bytes, Math.max(0, diskUsed - accountedTotal)));
+    accountedTotal += capped;
+    if (capped <= 0) return;
+    if (idx < 3) {
+      segments.push({
+        key: `member-${idx}`,
+        label: slice.label,
+        value: capped,
+        color: memberBarPalette[idx % memberBarPalette.length],
+        displayValue: formatByteSize(capped),
+      });
+    } else {
+      overflowBytes += capped;
+    }
+  });
+  if (overflowBytes > 0) {
+    segments.push({
+      key: "members-other",
+      label: "其他成员已入账",
+      value: overflowBytes,
+      color: ISLE_CHART_PALETTE[3],
+      displayValue: formatByteSize(overflowBytes),
+    });
+  }
+  const otherUsed = Math.max(0, diskUsed - accountedTotal);
+  segments.push({
+    key: "disk-other",
+    label: accountedTotal > 0 ? "磁盘其他已用" : "已用空间",
+    value: otherUsed,
+    color: ISLE_CHART_COLORS.amber,
+    displayValue: formatByteSize(otherUsed),
+  });
+  segments.push({
+    key: "disk-free",
+    label: "剩余可用",
+    value: free,
+    color: ISLE_CHART_COLORS.green,
+    displayValue: formatByteSize(free),
+  });
+  return segments;
+}
+
+function rootQuotaSegments(q: {
+  accountedBytes: number;
+  reservedBytes: number;
+  quotaBytes: number;
+}) {
+  return buildQuotaSegments(q.accountedBytes, q.reservedBytes, q.quotaBytes, formatByteSize);
+}
+
+function unlimitedDiskSegments(root: {
+  filesystemTotalBytes?: number;
+  filesystemAvailableBytes?: number;
+}): ChartSegmentInput[] {
+  const total = Math.max(0, root.filesystemTotalBytes ?? 0);
+  const free = Math.min(total, Math.max(0, root.filesystemAvailableBytes ?? 0));
+  const used = Math.max(0, total - free);
+  return [
+    { key: "used", label: "磁盘已用", value: used, color: ISLE_CHART_COLORS.blue, displayValue: formatByteSize(used) },
+    { key: "free", label: "磁盘剩余", value: free, color: ISLE_CHART_COLORS.green, displayValue: formatByteSize(free) },
+  ];
+}
 </script>
 
 <template>
@@ -125,23 +226,35 @@ const {
 
           <div
             v-if="root.filesystemTotalBytes !== undefined && root.filesystemAvailableBytes !== undefined && root.filesystemTotalBytes > 0"
-            class="dir-capacity"
+            class="dir-capacity dir-capacity-chart"
           >
-            <div class="capacity-bar-track">
-              <div
-                class="capacity-bar-fill"
-                :style="{ width: Math.min(100, Math.round(((root.filesystemTotalBytes - root.filesystemAvailableBytes) / root.filesystemTotalBytes) * 100)) + '%' }"
+            <IsleCharts
+              kind="donut"
+              :size="54"
+              :stroke-width="5"
+              :percent="Math.min(100, Math.round(((root.filesystemTotalBytes - root.filesystemAvailableBytes) / root.filesystemTotalBytes) * 100))"
+              :color="((root.filesystemTotalBytes - root.filesystemAvailableBytes) / root.filesystemTotalBytes) >= 0.9 ? ISLE_CHART_COLORS.rose : ISLE_CHART_COLORS.blue"
+              :aria-label="`${root.name} 存储空间使用率`"
+            />
+            <div class="dir-capacity-bar-col">
+              <IsleCharts
+                kind="segmented"
+                :segments="rootPoolSegments(root)"
+                :total="root.filesystemTotalBytes"
+                :bar-height="10"
+                compact-legend
+                :aria-label="`${root.name} 各成员已入账、磁盘其他已用与剩余空间比例`"
               />
-            </div>
-            <div class="capacity-labels">
-              <span>可用 {{ prettyBytes(root.filesystemAvailableBytes) }}</span>
-              <span>总容量 {{ prettyBytes(root.filesystemTotalBytes) }}</span>
+              <div class="capacity-labels">
+                <span>可用 {{ prettyBytes(root.filesystemAvailableBytes) }}</span>
+                <span>总容量 {{ prettyBytes(root.filesystemTotalBytes) }}</span>
+              </div>
             </div>
           </div>
 
           <div class="directory-card-footer">
             <span class="dir-meta">
-              登记代次 #{{ root.generation }} · 已绑定 {{ boundCountForRoot(root.rootID) }} 项用户空间
+              当前已绑定 {{ boundCountForRoot(root.rootID) }} 项用户空间
             </span>
             <IsleButton
               v-if="firstUserBoundToRoot(root.rootID) && roots.length > 1"
@@ -199,7 +312,7 @@ const {
               <IsleButton variant="primary" size="sm" :disabled="!policy.locations.length || pending" @click="openMigrateModal(policy.userId)">
                 <ArrowRightLeft :size="14" /><span>旧目录迁移到新目录</span>
               </IsleButton>
-              <IsleButton variant="ghost" size="sm" :disabled="pending || !rootsKnown" @click="checkOnlineUsage(policy)">
+              <IsleButton variant="glass" size="sm" :disabled="pending || !rootsKnown" @click="checkOnlineUsage(policy)">
                 核对占用
               </IsleButton>
             </div>
@@ -220,14 +333,14 @@ const {
                   <IsleBadge
                     :variant="isActiveRoot(policy, q) ? (findRoot(q.rootID)?.online === false ? 'danger' : (diskLocations(policy, q).length ? 'online' : 'warning')) : 'neutral'"
                     size="sm"
-                    :title="'登记代次 #' + q.rootGeneration"
+                    :title="isActiveRoot(policy, q) ? undefined : '历史已解绑磁盘的记录'"
                   >
-                    {{ isActiveRoot(policy, q) ? (findRoot(q.rootID)?.online === false ? "离线 · 请接回原盘" : (diskLocations(policy, q).length ? "当前使用中" : "已预留配额")) : "历史账本 #" + q.rootGeneration }}
+                    {{ isActiveRoot(policy, q) ? (findRoot(q.rootID)?.online === false ? "离线 · 请接回原盘" : (diskLocations(policy, q).length ? "当前使用中" : "已预留配额")) : "已解绑旧记录" }}
                   </IsleBadge>
                 </div>
 
                 <div v-if="admin" class="owned-dir-actions">
-                  <IsleButton v-if="!isUserUnlimited(policy)" variant="ghost" size="sm" @click="startEditQuota(policy.userId, q)">
+                  <IsleButton v-if="!isUserUnlimited(policy)" variant="glass" size="sm" @click="startEditQuota(policy.userId, q)">
                     <Sliders :size="13" /><span>调整配额</span>
                   </IsleButton>
                   <IsleButton
@@ -253,13 +366,47 @@ const {
                 </div>
                 <input v-model="editingQuotaGiB" type="number" min="1" class="isle-input quota-input" />
                 <IsleButton variant="primary" size="sm" :loading="savingQuota" @click="saveQuota(policy.userId, q)">保存</IsleButton>
-                <IsleButton variant="ghost" size="sm" @click="editingQuotaKey = null">取消</IsleButton>
+                <IsleButton variant="glass" size="sm" @click="editingQuotaKey = null">取消</IsleButton>
               </div>
 
-              <div v-if="q.quotaBytes !== null && q.quotaBytes > 0" class="quota-progress-wrap">
-                <div class="capacity-bar-track">
-                  <div class="capacity-bar-fill" :style="{ width: Math.min(100, Math.round(((q.accountedBytes + q.reservedBytes) / q.quotaBytes) * 100)) + '%' }" />
-                </div>
+              <div v-if="q.quotaBytes !== null && q.quotaBytes > 0" class="quota-chart-row">
+                <IsleCharts
+                  kind="donut"
+                  :size="46"
+                  :stroke-width="5"
+                  :percent="Math.min(100, Math.round(((q.accountedBytes + q.reservedBytes) / q.quotaBytes) * 100))"
+                  :color="((q.accountedBytes + q.reservedBytes) / q.quotaBytes) >= 0.9 ? ISLE_CHART_COLORS.rose : ISLE_CHART_COLORS.blue"
+                  :aria-label="`${rootName(q)} 个人空间使用率`"
+                />
+                <IsleCharts
+                  kind="segmented"
+                  :segments="rootQuotaSegments({ accountedBytes: q.accountedBytes, reservedBytes: q.reservedBytes, quotaBytes: q.quotaBytes })"
+                  :total="q.quotaBytes"
+                  :bar-height="9"
+                  compact-legend
+                  :aria-label="`${rootName(q)} 已入账、传输预占与剩余额度`"
+                />
+              </div>
+              <div
+                v-else-if="findRoot(q.rootID)?.filesystemTotalBytes && (findRoot(q.rootID)?.filesystemTotalBytes ?? 0) > 0"
+                class="quota-chart-row"
+              >
+                <IsleCharts
+                  kind="donut"
+                  :size="46"
+                  :stroke-width="5"
+                  :percent="Math.min(100, Math.round((((findRoot(q.rootID)?.filesystemTotalBytes ?? 0) - (findRoot(q.rootID)?.filesystemAvailableBytes ?? 0)) / (findRoot(q.rootID)?.filesystemTotalBytes ?? 1)) * 100))"
+                  :color="ISLE_CHART_COLORS.teal"
+                  :aria-label="`${rootName(q)} 所在磁盘空间使用率`"
+                />
+                <IsleCharts
+                  kind="segmented"
+                  :segments="unlimitedDiskSegments(findRoot(q.rootID)!)"
+                  :total="findRoot(q.rootID)?.filesystemTotalBytes ?? 0"
+                  :bar-height="9"
+                  compact-legend
+                  aria-label="管理员不设限，受所在物理磁盘空间约束"
+                />
               </div>
 
               <div class="owned-dir-stats">
@@ -281,7 +428,7 @@ const {
                 <template v-if="admin">
                   <IsleButton
                     v-if="selectedLocation(policy, category.id)"
-                    variant="ghost"
+                    variant="glass"
                     size="sm"
                     @click="() => { const loc = selectedLocation(policy, category.id)!; openMigrateModal(policy.userId, loc.rootID, loc.rootGeneration, [category.id]); }"
                   >
@@ -350,5 +497,3 @@ const {
     />
   </div>
 </template>
-
-<style scoped src="./UserStoragePanel.css"></style>

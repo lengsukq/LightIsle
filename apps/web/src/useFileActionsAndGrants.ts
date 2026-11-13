@@ -2,6 +2,7 @@ import { computed, ref, watch, type Ref } from "vue";
 import { createFileOperationsClient } from "./fileOperationsClient.ts";
 import { readApiFailure } from "./apiFailure.ts";
 import { describeUserFacingError } from "./userFacingError.ts";
+import { copyTextToClipboard } from "./clipboard.ts";
 import { requestConfirm } from "./useConfirmDialog.ts";
 import type { ManagedAccount } from "./useAccountManagement.ts";
 import type { SharedFileEntry } from "./useFileShares.ts";
@@ -29,7 +30,7 @@ export function useFileActionsAndGrants(options: {
   rootFetch: (endpoint: string, init?: RequestInit) => Promise<Response>;
   jsonGet: <T>(endpoint: string, signal?: AbortSignal) => Promise<T>;
   jsonWrite: <T>(endpoint: string, method: "POST" | "PATCH" | "PUT" | "DELETE", body?: object, signal?: AbortSignal) => Promise<T>;
-  loadFiles: (path?: string) => Promise<void>;
+  loadFiles: (path?: string) => Promise<unknown>;
   loadTrash: () => Promise<void>;
   isAbortError: (error: unknown) => boolean;
 }) {
@@ -45,6 +46,7 @@ export function useFileActionsAndGrants(options: {
   const fileOperationNotice = ref("");
   const newFolderName = ref("");
   const trashTarget = ref<SharedFileEntry | null>(null);
+  const fileActionBusy = ref(false);
   const previewItem = ref<SharedFileEntry | null>(null);
   const previewText = ref("");
   const previewError = ref("");
@@ -357,18 +359,24 @@ export function useFileActionsAndGrants(options: {
     void options.loadFiles(p.length ? p.join("/") : ".");
   }
 
-  async function makeFolder() {
-    if (!options.currentFolderCanWrite.value) return;
+  async function makeFolder(): Promise<boolean> {
+    if (!options.currentFolderCanWrite.value || fileActionBusy.value) return false;
     const name = newFolderName.value.trim();
-    if (!name) return;
+    if (!name) return false;
     const full = options.filesPath.value === "." ? name : options.filesPath.value + "/" + name;
+    fileActionBusy.value = true;
     options.filesError.value = "";
     try {
       await options.jsonWrite(options.scopedApiPath("/api/v2/files/folders"), "POST", { path: full });
       newFolderName.value = "";
       await options.loadFiles();
+      fileOperationNotice.value = "已新建文件夹「" + name + "」。";
+      return true;
     } catch (e) {
       if (!options.isAbortError(e)) options.filesError.value = "新建文件夹失败：" + describeUserFacingError(e);
+      return false;
+    } finally {
+      fileActionBusy.value = false;
     }
   }
 
@@ -498,13 +506,11 @@ export function useFileActionsAndGrants(options: {
       options.filesError.value = "所选文件列表已经变化，请刷新并重新选择。";
       return;
     }
-    try {
-      if (!navigator.clipboard?.writeText) throw new Error("clipboard_unavailable");
-      await navigator.clipboard.writeText(selected.join("\n"));
+    if (await copyTextToClipboard(selected.join("\n"))) {
       selectedPathsFallback.value = "";
       fileOperationNotice.value = "已复制 " + selected.length + " 项的相对路径，原文件未改变。";
-    } catch {
-      // Clipboard API is unavailable on many default LAN HTTP origins.
+    } else {
+      // Clipboard API may be unavailable on default LAN HTTP origins.
       // Offer a selectable read-only field rather than a dead-end error.
       selectedPathsFallback.value = selected.join("\n");
       fileOperationNotice.value = "浏览器不支持自动复制，已在下方显示路径，可长按或选中后复制。";
@@ -512,10 +518,10 @@ export function useFileActionsAndGrants(options: {
   }
 
   async function removeFile() {
-    if (!trashTarget.value) return;
+    if (!trashTarget.value || fileActionBusy.value) return;
     const name = trashTarget.value.name;
     const filepath = trashTarget.value.path;
-    trashTarget.value = null;
+    fileActionBusy.value = true;
     options.filesError.value = "";
     try {
       const response = await options.rootFetch(
@@ -529,10 +535,14 @@ export function useFileActionsAndGrants(options: {
       if (!response.ok) throw await readApiFailure(response);
       await options.loadFiles();
       if (options.showingTrash.value) await options.loadTrash();
+      fileOperationNotice.value = "已将「" + name + "」移入回收站。";
     } catch (e) {
       if (!options.isAbortError(e)) {
         options.filesError.value = "移动 " + name + " 到回收站失败：" + describeUserFacingError(e);
       }
+    } finally {
+      trashTarget.value = null;
+      fileActionBusy.value = false;
     }
   }
 
@@ -540,11 +550,12 @@ export function useFileActionsAndGrants(options: {
     fileOperationDialog.value = null;
     fileOperationNotice.value = "";
     newFolderName.value = "";
+    trashTarget.value = null;
+    fileActionBusy.value = false;
     previewItem.value = null;
     previewText.value = "";
     previewError.value = "";
     showPreviewPlaylist.value = false;
-    trashTarget.value = null;
     grantUser.value = null;
     grants.value = [];
     grantError.value = "";
@@ -566,6 +577,7 @@ export function useFileActionsAndGrants(options: {
     fileOperationNotice,
     newFolderName,
     trashTarget,
+    fileActionBusy,
     previewItem,
     previewText,
     previewError,

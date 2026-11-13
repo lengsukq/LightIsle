@@ -51,10 +51,6 @@ function settleCurrentDialog(accepted: boolean): void {
   }
 }
 
-export function setConfirmDialogBusy(busy: boolean): void {
-  dialogState.busy = Boolean(busy)
-}
-
 export function requestConfirm(options: ConfirmDialogOptions | string): Promise<boolean> {
   if (activeResolver) {
     dialogState.busy = false

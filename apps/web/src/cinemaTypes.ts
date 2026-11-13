@@ -92,6 +92,8 @@ export type SeriesInfo = {
   year?: number;
   nextFilmId?: number;
   nextTitle?: string;
+  nextSeason?: number;
+  nextEpisode?: number;
   inProgress?: boolean;
   position?: number;
   duration?: number;

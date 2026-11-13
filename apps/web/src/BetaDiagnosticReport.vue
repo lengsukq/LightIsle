@@ -2,6 +2,7 @@
 import { ref } from "vue";
 import { FileText, Download, Copy, Check } from "lucide-vue-next";
 import { localDiagnosticReport } from "./betaDiagnostics.ts";
+import { copyTextToClipboard } from "./clipboard.ts";
 import IsleCard from "./IsleCard.vue";
 import IsleButton from "./IsleButton.vue";
 
@@ -13,14 +14,14 @@ function togglePreview() {
   preview.value = preview.value ? "" : localDiagnosticReport();
 }
 
-function copyReport() {
-  if (!preview.value || !navigator.clipboard) return;
-  navigator.clipboard.writeText(preview.value).then(() => {
+async function copyReport() {
+  if (!preview.value) return;
+  if (await copyTextToClipboard(preview.value)) {
     copied.value = true;
     window.setTimeout(() => {
       copied.value = false;
     }, 2000);
-  }).catch(() => {});
+  }
 }
 
 function exportReport() {

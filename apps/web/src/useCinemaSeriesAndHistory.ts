@@ -9,6 +9,8 @@ export function useCinemaSeriesAndHistory(options: {
   getRootEpoch: () => number;
   isDisposed: () => boolean;
   query: Ref<string>;
+  watchedFilter: Ref<"all" | "unwatched" | "watched">;
+  sortBy: Ref<"recent" | "rating" | "year" | "title">;
   view: Ref<"films" | "series">;
   movies: Ref<Movie[]>;
   selected: Ref<Movie | null>;
@@ -17,6 +19,7 @@ export function useCinemaSeriesAndHistory(options: {
   api: <T>(url: string, method?: string, body?: object, signal?: AbortSignal) => Promise<T>;
   apiPath: (path: string) => string;
   load: (reset?: boolean) => Promise<void>;
+  loadHomeShelves?: () => Promise<void>;
   open: (v: Movie, autoStart?: boolean) => Promise<void>;
   getMediaBackstack: () => ReturnType<typeof createBrowserMediaBackstack> | null;
 }) {
@@ -63,8 +66,11 @@ export function useCinemaSeriesAndHistory(options: {
     seriesSearchLoading.value = true;
     seriesSearchError.value = "";
     try {
+      const searchParams = new URLSearchParams({ limit: "120", query: term });
+      if (options.watchedFilter.value !== "all") searchParams.set("watched", options.watchedFilter.value);
+      if (options.sortBy.value !== "recent") searchParams.set("sort", options.sortBy.value);
       const result = await options.api<{ series: SeriesInfo[] }>(
-        options.apiPath("/api/v2/series") + "?" + new URLSearchParams({ limit: "120", query: term }),
+        options.apiPath("/api/v2/series") + "?" + searchParams.toString(),
       );
       if (current()) matchingSeries.value = result.series;
     } catch (e) {
@@ -116,9 +122,39 @@ export function useCinemaSeriesAndHistory(options: {
       historyFilms.value = [];
       historyNext.value = 0;
       options.movies.value = options.movies.value.map((item) => ({ ...item, position: 0, completed: false }));
+      if (seriesDetail.value) {
+        seriesDetail.value = {
+          ...seriesDetail.value,
+          series: { ...seriesDetail.value.series, watchedCount: 0, inProgress: false, nextFilmId: undefined },
+          films: seriesDetail.value.films.map((item) => ({ ...item, position: 0, completed: false })),
+        };
+      }
       await options.load(true);
+      await options.loadHomeShelves?.();
     } catch (e) {
       historyError.value = describeRootOperationFailure(e);
+    }
+  }
+
+  function applyEpisodeUpdateToState(updated: Movie) {
+    if (options.selected.value?.id === updated.id) options.selected.value = updated;
+    options.movies.value = options.movies.value.map((item) =>
+      item.id === updated.id ? { ...item, ...updated } : item,
+    );
+    historyFilms.value = historyFilms.value
+      .map((item) => (item.id === updated.id ? { ...item, ...updated } : item))
+      .filter((item) => item.id !== updated.id || item.position > 5 || item.completed);
+    if (seriesDetail.value) {
+      const nextFilms = seriesDetail.value.films.map((item) =>
+        item.id === updated.id ? { ...item, ...updated } : item,
+      );
+      const watchedCount = nextFilms.filter((item) => item.completed).length;
+      const inProgress = nextFilms.some((item) => (item.position || 0) > 5 && !item.completed);
+      seriesDetail.value = {
+        ...seriesDetail.value,
+        series: { ...seriesDetail.value.series, watchedCount, inProgress },
+        films: nextFilms,
+      };
     }
   }
 
@@ -127,14 +163,22 @@ export function useCinemaSeriesAndHistory(options: {
       const updated = await options.api<Movie>(options.apiPath("/api/v2/cinema/" + v.id + "/watched"), "POST", {
         completed,
       });
-      if (options.selected.value?.id === v.id) options.selected.value = updated;
-      options.movies.value = options.movies.value.map((item) => (item.id === v.id ? { ...item, ...updated } : item));
-      historyFilms.value = historyFilms.value
-        .map((item) => (item.id === v.id ? { ...item, ...updated } : item))
-        .filter((item) => item.id !== v.id || item.position > 5 || item.completed);
+      applyEpisodeUpdateToState(updated);
       options.scrapeMessage.value = completed ? "已标记为看完。" : "已标记为未看，续播进度已重置。";
+      void options.loadHomeShelves?.();
     } catch (e) {
       options.scrapeMessage.value = "标记失败：" + describeRootOperationFailure(e);
+    }
+  }
+
+  async function clearProgress(v: Movie) {
+    try {
+      await options.api<{ cleared: boolean }>(options.apiPath("/api/v2/cinema/" + v.id + "/progress"), "DELETE");
+      applyEpisodeUpdateToState({ ...v, position: 0, completed: false });
+      options.scrapeMessage.value = "已清除续播进度并移出「继续观看」。";
+      void options.loadHomeShelves?.();
+    } catch (e) {
+      options.scrapeMessage.value = "移除续播失败：" + describeRootOperationFailure(e);
     }
   }
 
@@ -165,15 +209,18 @@ export function useCinemaSeriesAndHistory(options: {
     }
   }
 
-  async function loadSeries() {
-    if (seriesLoading.value) return;
+  async function loadSeries(force = false) {
+    if (seriesLoading.value && !force) return;
     const generation = ++seriesGeneration;
     const root = options.getRootEpoch();
     const current = () => !options.isDisposed() && generation === seriesGeneration && root === options.getRootEpoch();
     seriesLoading.value = true;
     seriesError.value = "";
     try {
-      const page = await options.api<{ series: SeriesInfo[] }>(options.apiPath("/api/v2/series") + "?limit=60");
+      const params = new URLSearchParams({ limit: "60" });
+      if (options.watchedFilter.value !== "all") params.set("watched", options.watchedFilter.value);
+      if (options.sortBy.value !== "recent") params.set("sort", options.sortBy.value);
+      const page = await options.api<{ series: SeriesInfo[] }>(options.apiPath("/api/v2/series") + "?" + params);
       if (!current()) return;
       seriesList.value = page.series;
     } catch (e) {
@@ -357,6 +404,7 @@ export function useCinemaSeriesAndHistory(options: {
     loadHistory,
     clearHistory,
     markWatched,
+    clearProgress,
     findNextEpisode,
     loadSeries,
     switchView,

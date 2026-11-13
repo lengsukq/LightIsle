@@ -146,7 +146,11 @@ function toggleMute() {
   backdrop-filter: blur(14px);
   -webkit-backdrop-filter: blur(14px);
   cursor: pointer;
-  transition: background 0.18s ease, transform 0.15s ease;
+  transition: transform 0.15s var(--motion-spring, cubic-bezier(0.22, 1, 0.36, 1)), opacity 0.15s ease;
+}
+.live-pill-btn:active,
+.live-mute-btn:active {
+  transform: scale(0.96);
 }
 .live-pill-btn:hover,
 .live-mute-btn:hover {
@@ -163,5 +167,11 @@ function toggleMute() {
   border-radius: 50%;
   border: 1.8px dotted currentColor;
   display: inline-block;
+}
+@media (prefers-reduced-motion: reduce) {
+  .live-pill-btn,
+  .live-mute-btn {
+    transition: none;
+  }
 }
 </style>

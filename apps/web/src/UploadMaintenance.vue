@@ -124,7 +124,7 @@ onUnmounted(()=>{disposed=true;generation++;controller.abort()});
   <section class="account-panel upload-maintenance">
     <div class="account-heading">
       <h3>未完成上传</h3>
-      <IsleButton variant="ghost" size="sm" :loading="loading" :disabled="busy" @click="load()">
+      <IsleButton variant="glass" size="sm" :loading="loading" :disabled="busy" @click="load()">
         刷新
       </IsleButton>
     </div>
@@ -143,7 +143,7 @@ onUnmounted(()=>{disposed=true;generation++;controller.abort()});
       <IsleButton variant="danger" size="sm" :disabled="busy" @click="confirming=upload">取消残留</IsleButton>
     </div>
     <div v-if="nextCursor" class="gallery-load">
-      <IsleButton variant="ghost" size="sm" :loading="loading" :disabled="busy" @click="load(true)">
+      <IsleButton variant="glass" size="sm" :loading="loading" :disabled="busy" @click="load(true)">
         {{ loading ? '正在加载…' : '加载更多上传' }}
       </IsleButton>
     </div>
@@ -160,15 +160,15 @@ onUnmounted(()=>{disposed=true;generation++;controller.abort()});
           <span>.lightisle-parts/{{item.name}}</span><small v-if="item.nameBytes">文件名字节（Base64URL）：{{item.nameBytes}}</small>
         </div>
         <div style="display: flex; gap: 8px; margin-top: 8px;">
-          <IsleButton v-if="unknownNext" variant="ghost" size="sm" :loading="unknownLoading" @click="loadUnknown(true)">加载更多</IsleButton>
-          <IsleButton variant="ghost" size="sm" :loading="unknownLoading" @click="loadUnknown()">重新检查</IsleButton>
+          <IsleButton v-if="unknownNext" variant="glass" size="sm" :loading="unknownLoading" @click="loadUnknown(true)">加载更多</IsleButton>
+          <IsleButton variant="glass" size="sm" :loading="unknownLoading" @click="loadUnknown()">重新检查</IsleButton>
         </div>
       </div>
     </details>
     <div class="upload-cleanup-controls">
       <span class="upload-cleanup-label">清理多久未活动的上传</span>
       <AppleSelect v-model="days" :options="dayOptions" :disabled="busy" size="sm" aria-label="清理多久未活动的上传" />
-      <IsleButton variant="ghost" size="sm" :disabled="busy || loading" @click="confirming='expired'">清理过期残留…</IsleButton>
+      <IsleButton variant="glass" size="sm" :disabled="busy || loading" @click="confirming='expired'">清理过期残留…</IsleButton>
     </div>
     <div v-if="confirming" class="upload-confirm" role="group" aria-label="确认清理上传">
       <p>{{confirming==='expired'?`清理 ${days} 天没有活动、尚未发布的上传残留？正在写入和提交的上传会受到保护。`:`取消“${confirming.path}”的断点续传残留？已上传的临时部分将被清理。`}}</p>
@@ -176,7 +176,7 @@ onUnmounted(()=>{disposed=true;generation++;controller.abort()});
         <IsleButton variant="danger" size="sm" :loading="busy" :disabled="busy" @click="confirm">
           {{ busy ? '正在处理…' : '确认清理' }}
         </IsleButton>
-        <IsleButton variant="ghost" size="sm" :disabled="busy" @click="confirming=null">保留</IsleButton>
+        <IsleButton variant="glass" size="sm" :disabled="busy" @click="confirming=null">保留</IsleButton>
       </div>
     </div>
   </section>

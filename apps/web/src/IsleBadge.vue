@@ -144,4 +144,10 @@ defineSlots<{
     background: rgba(239, 68, 68, 0.16);
   }
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .isle-badge {
+    transition: none;
+  }
+}
 </style>

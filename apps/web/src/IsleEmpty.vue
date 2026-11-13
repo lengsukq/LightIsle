@@ -141,4 +141,10 @@ defineSlots<{
 .isle-empty.compact .isle-empty-action {
   margin-top: 12px;
 }
+
+@media (prefers-reduced-motion: reduce) {
+  .isle-empty-icon-wrap {
+    transition: none;
+  }
+}
 </style>

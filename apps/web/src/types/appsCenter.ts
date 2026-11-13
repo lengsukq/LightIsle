@@ -1,7 +1,5 @@
 export type AccessPolicyType = "admin_only" | "selected_members" | "all_members";
 
-export type AppWebMode = "none" | "static" | "on-demand" | "persistent" | "daemon";
-
 export interface AppWebDraft {
   enabled: boolean;
   mode: "static" | "on-demand" | "persistent";
@@ -36,9 +34,9 @@ export interface AppDiagnostic {
   dataSafe?: string;
 }
 
-export interface PublicAppWebView {
+interface PublicAppWebView {
   enabled?: boolean;
-  mode?: "static" | "on-demand" | "persistent" | "daemon";
+  mode?: "static" | "on-demand" | "persistent";
   entry?: string;
   idleTimeoutSeconds?: number;
   autoRestart?: boolean;
@@ -49,7 +47,7 @@ export interface PublicAppWebView {
   lastError?: string;
 }
 
-export interface PublicAppCronView {
+interface PublicAppCronView {
   hasCron?: boolean;
   enabled?: boolean;
   entry?: string;
@@ -61,14 +59,12 @@ export interface PublicAppCronView {
   notification?: { events?: string[]; channels?: string[] };
   running?: boolean;
   nextRun?: number;
-  nextRunAt?: number;
   lastRun?: AppCronRunEntry;
 }
 
-export interface PublicAppAccessView {
+interface PublicAppAccessView {
   policy: AccessPolicyType;
   allowedUserIDs?: number[];
-  allowedUserIds?: number[];
 }
 
 export interface PublicAppItem {
@@ -135,7 +131,7 @@ export interface AppStorageLocationItem {
   appCount: number;
 }
 
-export interface AppStorageVolumeOption {
+interface AppStorageVolumeOption {
   name: string;
   mount: string;
   suggestedPath: string;

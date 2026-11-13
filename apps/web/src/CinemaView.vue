@@ -1,18 +1,22 @@
 <script setup lang="ts">
-import { handleCinemaKeydown } from "./cinemaKeyboard.ts";
+import { createCinemaKeyboardController } from "./cinemaKeyboard.ts";
 import { createVisibleMediaPolling } from "./visibleMediaPolling.ts";
 import { ref, onMounted, onBeforeUnmount, onUnmounted, watch, nextTick } from "vue";
 import { describeRootOperationFailure } from "./rootDiscovery.ts";
 import { describeUserFacingError } from "./userFacingError.ts";
 import { createScopedRootApi } from "./apiClient.ts";
-import { Clapperboard, Film, Tv, Play, Download, Search, RefreshCcw, X, Pencil, Wand2, RotateCcw, Trash2 } from "lucide-vue-next";
+import { Trash2, X } from "lucide-vue-next";
 import { rootApiPath, rootMediaPath } from "./rootApi.ts";
+import CinemaBrowseGrids from "./CinemaBrowseGrids.vue";
+import CinemaHeaderBar from "./CinemaHeaderBar.vue";
 import CinemaPlayerStage from "./CinemaPlayerStage.vue";
+import CinemaRenameModal from "./CinemaRenameModal.vue";
+import CinemaSeriesModal from "./CinemaSeriesModal.vue";
 import CinemaTmdbPanel from "./CinemaTmdbPanel.vue";
 import CinemaHomeShelvesSection from "./CinemaHomeShelvesSection.vue";
 import CinemaDetailMetadataPanels from "./CinemaDetailMetadataPanels.vue";
 import { useCinemaPlayback } from "./useCinemaPlayback.ts";
-import { duration, percent, useCinemaMetadata } from "./useCinemaMetadata.ts";
+import { duration, useCinemaMetadata } from "./useCinemaMetadata.ts";
 import { useCinemaSeriesAndHistory } from "./useCinemaSeriesAndHistory.ts";
 import { useCinemaDirectoryPlaylist } from "./useCinemaDirectoryPlaylist.ts";
 import { useCinemaCatalogController } from "./composables/useCinemaCatalogController.ts";
@@ -20,17 +24,18 @@ import { continueAfterPlaybackEnd } from "./cinemaAutoAdvance.ts";
 import { confirmCinemaExit } from "./cinemaSafeExit.ts";
 import { createBrowserMediaBackstack } from "./browserMediaBackstack.ts";
 import { pushModalLayer, type ModalLayerHandle } from "./modalStack.ts";
-import IsleModal from "./IsleModal.vue";
 import IsleButton from "./IsleButton.vue";
-import IsleChip from "./IsleChip.vue";
-import IsleBanner from "./IsleBanner.vue";
-import IsleBadge from "./IsleBadge.vue";
-import IsleEmpty from "./IsleEmpty.vue";
 import type { Movie } from "./cinemaTypes.ts";
 
 const props = defineProps<{ active?: boolean; admin: boolean; rootId?: string; rootGeneration?: number }>();
+const emit = defineEmits<{
+  (e: "open-mount-guide"): void;
+  (e: "open-scraping-settings"): void;
+}>();
 const movies = ref<Movie[]>([]);
 const mode = ref("all");
+const watchedFilter = ref<"all" | "unwatched" | "watched">("all");
+const sortBy = ref<"recent" | "rating" | "year" | "title">("recent");
 const query = ref("");
 const actionError = ref("");
 const selected = ref<Movie | null>(null);
@@ -42,13 +47,32 @@ const exitSaveBlocked = ref(false);
 let mediaBackstack: ReturnType<typeof createBrowserMediaBackstack> | null = null;
 let cinemaLayerHandle: ModalLayerHandle | null = null;
 const cinemaDialog = ref<HTMLElement | null>(null);
+const playerStageRef = ref<{ closeMenus: () => void } | null>(null);
+const playerMenuOpen = ref(false);
+const osdMessage = ref("");
+let osdTimer: number | undefined;
+const keyboardController = createCinemaKeyboardController();
+
+function showOsd(text: string) {
+  osdMessage.value = text;
+  if (osdTimer) window.clearTimeout(osdTimer);
+  osdTimer = window.setTimeout(() => {
+    osdTimer = undefined;
+    osdMessage.value = "";
+  }, 1100);
+}
 
 watch(selected, (film) => {
   if (film) {
     cinemaLayerHandle?.dispose();
     cinemaLayerHandle = pushModalLayer({
       onEsc: () => {
-        if (viewerPlaying.value && showPlayerPlaylist.value) {
+        if (viewerPlaying.value && isFullscreen.value) {
+          void exitCinemaFullscreen();
+        } else if (viewerPlaying.value && playerMenuOpen.value) {
+          playerStageRef.value?.closeMenus();
+          playerMenuOpen.value = false;
+        } else if (viewerPlaying.value && showPlayerPlaylist.value) {
           showPlayerPlaylist.value = false;
         } else {
           if (viewerPlaying.value) returnToOverview();
@@ -58,6 +82,8 @@ watch(selected, (film) => {
       lockScroll: true,
     });
   } else {
+    keyboardController.reset();
+    osdMessage.value = "";
     cinemaLayerHandle?.dispose();
     cinemaLayerHandle = null;
   }
@@ -86,11 +112,11 @@ const { api } = createScopedRootApi({
 const {
   next, loading, pageLoaded, loadError, scanActionError, scanStatusLoading, scanStatusLoaded, scanStatusError, scan,
   continueShelf, recentShelf, shelvesError, featuredFilm, showRecentShelf, deleting, choosingTrash, trashIDs,
-  filteredView, emptyTitle, emptyMessage, continueCount, disambiguationBadge, toggleTrashFilm,
+  filteredView, emptyTitle, emptyMessage, continueCount, disambiguationMap, toggleTrashFilm,
   loadHomeShelves, load, retryLoad, trashFilms, trashSelectedFilms, status, startScan,
   clearCatalogForQueryChange, resetCatalogForRootChange, disposeCatalog,
 } = useCinemaCatalogController({
-  props, movies, mode, query, view, selected, posterFailed, actionError,
+  props, movies, mode, watchedFilter, sortBy, query, view, selected, posterFailed, actionError,
   getRootEpoch: () => rootEpoch, isDisposed: () => disposed, api, apiPath,
   onSelectedTrashed: () => close(),
   onScanCompleted: () => { void refreshScrape(); if (view.value === "series") void loadSeries(); },
@@ -98,19 +124,22 @@ const {
 
 const {
   player, hlsPlayer, caption, playError, hlsSession, hlsStarting,
-  playbackRate, autoplayNext, preferLocalDecode, directLocalOverride, playbackPosition, playbackDuration, playbackBuffered, canPictureInPicture, seekPreview,
+  playbackRate, isSpeedBoosting, autoplayNext, preferLocalDecode, directLocalOverride,
+  subtitleSize, subtitleOffset, localSubtitleName, localSubtitleError,
+  playbackPosition, playbackDuration, playbackBuffered, canPictureInPicture,
   progressSaveError, retryProgress, currentFilmProgressUnsaved, refreshProgressSaveError, refreshBufferedProgress, resetPlaybackForFilm, stream, track, download, playback, canAttemptDirect, destroyHls,
   resetPendingSeek, startTranscode, switchAudioTrack, switchQuality, playbackRateOptions,
-  captionOptions, audioTrackOptions, currentQuality, cinemaQualityOptions, setPlaybackRate,
-  setAutoplayNext, setPreferLocalDecode, activeVideo, loaded, save, tick, resetProgressClock, changeCaption, captionSrclang,
-  jumpPlayback, seekAbsolute, toggleCinemaFullscreen, toggleCinemaPictureInPicture, transcodeErrorMessage,
-  isPlaying, volume, isMuted, fillScreen, isFullscreen, syncVideoMediaState, togglePlayPause, setVolume, toggleMute, toggleFillScreen, syncFullscreenState,
+  captionOptions, audioTrackOptions, currentQuality, cinemaQualityOptions, setPlaybackRate, startHoldSpeedBoost, stopHoldSpeedBoost,
+  setAutoplayNext, setPreferLocalDecode, activeVideo, loaded, save, tick, resetProgressClock, changeCaption, captionLoaded, captionSrclang,
+  loadLocalSubtitleFile, clearLocalSubtitle, setSubtitleSize, adjustSubtitleOffset, resetSubtitleOffset,
+  jumpPlayback, seekAbsolute, exitCinemaFullscreen, toggleCinemaFullscreen, toggleCinemaPictureInPicture, transcodeErrorMessage,
+  isPlaying, volume, isMuted, fillScreen, isFullscreen, syncVideoMediaState, togglePlayPause, setVolume, adjustVolume, toggleMute, toggleFillScreen, syncFullscreenState,
 } = useCinemaPlayback({ selected, movies, props, api, apiPath, mediaPath });
 
 const {
   candidatePosterFailed, scraping, scrapeMessage, tmdbQuery, tmdbToken, tmdbMatches, tmdbBusy, tmdbError, batchToken, batchBusy, batchError, batchProgress, batchCandidates,
   doubanQuery, doubanMatches, doubanBusy, doubanError, scrapeState, scrapeBusy, scrapeNotice, scrapeError, cancelBatch, suggestBatch, acceptBatchCandidate,
-  searchDouban, matchDouban, rename, importLocalNFO, searchTMDB, matchTMDB, refreshScrape, startScrape, resetMetadataForOpen, resetMetadataForClose, resetMetadataForRootChange, disposeMetadata,
+  searchDouban, matchDouban, renameTarget, renameTitle, renameBusy, renameError, openRenameModal, closeRenameModal, submitRename, importLocalNFO, searchTMDB, matchTMDB, refreshScrape, startScrape, resetMetadataForOpen, resetMetadataForClose, resetMetadataForRootChange, disposeMetadata,
 } = useCinemaMetadata({
   isAdmin: () => props.admin, getRootId: () => props.rootId, getRootGeneration: () => props.rootGeneration ?? 0, getRootEpoch: () => rootEpoch, isDisposed: () => disposed,
   movies, selected, posterFailed, actionError, api, apiPath, load: (reset) => load(reset), transcodeErrorMessage,
@@ -118,11 +147,11 @@ const {
 
 const {
   matchingSeries, seriesSearchLoading, seriesSearchError, historyFilms, historyLoading, historyError, seriesList, seriesLoading, seriesError, seriesDetail, seriesDetailLoading, seriesDetailError,
-  seriesTmdbId, seriesTmdbBusy, seriesTmdbMessage, resetSeriesSearch, searchForSeries, loadHistory, clearHistory, markWatched, findNextEpisode, loadSeries, switchView, openSeries,
+  seriesTmdbId, seriesTmdbBusy, seriesTmdbMessage, resetSeriesSearch, searchForSeries, loadHistory, clearHistory, markWatched, clearProgress, findNextEpisode, loadSeries, switchView, openSeries,
   finishCloseSeries, closeSeries, seasonNumbers, continueSeries, matchSeriesTMDB, resetSeriesAndHistoryForRootChange, disposeSeriesAndHistory,
 } = useCinemaSeriesAndHistory({
-  isAdmin: () => props.admin, getRootEpoch: () => rootEpoch, isDisposed: () => disposed, query, view, movies, selected, scrapeMessage, seriesDialog, api, apiPath,
-  load: (reset) => load(reset), open: (v, autoStart) => open(v, autoStart), getMediaBackstack: () => mediaBackstack,
+  isAdmin: () => props.admin, getRootEpoch: () => rootEpoch, isDisposed: () => disposed, query, watchedFilter, sortBy, view, movies, selected, scrapeMessage, seriesDialog, api, apiPath,
+  load: (reset) => load(reset), loadHomeShelves, open: (v, autoStart) => open(v, autoStart), getMediaBackstack: () => mediaBackstack,
 });
 
 const {
@@ -156,6 +185,7 @@ function finishReturnToOverview() {
   player.value?.pause(); hlsPlayer.value?.pause(); destroyHls();
   viewerPlaying.value = false; showPlayerPlaylist.value = false; playerControlsHidden.value = false; exitSaveBlocked.value = false;
   playError.value = "";
+  void loadHomeShelves();
   void nextTick(() => cinemaDialog.value?.focus());
 }
 
@@ -232,8 +262,21 @@ watch(query, () => {
   }, 350);
 }, { flush: "sync" });
 
+watch([watchedFilter, sortBy], () => {
+  if (view.value === "series") {
+    void loadSeries(true);
+    return;
+  }
+  if (mode.value !== "history") {
+    clearCatalogForQueryChange();
+    void load(true);
+  }
+  const term = query.value.trim();
+  if (term) void searchForSeries(term);
+});
+
 function resetFilters() {
-  mode.value = "all"; query.value = "";
+  mode.value = "all"; watchedFilter.value = "all"; sortBy.value = "recent"; query.value = "";
   if (searchTimer) { clearTimeout(searchTimer); searchTimer = undefined; }
   void load(true);
 }
@@ -346,29 +389,85 @@ function close() {
   void leavePlayer("close");
 }
 
+function cinemaKeyBindings() {
+  const playing = selected.value !== null && viewerPlaying.value;
+  return {
+    dialog: selected.value ? cinemaDialog.value : seriesDetail.value ? seriesDialog.value : null,
+    playing,
+    playlistOpen: showPlayerPlaylist.value,
+    popoverOpen: playerMenuOpen.value,
+    isFullscreen: isFullscreen.value,
+    showControls: () => { playerControlsHidden.value = false; },
+    jump: (seconds: number) => {
+      showOsd(seconds > 0 ? `⏩ +${seconds}s` : `⏪ ${seconds}s`);
+      void jumpPlayback(seconds);
+    },
+    togglePlay: () => {
+      const willPlay = !isPlaying.value;
+      showOsd(willPlay ? "▶ 继续播放" : "⏸ 已暂停");
+      void togglePlayPause();
+    },
+    adjustVolume: (delta: number) => {
+      adjustVolume(delta);
+      showOsd(isMuted.value || volume.value === 0 ? "🔇 已静音" : `🔊 音量 ${Math.round(volume.value * 100)}%`);
+    },
+    toggleMute: () => {
+      toggleMute();
+      showOsd(isMuted.value || volume.value === 0 ? "🔇 已静音" : `🔊 音量 ${Math.round(volume.value * 100)}%`);
+    },
+    toggleFullscreen: () => void toggleCinemaFullscreen(cinemaDialog.value),
+    exitFullscreen: () => void exitCinemaFullscreen(),
+    startHoldBoost: () => startHoldSpeedBoost(),
+    stopHoldBoost: () => stopHoldSpeedBoost(),
+    closePopover: () => { playerStageRef.value?.closeMenus(); playerMenuOpen.value = false; },
+    closePlaylist: () => { showPlayerPlaylist.value = false; },
+    close: () => selected.value ? (playing ? returnToOverview() : close()) : closeSeries(),
+  };
+}
+
 function keydown(event: KeyboardEvent) {
   if (props.active === false || event.defaultPrevented) return;
   if (cinemaLayerHandle && !cinemaLayerHandle.isTop()) return;
-  const playing = selected.value !== null && viewerPlaying.value;
-  handleCinemaKeydown(event, {
-    dialog: selected.value ? cinemaDialog.value : seriesDetail.value ? seriesDialog.value : null,
-    playing, playlistOpen: showPlayerPlaylist.value,
-    showControls: () => { playerControlsHidden.value = false; },
-    jump: (seconds) => void jumpPlayback(seconds), togglePlay: () => void togglePlayPause(),
-    closePlaylist: () => { showPlayerPlaylist.value = false; },
-    close: () => selected.value ? (playing ? returnToOverview() : close()) : closeSeries(),
-  });
+  keyboardController.handleKeydown(event, cinemaKeyBindings());
+}
+
+function keyup(event: KeyboardEvent) {
+  if (props.active === false) return;
+  keyboardController.handleKeyup(event, cinemaKeyBindings());
+}
+
+function onWindowBlur() {
+  keyboardController.reset();
+  stopHoldSpeedBoost();
 }
 
 const setScanPolling = createVisibleMediaPolling(status, 5000);
 function syncCinemaActiveBindings(active: boolean) {
   setScanPolling(active);
-  if (active) window.addEventListener("keydown", keydown);
-  else window.removeEventListener("keydown", keydown);
+  if (active) {
+    window.addEventListener("keydown", keydown);
+    window.addEventListener("keyup", keyup);
+    window.addEventListener("blur", onWindowBlur);
+  } else {
+    keyboardController.reset();
+    stopHoldSpeedBoost();
+    window.removeEventListener("keydown", keydown);
+    window.removeEventListener("keyup", keyup);
+    window.removeEventListener("blur", onWindowBlur);
+  }
+}
+
+function onVisibilityFlush() {
+  if (document.visibilityState === "hidden" && selected.value && viewerPlaying.value) void save();
+}
+function onPageHideFlush() {
+  if (selected.value && viewerPlaying.value) void save();
 }
 
 onMounted(() => {
   disposed = false;
+  document.addEventListener("visibilitychange", onVisibilityFlush);
+  window.addEventListener("pagehide", onPageHideFlush);
   mediaBackstack = createBrowserMediaBackstack(window, "lightisle-cinema", async (_old, target) => {
     if (selected.value) {
       const toOverview = viewerPlaying.value && target > 0 && !seriesDetail.value;
@@ -396,33 +495,36 @@ watch(() => props.active, (val) => {
 
 onBeforeUnmount(() => { void save(); });
 onUnmounted(() => {
+  document.removeEventListener("visibilitychange", onVisibilityFlush);
+  window.removeEventListener("pagehide", onPageHideFlush);
   cinemaLayerHandle?.dispose(); cinemaLayerHandle = null;
   disposed = true; rootEpoch += 1; rootScopeAbort.abort(); syncCinemaActiveBindings(false); resetDirectoryPlaylist();
   mediaBackstack?.dispose(); mediaBackstack = null; playbackGeneration += 1; disposeSeriesAndHistory();
-  if (searchTimer) clearTimeout(searchTimer); selectedController?.abort(); disposeMetadata(); destroyHls(); disposeCatalog();
+  if (searchTimer) clearTimeout(searchTimer); if (osdTimer) clearTimeout(osdTimer); clearLocalSubtitle(); selectedController?.abort(); disposeMetadata(); destroyHls(); disposeCatalog();
 });
 </script>
 
 <template>
   <div class="content cinema-view">
-    <div class="section-heading cinema-header-bar">
-      <div><h2>私人影院</h2><p>选择想看的作品，或者从上次的位置继续观看。</p></div>
-      <div class="cinema-header-actions">
-        <label class="cinema-search"><Search :size="15"/><input v-model="query" maxlength="120" type="search" placeholder="搜索电影、剧集或单集…" aria-label="搜索电影、剧集或单集"/><button v-if="query" type="button" title="清除搜索" @click="query=''"><X :size="14"/></button></label>
-        <button v-if="(admin||movies.some(movie=>movie.canWrite===true))&&view==='films'&&mode!=='history'" type="button" class="dl-btn" :class="{chosen:choosingTrash}" :disabled="deleting" @click="choosingTrash=!choosingTrash;trashIDs=new Set()">{{choosingTrash?"退出多选":"多选"}}</button>
-        <button v-if="admin" class="refresh" :disabled="scan.running&&!scanStatusError" @click="startScan"><RefreshCcw :size="15" :class="{spinning: scan.running&&!scanStatusError}"/>{{scan.running&&!scanStatusError?"扫描中…":"扫描影视库"}}</button>
-      </div>
-    </div>
-    <div class="cinema-tools cinema-navigation">
-      <div class="cinema-tabs" role="group" aria-label="影视分类与观看记录">
-        <IsleChip :selected="view==='films'&&mode==='all'" @select="filter('all')"><template #icon><Clapperboard :size="15"/></template>首页</IsleChip>
-        <IsleChip :selected="view==='films'&&mode==='movie'" @select="filter('movie')"><template #icon><Film :size="15"/></template>电影</IsleChip>
-        <IsleChip :selected="view==='series'" @select="switchView('series')"><template #icon><Tv :size="15"/></template>剧集</IsleChip>
-        <IsleChip :selected="mode==='continue'&&view==='films'" @select="filter('continue')"><template #icon><Play :size="15"/></template>继续观看</IsleChip>
-        <IsleChip :selected="mode==='history'&&view==='films'" @select="filter('history')">观看历史</IsleChip>
-        <IsleChip :selected="view==='films'&&mode==='unmatched'" @select="filter('unmatched')"><template #icon><Wand2 :size="15"/></template>待匹配</IsleChip>
-      </div>
-    </div>
+    <CinemaHeaderBar
+      v-model:query="query"
+      v-model:watched-filter="watchedFilter"
+      v-model:sort-by="sortBy"
+      :admin="admin"
+      :view="view"
+      :mode="mode"
+      :can-batch-trash="admin || movies.some(movie => movie.canWrite === true)"
+      :choosing-trash="choosingTrash"
+      :deleting="deleting"
+      :scan-running="scan.running"
+      :scan-status-error="scanStatusError"
+      @toggle-trash-mode="choosingTrash = !choosingTrash; trashIDs = new Set()"
+      @start-scan="startScan"
+      @filter="filter"
+      @switch-view="switchView"
+      @open-mount-guide="emit('open-mount-guide')"
+      @open-scraping-settings="emit('open-scraping-settings')"
+    />
     <CinemaTmdbPanel
       v-if="admin && view === 'films' && mode === 'unmatched'"
       v-model:batch-token="batchToken"
@@ -434,6 +536,7 @@ onUnmounted(() => {
       :scrape-busy="scrapeBusy"
       :scrape-notice="scrapeNotice"
       :scrape-error="scrapeError"
+      :unmatched-count="movies.length"
       @suggest-batch="suggestBatch"
       @cancel-batch="cancelBatch"
       @accept-candidate="acceptBatchCandidate"
@@ -446,16 +549,19 @@ onUnmounted(() => {
     <div v-if="actionError&&movies.length" class="cinema-alert" role="alert">{{actionError}}</div>
     <div v-if="loadError&&movies.length" class="cinema-alert" role="alert">加载影视库失败：{{loadError}} 当前仍显示上次成功读取的内容。 <button type="button" class="account-action" :disabled="loading" @click="retryLoad">重试加载</button></div>
     <div v-if="progressSaveError" class="cinema-alert" role="alert">{{progressSaveError}} <button type="button" class="account-action" @click="retryProgress">重试保存进度</button></div>
-    <div v-if="choosingTrash&&view==='films'&&mode!=='history'" class="cinema-batch-hud" role="group" aria-label="已选择影片的操作">
-      <span>已选 {{trashIDs.size}} 部（最多50部）</span>
-      <IsleButton variant="glass" size="sm" :disabled="deleting" @click="trashIDs=new Set(movies.filter(movie=>admin||movie.canWrite===true).slice(0,50).map(movie=>movie.id))">全选可删除影片</IsleButton>
-      <IsleButton v-if="trashIDs.size" variant="ghost" size="sm" :disabled="deleting" @click="trashIDs=new Set()">清空选择</IsleButton>
-      <IsleButton variant="danger" size="sm" :disabled="deleting||!trashIDs.size" @click="trashSelectedFilms"><template #icon><Trash2 :size="14"/></template>移入回收站</IsleButton>
-      <IsleButton variant="primary" size="sm" :disabled="deleting" @click="choosingTrash=false;trashIDs=new Set()"><template #icon><X :size="14"/></template>完成</IsleButton>
-    </div>
+    <Transition name="isle-hud-float">
+      <div v-if="choosingTrash&&view==='films'&&mode!=='history'" class="cinema-batch-hud" role="group" aria-label="已选择影片的操作">
+        <span>已选 {{trashIDs.size}} 部（最多50部）</span>
+        <IsleButton variant="glass" size="sm" :disabled="deleting" @click="trashIDs=new Set(movies.filter(movie=>admin||movie.canWrite===true).slice(0,50).map(movie=>movie.id))">全选可删除影片</IsleButton>
+        <IsleButton v-if="trashIDs.size" variant="glass" size="sm" :disabled="deleting" @click="trashIDs=new Set()">清空选择</IsleButton>
+        <IsleButton variant="danger" size="sm" :disabled="deleting||!trashIDs.size" @click="trashSelectedFilms"><template #icon><Trash2 :size="14"/></template>移入回收站</IsleButton>
+        <IsleButton variant="primary" size="sm" :disabled="deleting" @click="choosingTrash=false;trashIDs=new Set()"><template #icon><X :size="14"/></template>完成</IsleButton>
+      </div>
+    </Transition>
     <p v-if="view==='films'&&mode==='continue'&&continueCount" class="cinema-hint">当前列表有 {{continueCount}} 部作品可继续观看</p>
     <CinemaHomeShelvesSection
       v-if="view==='films'&&mode==='all'&&!query.trim()&&!choosingTrash"
+      class="isle-subview-pane"
       :featured-film="featuredFilm"
       :continue-shelf="continueShelf"
       :recent-shelf="recentShelf"
@@ -466,119 +572,96 @@ onUnmounted(() => {
       :poster-url="poster"
       @retry-shelves="loadHomeShelves"
       @open-film="(film, autoStart) => open(film, autoStart)"
+      @clear-progress="clearProgress"
       @filter-mode="filter"
       @poster-error="(id) => { posterFailed[id] = true }"
     />
-    <section v-if="query.trim()" class="cinema-home-section" aria-label="影视搜索结果">
-      <div class="cinema-home-heading"><h3>剧集匹配</h3><small v-if="seriesSearchLoading" role="status">正在搜索剧集…</small></div>
-      <p v-if="seriesSearchError" class="cinema-alert" role="alert">搜索剧集失败：{{seriesSearchError}} <button type="button" class="account-action" @click="searchForSeries(query.trim())">重试</button></p>
-      <div v-if="matchingSeries.length" class="cinema-home-rail" role="group" aria-label="匹配的完整剧集">
-        <button v-for="item in matchingSeries" :key="item.id" type="button" class="cinema-home-card" :aria-label="'查看剧集 '+item.name" @click="openSeries(item)">
-          <span class="cinema-home-cover"><img v-if="item.posterURL" :src="item.posterURL" :alt="item.name+'海报'" loading="lazy"/><Tv v-else :size="32"/></span>
-          <strong :title="item.name">{{item.name}}</strong><small>{{item.episodeCount}} 集 · {{item.year||'年份未知'}}</small>
-        </button>
-      </div>
-      <p v-else-if="!seriesSearchLoading&&!seriesSearchError" class="cinema-hint">没有匹配的完整剧集，可继续查看下方影片和单集。</p>
-      <div class="cinema-home-heading"><h3>影片与单集匹配</h3></div>
-    </section>
-    <div v-if="view==='series'" class="cinema-tools">
-      <span v-if="seriesLoading" class="cinema-hint" role="status">正在读取剧集库…</span>
-      <span v-else-if="seriesError" class="cinema-alert" role="alert">剧集库读取失败：{{seriesError}} <button type="button" class="account-action" @click="loadSeries">重试</button></span>
-      <span v-else-if="!seriesList.length" class="cinema-hint">暂无可聚合剧集；放入含剧集编号的视频并扫描后自动聚合。</span>
-      <span v-else class="cinema-hint">共 {{seriesList.length}} 部剧集</span>
-    </div>
-    <div v-if="view==='series'&&seriesList.length" class="cinema-grid">
-      <article v-for="item in seriesList" :key="item.id" class="cinema-tile">
-        <button class="cinema-poster" :aria-label="'查看剧集 '+item.name" @click="openSeries(item)">
-          <img v-if="item.posterURL" :src="item.posterURL" :alt="item.name+'海报'" class="cinema-poster-image"/>
-          <template v-else><Tv :size="44"/></template>
-          <span class="cinema-play"><Play v-if="item.nextFilmId" :size="18" fill="currentColor"/><Tv v-else :size="18"/></span>
-          <span class="cinema-label">{{item.year||"剧集"}}</span>
-        </button>
-        <div class="cinema-details">
-          <strong :title="item.name">{{item.name}}</strong>
-          <small>已看 {{item.watchedCount}}/{{item.episodeCount}} 集</small>
-          <IsleBadge v-if="item.inProgress&&item.nextTitle" variant="accent" size="sm">继续：{{item.nextTitle}}</IsleBadge>
-          <IsleBadge v-else-if="item.watchedCount>=item.episodeCount&&item.episodeCount" variant="online" size="sm">已看完</IsleBadge>
-          <button v-if="item.nextFilmId" @click="continueSeries(item)" title="继续观看"><Play :size="14"/></button>
-        </div>
-      </article>
-    </div>
-    <IsleEmpty
-      v-if="view==='films'&&mode!=='history'&&!movies.length&&(loadError||actionError||scanActionError||scanStatusError||scanStatusLoaded&&scan.lastError)"
-      :icon="Clapperboard" :icon-size="44"
-      :title="loadError?'暂时无法读取影视库':actionError?'操作未完成':scanActionError?'扫描无法启动':scanStatusError?'无法确认扫描状态':'上次扫描未完成'"
-      :description="loadError?'加载影视库失败：'+loadError:actionError||scanActionError||(scanStatusError?'扫描状态暂不可用：'+scanStatusError:'上次扫描未完成：'+describeUserFacingError(scan.lastError))"
-      role="alert"
-    >
-      <template #action>
-        <IsleButton v-if="loadError" variant="tonal" size="sm" :disabled="loading" @click="retryLoad">重试读取影视库</IsleButton>
-        <IsleButton v-if="scanStatusError" variant="tonal" size="sm" :disabled="scanStatusLoading" @click="status">重试读取扫描状态</IsleButton>
-        <IsleButton v-if="admin&&(!loadError||scanActionError||scan.lastError)" variant="tonal" size="sm" :disabled="scan.running&&!scanStatusError" @click="startScan">重新扫描</IsleButton>
-      </template>
-    </IsleEmpty>
-    <IsleEmpty
-      v-else-if="view==='films'&&mode!=='history'&&!movies.length&&(loading||!pageLoaded||!scanStatusLoaded&&!scanStatusError||scan.running&&!scanStatusError)"
-      :icon="Clapperboard" :icon-size="44"
-      :title="scan.running&&!scanStatusError?'正在扫描影视库…':!scanStatusLoaded&&!scanStatusError?'正在确认扫描状态…':'正在读取影视库…'"
-      description="正在检查 Mac 授权的共享目录。"
+    <CinemaBrowseGrids
+      :view="view"
+      :mode="mode"
+      :query="query"
+      :admin="admin"
+      :movies="movies"
+      :next="next"
+      :loading="loading"
+      :page-loaded="pageLoaded"
+      :load-error="loadError"
+      :action-error="actionError"
+      :scan-action-error="scanActionError"
+      :scan-status-error="scanStatusError"
+      :scan-status-loaded="scanStatusLoaded"
+      :scan-status-loading="scanStatusLoading"
+      :scan="scan"
+      :choosing-trash="choosingTrash"
+      :trash-ids="trashIDs"
+      :deleting="deleting"
+      :filtered-view="filteredView"
+      :empty-title="emptyTitle"
+      :empty-message="emptyMessage"
+      :featured-film="featuredFilm"
+      :continue-shelf="continueShelf"
+      :show-recent-shelf="showRecentShelf"
+      :disambiguation-map="disambiguationMap"
+      :matching-series="matchingSeries"
+      :series-search-loading="seriesSearchLoading"
+      :series-search-error="seriesSearchError"
+      :series-list="seriesList"
+      :series-loading="seriesLoading"
+      :series-error="seriesError"
+      :history-films="historyFilms"
+      :history-loading="historyLoading"
+      :history-error="historyError"
+      :poster-failed="posterFailed"
+      :poster-ready="posterReady"
+      :poster-url="poster"
+      :playback="playback"
+      @retry-series-search="searchForSeries(query.trim())"
+      @open-series="openSeries"
+      @continue-series="continueSeries"
+      @reload-series="loadSeries(true)"
+      @retry-load="retryLoad"
+      @retry-status="status"
+      @start-scan="startScan"
+      @reset-filters="resetFilters"
+      @reload-history="loadHistory(true)"
+      @clear-history="clearHistory"
+      @open-film="(film, autoStart) => open(film, autoStart)"
+      @toggle-trash-film="toggleTrashFilm"
+      @trash-film="(film) => trashFilms([film])"
+      @open-rename="openRenameModal"
+      @mark-restart="(film) => { markWatched(film, false); open(film, true); }"
+      @load-more="load()"
+      @poster-error="(id) => { posterFailed[id] = true }"
     />
-    <IsleEmpty
-      v-else-if="view==='films'&&mode!=='history'&&!movies.length&&!(query.trim()&&matchingSeries.length)"
-      :icon="Clapperboard" :icon-size="44" :title="emptyTitle" :description="emptyMessage"
-    >
-      <template v-if="filteredView" #action>
-        <IsleButton variant="tonal" size="sm" @click="resetFilters">查看全部影片</IsleButton>
-      </template>
-    </IsleEmpty>
-    <div v-if="view==='films'&&mode==='history'" class="cinema-tools">
-      <span v-if="historyLoading" class="cinema-hint" role="status">正在读取历史记录…</span>
-      <span v-else-if="historyError" class="cinema-alert" role="alert">历史读取失败：{{historyError}} <button type="button" class="account-action" @click="loadHistory(true)">重试</button></span>
-      <span v-else-if="!historyFilms.length" class="cinema-hint">还没有观看记录；播放过的影片和剧集会按时间出现在这里。</span>
-      <span v-else class="cinema-hint">共 {{historyFilms.length}} 条记录（仅当前账号可见） <button type="button" class="account-action" @click="clearHistory">清空历史</button></span>
-    </div>
-    <div v-if="view==='films'&&mode==='history'" class="cinema-grid">
-      <article v-for="movie in historyFilms" :key="movie.id" class="cinema-tile">
-        <button class="cinema-poster" @click="open(movie,true)">
-          <img v-if="(movie.posterURL||posterReady(movie))&&!posterFailed[movie.id]" :src="poster(movie)" :alt="movie.title+'海报'" class="cinema-poster-image" @error="posterFailed[movie.id]=true"/>
-          <template v-else><Tv v-if="movie.kind==='series'" :size="44"/><Film v-else :size="44"/></template>
-          <span class="cinema-play"><Play :size="18" fill="currentColor"/></span>
-          <span class="cinema-label">{{movie.updatedAt?new Date(movie.updatedAt*1000).toLocaleDateString():""}}</span>
-          <span class="cinema-watchbar" :style="{width:percent(movie)+'%'}"></span>
-        </button>
-        <div class="cinema-details">
-          <strong :title="movie.title">{{movie.title}}</strong>
-          <small>{{movie.completed?"已看完":"看到 "+percent(movie)+"%"}} · {{duration(movie.durationSeconds||movie.duration)}}</small>
-          <button v-if="movie.position>5&&!movie.completed" @click="markWatched(movie,false);open(movie,true)" title="从头播放"><RotateCcw :size="14"/></button>
-        </div>
-      </article>
-    </div>
-    <div v-if="view==='films'&&mode==='all'&&!query.trim()&&!choosingTrash&&movies.length&&(featuredFilm||continueShelf.length||showRecentShelf)" class="cinema-home-heading cinema-all-heading"><h3>全部影片</h3><small class="cinema-hint-inline">共 {{next?movies.length+'+':movies.length}} 部</small></div>
-    <div v-if="view==='films'&&mode!=='history'" class="cinema-grid">
-      <article v-for="movie in movies" :key="movie.id" class="cinema-tile">
-        <button class="cinema-poster" :aria-label="choosingTrash?'选择 '+movie.title:'查看影片 '+movie.title"
-          :aria-pressed="choosingTrash?trashIDs.has(movie.id):undefined"
-          :style="choosingTrash&&trashIDs.has(movie.id)?{outline:'3px solid var(--accent-primary)'}:undefined"
-          @click="choosingTrash?toggleTrashFilm(movie.id):open(movie)">
-          <img v-if="(movie.posterURL||posterReady(movie))&&!posterFailed[movie.id]" :src="poster(movie)" :alt="movie.title+'海报'" class="cinema-poster-image" @error="posterFailed[movie.id]=true"/>
-          <template v-else><Tv v-if="movie.kind==='series'" :size="44"/><Film v-else :size="44"/></template>
-          <span class="cinema-play"><Download v-if="playback(movie)==='download-only'" :size="18"/><Play v-else :size="18" fill="currentColor"/></span>
-          <span v-if="disambiguationBadge(movie)" class="cinema-scope-label">{{disambiguationBadge(movie)}}</span>
-          <span class="cinema-label">{{movie.kind==='series'?'S'+movie.season+'E'+movie.episode:(movie.year||(movie.isStrm?'STRM 直链':'电影'))}}</span>
-          <span v-if="choosingTrash" class="cinema-label" style="left:auto;right:8px">{{trashIDs.has(movie.id)?"✓":"○"}}</span>
-          <span class="cinema-watchbar" :style="{width:percent(movie)+'%'}"></span>
-        </button>
-        <div class="cinema-details">
-          <strong :title="movie.title">{{movie.title}}</strong>
-          <small>{{movie.kind==='series'?'剧集':'电影'}}<template v-if="movie.isStrm"> · STRM 直链</template> · {{duration(movie.durationSeconds||movie.duration)}}<template v-if="disambiguationBadge(movie)"> · {{disambiguationBadge(movie)}}</template><template v-if="movie.completed"> · 已看完</template><template v-else-if="movie.position>5"> · 已看 {{percent(movie)}}%</template></small>
-          <IsleBadge v-if="mode==='unmatched'&&!movie.metadataSource" variant="warning" size="sm">{{movie.scrapeState==='miss'?'自动未命中 · 待手动匹配':'待匹配资料'}}</IsleBadge>
-          <button v-if="admin" @click="rename(movie)" title="修改展示名称"><Pencil :size="14"/></button>
-          <button v-if="(admin||movie.canWrite===true)&&!choosingTrash" :disabled="deleting" @click="trashFilms([movie])" title="移入回收站"><Trash2 :size="14"/></button>
-        </div>
-      </article>
-    </div>
-    <div v-if="view==='films'&&mode!=='history'" class="cinema-more"><button v-if="next" :disabled="loading" @click="load()">{{loading?"正在加载…":"加载更多作品"}}</button><span v-else-if="movies.length">已展示全部 {{movies.length}} 部作品</span></div>
     <details class="cinema-foot"><summary>播放兼容性说明</summary><p>优先原画直出；浏览器不兼容时可在线转码（需 FFmpeg，不改动原片）或下载后用本地播放器打开。</p></details>
+
+    <CinemaRenameModal
+      :open="Boolean(renameTarget)"
+      v-model:rename-title="renameTitle"
+      :rename-busy="renameBusy"
+      :rename-error="renameError"
+      @close="closeRenameModal"
+      @submit="submitRename"
+    />
+
+    <CinemaSeriesModal
+      :open="Boolean(seriesDetail) && props.active !== false"
+      :series-detail="seriesDetail"
+      :series-detail-loading="seriesDetailLoading"
+      :series-detail-error="seriesDetailError"
+      :series-tmdb-id="seriesTmdbId"
+      :series-tmdb-busy="seriesTmdbBusy"
+      :series-tmdb-message="seriesTmdbMessage"
+      :admin="admin"
+      :season-numbers="seriesDetail ? seasonNumbers(seriesDetail.films) : []"
+      @close="closeSeries"
+      @play-episode="(episode) => open(episode, true)"
+      @continue-series="continueSeries"
+      @toggle-watched="(episode, completed) => markWatched(episode, completed)"
+      @clear-progress="(episode) => clearProgress(episode)"
+      @update:series-tmdb-id="seriesTmdbId = $event"
+      @match-tmdb="matchSeriesTMDB"
+    />
 
     <Teleport to="body">
       <Transition name="isle-overlay-fade">
@@ -636,31 +719,41 @@ onUnmounted(() => {
             @trash-selected="trashFilms([selected])"
             @download-selected="download(selected)"
             @toggle-watched="markWatched(selected, !selected.completed)"
+            @clear-progress="clearProgress(selected)"
             @restart-from-beginning="markWatched(selected, false); open(selected, true)"
             @import-local-nfo="importLocalNFO(selected)"
+            @open-mount-guide="emit('open-mount-guide')"
           />
           <CinemaPlayerStage
+            ref="playerStageRef"
             v-if="viewerPlaying" :selected="selected" :can-direct="canAttemptDirect(selected)"
             :stream-url="stream(selected)" :track-url="track(selected)" :caption="caption" :caption-srclang="captionSrclang()"
             :caption-options="captionOptions" :audio-track-options="audioTrackOptions" :quality-options="cinemaQualityOptions"
-            :current-quality="currentQuality" :playback-rate="playbackRate" :playback-rate-options="playbackRateOptions"
+            :current-quality="currentQuality" :playback-rate="playbackRate" :is-speed-boosting="isSpeedBoosting" :osd-message="osdMessage" :playback-rate-options="playbackRateOptions"
+            :subtitle-size="subtitleSize" :subtitle-offset="subtitleOffset" :local-subtitle-name="localSubtitleName" :local-subtitle-error="localSubtitleError"
             :hls-session="hlsSession" :hls-starting="hlsStarting" :play-error="playError" :is-playing="isPlaying"
             :volume="volume" :is-muted="isMuted" :fill-screen="fillScreen" :is-fullscreen="isFullscreen"
             :can-picture-in-picture="canPictureInPicture" :playback-position="playbackPosition" :playback-duration="playbackDuration" :playback-buffered="playbackBuffered"
-            :seek-preview="seekPreview" :autoplay-next="autoplayNext" :prefer-local-decode="preferLocalDecode"
+            :autoplay-next="autoplayNext" :prefer-local-decode="preferLocalDecode"
             :leaving-player="leavingPlayer" :show-player-playlist="showPlayerPlaylist" :same-directory-films="sameDirectoryFilms"
             :current-playlist-index="currentPlaylistIndex" :has-prev-playlist="!!prevPlaylistFilm" :has-next-playlist="!!nextPlaylistFilm"
             :playlist-dir-label="playlistDirectory(selected.path)" :directory-loading="directoryLoading" :directory-error="directoryError"
             :directory-next-cursor="directoryNextCursor" :controls-hidden="playerControlsHidden"
             :set-direct-video-ref="(el) => { player = el }" :set-hls-video-ref="(el) => { hlsPlayer = el }"
-            @update:controls-hidden="playerControlsHidden = $event" @update:seek-preview="seekPreview = $event"
+            @update:controls-hidden="playerControlsHidden = $event"
+            @update:menu-open="playerMenuOpen = $event"
             @update:show-player-playlist="onPlayerPlaylistToggle" @loadedmetadata="loaded" @timeupdate="tick" @buffer-progress="refreshBufferedProgress"
             @media-state="syncVideoMediaState(); syncFullscreenState()" @pause-save="save()" @ended="playbackEnded"
             @direct-error="playError = '浏览器无法解码该视频格式，可切换在线转码或下载原片使用 IINA / VLC 播放。'"
             @hls-error="playError = playError || '转码播放出错，可重新尝试或下载原片。'"
-            @caption-load="changeCaption" @toggle-play="togglePlayPause" @jump="jumpPlayback" @seek="seekAbsolute"
+            @caption-load="captionLoaded" @toggle-play="togglePlayPause" @jump="(d) => { showOsd(d > 0 ? `⏩ +${d}s` : `⏪ ${d}s`); void jumpPlayback(d); }" @seek="seekAbsolute"
             @set-volume="setVolume" @toggle-mute="toggleMute"
             @select-caption="(val) => { caption = val; void changeCaption() }"
+            @select-local-subtitle="loadLocalSubtitleFile"
+            @clear-local-subtitle="clearLocalSubtitle"
+            @update:subtitle-size="setSubtitleSize"
+            @adjust-subtitle-offset="adjustSubtitleOffset"
+            @reset-subtitle-offset="resetSubtitleOffset"
             @select-audio="(idx) => void switchAudioTrack(idx)" @select-quality="(q) => void switchQuality(q)"
             @select-rate="(r) => setPlaybackRate(r)" @toggle-autoplay="(c) => setAutoplayNext(c)"
             @toggle-local-decode="(c) => setPreferLocalDecode(c)" @toggle-fill="toggleFillScreen"
@@ -675,41 +768,5 @@ onUnmounted(() => {
       </div>
       </Transition>
     </Teleport>
-    <Teleport to="body">
-      <div v-if="seriesDetail && props.active !== false">
-        <IsleModal
-          :title="seriesDetail.series.name"
-          :description="(seriesDetail.series.year || '剧集') + ' · 已看 ' + seriesDetail.series.watchedCount + '/' + seriesDetail.series.episodeCount + ' 集' + (seriesDetail.series.tmdbId ? ' · TMDB' : '')"
-          size="wide"
-          role="dialog"
-          :aria-label="seriesDetail.series.name + ' · 剧集列表'"
-          @close="closeSeries"
-        >
-          <template #icon><Tv :size="18" /></template>
-          <p v-if="seriesDetail.series.overview" class="cinema-synopsis">{{ seriesDetail.series.overview }}</p>
-          <IsleBanner v-if="seriesDetailLoading" type="info" compact message="正在读取剧集分集…" style="margin-bottom:10px" />
-          <IsleBanner v-if="seriesDetailError" type="error" compact :message="seriesDetailError" style="margin-bottom:10px" />
-          <div v-for="season in seasonNumbers(seriesDetail.films)" :key="season" class="cinema-season">
-            <h4>第 {{ season }} 季</h4>
-            <button v-for="episode in seriesDetail.films.filter(f => f.season === season)" :key="episode.id" class="cinema-episode" @click="open(episode, true)">
-              <span class="cinema-episode-no">E{{ episode.episode }}</span>
-              <span class="cinema-episode-title">{{ episode.title }}</span>
-              <span class="cinema-episode-meta">{{ duration(episode.durationSeconds || episode.duration) }}</span>
-              <IsleBadge v-if="episode.completed" variant="online" size="sm">已看完</IsleBadge>
-              <IsleBadge v-else-if="episode.position > 5" variant="accent" size="sm">已看 {{ percent(episode) }}%</IsleBadge>
-            </button>
-          </div>
-          <p v-if="seriesTmdbMessage" class="cinema-alert" role="status">{{ seriesTmdbMessage }}</p>
-          <details v-if="admin" class="cinema-tmdb-panel" style="margin-top:14px">
-            <summary>匹配 TMDB 剧集资料（使用 Mac App 配置的 Token）</summary>
-            <form class="cinema-tmdb-form" @submit.prevent="matchSeriesTMDB(seriesDetail.series)">
-              <input v-model="seriesTmdbId" type="text" inputmode="numeric" placeholder="TMDB 剧集 ID（数字，可在 themoviedb.org 剧集页地址中找到）" :disabled="seriesTmdbBusy"/>
-              <IsleButton type="submit" variant="primary" size="sm" :disabled="seriesTmdbBusy">{{ seriesTmdbBusy ? "匹配中…" : "匹配" }}</IsleButton>
-            </form>
-          </details>
-        </IsleModal>
-      </div>
-    </Teleport>
   </div>
 </template>
-<style scoped src="./CinemaView.css"></style>

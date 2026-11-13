@@ -58,7 +58,7 @@ onUnmounted(()=>{disposed=true;controller.abort()});
     <IsleBanner v-if="error" type="error" compact role="alert">
       {{ error }}
       <template #action>
-        <IsleButton variant="ghost" size="sm" :disabled="busy" @click="load">重新读取</IsleButton>
+        <IsleButton variant="glass" size="sm" :disabled="busy" @click="load">重新读取</IsleButton>
       </template>
     </IsleBanner>
     <div v-if="error && savedDays === null" style="margin: 4px 0;">

@@ -101,7 +101,7 @@ const defaultIcon = computed(() => {
   box-sizing: border-box;
   -webkit-backdrop-filter: blur(12px);
   backdrop-filter: blur(12px);
-  transition: all var(--motion-normal, 260ms) ease;
+  transition: transform var(--motion-normal, 260ms) var(--motion-spring, cubic-bezier(0.22, 1, 0.36, 1)), opacity var(--motion-normal, 260ms) ease;
 }
 
 .isle-banner.is-compact {
@@ -243,5 +243,11 @@ const defaultIcon = computed(() => {
 }
 .isle-banner.type-offline .isle-banner-title {
   color: #475569;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .isle-banner {
+    transition: none;
+  }
 }
 </style>

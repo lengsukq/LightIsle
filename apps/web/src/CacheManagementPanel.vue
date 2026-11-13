@@ -3,6 +3,7 @@ import { computed, onMounted, ref, watch } from 'vue'
 import IsleButton from './IsleButton.vue'
 import IsleBanner from './IsleBanner.vue'
 import IsleBadge from './IsleBadge.vue'
+import IsleCharts from './IsleCharts.vue'
 import {
   ISLE_WEB_CACHE_CATEGORIES,
   clearLocalCache,
@@ -158,13 +159,19 @@ async function handleClearServer(categories: string[], label: string) {
   }
 }
 
-function segmentWidthPercent(cat: IsleWebCacheCategory): string {
-  const total = localReport.value?.totalBytes || 0
-  if (total <= 0) return '0%'
-  const used = localReport.value?.categories?.[cat]?.usedBytes || 0
-  if (used <= 0) return '0%'
-  return `${Math.max(4, Math.round((used / total) * 100))}%`
-}
+const cacheChartSegments = computed(() =>
+  ISLE_WEB_CACHE_CATEGORIES.map((meta) => {
+    const used = localReport.value?.categories?.[meta.id]?.usedBytes || 0
+    return {
+      key: meta.id,
+      label: meta.label,
+      value: used,
+      color: meta.color,
+      displayValue: formatCacheBytes(used),
+      hint: `${meta.label} · ${localReport.value?.categories?.[meta.id]?.entryCount || 0} 项`,
+    }
+  }),
+)
 
 onMounted(() => {
   void refreshStats()
@@ -197,7 +204,7 @@ watch(cacheEpochVersion, () => {
           {{ localReport?.totalEntries || 0 }} 项
         </IsleBadge>
         <IsleButton
-          variant="ghost"
+          variant="glass"
           size="sm"
           :loading="loading"
           @click="refreshStats"
@@ -220,34 +227,31 @@ watch(cacheEpochVersion, () => {
       {{ notice }}
     </IsleBanner>
 
-    <div class="cache-bar-wrap" aria-label="浏览器缓存分类占比">
-      <div class="cache-segmented-bar">
-        <template v-if="(localReport?.totalBytes || 0) > 0">
-          <div
-            v-for="meta in ISLE_WEB_CACHE_CATEGORIES"
-            :key="meta.id"
-            class="cache-segment"
-            :style="{
-              width: segmentWidthPercent(meta.id),
-              background: meta.color,
-            }"
-            :title="`${meta.label}: ${formatCacheBytes(localReport?.categories?.[meta.id]?.usedBytes || 0)}`"
-          />
-        </template>
+    <div class="cache-chart-summary" aria-label="浏览器缓存分类占比">
+      <div class="cache-donut-block">
+        <IsleCharts
+          kind="donut"
+          :size="64"
+          :stroke-width="7"
+          :segments="cacheChartSegments"
+          :total="localReport?.totalBytes || 0"
+          :show-legend="false"
+          :center-label="formatCacheBytes(localReport?.totalBytes || 0)"
+          aria-label="浏览器缓存总览环形图"
+        />
+        <div class="cache-donut-meta">
+          <span class="cache-donut-kicker">本地总缓存</span>
+          <strong class="cache-donut-total">{{ formatCacheBytes(localReport?.totalBytes || 0) }}</strong>
+          <small class="muted">{{ localReport?.totalEntries || 0 }} 项记录</small>
+        </div>
       </div>
-      <div class="cache-legend-row">
-        <span
-          v-for="meta in ISLE_WEB_CACHE_CATEGORIES"
-          :key="meta.id"
-          class="cache-legend-item"
-        >
-          <i class="cache-dot" :style="{ background: meta.color }" />
-          {{ meta.label }}
-          <strong>{{
-            formatCacheBytes(localReport?.categories?.[meta.id]?.usedBytes || 0)
-          }}</strong>
-        </span>
-      </div>
+      <IsleCharts
+        kind="segmented"
+        :segments="cacheChartSegments"
+        :total="localReport?.totalBytes || 0"
+        :bar-height="10"
+        aria-label="浏览器缓存 4 分类占比条"
+      />
     </div>
 
     <div class="cache-subcard">
@@ -278,7 +282,7 @@ watch(cacheEpochVersion, () => {
     <div class="cache-subcard">
       <div class="cache-subcard-head">
         <strong>浏览器本地缓存分类</strong>
-        <IsleButton variant="ghost" size="sm" @click="toggleSelectAll">
+        <IsleButton variant="glass" size="sm" @click="toggleSelectAll">
           {{ allSelected ? '取消全选' : '全选' }}
         </IsleButton>
       </div>
@@ -311,7 +315,7 @@ watch(cacheEpochVersion, () => {
             </span>
           </label>
           <IsleButton
-            variant="ghost"
+            variant="glass"
             size="sm"
             :disabled="clearingLocal"
             :data-testid="`clear-local-${meta.id}`"
@@ -338,7 +342,7 @@ watch(cacheEpochVersion, () => {
           }}
         </IsleButton>
         <IsleButton
-          variant="ghost"
+          variant="glass"
           size="sm"
           :disabled="clearingLocal"
           data-testid="clear-all-local-cache"
@@ -371,7 +375,7 @@ watch(cacheEpochVersion, () => {
           </div>
           <IsleButton
             v-if="isAdmin"
-            variant="ghost"
+            variant="glass"
             size="sm"
             :disabled="clearingServer"
             data-testid="clear-server-thumbnails"
@@ -394,7 +398,7 @@ watch(cacheEpochVersion, () => {
           </div>
           <IsleButton
             v-if="isAdmin"
-            variant="ghost"
+            variant="glass"
             size="sm"
             :disabled="clearingServer"
             data-testid="clear-server-map-tiles"
@@ -407,7 +411,7 @@ watch(cacheEpochVersion, () => {
 
       <div v-if="isAdmin" class="row-actions cache-bulk-actions">
         <IsleButton
-          variant="ghost"
+          variant="glass"
           size="sm"
           :disabled="clearingServer"
           :loading="clearingServer"
@@ -458,50 +462,6 @@ watch(cacheEpochVersion, () => {
   gap: 10px;
   flex-wrap: wrap;
 }
-.pill.info {
-  display: inline-flex;
-  align-items: center;
-  padding: 5px 12px;
-  border-radius: 999px;
-  font-size: 12px;
-  font-weight: 600;
-  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
-  color: var(--accent-primary);
-}
-button.ghost.small,
-button.primary.small {
-  border-radius: 999px;
-  padding: 6px 14px;
-  font: inherit;
-  font-size: 12.5px;
-  font-weight: 600;
-  cursor: pointer;
-  transition: transform var(--motion-fast) var(--motion-spring), background var(--motion-fast) ease;
-}
-button.ghost.small {
-  border: 1px solid var(--stroke-subtle);
-  background: var(--surface-base);
-  color: var(--text-primary);
-  box-shadow: none;
-}
-button.ghost.small:hover:not(:disabled) {
-  background: var(--fluid-card-hover);
-  transform: translateY(-1px);
-}
-button.primary.small {
-  border: 0;
-  background: linear-gradient(145deg, var(--accent-primary), var(--accent-secondary));
-  color: #fff;
-  box-shadow: 0 8px 18px rgba(88, 86, 214, 0.22);
-}
-button.primary.small:hover:not(:disabled) {
-  transform: translateY(-1px);
-}
-button.ghost.small:disabled,
-button.primary.small:disabled {
-  opacity: 0.45;
-  cursor: not-allowed;
-}
 .muted {
   color: var(--text-secondary);
   margin: 0;
@@ -511,55 +471,44 @@ button.primary.small:disabled {
 .small-text {
   font-size: 12px;
 }
-.status-banner {
-  margin: 0;
-  padding: 10px 14px;
-  border-radius: 12px;
-  font-size: 13px;
-  font-weight: 500;
+.cache-chart-summary {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 18px;
+  padding: 14px 16px;
+  border-radius: 16px;
+  border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-item-fill);
 }
-.status-banner.ok {
-  background: color-mix(in srgb, #10b981 14%, transparent);
-  color: var(--text-primary);
-  border: 1px solid rgba(16, 185, 129, 0.3);
+.cache-donut-block {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
 }
-.status-banner.error {
-  background: color-mix(in srgb, var(--error) 12%, transparent);
-  color: var(--error);
-  border: 1px solid color-mix(in srgb, var(--error) 28%, transparent);
-}
-.cache-bar-wrap {
+.cache-donut-meta {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 2px;
+  min-width: 0;
 }
-.cache-segmented-bar {
-  display: flex;
-  height: 10px;
-  border-radius: 999px;
-  overflow: hidden;
-  background: rgba(148, 163, 184, 0.2);
+.cache-donut-kicker {
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
 }
-.cache-segment {
-  height: 100%;
-  transition: width 0.25s ease;
+.cache-donut-total {
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
 }
-.cache-legend-row {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 14px;
-  font-size: 12.5px;
-}
-.cache-legend-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.cache-dot {
-  width: 8px;
-  height: 8px;
-  border-radius: 999px;
-  display: inline-block;
+@media (max-width: 640px) {
+  .cache-chart-summary {
+    grid-template-columns: 1fr;
+    gap: 14px;
+  }
 }
 .cache-dot-lg {
   width: 10px;
@@ -568,44 +517,44 @@ button.primary.small:disabled {
   flex-shrink: 0;
 }
 .cache-subcard {
-  background: transparent;
-  border: none;
-  border-top: 1px solid var(--stroke-subtle);
-  border-radius: 0;
-  padding: 16px 0 0 0;
-  margin-top: 6px;
+  background: var(--fluid-card-item-fill);
+  border: 1px solid var(--fluid-card-border);
+  border-radius: 16px;
+  padding: 14px 16px;
+  margin-top: 0;
   display: flex;
   flex-direction: column;
   gap: 10px;
-}
-.cache-subcard:first-of-type {
-  border-top: 0;
-  padding-top: 0;
-  margin-top: 0;
 }
 .cache-subcard-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 10px;
   flex-wrap: wrap;
+  padding-bottom: 8px;
+  border-bottom: 1px solid color-mix(in srgb, var(--stroke-subtle) 70%, transparent);
 }
 .cache-category-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 0;
 }
 .cache-category-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 6px 0;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.14);
+  padding: 10px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--stroke-subtle) 65%, transparent);
   flex-wrap: wrap;
+}
+.cache-category-row:first-child {
+  padding-top: 2px;
 }
 .cache-category-row:last-child {
   border-bottom: none;
+  padding-bottom: 2px;
 }
 .cache-category-label {
   display: flex;
@@ -623,11 +572,18 @@ button.primary.small:disabled {
 }
 .cache-bulk-actions {
   margin-top: 4px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--stroke-subtle) 65%, transparent);
 }
 @media (max-width: 640px) {
   .cache-mgmt-panel {
     padding: 18px 16px;
     border-radius: 20px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cache-segment {
+    transition: none;
   }
 }
 </style>

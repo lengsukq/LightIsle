@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from "vue";
+import { computed, onMounted, ref, watch } from "vue";
 import { Sparkles, RefreshCw, Trash2, CheckCircle2 } from "lucide-vue-next";
 import IsleEmpty from "./IsleEmpty.vue";
 import IsleButton from "./IsleButton.vue";
 import IsleBanner from "./IsleBanner.vue";
+import IsleCharts from "./IsleCharts.vue";
+import { ISLE_CHART_COLORS } from "./isleChartsMath.ts";
 import { formatBytes, dateLabel } from "./photoPresentation.ts";
 import { describeUserFacingError } from "./userFacingError.ts";
 import { requestConfirm } from "./useConfirmDialog.ts";
@@ -31,6 +33,37 @@ const trashingGroupId = ref("");
 const error = ref("");
 const feedback = ref("");
 const selections = ref<Record<string, number[]>>({});
+
+const cleanupSavingsSummary = computed(() => {
+  if (!groups.value.length) return null;
+  let keepBytes = 0;
+  let reclaimableBytes = 0;
+  let trashCount = 0;
+  for (const g of groups.value) {
+    const trashSet = new Set(selections.value[g.groupId] ?? []);
+    for (const item of g.items) {
+      const size = Math.max(0, item.size || 0);
+      if (trashSet.has(item.assetId)) {
+        reclaimableBytes += size;
+        trashCount += 1;
+      } else {
+        keepBytes += size;
+      }
+    }
+  }
+  const totalBytes = keepBytes + reclaimableBytes;
+  if (totalBytes <= 0) return null;
+  const savedPercent = Math.round((reclaimableBytes / totalBytes) * 100);
+  return {
+    totalBytes,
+    savedPercent,
+    trashCount,
+    segments: [
+      { key: "keep", label: "保留精选体积", value: keepBytes, color: ISLE_CHART_COLORS.blue, displayValue: formatBytes(keepBytes) },
+      { key: "reclaim", label: "可释放冗余空间", value: reclaimableBytes, color: ISLE_CHART_COLORS.green, displayValue: formatBytes(reclaimableBytes) },
+    ],
+  };
+});
 
 async function loadSimilar() {
   loading.value = true;
@@ -144,6 +177,31 @@ onMounted(() => {
     />
 
     <div v-else class="similar-group-list">
+      <div v-if="cleanupSavingsSummary" class="similar-savings-card" aria-label="相似废片空间瘦身比例预览">
+        <IsleCharts
+          kind="donut"
+          :size="56"
+          :stroke-width="6"
+          :segments="cleanupSavingsSummary.segments"
+          :total="cleanupSavingsSummary.totalBytes"
+          :show-legend="false"
+          :center-label="`省 ${cleanupSavingsSummary.savedPercent}%`"
+          center-sublabel="可释放"
+          :aria-label="`已勾选 ${cleanupSavingsSummary.trashCount} 张待清理照片，预计可释放 ${cleanupSavingsSummary.savedPercent}% 体积`"
+        />
+        <div class="similar-savings-body">
+          <strong>当前已选 {{ cleanupSavingsSummary.trashCount }} 张相似冗余照片（共 {{ groups.length }} 组对比）</strong>
+          <IsleCharts
+            kind="segmented"
+            :segments="cleanupSavingsSummary.segments"
+            :total="cleanupSavingsSummary.totalBytes"
+            :bar-height="10"
+            compact-legend
+            aria-label="保留精选体积与可释放冗余空间占比条"
+          />
+        </div>
+      </div>
+
       <article v-for="group in groups" :key="group.groupId" class="similar-group-card">
         <div class="similar-group-top">
           <div>
@@ -178,7 +236,7 @@ onMounted(() => {
             @click="toggleCandidate(group, item.assetId, item.canTrash)"
           >
             <div class="similar-thumb-wrap">
-              <img :src="mediaPath('/api/v2/photos/' + item.assetId + '/thumbnail')" :alt="item.name" loading="lazy" />
+              <img :src="mediaPath('/api/v2/photos/' + item.assetId + '/thumbnail')" :alt="item.name" loading="lazy" decoding="async" />
               <span
                 v-for="badge in item.qualityBadges ?? []"
                 :key="badge"
@@ -231,6 +289,23 @@ onMounted(() => {
   flex-direction: column;
   gap: 16px;
 }
+.similar-savings-card {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  border-radius: 14px;
+  background: var(--surface-card, rgba(255, 255, 255, 0.74));
+  border: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.08));
+}
+.similar-savings-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  font-size: 13px;
+}
 .similar-group-card {
   padding: 16px;
   border-radius: 16px;
@@ -239,6 +314,8 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  content-visibility: auto;
+  contain-intrinsic-size: auto 260px;
 }
 .similar-group-top {
   display: flex;
@@ -281,7 +358,13 @@ onMounted(() => {
   border: 2px solid transparent;
   background: rgba(120, 120, 128, 0.06);
   cursor: pointer;
-  transition: border-color 0.15s ease, opacity 0.15s ease;
+  transition: transform var(--motion-fast) var(--motion-spring), opacity 0.15s ease;
+}
+.similar-candidate-card:hover {
+  transform: translateY(-2px);
+}
+.similar-candidate-card:active {
+  transform: scale(0.985);
 }
 .similar-candidate-card.is-recommended {
   border-color: rgba(52, 199, 89, 0.7);
@@ -339,5 +422,10 @@ onMounted(() => {
 .similar-meta small {
   font-size: 11px;
   color: var(--text-secondary, #6e6e73);
+}
+@media (prefers-reduced-motion: reduce) {
+  .similar-candidate-card {
+    transition: none;
+  }
 }
 </style>

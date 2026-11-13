@@ -2,6 +2,7 @@
 import { Film, Play, Trash2 } from "lucide-vue-next";
 import IsleBadge from "./IsleBadge.vue";
 import { duration, metadataSourceName } from "./useCinemaMetadata.ts";
+import { formatCinemaResumeLabel } from "./cinemaSubtitles.ts";
 import type { BrowserPlayback, DoubanCandidate, Movie, TMDBCandidate } from "./cinemaTypes.ts";
 
 defineProps<{
@@ -46,8 +47,10 @@ const emit = defineEmits<{
   (e: "trash-selected"): void;
   (e: "download-selected"): void;
   (e: "toggle-watched"): void;
+  (e: "clear-progress"): void;
   (e: "restart-from-beginning"): void;
   (e: "import-local-nfo"): void;
+  (e: "open-mount-guide"): void;
 }>();
 </script>
 
@@ -58,6 +61,7 @@ const emit = defineEmits<{
         v-if="(selected.posterURL || posterReady(selected)) && !posterFailed[selected.id]"
         :src="posterUrl(selected)"
         :alt="selected.title + '海报'"
+        decoding="async"
         @error="emit('poster-error', selected.id)"
       />
       <Film v-else :size="56" />
@@ -75,10 +79,11 @@ const emit = defineEmits<{
         :disabled="selected.probeStatus === 'pending' && playbackMode === 'download-only'"
         @click="emit('play-selected')"
       >
-        <Play :size="16" /> {{ selected.position > 5 && !selected.completed ? "继续观看" : "开始播放" }}
+        <Play :size="16" /> {{ selected.position > 5 && !selected.completed ? formatCinemaResumeLabel(selected) : "开始播放" }}
       </button>
       <p v-if="playbackMode === 'download-only'" class="cinema-metadata-source">
-        {{ playbackLabelText }}，可尝试在线转码或保存原文件。
+        {{ playbackLabelText }}：可尝试实时转码、下载原片用 IINA / Infuse / VLC 打开，或
+        <button type="button" class="account-action" @click="emit('open-mount-guide')">通过 WebDAV 直连外部播放器</button>。
       </p>
     </div>
   </div>
@@ -174,6 +179,7 @@ const emit = defineEmits<{
         :src="candidate.posterURL"
         :alt="candidate.title + '海报'"
         loading="lazy"
+        decoding="async"
         @error="emit('candidate-poster-error', candidate.id)"
       />
       <div v-else class="cinema-tmdb-poster-placeholder" aria-hidden="true"><Film :size="22" /></div>
@@ -205,6 +211,9 @@ const emit = defineEmits<{
     </span>
     <button class="dl-btn" @click="emit('download-selected')">下载原片文件</button>
     <button class="dl-btn" @click="emit('toggle-watched')">{{ selected.completed ? "标记未看" : "标记已看" }}</button>
+    <button v-if="selected.position > 5 && !selected.completed" class="dl-btn" @click="emit('clear-progress')">
+      移出继续观看
+    </button>
     <button v-if="selected.position > 5 && !selected.completed" class="dl-btn" @click="emit('restart-from-beginning')">
       从头播放
     </button>

@@ -2,6 +2,7 @@ import { computed, nextTick, ref, type Ref } from "vue";
 import { validateAlbumName } from "./albumNameValidation.ts";
 import { createLatestRequestGate } from "./latestRequestGate.ts";
 import { albumError } from "./photoPresentation.ts";
+import { syncViewerAfterItemRemoval } from "./photoViewerNavigation.ts";
 import { requestConfirm } from "./useConfirmDialog.ts";
 import type { ShareTarget } from "./usePhotoFilterAndSharing.ts";
 import type { BatchAsset } from "./usePhotoBatchActions.ts";
@@ -39,6 +40,7 @@ export function usePhotoAlbums<TAsset extends BatchAsset>(options: {
   api: <T>(url: string, method?: string, body?: object, signal?: AbortSignal) => Promise<T>;
   apiPath: (path: string) => string;
   load: (reset?: boolean) => Promise<void>;
+  showAssetAt?: (index: number) => void;
   closeModal: (restoreFocus?: boolean) => void;
   focusTile: (index: number) => Promise<void>;
   changeView: (album: number, favorites: boolean, mine?: boolean, privateID?: number) => void;
@@ -269,26 +271,28 @@ export function usePhotoAlbums<TAsset extends BatchAsset>(options: {
     albumBusy.value = true;
     try {
       await options.api(options.apiPath("/api/v2/photos/private-albums/" + albumID + "/items/" + assetID), "DELETE");
-      const shouldClose = activePrivateAlbum.value === albumID && options.selected.value?.id === assetID;
-      const retainedSelection = shouldClose ? 0 : (options.selected.value?.id ?? 0);
-      if (shouldClose) options.closeModal(false);
+      const wasViewerOpenForRemoved = activePrivateAlbum.value === albumID && options.selected.value?.id === assetID;
       if (activePrivateAlbum.value === albumID) {
-        await options.load(true);
-        if (retainedSelection && activePrivateAlbum.value === albumID) {
-          const index = options.assets.value.findIndex((item) => item.id === retainedSelection);
-          if (index >= 0) options.selectedIndex.value = index;
-        }
+        await syncViewerAfterItemRemoval({
+          removedIds: [assetID],
+          wasViewerOpenForRemoved,
+          previousIndex: removedIndex,
+          assets: options.assets,
+          selected: options.selected,
+          selectedIndex: options.selectedIndex,
+          showAssetAt: options.showAssetAt ?? ((idx) => options.focusTile(idx)),
+          closeModal: options.closeModal,
+          reload: () => options.load(true),
+          shouldStillRestore: () => activePrivateAlbum.value === albumID && view === options.getViewGeneration(),
+          focusFallback: async () => {
+            await nextTick();
+            options.photosPage.value?.querySelector<HTMLButtonElement>(`[data-private-album-filter="${albumID}"]`)?.focus();
+          },
+        });
       }
       await refreshPrivateAlbums(() => view === options.getViewGeneration() && activePrivateAlbum.value === albumID);
       if (view === options.getViewGeneration() && activePrivateAlbum.value === albumID) {
-        if (shouldClose) {
-          if (options.assets.value.length) await options.focusTile(Math.min(removedIndex, options.assets.value.length - 1));
-          else {
-            await nextTick();
-            options.photosPage.value?.querySelector<HTMLButtonElement>(`[data-private-album-filter="${albumID}"]`)?.focus();
-          }
-        }
-        options.message.value = "照片已从私人相册移出，原文件不受影响。";
+        options.message.value = "照片已从私人相册移出，原始照片/视频不受影响。";
       }
     } catch (e) {
       if (
@@ -455,21 +459,23 @@ export function usePhotoAlbums<TAsset extends BatchAsset>(options: {
     options.message.value = "";
     try {
       await options.api(options.apiPath(`/api/v2/photos/albums/${albumId}/items/${assetId}`), "DELETE");
-      const shouldClose = activeAlbum.value === albumId && options.selected.value?.id === assetId;
-      const retainedSelection = shouldClose ? 0 : (options.selected.value?.id ?? 0);
-      if (shouldClose) options.closeModal(false);
+      const wasViewerOpenForRemoved = activeAlbum.value === albumId && options.selected.value?.id === assetId;
       await refreshAlbums();
       if (activeAlbum.value === albumId) {
-        await options.load(true);
-        if (retainedSelection) {
-          const index = options.assets.value.findIndex((item) => item.id === retainedSelection);
-          if (index >= 0) options.selectedIndex.value = index;
-        }
+        await syncViewerAfterItemRemoval({
+          removedIds: [assetId],
+          wasViewerOpenForRemoved,
+          previousIndex: removedIndex,
+          assets: options.assets,
+          selected: options.selected,
+          selectedIndex: options.selectedIndex,
+          showAssetAt: options.showAssetAt ?? ((idx) => options.focusTile(idx)),
+          closeModal: options.closeModal,
+          reload: () => options.load(true),
+          shouldStillRestore: () => activeAlbum.value === albumId && view === options.getViewGeneration(),
+        });
         if (view === options.getViewGeneration()) {
-          if (shouldClose && options.assets.value.length) {
-            await options.focusTile(Math.min(removedIndex, options.assets.value.length - 1));
-          }
-          options.message.value = "已从相册移出，原始文件仍保留。";
+          options.message.value = "已从相册移出，原始照片/视频仍保留。";
         }
       }
     } catch (e) {

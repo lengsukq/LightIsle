@@ -14,10 +14,11 @@ import {
 const appsViewSource = readFileSync(new URL("../src/AppsCenterView.vue", import.meta.url), "utf8");
 const appVueSource = readFileSync(new URL("../src/App.vue", import.meta.url), "utf8");
 const appShellSource = readFileSync(new URL("../src/AppShell.html", import.meta.url), "utf8");
+const fileSearchControlsSource = readFileSync(new URL("../src/FileSearchControls.vue", import.meta.url), "utf8");
 
 test("userFacingError translates App Center error codes into actionable Chinese", () => {
   assert.match(describeUserFacingError(new Error("app_origin_isolated")), /轻应用.*核心管理接口/);
-  assert.match(describeUserFacingError(new Error("app_wake_timeout")), /唤醒超时/);
+  assert.match(describeUserFacingError(new Error("app_invalid")), /轻应用配置无效/);
   assert.match(describeUserFacingError(new Error("app_not_found")), /轻应用不存在|刷新应用中心/);
   assert.match(describeUserFacingError(new Error("app_forbidden")), /没有访问该轻应用的权限/);
 });
@@ -119,9 +120,6 @@ test("createAppsCenterClient enforces exact Go Core HTTP routes, headers, and se
   assert.equal(calls.at(-1).options.method, "POST");
 
   // 9. App data storage locations (1 internal + 1 external) & template install target
-  await client.getAppStorage();
-  assert.equal(calls.at(-1).url, "/api/v2/apps/storage");
-
   await client.mutateAppStorage({
     action: "add",
     kind: "external",
@@ -188,9 +186,10 @@ test("AppsCenterView SFC parses cleanly and includes sandboxed iframe workbench,
 
 test("App.vue and AppShell.html integrate the Apps Center tab under 生活空间 for both admins and members", () => {
   assert.match(appVueSource, /key:\s*"apps"\s*as\s*Page,\s*title:\s*"应用中心".*group:\s*"space"/);
-  assert.match(appVueSource, /validTabs/);
+  assert.match(appVueSource, /validPages/);
   assert.match(appShellSource, /<AppsCenterView\s+:active="active === 'apps'"/);
   assert.doesNotMatch(appShellSource, /<AgentConnections/);
-  assert.match(appShellSource, /file-spotlight-pill/);
+  assert.match(appShellSource, /<FileSearchControls/);
+  assert.match(fileSearchControlsSource, /file-spotlight-pill/);
   assert.match(appShellSource, /管理员请前往「任务与通知」统一核对/);
 });

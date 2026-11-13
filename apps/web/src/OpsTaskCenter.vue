@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import {
-  Activity, AlertTriangle, CheckCircle2, ChevronRight, Clock, Images, RefreshCcw, UploadCloud,
+  Activity, CheckCircle2, ChevronRight, Clock, Images, RefreshCcw, UploadCloud,
 } from "lucide-vue-next";
 import { taskHistoryErrorLabel, taskOperationLabel, taskRunStatusLabel } from "./taskHistoryPresentation.ts";
 import { bytes } from "./useHostTelemetry.ts";
@@ -217,7 +217,7 @@ defineProps<{
 
       <IsleBanner v-if="taskHistoryError" type="error" compact role="alert" :message="taskHistoryError">
         <template #action>
-          <IsleButton variant="ghost" size="sm" :loading="taskHistoryLoading" @click="reloadTaskHistory(true)">重试</IsleButton>
+          <IsleButton variant="glass" size="sm" :loading="taskHistoryLoading" @click="reloadTaskHistory(true)">重试</IsleButton>
         </template>
       </IsleBanner>
 

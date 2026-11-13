@@ -202,20 +202,20 @@ onUnmounted(() => {
 }
 
 .isle-modal-enter-active {
-  transition: opacity 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .isle-modal-leave-active {
-  transition: opacity 0.16s cubic-bezier(0.32, 0, 0.67, 0);
+  transition: opacity 0.14s cubic-bezier(0.32, 0, 0.67, 0);
 }
 .isle-modal-enter-active .isle-modal-card {
   transition:
-    opacity 0.24s cubic-bezier(0.22, 1, 0.36, 1),
-    transform 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+    opacity 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .isle-modal-leave-active .isle-modal-card {
   transition:
-    opacity 0.16s cubic-bezier(0.32, 0, 0.67, 0),
-    transform 0.16s cubic-bezier(0.32, 0, 0.67, 0);
+    opacity 0.14s cubic-bezier(0.32, 0, 0.67, 0),
+    transform 0.14s cubic-bezier(0.32, 0, 0.67, 0);
 }
 .isle-modal-enter-from,
 .isle-modal-leave-to {
@@ -223,11 +223,11 @@ onUnmounted(() => {
 }
 .isle-modal-enter-from .isle-modal-card {
   opacity: 0;
-  transform: scale(0.96) translateY(8px);
+  transform: translate3d(0, 8px, 0) scale(0.965);
 }
 .isle-modal-leave-to .isle-modal-card {
   opacity: 0;
-  transform: scale(0.975) translateY(6px);
+  transform: translate3d(0, 6px, 0) scale(0.98);
 }
 
 .isle-modal-card.size-sm {
@@ -358,7 +358,7 @@ onUnmounted(() => {
   }
   .isle-modal-enter-from .isle-modal-card,
   .isle-modal-leave-to .isle-modal-card {
-    transform: translateY(100%);
+    transform: translate3d(0, 100%, 0);
   }
   .isle-modal-header {
     padding: 16px 18px 12px;

@@ -1,7 +1,9 @@
 import { ref, watch, type Ref } from "vue";
 import { describeRootOperationFailure } from "./rootDiscovery.ts";
 import { describeUserFacingError } from "./userFacingError.ts";
+import { copyTextToClipboard } from "./clipboard.ts";
 import { trashMediaOriginals } from "./mediaTrash.ts";
+import { applyPhotoRangeSelection, syncViewerAfterItemRemoval } from "./photoViewerNavigation.ts";
 import { requestConfirm } from "./useConfirmDialog.ts";
 import {
   photoArchivePath,
@@ -42,6 +44,7 @@ export type BatchAsset = {
 export function usePhotoBatchActions<TAsset extends BatchAsset>(options: {
   assets: Ref<TAsset[]>;
   selected: Ref<TAsset | null>;
+  selectedIndex?: Ref<number>;
   folderAlbums: Ref<FolderAlbum[]>;
   privateAlbums: Ref<Array<{ id: number; name: string; count: number }>>;
   message: Ref<string>;
@@ -55,6 +58,7 @@ export function usePhotoBatchActions<TAsset extends BatchAsset>(options: {
   api: <T>(url: string, method?: string, body?: object, signal?: AbortSignal) => Promise<T>;
   apiPath: (path: string) => string;
   mediaPath: (path: string) => string;
+  showAssetAt?: (index: number) => void;
   closeModal: (restoreFocus?: boolean) => void;
   load: (reset?: boolean) => Promise<void>;
   refreshPrivateAlbums: (isCurrent?: () => boolean) => Promise<void>;
@@ -62,6 +66,7 @@ export function usePhotoBatchActions<TAsset extends BatchAsset>(options: {
   const trashSelecting = ref(false);
   const trashBusy = ref(false);
   const trashIDs = ref<Set<number>>(new Set());
+  const lastToggledID = ref<number | null>(null);
   const batchFolderTarget = ref("");
   const batchPrivateAlbum = ref(0);
   const batchShareLinks = ref<Array<{ name: string; url: string }>>([]);
@@ -74,6 +79,7 @@ export function usePhotoBatchActions<TAsset extends BatchAsset>(options: {
     options.photoQueryKey,
     () => {
       trashIDs.value = new Set();
+      lastToggledID.value = null;
       trashSelecting.value = false;
       batchFolderTarget.value = "";
       batchPrivateAlbum.value = 0;
@@ -81,12 +87,18 @@ export function usePhotoBatchActions<TAsset extends BatchAsset>(options: {
     { flush: "sync" },
   );
 
-  function toggleTrashID(id: number) {
+  function toggleTrashID(id: number, shiftKey = false) {
     if (trashBusy.value) return;
-    const next = new Set(trashIDs.value);
-    if (next.has(id)) next.delete(id);
-    else if (next.size < 50) next.add(id);
-    trashIDs.value = next;
+    const res = applyPhotoRangeSelection({
+      assets: options.assets.value,
+      currentSelection: trashIDs.value,
+      targetId: id,
+      anchorId: lastToggledID.value,
+      shiftKey,
+      maxCount: 50,
+    });
+    trashIDs.value = res.next;
+    lastToggledID.value = res.anchorId;
   }
 
   function isMonthSelected(header: { startIndex: number; count: number }): boolean {
@@ -157,17 +169,38 @@ export function usePhotoBatchActions<TAsset extends BatchAsset>(options: {
         options.message.value = "原硬盘或列表已变化，请返回原目录检查回收站。";
         return;
       }
-      if (options.selected.value && selectedIDs.includes(options.selected.value.id)) options.closeModal(false);
+      const wasViewerOpenForRemoved = Boolean(options.selected.value && selectedIDs.includes(options.selected.value.id));
+      const previousIndex = options.selectedIndex?.value ?? -1;
       trashIDs.value = new Set();
+      lastToggledID.value = null;
       trashSelecting.value = false;
-      options.message.value =
-        `已确认移入回收站 ${result.completed}/${items.length} 项。` +
+      const doneNotice =
+        `已确认移入回收站 ${result.completed}/${items.length} 项（可在文件回收站恢复）。` +
         (result.needsRootCheck
           ? "硬盘连接发生变化，部分操作的结果不确定。请重新连接原硬盘，检查原目录和回收站后再重试。"
           : result.failed.length
             ? "其余项目请检查权限或文件状态。"
             : "");
-      await options.load(true);
+      if (options.showAssetAt && options.selectedIndex) {
+        await syncViewerAfterItemRemoval({
+          removedIds: selectedIDs,
+          wasViewerOpenForRemoved,
+          previousIndex,
+          assets: options.assets,
+          selected: options.selected,
+          selectedIndex: options.selectedIndex,
+          showAssetAt: options.showAssetAt,
+          closeModal: options.closeModal,
+          reload: () => options.load(true),
+          shouldStillRestore: () => !options.isDisposed() && root === options.getRootEpoch() && view === options.getViewGeneration(),
+        });
+      } else {
+        if (wasViewerOpenForRemoved) options.closeModal(false);
+        await options.load(true);
+      }
+      if (view === options.getViewGeneration()) {
+        options.message.value = doneNotice;
+      }
     } catch (error) {
       if (root === options.getRootEpoch()) {
         options.message.value = "未能确认移入回收站的结果：" + describeRootOperationFailure(error);
@@ -490,11 +523,9 @@ export function usePhotoBatchActions<TAsset extends BatchAsset>(options: {
   async function copyBatchShareLinks() {
     const root = options.getRootEpoch();
     const links = batchShareLinks.value.map((item) => `${item.name}：${item.url}`).join("\n");
-    try {
-      await navigator.clipboard.writeText(links);
-      if (root === options.getRootEpoch()) batchShareNotice.value = "链接已复制。";
-    } catch {
-      if (root === options.getRootEpoch()) batchShareNotice.value = "无法自动复制，请手动选择并复制下方链接。";
+    const copied = await copyTextToClipboard(links);
+    if (root === options.getRootEpoch()) {
+      batchShareNotice.value = copied ? "链接已复制。" : "无法自动复制，请手动选择并复制下方链接。";
     }
   }
 

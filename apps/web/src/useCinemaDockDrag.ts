@@ -23,7 +23,7 @@ export function clampDockOffset(
   };
 }
 
-export function isInteractiveDockTarget(target: EventTarget | null): boolean {
+function isInteractiveDockTarget(target: EventTarget | null): boolean {
   if (!target || typeof (target as Element).closest !== "function") return false;
   return Boolean(
     (target as Element).closest(
@@ -61,25 +61,57 @@ export function useCinemaDockDrag() {
     startOffset = { ...dockOffset.value };
     dockEl?.setPointerCapture?.(event.pointerId);
 
+    // Measure stage and dock bounds once per gesture to avoid per-frame forced reflows.
+    let cachedStageRect: DOMRect | null = stageEl?.getBoundingClientRect() ?? null;
+    let cachedDockRect: DOMRect | null = dockEl?.getBoundingClientRect() ?? null;
+    let pendingOffset: DockOffset | null = null;
+    let dragRafId: number | null = null;
+
+    const applyOffset = (raw: DockOffset) => {
+      if (stageEl && dockEl) {
+        cachedStageRect ??= stageEl.getBoundingClientRect();
+        cachedDockRect ??= dockEl.getBoundingClientRect();
+        dockOffset.value = clampDockOffset(raw, cachedStageRect, cachedDockRect);
+      } else {
+        dockOffset.value = raw;
+      }
+    };
+
     const onMove = (moveEvent: PointerEvent) => {
       if (activePointerId !== null && moveEvent.pointerId !== activePointerId) return;
       const raw: DockOffset = {
         x: startOffset.x + (moveEvent.clientX - startPointer.x),
         y: startOffset.y + (moveEvent.clientY - startPointer.y),
       };
-      if (stageEl && dockEl) {
-        dockOffset.value = clampDockOffset(
-          raw,
-          stageEl.getBoundingClientRect(),
-          dockEl.getBoundingClientRect(),
-        );
+      pendingOffset = raw;
+      if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+        if (dragRafId === null) {
+          dragRafId = window.requestAnimationFrame(() => {
+            dragRafId = null;
+            if (pendingOffset !== null) {
+              const next = pendingOffset;
+              pendingOffset = null;
+              applyOffset(next);
+            }
+          });
+        }
       } else {
-        dockOffset.value = raw;
+        pendingOffset = null;
+        applyOffset(raw);
       }
     };
 
     const onEnd = (endEvent: PointerEvent) => {
       if (activePointerId !== null && endEvent.pointerId !== activePointerId) return;
+      if (dragRafId !== null && typeof window !== "undefined" && typeof window.cancelAnimationFrame === "function") {
+        window.cancelAnimationFrame(dragRafId);
+        dragRafId = null;
+      }
+      if (pendingOffset !== null) {
+        const finalOffset = pendingOffset;
+        pendingOffset = null;
+        applyOffset(finalOffset);
+      }
       draggingDock.value = false;
       activePointerId = null;
       dockEl?.releasePointerCapture?.(endEvent.pointerId);
@@ -88,7 +120,7 @@ export function useCinemaDockDrag() {
       window.removeEventListener("pointercancel", onEnd);
     };
 
-    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointermove", onMove, { passive: true });
     window.addEventListener("pointerup", onEnd);
     window.addEventListener("pointercancel", onEnd);
     return true;

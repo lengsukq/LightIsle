@@ -85,7 +85,7 @@ onUnmounted(() => { disposed = true; controller.abort(); });
     <IsleBanner v-if="accountError" type="error" compact role="alert">
       {{ accountError }}
       <template #action>
-        <IsleButton variant="ghost" size="sm" @click="loadAccounts">重试</IsleButton>
+        <IsleButton variant="glass" size="sm" @click="loadAccounts">重试</IsleButton>
       </template>
     </IsleBanner>
     <p v-else-if="!accountsLoaded" class="footnote">正在读取成员…</p>

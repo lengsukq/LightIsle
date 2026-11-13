@@ -185,30 +185,65 @@ export function usePhotoTimelineScrubber<TAsset extends BatchAsset>(options: {
     return Math.max(0, fallback);
   });
 
-  function scrubAtPointer(event: PointerEvent) {
-    const rail = event.currentTarget as HTMLElement;
-    const rect = rail.getBoundingClientRect();
-    const index = timelineScrubIndexAt(event.clientY - rect.top, rect.height, scrubMonths.value.length);
+  let scrubRailRect: DOMRect | null = null;
+  let scrubRafId: number | null = null;
+  let pendingScrubY: number | null = null;
+
+  function cancelScrubFrame() {
+    if (scrubRafId !== null && typeof window !== "undefined" && typeof window.cancelAnimationFrame === "function") {
+      window.cancelAnimationFrame(scrubRafId);
+    }
+    scrubRafId = null;
+    pendingScrubY = null;
+  }
+
+  function applyScrubClientY(clientY: number, rail?: HTMLElement) {
+    const rect = scrubRailRect ?? rail?.getBoundingClientRect() ?? null;
+    if (!rect) return;
+    scrubRailRect = rect;
+    const index = timelineScrubIndexAt(clientY - rect.top, rect.height, scrubMonths.value.length);
     if (index >= 0) scrubPreview.value = index;
   }
 
   function startScrub(event: PointerEvent) {
     if (event.button !== 0 || options.loading.value || !scrubMonths.value.length) return;
+    const rail = event.currentTarget as HTMLElement;
+    scrubRailRect = rail.getBoundingClientRect();
     scrubbing.value = true;
     scrubPointerId = event.pointerId;
-    scrubAtPointer(event);
-    (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
+    applyScrubClientY(event.clientY, rail);
+    rail.setPointerCapture(event.pointerId);
     event.preventDefault();
   }
 
   function moveScrub(event: PointerEvent) {
     if (!scrubbing.value || scrubPointerId !== event.pointerId) return;
-    scrubAtPointer(event);
+    const rail = event.currentTarget as HTMLElement;
+    pendingScrubY = event.clientY;
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      if (scrubRafId === null) {
+        scrubRafId = window.requestAnimationFrame(() => {
+          scrubRafId = null;
+          if (!scrubbing.value || pendingScrubY === null) return;
+          const clientY = pendingScrubY;
+          pendingScrubY = null;
+          applyScrubClientY(clientY, rail);
+        });
+      }
+    } else {
+      pendingScrubY = null;
+      applyScrubClientY(event.clientY, rail);
+    }
   }
 
   function stopScrub(event: PointerEvent, commit = true) {
     if (!scrubbing.value || scrubPointerId !== event.pointerId) return;
     const rail = event.currentTarget as HTMLElement;
+    if (commit && pendingScrubY !== null) {
+      applyScrubClientY(pendingScrubY, rail);
+    }
+    cancelScrubFrame();
+    scrubRailRect = null;
     if (rail.hasPointerCapture(event.pointerId)) rail.releasePointerCapture(event.pointerId);
     const selectedIndex = scrubPreview.value;
     scrubbing.value = false;
@@ -247,6 +282,8 @@ export function usePhotoTimelineScrubber<TAsset extends BatchAsset>(options: {
   }
 
   function resetScrubberForRootChange() {
+    cancelScrubFrame();
+    scrubRailRect = null;
     timelineCursorStart.value = 0;
     fullTimelineMonths.value = [];
     scrubbing.value = false;

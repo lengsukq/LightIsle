@@ -65,7 +65,7 @@ const CATEGORY_LABELS: Record<string, string> = {
 export function appMode(app: PublicAppItem): "static" | "on-demand" | "persistent" {
   const raw = app.web?.mode || app.mode || "on-demand";
   if (raw === "static") return "static";
-  if (raw === "persistent" || raw === "daemon") return "persistent";
+  if (raw === "persistent") return "persistent";
   return "on-demand";
 }
 
@@ -73,7 +73,7 @@ export function appStatus(app: PublicAppItem): string {
   return app.status || app.web?.status || (appMode(app) === "static" ? "static" : "sleeping");
 }
 
-export function appMemoryMB(app: PublicAppItem): number {
+function appMemoryMB(app: PublicAppItem): number {
   if (typeof app.memoryMB === "number" && app.memoryMB > 0) return Math.round(app.memoryMB);
   if (typeof app.web?.memoryMB === "number" && app.web.memoryMB > 0) return Math.round(app.web.memoryMB);
   const rss = app.rssBytes ?? app.web?.rssBytes ?? 0;
@@ -126,23 +126,6 @@ export function flipItem<T>(list: T[], value: T): T[] {
   return list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
 }
 
-export async function writeAppsClipboard(text: string): Promise<void> {
-  if (navigator.clipboard && window.isSecureContext) {
-    await navigator.clipboard.writeText(text);
-    return;
-  }
-  const editor = document.createElement("textarea");
-  editor.value = text;
-  editor.readOnly = true;
-  editor.style.position = "fixed";
-  editor.style.left = "-9999px";
-  document.body.appendChild(editor);
-  editor.select();
-  const copied = document.execCommand("copy");
-  editor.remove();
-  if (!copied) throw new Error("copy_not_available");
-}
-
 export function useAppsCenterController(props: { active?: boolean; admin?: boolean }) {
   const apiClient = createAppsCenterClient();
   const apps = ref<PublicAppItem[]>([]);
@@ -154,6 +137,7 @@ export function useAppsCenterController(props: { active?: boolean; admin?: boole
   const selectedInstallLocationId = ref("");
   const busy = ref(false);
   const error = ref("");
+  const modalError = ref("");
   const notice = ref("");
   const failedIcons = ref<Set<string>>(new Set());
 
@@ -187,6 +171,18 @@ export function useAppsCenterController(props: { active?: boolean; admin?: boole
 
   const activeWorkbenchApp = computed(() => apps.value.find((a) => a.id === activeWorkbenchAppId.value) ?? null);
   const nonAdminMembers = computed(() => members.value.filter((m) => m.role !== "admin"));
+  const installLocationOptions = computed(() => {
+    const locs = appStorage.value?.locations ?? [];
+    const defaultLoc = locs.find((l) => l.isDefault);
+    return [
+      { value: "", label: `跟随默认位置（${defaultLoc?.name || "Mac 内置盘"}）` },
+      ...locs.map((loc) => ({
+        value: loc.id,
+        label: `${loc.kind === "external" ? "其他盘 · " : "内置盘 · "}${loc.name}${!loc.online ? "（离线）" : !loc.writable ? "（只读）" : ""}`,
+        disabled: !loc.online || !loc.writable,
+      })),
+    ];
+  });
   watch(() => props.admin, (val) => {
     if (typeof val === "boolean") isAdmin.value = val;
   });
@@ -199,7 +195,8 @@ export function useAppsCenterController(props: { active?: boolean; admin?: boole
     if (Array.isArray(payload.configuredChannels)) configuredChannels.value = payload.configuredChannels as string[];
     if (payload.appStorage && typeof payload.appStorage === "object") {
       appStorage.value = payload.appStorage as AppStorageSnapshot;
-      if (selectedInstallLocationId.value === "external" && !appStorage.value.hasExternal) {
+      const activeLoc = appStorage.value.locations.find((l) => l.id === selectedInstallLocationId.value);
+      if (selectedInstallLocationId.value && (!activeLoc || !activeLoc.online || !activeLoc.writable)) {
         selectedInstallLocationId.value = "";
       }
     }
@@ -277,7 +274,7 @@ export function useAppsCenterController(props: { active?: boolean; admin?: boole
   async function loadLogs(app: PublicAppItem) {
     viewingLogsApp.value = app;
     logsLoading.value = true;
-    error.value = "";
+    modalError.value = "";
     try {
       const res = await apiClient.fetchLogs(app.id);
       if (viewingLogsApp.value?.id === app.id) {
@@ -285,13 +282,14 @@ export function useAppsCenterController(props: { active?: boolean; admin?: boole
         cronRuns.value = res.cronRuns as AppCronRunEntry[];
       }
     } catch (e) {
-      if (viewingLogsApp.value?.id === app.id) error.value = "读取应用日志失败：" + describeUserFacingError(e);
+      if (viewingLogsApp.value?.id === app.id) modalError.value = "读取应用日志失败：" + describeUserFacingError(e);
     } finally {
       logsLoading.value = false;
     }
   }
 
   function openLogsModal(app: PublicAppItem) {
+    modalError.value = "";
     webOutput.value = "";
     cronRuns.value = [];
     void loadLogs(app);
@@ -301,6 +299,7 @@ export function useAppsCenterController(props: { active?: boolean; admin?: boole
     if (busy.value) return;
     busy.value = true;
     error.value = "";
+    modalError.value = "";
     notice.value = "";
     try {
       const res = await apiClient.runAction(app.id, action);
@@ -315,7 +314,9 @@ export function useAppsCenterController(props: { active?: boolean; admin?: boole
       notice.value = `${app.name}：${labels[action]}。`;
       if (viewingLogsApp.value?.id === app.id) await loadLogs(app);
     } catch (e) {
-      error.value = "执行操作失败：" + describeUserFacingError(e);
+      const msg = "执行操作失败：" + describeUserFacingError(e);
+      if (viewingLogsApp.value?.id === app.id) modalError.value = msg;
+      else error.value = msg;
       void refreshDiagnosticSnapshot();
     } finally {
       busy.value = false;
@@ -323,16 +324,17 @@ export function useAppsCenterController(props: { active?: boolean; admin?: boole
   }
 
   function openAccessModal(app: PublicAppItem) {
+    modalError.value = "";
     editingAccessApp.value = app;
     accessPolicy.value = normalizeAccessPolicy(app.access?.policy);
-    accessAllowedUserIDs.value = [...(app.access?.allowedUserIDs || app.access?.allowedUserIds || [])];
+    accessAllowedUserIDs.value = [...(app.access?.allowedUserIDs || [])];
   }
 
   async function saveAccess() {
     const app = editingAccessApp.value;
     if (!app || busy.value) return;
     busy.value = true;
-    error.value = "";
+    modalError.value = "";
     try {
       const res = await apiClient.saveAccess(app, accessPolicy.value, accessAllowedUserIDs.value);
       if (res.app) upsertSingleApp(res.app);
@@ -340,13 +342,14 @@ export function useAppsCenterController(props: { active?: boolean; admin?: boole
       notice.value = `已保存「${app.name}」的成员访问权限。`;
       editingAccessApp.value = null;
     } catch (e) {
-      error.value = "保存权限失败：" + describeUserFacingError(e);
+      modalError.value = "保存权限失败：" + describeUserFacingError(e);
     } finally {
       busy.value = false;
     }
   }
 
   function openConfigDrawer(app: PublicAppItem) {
+    modalError.value = "";
     editingConfigApp.value = app;
     webEnabled.value = app.web?.enabled ?? true;
     webMode.value = appMode(app);
@@ -364,7 +367,7 @@ export function useAppsCenterController(props: { active?: boolean; admin?: boole
     const app = editingConfigApp.value;
     if (!app || busy.value) return;
     busy.value = true;
-    error.value = "";
+    modalError.value = "";
     try {
       const res = await apiClient.saveConfig(
         app,
@@ -387,7 +390,40 @@ export function useAppsCenterController(props: { active?: boolean; admin?: boole
       notice.value = `已保存「${app.name}」的生命周期与定时设置。`;
       editingConfigApp.value = null;
     } catch (e) {
-      error.value = "保存设置失败：" + describeUserFacingError(e);
+      modalError.value = "保存设置失败：" + describeUserFacingError(e);
+    } finally {
+      busy.value = false;
+    }
+  }
+
+  async function activateApp(app: PublicAppItem) {
+    if (busy.value) return;
+    busy.value = true;
+    error.value = "";
+    notice.value = "";
+    try {
+      const c = app.cron;
+      const res = await apiClient.saveConfig(
+        app,
+        {
+          enabled: app.web?.enabled ?? true,
+          mode: appMode(app),
+          idleTimeoutSeconds: app.web?.idleTimeoutSeconds ?? 900,
+          autoRestart: app.web?.autoRestart ?? true,
+        },
+        {
+          enabled: c?.enabled ?? false,
+          cron: c?.cron || c?.schedule?.cron || "*/15 * * * *",
+          timezone: c?.timezone || c?.schedule?.timezone || "Asia/Shanghai",
+          events: c?.events || c?.notification?.events || ["failure", "timeout"],
+          channels: c?.channels || c?.notification?.channels || [],
+        },
+      );
+      if (res.app) upsertSingleApp(res.app);
+      if (Array.isArray(res.apps)) apps.value = res.apps;
+      notice.value = `已激活「${app.name}」，现在可以直接打开使用。`;
+    } catch (e) {
+      error.value = `激活「${app.name}」失败：` + describeUserFacingError(e);
     } finally {
       busy.value = false;
     }
@@ -416,7 +452,11 @@ export function useAppsCenterController(props: { active?: boolean; admin?: boole
       confirmText: "确认恢复",
       variant: "danger",
     });
-    if (!ok) return;
+    if (!ok) {
+      restoringApp.value = null;
+      if (input) input.value = "";
+      return;
+    }
     busy.value = true;
     error.value = "";
     try {
@@ -428,6 +468,7 @@ export function useAppsCenterController(props: { active?: boolean; admin?: boole
     } finally {
       busy.value = false;
       restoringApp.value = null;
+      if (input) input.value = "";
     }
   }
 
@@ -514,8 +555,10 @@ export function useAppsCenterController(props: { active?: boolean; admin?: boole
     configuredChannels,
     appStorage,
     selectedInstallLocationId,
+    installLocationOptions,
     busy,
     error,
+    modalError,
     notice,
     failedIcons,
     launchingAppId,
@@ -554,6 +597,7 @@ export function useAppsCenterController(props: { active?: boolean; admin?: boole
     saveAccess,
     openConfigDrawer,
     saveConfig,
+    activateApp,
     loadLogs,
     openLogsModal,
     exportAppData,

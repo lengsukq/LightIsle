@@ -1,9 +1,12 @@
 <script setup lang="ts">
+import { computed } from "vue";
 import IsleButton from "./IsleButton.vue";
 import IsleBanner from "./IsleBanner.vue";
+import IsleCharts from "./IsleCharts.vue";
+import { ISLE_CHART_COLORS } from "./isleChartsMath.ts";
 import type { BatchCandidate } from "./cinemaTypes.ts";
 
-defineProps<{
+const props = defineProps<{
   batchToken: string;
   batchBusy: boolean;
   batchProgress: string;
@@ -13,7 +16,24 @@ defineProps<{
   scrapeBusy: boolean;
   scrapeNotice: string;
   scrapeError: string;
+  unmatchedCount?: number;
 }>();
+
+const scrapeChartStats = computed(() => {
+  const s = props.scrapeState;
+  if (!s || s.processed <= 0) return null;
+  const matched = Math.max(0, Math.min(s.processed, s.matched));
+  const missed = Math.max(0, s.processed - matched);
+  const matchRate = Math.round((matched / s.processed) * 100);
+  return {
+    total: s.processed,
+    matchRate,
+    segments: [
+      { key: "matched", label: "自动命中匹配", value: matched, color: ISLE_CHART_COLORS.green, displayValue: `${matched} 项` },
+      { key: "missed", label: "待人工核对", value: missed, color: ISLE_CHART_COLORS.amber, displayValue: `${missed} 项` },
+    ],
+  };
+});
 
 const emit = defineEmits<{
   (e: "update:batchToken", value: string): void;
@@ -42,7 +62,7 @@ const emit = defineEmits<{
         <IsleButton type="submit" variant="primary" size="sm" :loading="batchBusy" :disabled="batchBusy">
           {{ batchBusy ? "正在查找…" : "生成候选" }}
         </IsleButton>
-        <IsleButton type="button" variant="ghost" size="sm" :disabled="batchBusy" @click="emit('cancelBatch')">
+        <IsleButton type="button" variant="glass" size="sm" :disabled="batchBusy" @click="emit('cancelBatch')">
           清空候选
         </IsleButton>
       </form>
@@ -83,6 +103,24 @@ const emit = defineEmits<{
       <IsleBanner v-else-if="scrapeState?.tmdbConfigured" type="info" compact role="status">
         已在 Mac 端配置 TMDB Token，自动刮削已默认开启（仅 Mac 端可关闭）。
       </IsleBanner>
+      <div v-if="scrapeChartStats" style="display:flex;align-items:center;gap:12px;margin:10px 0 8px">
+        <IsleCharts
+          kind="donut"
+          :size="44"
+          :stroke-width="4"
+          :percent="scrapeChartStats.matchRate"
+          :color="ISLE_CHART_COLORS.green"
+          aria-label="自动刮削海报匹配命中率"
+        />
+        <IsleCharts
+          kind="segmented"
+          :segments="scrapeChartStats.segments"
+          :total="scrapeChartStats.total"
+          :bar-height="8"
+          compact-legend
+          aria-label="刮削匹配成功与待核对数量比例"
+        />
+      </div>
       <IsleBanner v-if="scrapeNotice" type="info" compact role="status">{{ scrapeNotice }}</IsleBanner>
       <IsleBanner v-if="scrapeError" type="error" compact role="alert">{{ scrapeError }}</IsleBanner>
       <form class="cinema-tmdb-form" style="margin-top: 10px;" @submit.prevent="emit('startScrape')">

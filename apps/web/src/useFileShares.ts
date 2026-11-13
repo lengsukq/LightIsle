@@ -1,5 +1,6 @@
 import { ref } from "vue";
 import { describeUserFacingError } from "./userFacingError.ts";
+import { copyTextToClipboard } from "./clipboard.ts";
 
 export type SharedFileEntry = {
   name: string;
@@ -157,10 +158,9 @@ export function useFileShares(deps: FileShareDependencies) {
 
   async function copyShareLink() {
     if (!shareCreatedLink.value) return;
-    try {
-      await navigator.clipboard.writeText(shareCreatedLink.value);
+    if (await copyTextToClipboard(shareCreatedLink.value)) {
       shareCopied.value = "已复制";
-    } catch {
+    } else {
       shareLinkInput.value?.select();
       shareCopied.value = "已选中链接，请手动复制";
     }

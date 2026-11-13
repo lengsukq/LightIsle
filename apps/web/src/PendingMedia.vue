@@ -82,8 +82,8 @@ onUnmounted(()=>{disposed=true;document.removeEventListener("visibilitychange",v
       <div class="account-heading">
         <h4>{{ kind === 'photos' ? '照片与视频' : '影视' }}</h4>
         <div style="display: flex; gap: 8px;">
-          <IsleButton variant="ghost" size="sm" :disabled="busy" @click="recheck(kind)">重新检查</IsleButton>
-          <IsleButton variant="ghost" size="sm" :loading="groups[kind].loading" @click="load(kind)">刷新</IsleButton>
+          <IsleButton variant="glass" size="sm" :loading="busy" @click="recheck(kind)">重新检查</IsleButton>
+          <IsleButton variant="glass" size="sm" :loading="groups[kind].loading" @click="load(kind)">刷新</IsleButton>
         </div>
       </div>
       <IsleBanner v-if="groups[kind].error" type="error" compact role="alert">{{ groups[kind].error }}</IsleBanner>
@@ -105,7 +105,7 @@ onUnmounted(()=>{disposed=true;document.removeEventListener("visibilitychange",v
           <IsleButton variant="danger" size="sm" :disabled="busy || !item.canManage" @click="discard(kind, item)">放弃旧记录…</IsleButton>
         </div>
       </div>
-      <IsleButton v-if="groups[kind].next" variant="ghost" size="sm" :loading="groups[kind].loading" @click="load(kind, true)">加载更多</IsleButton>
+      <IsleButton v-if="groups[kind].next" variant="glass" size="sm" :loading="groups[kind].loading" @click="load(kind, true)">加载更多</IsleButton>
     </div>
   </section>
 </template>

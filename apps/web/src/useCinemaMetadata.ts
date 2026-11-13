@@ -24,11 +24,6 @@ export function metadataSourceName(value?: string) {
   return "已确认的其他来源";
 }
 
-export function formatLabel(v: Movie) {
-  const values = [v.container?.toUpperCase(), v.videoCodec?.toUpperCase(), v.audioCodec?.toUpperCase()].filter(Boolean);
-  return values.join(" · ");
-}
-
 export function percent(v: Movie) {
   return v.duration ? Math.min(100, Math.round((v.position / v.duration) * 100)) : 0;
 }
@@ -75,7 +70,10 @@ export function useCinemaMetadata(options: {
   const scrapeBusy = ref(false);
   const scrapeNotice = ref("");
   const scrapeError = ref("");
-  const scrapeRetryTried = ref(false);
+  const renameTarget = ref<Movie | null>(null);
+  const renameTitle = ref("");
+  const renameBusy = ref(false);
+  const renameError = ref("");
 
   let batchController: AbortController | undefined;
   let scrapeTimer: number | undefined;
@@ -304,15 +302,52 @@ export function useCinemaMetadata(options: {
     }
   }
 
-  async function rename(v: Movie) {
-    if (!options.isAdmin()) return;
-    const title = window.prompt("修改影片展示名称", v.title)?.trim();
-    if (!title || title === v.title) return;
+  function openRenameModal(v: Movie) {
+    if (!options.isAdmin() || renameBusy.value) return;
+    renameTarget.value = v;
+    renameTitle.value = v.title;
+    renameError.value = "";
+  }
+
+  function closeRenameModal() {
+    if (renameBusy.value) return;
+    renameTarget.value = null;
+    renameTitle.value = "";
+    renameError.value = "";
+  }
+
+  async function submitRename() {
+    const v = renameTarget.value;
+    if (!v || !options.isAdmin() || renameBusy.value) return;
+    const title = renameTitle.value.trim();
+    if (!title) {
+      renameError.value = "请输入影片展示名称。";
+      return;
+    }
+    if (title === v.title) {
+      closeRenameModal();
+      return;
+    }
+    const filmID = v.id;
+    const epoch = options.getRootEpoch();
+    renameBusy.value = true;
+    renameError.value = "";
     try {
-      await options.api(options.apiPath("/api/v2/cinema/" + v.id), "PATCH", { title });
+      await options.api(options.apiPath("/api/v2/cinema/" + filmID), "PATCH", { title });
+      if (options.isDisposed() || epoch !== options.getRootEpoch()) return;
       v.title = title;
+      options.movies.value = options.movies.value.map((m) => (m.id === filmID ? { ...m, title } : m));
+      if (options.selected.value?.id === filmID) {
+        options.selected.value = { ...options.selected.value, title };
+      }
+      renameTarget.value = null;
+      renameTitle.value = "";
     } catch (e) {
-      options.actionError.value = describeUserFacingError(e);
+      if (!options.isDisposed() && epoch === options.getRootEpoch()) {
+        renameError.value = describeUserFacingError(e);
+      }
+    } finally {
+      renameBusy.value = false;
     }
   }
 
@@ -513,6 +548,10 @@ export function useCinemaMetadata(options: {
     stopScrapeTimer();
     scrapeState.value = null;
     scrapeNotice.value = "";
+    renameTarget.value = null;
+    renameTitle.value = "";
+    renameBusy.value = false;
+    renameError.value = "";
   }
 
   function disposeMetadata() {
@@ -545,14 +584,19 @@ export function useCinemaMetadata(options: {
     scrapeBusy,
     scrapeNotice,
     scrapeError,
-    scrapeRetryTried,
     cancelBatch,
     suggestBatch,
     acceptBatchCandidate,
     cancelMetadataRequests,
     searchDouban,
     matchDouban,
-    rename,
+    renameTarget,
+    renameTitle,
+    renameBusy,
+    renameError,
+    openRenameModal,
+    closeRenameModal,
+    submitRename,
     importLocalNFO,
     searchTMDB,
     matchTMDB,

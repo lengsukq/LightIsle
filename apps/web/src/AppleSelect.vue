@@ -242,33 +242,49 @@ function handleGlobalPointerDown(event: PointerEvent) {
   closeMenu();
 }
 
-function handleScrollOrResize() {
-  if (!isOpen.value) return;
-  if (triggerRef.value) {
-    const rect = triggerRef.value.getBoundingClientRect();
-    if (rect.bottom < 0 || rect.top > window.innerHeight) {
-      closeMenu();
-      return;
-    }
+let positionRafId: number | null = null;
+
+function cancelPositionUpdate() {
+  if (positionRafId !== null) {
+    window.cancelAnimationFrame(positionRafId);
+    positionRafId = null;
   }
-  updatePosition();
+}
+
+function handleScrollOrResize() {
+  if (!isOpen.value || positionRafId !== null) return;
+  positionRafId = window.requestAnimationFrame(() => {
+    positionRafId = null;
+    if (!isOpen.value) return;
+    if (triggerRef.value) {
+      const rect = triggerRef.value.getBoundingClientRect();
+      if (rect.bottom < 0 || rect.top > window.innerHeight) {
+        closeMenu();
+        return;
+      }
+    }
+    updatePosition();
+  });
 }
 
 onMounted(() => {
   window.addEventListener("pointerdown", handleGlobalPointerDown, true);
-  window.addEventListener("scroll", handleScrollOrResize, true);
-  window.addEventListener("resize", handleScrollOrResize);
+  window.addEventListener("scroll", handleScrollOrResize, { capture: true, passive: true });
+  window.addEventListener("resize", handleScrollOrResize, { passive: true });
 });
 
 onUnmounted(() => {
+  cancelPositionUpdate();
   window.removeEventListener("pointerdown", handleGlobalPointerDown, true);
-  window.removeEventListener("scroll", handleScrollOrResize, true);
+  window.removeEventListener("scroll", handleScrollOrResize, { capture: true });
   window.removeEventListener("resize", handleScrollOrResize);
 });
 
 watch(isOpen, (open) => {
   if (open) {
     nextTick(updatePosition);
+  } else {
+    cancelPositionUpdate();
   }
 });
 </script>
@@ -641,5 +657,14 @@ watch(isOpen, (open) => {
 .apple-select-up-leave-to {
   opacity: 0;
   transform: scale(0.97) translateY(2px);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .apple-select-down-enter-active,
+  .apple-select-up-enter-active,
+  .apple-select-down-leave-active,
+  .apple-select-up-leave-active {
+    transition: none;
+  }
 }
 </style>

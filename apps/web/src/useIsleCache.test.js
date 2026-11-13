@@ -166,7 +166,9 @@ test("AppShell preserves core user views with v-show and unmounts admin/utility 
   assert.match(html, /<CacheManagementPanel/);
 
   const photosSfc = readFileSync(new URL("./PhotosView.vue", import.meta.url), "utf8");
+  const photoViewerSfc = readFileSync(new URL("./PhotoViewerModal.vue", import.meta.url), "utf8");
   const cinemaSfc = readFileSync(new URL("./CinemaView.vue", import.meta.url), "utf8");
-  assert.match(photosSfc, /<\/Teleport>\s*<\/div>\s*<\/template>/);
+  assert.match(photosSfc, /<PhotoViewerModal[\s\S]*\/>\s*<\/div>\s*<\/template>/);
+  assert.match(photoViewerSfc, /<\/Teleport>\s*<\/template>/);
   assert.match(cinemaSfc, /<\/Teleport>\s*<\/div>\s*<\/template>/);
 });

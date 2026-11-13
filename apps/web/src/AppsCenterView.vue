@@ -29,29 +29,18 @@ import {
   useAppsCenterController,
   workbenchBadge,
 } from "./composables/useAppsCenterController.ts";
-import type {
-  AppCronRunEntry,
-  AppDiagnostic,
-  AppMemberSummary,
-  PublicAppItem,
-} from "./types/appsCenter.ts";
-
-export type AppMember = AppMemberSummary;
-export type CronRun = AppCronRunEntry;
-export type { AppDiagnostic };
-export type AppItem = PublicAppItem;
-
 const props = defineProps<{ active?: boolean; admin?: boolean }>();
 const {
   apps,
   templates,
   isAdmin,
-  members,
   configuredChannels,
   appStorage,
   selectedInstallLocationId,
+  installLocationOptions,
   busy,
   error,
+  modalError,
   notice,
   failedIcons,
   launchingAppId,
@@ -90,6 +79,7 @@ const {
   saveAccess,
   openConfigDrawer,
   saveConfig,
+  activateApp,
   loadLogs,
   openLogsModal,
   exportAppData,
@@ -165,12 +155,12 @@ const {
           <small>随包内置高频家庭小工具，点击即可安装到选定的应用存储位置并可在「成员权限」中授权给家人。</small>
           <div v-if="appStorage && appStorage.locations.length > 1" class="apps-install-target-row">
             <span>安装到存储位置：</span>
-            <select v-model="selectedInstallLocationId" aria-label="选择官方模板安装位置" class="apps-install-target-select">
-              <option value="">跟随默认位置（{{ appStorage.locations.find(l => l.isDefault)?.name || 'Mac 内置盘' }}）</option>
-              <option v-for="loc in appStorage.locations" :key="loc.id" :value="loc.id" :disabled="!loc.online || !loc.writable">
-                {{ loc.kind === 'external' ? '其他盘 · ' : '内置盘 · ' }}{{ loc.name }}{{ loc.online ? '' : '（离线）' }}
-              </option>
-            </select>
+            <AppleSelect
+              v-model="selectedInstallLocationId"
+              :options="installLocationOptions"
+              size="sm"
+              aria-label="选择官方模板安装位置"
+            />
           </div>
           <div class="apps-template-shelf">
             <div v-for="tpl in templates" :key="tpl.id" class="apps-template-card">
@@ -198,7 +188,7 @@ const {
         <article v-for="app in apps" :key="app.id" class="app-card">
           <div class="app-card-top">
             <div class="app-icon-wrap">
-              <img v-if="app.iconUrl && !failedIcons.has(app.id)" :src="app.iconUrl" :alt="app.name + ' 图标'" class="app-icon-img" @error="failedIcons.add(app.id)" />
+              <img v-if="app.iconUrl && !failedIcons.has(app.id)" :src="app.iconUrl" :alt="app.name + ' 图标'" class="app-icon-img" loading="lazy" decoding="async" @error="failedIcons.add(app.id)" />
               <Cpu v-else :size="24" />
             </div>
             <div class="app-title-meta">
@@ -236,7 +226,10 @@ const {
           </small>
 
           <div class="app-card-actions">
-            <IsleButton v-if="app.web?.enabled !== false" variant="primary" :disabled="!!launchingAppId" @click="openApp(app)">
+            <IsleButton v-if="app.pendingActivation && isAdmin" variant="primary" :disabled="busy" @click="activateApp(app)">
+              <Play :size="14" /> 确认激活
+            </IsleButton>
+            <IsleButton v-if="app.web?.enabled !== false" :variant="app.pendingActivation && isAdmin ? 'glass' : 'primary'" :disabled="!!launchingAppId" @click="openApp(app)">
               <Play :size="14" /> {{ launchingAppId === app.id ? "正在唤醒轻应用..." : "立即打开" }}
             </IsleButton>
             <template v-if="isAdmin">
@@ -262,11 +255,15 @@ const {
       v-if="editingAccessApp"
       :title="'成员权限 · ' + editingAccessApp.name"
       size="md"
-      @close="editingAccessApp = null"
+      :close-on-backdrop="!busy"
+      :close-on-esc="!busy"
+      :show-close="!busy"
+      @close="editingAccessApp = null; modalError = ''"
     >
       <template #icon>
         <Users :size="17" />
       </template>
+      <IsleBanner v-if="modalError" type="error" compact :message="modalError" style="margin-bottom: 12px" />
       <div class="apps-radio-group">
         <label class="apps-radio-option"><input v-model="accessPolicy" type="radio" value="admin_only" /><div><strong><Lock :size="14" /> 仅管理员（默认推荐）</strong><small>仅管理员可见与使用</small></div></label>
         <label class="apps-radio-option"><input v-model="accessPolicy" type="radio" value="selected_members" /><div><strong><Users :size="14" /> 指定家庭成员</strong><small>管理员与勾选成员可见并使用</small></div></label>
@@ -282,8 +279,8 @@ const {
       </div>
       <template #footer>
         <div style="display:flex;justify-content:flex-end;gap:10px;width:100%">
-          <IsleButton variant="glass" @click="editingAccessApp = null">取消</IsleButton>
-          <IsleButton variant="primary" :disabled="busy" @click="saveAccess">保存权限</IsleButton>
+          <IsleButton variant="glass" :disabled="busy" @click="editingAccessApp = null; modalError = ''">取消</IsleButton>
+          <IsleButton variant="primary" :loading="busy" :disabled="busy" @click="saveAccess">保存权限</IsleButton>
         </div>
       </template>
     </IsleModal>
@@ -292,11 +289,15 @@ const {
       v-if="editingConfigApp"
       :title="'生命周期与定时 · ' + editingConfigApp.name"
       size="md"
-      @close="editingConfigApp = null"
+      :close-on-backdrop="!busy"
+      :close-on-esc="!busy"
+      :show-close="!busy"
+      @close="editingConfigApp = null; modalError = ''"
     >
       <template #icon>
         <Settings2 :size="17" />
       </template>
+      <IsleBanner v-if="modalError" type="error" compact :message="modalError" style="margin-bottom: 12px" />
       <div v-if="hasWeb(editingConfigApp)" class="apps-form-section">
         <strong>Web 运行模式</strong>
         <label class="apps-check-item"><input v-model="webEnabled" type="checkbox" /> 启用 Web 界面入口</label>
@@ -333,8 +334,8 @@ const {
       </div>
       <template #footer>
         <div style="display:flex;justify-content:flex-end;gap:10px;width:100%">
-          <IsleButton variant="glass" @click="editingConfigApp = null">取消</IsleButton>
-          <IsleButton variant="primary" :disabled="busy" @click="saveConfig">保存设置</IsleButton>
+          <IsleButton variant="glass" :disabled="busy" @click="editingConfigApp = null; modalError = ''">取消</IsleButton>
+          <IsleButton variant="primary" :loading="busy" :disabled="busy" @click="saveConfig">保存设置</IsleButton>
         </div>
       </template>
     </IsleModal>
@@ -343,15 +344,16 @@ const {
       v-if="viewingLogsApp"
       :title="'运行日志 · ' + viewingLogsApp.name"
       size="wide"
-      @close="viewingLogsApp = null"
+      @close="viewingLogsApp = null; modalError = ''"
     >
       <template #icon>
         <ScrollText :size="17" />
       </template>
       <template #header-actions>
-        <IsleButton variant="glass" size="sm" :disabled="logsLoading" @click="loadLogs(viewingLogsApp)"><RefreshCcw :size="14" /> 刷新日志</IsleButton>
-        <IsleButton v-if="hasCron(viewingLogsApp)" variant="glass" size="sm" :disabled="busy" @click="runAction(viewingLogsApp, 'run_cron')"><Play :size="14" /> 立即执行 Cron</IsleButton>
+        <IsleButton variant="glass" size="sm" :loading="logsLoading" :disabled="logsLoading" @click="loadLogs(viewingLogsApp)"><RefreshCcw :size="14" /> 刷新日志</IsleButton>
+        <IsleButton v-if="hasCron(viewingLogsApp)" variant="glass" size="sm" :loading="busy" :disabled="busy" @click="runAction(viewingLogsApp, 'run_cron')"><Play :size="14" /> 立即执行 Cron</IsleButton>
       </template>
+      <IsleBanner v-if="modalError" type="error" compact :message="modalError" style="margin-bottom: 12px" />
       <div class="apps-form-section">
         <strong>Web 进程标准输出（最近日志）</strong>
         <pre class="apps-log-pre">{{ webOutput || "（当前无 Web 进程日志输出，或应用处于休眠/静态状态）" }}</pre>
@@ -369,11 +371,9 @@ const {
       </div>
       <template #footer>
         <div style="display:flex;justify-content:flex-end;width:100%">
-          <IsleButton variant="glass" @click="viewingLogsApp = null">关闭</IsleButton>
+          <IsleButton variant="glass" @click="viewingLogsApp = null; modalError = ''">关闭</IsleButton>
         </div>
       </template>
     </IsleModal>
   </section>
 </template>
-
-<style scoped src="./AppsCenterView.css"></style>

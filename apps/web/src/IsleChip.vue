@@ -94,11 +94,8 @@ function handleRemove(event: MouseEvent) {
   cursor: pointer;
   box-shadow: var(--fluid-item-card-shadow);
   transition:
-    background 0.18s ease,
-    color 0.18s ease,
-    border-color 0.18s ease,
-    transform var(--motion-fast, 150ms) var(--motion-spring, cubic-bezier(0.16, 1, 0.3, 1)),
-    box-shadow 0.18s ease;
+    transform var(--motion-fast, 150ms) var(--motion-spring, cubic-bezier(0.22, 1, 0.36, 1)),
+    opacity 0.18s ease;
   user-select: none;
   -webkit-tap-highlight-color: transparent;
   white-space: nowrap;
@@ -186,5 +183,12 @@ function handleRemove(event: MouseEvent) {
 .isle-chip-remove-btn:hover {
   background: rgba(120, 136, 165, 0.2);
   opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .isle-chip,
+  .isle-chip-remove-btn {
+    transition: none;
+  }
 }
 </style>

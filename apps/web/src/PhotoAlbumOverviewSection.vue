@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { FolderPlus, Images, RefreshCw, Share2, Trash2, Plus } from "lucide-vue-next";
+import { FolderPlus, Images, Map as MapIcon, RefreshCw, Share2, Sparkles, Trash2, Plus, Users } from "lucide-vue-next";
 import AppleSelect from "./AppleSelect.vue";
 import IsleCard from "./IsleCard.vue";
 import IsleButton from "./IsleButton.vue";
@@ -15,7 +15,6 @@ interface LegacyAlbumItem {
 }
 
 defineProps<{
-  admin: boolean;
   folderAlbums: FolderAlbum[];
   folderCursor: string;
   folderError: string;
@@ -52,11 +51,17 @@ const emit = defineEmits<{
   (e: "refresh-shared"): void;
   (e: "open-legacy", album: LegacyAlbumItem, isPrivate: boolean): void;
   (e: "cover-error", key: string): void;
+  (e: "jump-mode", mode: "cleanup" | "map" | "people"): void;
 }>();
 </script>
 
 <template>
   <section class="photo-album-overview settings-stack" aria-label="相册总览">
+    <div class="hero-actions" style="margin:0 0 2px">
+      <button type="button" class="account-action" @click="emit('jump-mode', 'cleanup')"><Sparkles :size="13" /> 相似废片清理</button>
+      <button type="button" class="account-action" @click="emit('jump-mode', 'map')"><MapIcon :size="13" /> 足迹地图</button>
+      <button type="button" class="account-action" @click="emit('jump-mode', 'people')"><Users :size="13" /> 家人人物共享</button>
+    </div>
     <IsleCard
       title="照片目录中的文件夹相册"
       subtitle="文件夹相册直接保存在你的照片目录中，加入照片时可选择复制或移动，并支持共享给家庭成员。"
@@ -88,7 +93,7 @@ const emit = defineEmits<{
 
         <IsleBanner v-if="folderError" type="error" compact role="alert" :message="'文件夹相册读取失败：' + folderError">
           <template #action>
-            <IsleButton variant="ghost" size="sm" @click="emit('refresh-folders')">重试</IsleButton>
+            <IsleButton variant="glass" size="sm" @click="emit('refresh-folders')">重试</IsleButton>
           </template>
         </IsleBanner>
 
@@ -141,13 +146,13 @@ const emit = defineEmits<{
       <template #icon><Images :size="18" /></template>
       <IsleBanner v-if="privateAlbumsError" type="error" compact role="alert" :message="'私人相册读取失败：' + privateAlbumsError">
         <template #action>
-          <IsleButton variant="ghost" size="sm" :loading="privateAlbumsLoading" @click="emit('refresh-private')">重试</IsleButton>
+          <IsleButton variant="glass" size="sm" :loading="privateAlbumsLoading" @click="emit('refresh-private')">重试</IsleButton>
         </template>
       </IsleBanner>
       <div v-if="privateAlbums.length" class="photo-album-card-grid">
         <button v-for="album in privateAlbums" :key="'personal-' + album.id" type="button" class="photo-album-card" @click="emit('open-legacy', album, true)">
           <span class="photo-album-cover">
-            <img v-if="album.coverAssetId && !failedAlbumCovers['personal:' + album.id]" :src="mediaPath('/api/v2/photos/' + album.coverAssetId + '/thumbnail')" :alt="album.name + '封面'" loading="lazy" @error="emit('cover-error', 'personal:' + album.id)" />
+            <img v-if="album.coverAssetId && !failedAlbumCovers['personal:' + album.id]" :src="mediaPath('/api/v2/photos/' + album.coverAssetId + '/thumbnail')" :alt="album.name + '封面'" loading="lazy" decoding="async" @error="emit('cover-error', 'personal:' + album.id)" />
             <Images v-else :size="30" />
           </span>
           <strong :title="album.name">{{ album.name }}</strong><small>{{ album.count }} 项 · 仅自己可见</small>
@@ -163,13 +168,13 @@ const emit = defineEmits<{
       <template #icon><Images :size="18" /></template>
       <IsleBanner v-if="sharedAlbumsError" type="error" compact role="alert" :message="'共享相册读取失败：' + sharedAlbumsError">
         <template #action>
-          <IsleButton variant="ghost" size="sm" :loading="sharedAlbumsLoading" @click="emit('refresh-shared')">重试</IsleButton>
+          <IsleButton variant="glass" size="sm" :loading="sharedAlbumsLoading" @click="emit('refresh-shared')">重试</IsleButton>
         </template>
       </IsleBanner>
       <div v-if="albums.length" class="photo-album-card-grid">
         <button v-for="album in albums" :key="'shared-' + album.id" type="button" class="photo-album-card" @click="emit('open-legacy', album, false)">
           <span class="photo-album-cover">
-            <img v-if="album.coverAssetId && !failedAlbumCovers['shared:' + album.id]" :src="mediaPath('/api/v2/photos/' + album.coverAssetId + '/thumbnail')" :alt="album.name + '封面'" loading="lazy" @error="emit('cover-error', 'shared:' + album.id)" />
+            <img v-if="album.coverAssetId && !failedAlbumCovers['shared:' + album.id]" :src="mediaPath('/api/v2/photos/' + album.coverAssetId + '/thumbnail')" :alt="album.name + '封面'" loading="lazy" decoding="async" @error="emit('cover-error', 'shared:' + album.id)" />
             <Images v-else :size="30" />
           </span>
           <strong :title="album.name">{{ album.name }}</strong><small>{{ album.count }} 项 · 共享</small>

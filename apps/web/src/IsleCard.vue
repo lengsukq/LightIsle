@@ -66,9 +66,8 @@ const props = withDefaults(
   color: var(--text-primary);
   box-sizing: border-box;
   transition:
-    transform var(--motion-normal, 260ms) var(--motion-spring, cubic-bezier(0.16, 1, 0.3, 1)),
-    box-shadow var(--motion-normal, 260ms) ease,
-    border-color var(--motion-normal, 260ms) ease;
+    transform var(--motion-normal, 260ms) var(--motion-spring, cubic-bezier(0.22, 1, 0.36, 1)),
+    opacity var(--motion-normal, 260ms) ease;
 }
 
 /* Variants */
@@ -98,6 +97,9 @@ const props = withDefaults(
 /* Hover effects */
 .isle-card.is-interactive:hover {
   transform: translateY(-2px);
+}
+.isle-card.is-interactive:active {
+  transform: scale(0.985);
 }
 
 .isle-card.variant-card.is-interactive:hover,
@@ -208,5 +210,10 @@ const props = withDefaults(
   justify-content: flex-end;
   gap: 10px;
   flex-shrink: 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .isle-card {
+    transition: none;
+  }
 }
 </style>

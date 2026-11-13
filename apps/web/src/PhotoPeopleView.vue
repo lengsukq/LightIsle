@@ -169,6 +169,7 @@ onMounted(() => {
               :src="mediaPath('/api/v2/photos/faces/' + person.coverFaceId + '/thumbnail')"
               :alt="person.name || '人物头像'"
               loading="lazy"
+              decoding="async"
               @error="failedAvatars[person.id] = true"
             />
             <Users v-else :size="30" />
@@ -282,6 +283,15 @@ onMounted(() => {
   background: var(--surface-card, rgba(255, 255, 255, 0.72));
   border: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.07));
   gap: 10px;
+  content-visibility: auto;
+  contain-intrinsic-size: 175px 190px;
+  transition: transform var(--motion-fast) var(--motion-spring), opacity var(--motion-fast) ease;
+}
+.person-card:hover {
+  transform: translateY(-2px);
+}
+.person-card:active {
+  transform: scale(0.985);
 }
 .person-card.is-hidden {
   opacity: 0.65;
@@ -370,5 +380,10 @@ onMounted(() => {
 .person-inline-form button.secondary {
   background: rgba(120, 120, 128, 0.14);
   color: inherit;
+}
+@media (prefers-reduced-motion: reduce) {
+  .person-card {
+    transition: none;
+  }
 }
 </style>

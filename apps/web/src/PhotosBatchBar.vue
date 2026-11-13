@@ -59,14 +59,15 @@ const albumPickerOpen = ref(false);
     </div>
   </div>
 
-  <div v-if="selecting" class="photo-batch-hud" role="toolbar" aria-label="照片批量操作">
+  <Transition name="isle-hud-float">
+    <div v-if="selecting" class="photo-batch-hud" role="toolbar" aria-label="照片批量操作">
     <div class="photo-batch-hud-main">
       <span class="photo-batch-count">已选 {{ selectedCount }} 项<small>（上限 50）</small></span>
       <IsleButton variant="glass" size="sm" :disabled="busy || !totalLoaded" @click="emit('selectTop50')">
         <template #icon><CheckSquare :size="14" /></template>
         选前 50 项
       </IsleButton>
-      <IsleButton v-if="selectedCount" variant="ghost" size="sm" :disabled="busy" @click="emit('clearSelection')">
+      <IsleButton v-if="selectedCount" variant="glass" size="sm" :disabled="busy" @click="emit('clearSelection')">
         清空
       </IsleButton>
       <IsleButton
@@ -136,5 +137,6 @@ const albumPickerOpen = ref(false);
         </IsleButton>
       </div>
     </div>
-  </div>
+    </div>
+  </Transition>
 </template>

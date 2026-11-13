@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { Film, Play } from "lucide-vue-next";
+import { Film, Play, X } from "lucide-vue-next";
 import { duration, percent } from "./useCinemaMetadata.ts";
+import { formatCinemaResumeLabel } from "./cinemaSubtitles.ts";
 import type { Movie } from "./cinemaTypes.ts";
 
 defineProps<{
@@ -17,6 +18,7 @@ defineProps<{
 const emit = defineEmits<{
   (e: "retry-shelves"): void;
   (e: "open-film", film: Movie, autoStart?: boolean): void;
+  (e: "clear-progress", film: Movie): void;
   (e: "filter-mode", mode: string): void;
   (e: "poster-error", id: number): void;
 }>();
@@ -36,6 +38,7 @@ const emit = defineEmits<{
           :src="posterUrl(featuredFilm)"
           :alt="featuredFilm.title + '海报'"
           loading="lazy"
+          decoding="async"
           @error="emit('poster-error', featuredFilm.id)"
         />
         <Film v-else :size="48" />
@@ -57,7 +60,7 @@ const emit = defineEmits<{
         <p v-if="featuredFilm.overview" class="cinema-featured-description">{{ featuredFilm.overview }}</p>
         <div class="cinema-featured-actions">
           <button type="button" class="cinema-featured-play" @click="emit('open-film', featuredFilm, true)">
-            <Play :size="18" /> {{ featuredFilm.position > 5 && !featuredFilm.completed ? "继续播放" : "开始播放" }}
+            <Play :size="18" /> {{ featuredFilm.position > 5 && !featuredFilm.completed ? formatCinemaResumeLabel(featuredFilm) : "开始播放" }}
           </button>
           <button type="button" class="cinema-featured-detail" @click="emit('open-film', featuredFilm, false)">影片详情</button>
         </div>
@@ -70,28 +73,42 @@ const emit = defineEmits<{
         <button type="button" @click="emit('filter-mode', 'continue')">查看全部</button>
       </div>
       <div class="cinema-home-rail" role="group" aria-label="继续观看的影片">
-        <button
+        <div
           v-for="movie in continueShelf"
           :key="movie.id"
-          type="button"
-          class="cinema-home-card"
-          :aria-label="'继续观看 ' + movie.title"
-          @click="emit('open-film', movie, true)"
+          class="cinema-home-card-wrap"
         >
-          <span class="cinema-home-cover">
-            <img
-              v-if="(movie.posterURL || posterReady(movie)) && !posterFailed[movie.id]"
-              :src="posterUrl(movie)"
-              :alt="movie.title + '海报'"
-              loading="lazy"
-              @error="emit('poster-error', movie.id)"
-            />
-            <Film v-else :size="32" />
-          </span>
-          <strong :title="movie.title">{{ movie.title }}</strong>
-          <small>已看 {{ percent(movie) }}%</small>
-          <span class="cinema-home-progress"><span :style="{ width: percent(movie) + '%' }"></span></span>
-        </button>
+          <button
+            type="button"
+            class="cinema-home-card"
+            :aria-label="'继续观看 ' + movie.title"
+            @click="emit('open-film', movie, true)"
+          >
+            <span class="cinema-home-cover">
+              <img
+                v-if="(movie.posterURL || posterReady(movie)) && !posterFailed[movie.id]"
+                :src="posterUrl(movie)"
+                :alt="movie.title + '海报'"
+                loading="lazy"
+                decoding="async"
+                @error="emit('poster-error', movie.id)"
+              />
+              <Film v-else :size="32" />
+            </span>
+            <strong :title="movie.title">{{ movie.title }}</strong>
+            <small>{{ formatCinemaResumeLabel(movie).replace(/^继续播放\s*/, "") || ("已看 " + percent(movie) + "%") }}</small>
+            <span class="cinema-home-progress"><span :style="{ width: percent(movie) + '%' }"></span></span>
+          </button>
+          <button
+            type="button"
+            class="cinema-home-remove"
+            title="从「继续观看」移出（清除续播进度）"
+            aria-label="从继续观看移出"
+            @click="emit('clear-progress', movie)"
+          >
+            <X :size="12" />
+          </button>
+        </div>
       </div>
     </div>
 
@@ -115,6 +132,7 @@ const emit = defineEmits<{
               :src="posterUrl(movie)"
               :alt="movie.title + '海报'"
               loading="lazy"
+              decoding="async"
               @error="emit('poster-error', movie.id)"
             />
             <Film v-else :size="32" />

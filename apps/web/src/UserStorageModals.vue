@@ -79,8 +79,11 @@ const emit = defineEmits<{
   <IsleModal
     :model-value="showAllocModal"
     title="为用户分配存储目录"
-    max-width="520px"
-    @update:model-value="emit('update:showAllocModal', $event)"
+    size="md"
+    :close-on-backdrop="!allocBusy"
+    :close-on-esc="!allocBusy"
+    :show-close="!allocBusy"
+    @update:model-value="!allocBusy && emit('update:showAllocModal', $event)"
   >
     <div class="modal-form">
       <IsleBanner v-if="allocError" type="error" compact :message="allocError" />
@@ -145,7 +148,7 @@ const emit = defineEmits<{
     </div>
 
     <template #footer>
-      <IsleButton variant="ghost" @click="emit('update:showAllocModal', false)">取消</IsleButton>
+      <IsleButton variant="glass" :disabled="allocBusy" @click="emit('update:showAllocModal', false)">取消</IsleButton>
       <IsleButton variant="primary" :loading="allocBusy" @click="emit('submitAllocation')">
         确认分配并创建目录
       </IsleButton>
@@ -156,8 +159,11 @@ const emit = defineEmits<{
   <IsleModal
     :model-value="showMigrateModal"
     title="旧目录 → 新目录数据迁移向导"
-    max-width="580px"
-    @update:model-value="emit('update:showMigrateModal', $event)"
+    size="lg"
+    :close-on-backdrop="!migrateBusy"
+    :close-on-esc="!migrateBusy"
+    :show-close="!migrateBusy"
+    @update:model-value="!migrateBusy && emit('update:showMigrateModal', $event)"
   >
     <div class="modal-form">
       <div class="migration-route-pill">
@@ -321,7 +327,7 @@ const emit = defineEmits<{
     </div>
 
     <template #footer>
-      <IsleButton variant="ghost" @click="emit('update:showMigrateModal', false)">关闭</IsleButton>
+      <IsleButton variant="glass" :disabled="migrateBusy" @click="emit('update:showMigrateModal', false)">关闭</IsleButton>
       <IsleButton
         v-if="
           migrateStatus?.phase === 'copying' ||
@@ -521,6 +527,11 @@ const emit = defineEmits<{
 @keyframes spin {
   to {
     transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .status-icon.spin {
+    animation: none;
   }
 }
 </style>

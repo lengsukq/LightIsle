@@ -1,12 +1,22 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, h, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import {
-  Activity, ArrowDownToLine, ArrowUpRight, Clapperboard, CloudOff,
-  Eye, EyeOff, Folder, HardDrive, Images, LayoutDashboard, Moon, Monitor,
-  RefreshCcw, Server, Settings2, ShieldCheck, Sun, WifiOff, FileText, FolderPlus,
+  Activity, ArrowDownToLine, Clapperboard,
+  Folder, FolderOpen, HardDrive, Images, LayoutDashboard, Moon, Monitor,
+  RefreshCcw, Settings2, ShieldCheck, Sun, WifiOff, FileText, FolderPlus,
   UploadCloud, ChevronRight, ChevronLeft, Download, Trash2, CopyCheck,
-  Search, LogOut, Sparkles, Laptop, Workflow, LayoutGrid, List, MoreHorizontal, X
+  LogOut, Sparkles, Workflow, LayoutGrid, List
 } from "lucide-vue-next";
+import FileSearchControls from "./FileSearchControls.vue";
+import FileSearchStatusBar from "./FileSearchStatusBar.vue";
+import {
+  buildFileSearchHistoryKey,
+  FILE_SEARCH_KIND_OPTIONS,
+  folderLabelOfPath,
+  highlightSearchSegments,
+  parentDirOfPath,
+  scrollRevealedFileIntoView,
+} from "./fileSearchUtils.ts";
 import { hasActiveModalLayer, pushModalLayer, type ModalLayerHandle } from "./modalStack.ts";
 import { useShellAppearance } from "./useShellAppearance.ts";
 import { useHostTelemetry } from "./useHostTelemetry.ts";
@@ -15,7 +25,7 @@ import { useAccountManagement } from "./useAccountManagement.ts";
 import { useFileBrowser } from "./useFileBrowser.ts";
 import { useFileUploads } from "./useFileUploads.ts";
 import { useFileShares, type SharedFileEntry } from "./useFileShares.ts";
-import { useTaskCenter, type BackendTask, type TaskRun } from "./useTaskCenter.ts";
+import { useTaskCenter } from "./useTaskCenter.ts";
 import UploadMaintenance from "./UploadMaintenance.vue";
 import PendingMedia from "./PendingMedia.vue";
 import DiskManagement from "./DiskManagement.vue";
@@ -27,6 +37,8 @@ import DavAccess from "./DavAccess.vue";
 import BetaDiagnosticReport from "./BetaDiagnosticReport.vue";
 import { bindDiagnosticAccount, resetDiagnostics } from "./betaDiagnostics.ts";
 import ConfirmModal from "./ConfirmModal.vue";
+import AuthScene from "./AuthScene.vue";
+import MobileNavDrawer from "./MobileNavDrawer.vue";
 import { requestAlert, requestConfirm } from "./useConfirmDialog.ts";
 import FileOperationDialog from "./FileOperationDialog.vue";
 import IsleModal from "./IsleModal.vue";
@@ -51,8 +63,10 @@ import PendingReservations from "./PendingReservations.vue";
 import ComputerFilesView from "./ComputerFilesView.vue";
 import UploadCleanupRules from "./UploadCleanupRules.vue";
 import { describeUserFacingError } from "./userFacingError.ts";
+import { formatDateTime } from "./dateTimeFormat.ts";
 import { readApiFailure } from "./apiFailure.ts";
-import { useFileTrash, type FileTrashEntry } from "./useFileTrash.ts";
+import { useFileTrash } from "./useFileTrash.ts";
+import { type ShellPage as Page, type ShellSettingsGroup as SettingsGroup } from "./shellRouteGuard.ts";
 import { useFileActionsAndGrants } from "./useFileActionsAndGrants.ts";
 import { useOverviewAndDisclosures } from "./useOverviewAndDisclosures.ts";
 import { createJsonRootClient } from "./api/jsonRootClient.ts";
@@ -84,10 +98,7 @@ const DownloadsView = defineAsyncComponent({
   delay: 150,
 });
 
-type Page = "overview" | "files" | "computer" | "photos" | "cinema" | "downloads" | "apps" | "automation" | "settings";
-type SettingsGroup = "account" | "files" | "cache" | "storage" | "ops";
 type FileEntry = SharedFileEntry;
-type TrashEntry = FileTrashEntry;
 
 const items = [
   { key: "overview" as Page, title: "主页概览", shortTitle: "概览", icon: Sparkles, color: "blue", group: "space" },
@@ -103,9 +114,7 @@ const items = [
 
 const startingPage = new URLSearchParams(location.search).get("page");
 const validPages = new Set<Page>(["overview", "files", "computer", "photos", "cinema", "downloads", "apps", "automation", "settings"]);
-const validTabs = validPages;
 const active = ref<Page>(validPages.has(startingPage as Page) ? (startingPage as Page) : "overview");
-const activeTab = active;
 const visitedPages = ref<Record<Page, boolean>>({
   overview: true,
   files: active.value === "files",
@@ -206,7 +215,6 @@ const {
   getLastRootDiscoveryAt,
   resetAllRootControllerState,
   bindPolicyReader,
-  switchRoot,
   loadPersonalStoragePolicy: loadPersonalStoragePolicyWithReader,
   autoRouteSection,
   refreshRootDiscovery,
@@ -252,7 +260,7 @@ const {
   tasks, taskError, taskLoaded, taskLoading, taskHistory, taskHistoryNextCursor,
   taskHistoryLoading, taskHistoryError,
   reloadTasks, reloadTaskHistory, refreshTaskCenter,
-  refreshLatestTaskHistory, taskControl, startMediaTask,
+  taskControl, startMediaTask,
   reset: resetTaskCenter,
 } = useTaskCenter({
   role: () => user.value?.role,
@@ -339,11 +347,17 @@ const {
   origin: () => window.location.origin,
 });
 
+const fileSearchHistoryKey = computed(() =>
+  buildFileSearchHistoryKey(user.value?.username, multiRootMode.value ? selectedRootID.value : "primary"),
+);
+
 const {
   filesPath, currentFolderCanWrite, fileDirectoryLoaded, sharedRootName, fileEntries, fileNextCursor,
-  fileSortKey, fileSortDirection, failedThumbnails, fileSearch, fileSearchKind,
-  searchViaSpotlight, searchingFiles, searchTruncated, checkedFiles,
-  filesLoading, filesError, loadFiles, runFileSearch, extractZip, reset: resetFileBrowser,
+  fileSortKey, fileSortDirection, failedThumbnails, fileSearch, lastExecutedQuery, fileSearchKind,
+  fileSearchScope, searchFolderBase, searchViaSpotlight, searchingFiles, searchTruncated, recentSearches,
+  revealedFilePath, revealingFilePath, checkedFiles, filesLoading, extracting, filesError,
+  loadFiles, runFileSearch, selectSearchKind, setSearchScope, applyRecentSearch, deleteRecentSearch,
+  clearRecentSearches, syncSearchHistory, clearFileSearch, revealEntryFolder, extractZip, reset: resetFileBrowser,
 } = useFileBrowser({
   authenticated: () => user.value !== null,
   rootAvailable: () =>
@@ -361,10 +375,37 @@ const {
   onDirectoryLeave: () => {
     uploadContinuation.value = null;
   },
+  onExtracted: (name: string) => {
+    fileOperationNotice.value = "已解压「" + name + "」到同名文件夹。";
+  },
+  captureScrollTop: () =>
+    active.value === "files" && !showingTrash.value && typeof window !== "undefined" ? window.scrollY : null,
+  restoreScrollTop: (top: number) => {
+    void nextTick(() => requestAnimationFrame(() => { if (typeof window !== "undefined") window.scrollTo({ top, behavior: "auto" }); }));
+  },
+  historyStorageKey: () => fileSearchHistoryKey.value,
 });
+watch(fileSearchHistoryKey, () => syncSearchHistory(), { immediate: true });
+const fileSearchKindLabel = computed(() => FILE_SEARCH_KIND_OPTIONS.find((k) => k.value === fileSearchKind.value)?.label ?? "");
+const fileSearchFolderLabel = computed(() => folderLabelOfPath(searchFolderBase.value, sharedRootName.value || "共享根目录"));
+async function revealFileFolder(entry: FileEntry) {
+  const revealed = await revealEntryFolder(entry);
+  if (!revealed) return;
+  await nextTick();
+  requestAnimationFrame(() => scrollRevealedFileIntoView(revealed));
+}
+let photosJumpSeq = 0;
+const photosJumpTarget = ref<{ view: "similar" | "map" | "people"; seq: number } | null>(null);
+function jumpToPhotosView(view: "similar" | "map" | "people") {
+  active.value = "photos";
+  photosJumpTarget.value = { view, seq: ++photosJumpSeq };
+}
+function jumpToDuplicates() { active.value = "files"; showingTrash.value = false; showDuplicatesModal.value = true; }
+function jumpToTrash() { active.value = "files"; void openTrash(); }
+function jumpToSettingsGroup(group: SettingsGroup) { active.value = "settings"; settingsGroup.value = group; }
 
 const {
-  trashItems, trashRetention, trashLoading, trashError, showingTrash,
+  trashItems, trashRetention, trashLoading, trashBusy, trashError, trashNotice, showingTrash,
   loadTrash, openTrash, restoreTrash, purgeTrashItem, reset: resetFileTrash,
 } = useFileTrash({
   epoch: () => rootContextEpoch.value,
@@ -389,13 +430,13 @@ const trashPresentation = computed(() =>
 );
 
 const {
-  selectedUpload, uploadProgress, uploadPercent, uploadStage, uploadCurrent,
+  selectedUpload, uploadPercent, uploadStage, uploadCurrent,
   uploadTotal, uploadFileName, uploadSize, uploadTransferred, uploadDropActive,
   uploadAutoRenameConflicts, uploadCompleted, uploadResult, uploadFailure,
-  uploadBusy, uploadContinuation, currentUploadContext, canContinueUploads,
+  uploadBusy, uploadContinuation, canContinueUploads,
   cancelCurrentUpload, cancelAndWaitForUpload, hasActiveUpload, resetUploadsForRoot,
   chooseUploadFiles, startUpload, dragOverUpload, dragLeaveUpload, dropUpload,
-  enqueueUploads, continueIncompleteUploads, closeUploadActivity,
+  continueIncompleteUploads, closeUploadActivity,
 } = useFileUploads({
   username: () => user.value?.username,
   selectedRootID: () => selectedRootID.value,
@@ -418,11 +459,11 @@ const {
 
 const {
   grantUser, grants, grantError, grantNotice, grantPathInput, grantCanWrite, grantBusy,
-  fileOperationDialog, fileOperationNotice, newFolderName, trashTarget,
+  fileOperationDialog, fileOperationNotice, newFolderName, trashTarget, fileActionBusy,
   previewItem, previewText, previewError, previewURL,
   showPreviewPlaylist, previewAutoplayNext, previewVideoPlaylist,
   currentPreviewVideoIndex, prevPreviewVideo, nextPreviewVideo,
-  isPreviewImage, previewImagePlaylist, currentPreviewImageIndex, prevPreviewImage, nextPreviewImage,
+  previewImagePlaylist, currentPreviewImageIndex, prevPreviewImage, nextPreviewImage,
   onPreviewVideoEnded,
   pathSegments,
   selectedFilesAllWritable, selectedPathsFallback,
@@ -461,14 +502,14 @@ const { stats, error, polling, cpu, usedMemory, usedDisk, diskActivity, update, 
   useHostTelemetry(() => user.value?.role);
 
 const {
-  showHardwareSpecs, isAdminDashboard, personalSpace, personalSpaceError,
+  showHardwareSpecs, isAdminDashboard,
   advancedUploadsOpen, advancedDiagnosticsOpen, pendingUploadsOpen,
-  pendingReservationsOpen, cleanupRulesOpen, pendingMediaOpen, adminPendingMediaOpen,
-  togglePendingMedia, togglePendingUploads, togglePendingReservations,
-  toggleCleanupRules, toggleAdvanced,
+  pendingMediaOpen, adminPendingMediaOpen,
+  togglePendingMedia, togglePendingUploads,
+  toggleAdvanced, resetOverviewAndDisclosures,
   overviewIdentity, overviewSearch, overviewTelemetry, overviewPersonalSpace, overviewPending,
 } = useOverviewAndDisclosures({
-  user, fileSearch, searchViaSpotlight, filesLoading, searchingFiles,
+  user, fileSearch, searchViaSpotlight, filesLoading, searchingFiles, recentSearches,
   telemetry: { stats, error, polling, cpu, usedMemory, usedDisk, diskActivity, bytes, percent },
   sharedRoots, rootDiscoveryError, rootDiscoveryState, selectedRoot, taskLoaded, taskLoading, taskError, tasks,
 });
@@ -481,6 +522,10 @@ const {
 watch(createFolderOpen, (openState) => {
   if (openState) void nextTick(() => newFolderInputRef.value?.focus());
 });
+
+async function submitCreateFolder() {
+  if (await makeFolder()) createFolderOpen.value = false;
+}
 
 watch(filesPath, () => {
   lastCheckedFileIndex.value = null;
@@ -552,10 +597,17 @@ function handleShellKeydown(event: KeyboardEvent) {
   const target = event.target as HTMLElement | null;
   if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
   if (active.value === "files" && !showingTrash.value && !filesLoading.value) {
-    if (event.key === "Escape" && checkedFiles.value.length > 0) {
-      event.preventDefault();
-      checkedFiles.value = [];
-      return;
+    if (event.key === "Escape") {
+      if (checkedFiles.value.length > 0) {
+        event.preventDefault();
+        checkedFiles.value = [];
+        return;
+      }
+      if (searchingFiles.value) {
+        event.preventDefault();
+        void clearFileSearch();
+        return;
+      }
     }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "a" && fileEntries.value.length > 0) {
       event.preventDefault();
@@ -579,12 +631,24 @@ onUnmounted(() => {
 });
 
 function clearClientSessionState(expiredMessage = "") {
+  resetPollingTimers();
   resetDiagnostics();
   clearTelemetry();
   clearRuntimeMemoryCache();
   user.value = null;
   resetAccountState();
+  resetOverviewAndDisclosures();
   active.value = "overview";
+  settingsGroup.value = "account";
+  showDuplicatesModal.value = false;
+  photosJumpTarget.value = null;
+  shareOutcomeWarning.value = false;
+  photoBatchOutcomeWarning.value = false;
+  moreMenuOpen.value = false;
+  createFolderOpen.value = false;
+  lastCheckedFileIndex.value = null;
+  authPassword.value = "";
+  showAuthPassword.value = false;
   resetAllRootControllerState();
   resetRootScopedState();
   currentFolderCanWrite.value = false;
@@ -608,9 +672,13 @@ function clearClientSessionState(expiredMessage = "") {
 }
 
 async function hydrateAuthenticatedSession(role: "admin" | "member") {
-  await refreshRootDiscovery(true);
-  await loadPersonalStoragePolicy();
-  void loadComputerFilesStatus();
+  resetPollingTimers();
+  void update();
+  await Promise.all([
+    refreshRootDiscovery(true),
+    loadPersonalStoragePolicy(),
+    loadComputerFilesStatus(),
+  ]);
   await autoRouteSection();
   if (active.value === "files" && !fileDirectoryLoaded.value) await loadFiles();
   if (role === "admin") await loadAccounts();
@@ -661,7 +729,6 @@ async function submitAuth() {
     bindDiagnosticAccount(result.id);
     user.value = result;
     authPassword.value = "";
-    await update();
     await hydrateAuthenticatedSession(result.role);
   } catch (e) {
     const code = e instanceof Error ? e.message : "request_failed";
@@ -686,7 +753,7 @@ async function logout() {
   clearClientSessionState();
 }
 
-useAppBrowserLifecycle({
+const { resetPollingTimers } = useAppBrowserLifecycle({
   active,
   validPages,
   visitedPages,
@@ -700,6 +767,8 @@ useAppBrowserLifecycle({
   fileDirectoryLoaded: () => fileDirectoryLoaded.value,
   isAuthenticated: () => user.value !== null,
   isAdmin: () => user.value?.role === "admin",
+  computerFilesAllowed: () => showComputerFilesNav.value,
+  computerFilesResolved: () => computerFilesStatus.value !== null,
   rootFeatureContextReady: () => rootFeatureContextReady.value,
   rootDiscoveryLoading: () => rootDiscoveryLoading.value,
   getLastRootDiscoveryAt,

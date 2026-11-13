@@ -4,19 +4,25 @@ import { test } from "node:test";
 import { compile } from "@vue/compiler-dom";
 import { parse } from "@vue/compiler-sfc";
 import * as Vue from "vue";
+import { ISLE_CHART_COLORS } from "./isleChartsMath.ts";
+import { buildHostDiskSegments, buildHostMemorySegments, buildQuotaSegments } from "./overviewPageModels.ts";
 
 const source = readFileSync(new URL("./OverviewPage.vue", import.meta.url), "utf8");
 const template = parse(source, { filename: "OverviewPage.vue" }).descriptor.template.content;
 const render = new Function("Vue", compile(template, { mode: "function" }).code)(Vue);
 const iconNames = [
-  "Activity", "ArrowUpRight", "Clapperboard", "Folder", "HardDrive", "Images",
-  "Monitor", "RefreshCcw", "Search", "Server", "ShieldCheck", "WifiOff",
+  "Activity", "ArrowDownToLine", "ArrowUpRight", "Clapperboard", "CopyCheck", "Folder", "HardDrive", "Images",
+  "IsleCharts", "Monitor", "RecentSearchPopover", "RefreshCcw", "Search", "Server", "ShieldCheck", "Sparkles", "Trash2", "WifiOff",
 ];
 const IconStub = Vue.defineComponent({ setup: () => () => null });
 
 const OverviewTestHarness = Vue.defineComponent({
   props: ["identity", "search", "telemetry", "personalSpace", "pending"],
-  emits: ["search", "return-to-files", "refresh", "navigate", "open-account-settings", "open-pending", "update:query", "update:spotlight", "update:expanded"],
+  emits: [
+    "search", "return-to-files", "refresh", "navigate", "open-account-settings", "open-pending",
+    "open-duplicates", "open-trash", "open-similar-photos", "select-history", "delete-history", "clear-history",
+    "update:query", "update:spotlight", "update:expanded",
+  ],
   components: Object.fromEntries(iconNames.map(name => [name, IconStub])),
   setup(props, { emit }) {
     const view = {
@@ -26,6 +32,30 @@ const OverviewTestHarness = Vue.defineComponent({
       personalSpace: props.personalSpace,
       pending: props.pending,
       emit,
+      searchFocused: false,
+      searchComposing: false,
+      recentOpen: false,
+      ISLE_CHART_COLORS,
+      cpuSparkPoints: [],
+      memSparkPoints: [],
+      hostMemorySegments: props.telemetry.stats && !props.telemetry.error && props.telemetry.stats.memoryTotal > 0
+        ? buildHostMemorySegments(props.telemetry.stats, props.telemetry.bytes)
+        : [],
+      hostDiskSegments: props.telemetry.stats && !props.telemetry.error && props.telemetry.stats.diskTotal > 0
+        ? buildHostDiskSegments(props.telemetry.stats, props.telemetry.bytes)
+        : [],
+      personalQuotaCharts: (props.personalSpace.summary?.rootQuotas ?? [])
+        .filter((q) => q.quotaBytes !== null && q.quotaBytes > 0)
+        .map((q) => ({
+          key: `${q.rootID}:${q.rootGeneration}`,
+          label: props.personalSpace.rootNames?.[q.rootID] || "存储位置",
+          quotaBytes: q.quotaBytes,
+          usedPercent: Math.min(100, Math.round(((q.accountedBytes + q.reservedBytes) / q.quotaBytes) * 100)),
+          segments: buildQuotaSegments(q.accountedBytes, q.reservedBytes, q.quotaBytes, props.personalSpace.bytes),
+        })),
+      onSearchKeydown(event) {
+        if (event.key === "Enter" && props.search.query.trim().length >= 1) emit("search");
+      },
       get query() { return props.search.query; },
       set query(value) { emit("update:query", value.trim()); },
       get spotlight() { return props.search.spotlight; },
@@ -173,8 +203,11 @@ test("OverviewPage shows member identity and personal-space status without admin
     const content = textContent(mounted.root);
     assert.match(content, /欢迎回来，小岛/);
     assert.match(content, /我的空间/);
+    assert.match(content, /下载中心/);
+    assert.match(content, /已授权个人空间/);
     assert.match(content, /个人空间信息暂时不可用/);
     assert.match(content, /已计入 12 B/);
+    assert.doesNotMatch(content, /本机服务在线/);
     assert.doesNotMatch(content, /轻屿运行体征/);
     assert.doesNotMatch(content, /处理器负载/);
     assert.doesNotMatch(content, /待处理数据/);
@@ -196,6 +229,29 @@ test("administrator pending overview reports offline disks and incomplete state"
     assert.match(content, /2 块已登记硬盘离线/);
     assert.match(content, /照片盘：1 项任务未完成/);
     assert.match(content, /不代表所有数据已核对/);
+  } finally {
+    mounted.unmount();
+  }
+});
+
+test("OverviewPage allows navigating to downloads for members and blocks short whitespace Enter", () => {
+  const events = [];
+  const mounted = mountOverview({
+    identity: { username: "小岛", isAdmin: false },
+    search: { query: "   ", spotlight: false, filesLoading: false, searchingFiles: false },
+    telemetry: telemetry(),
+    personalSpace: { summary: null, error: "", bytes: value => `${value} B` },
+  }, {
+    search: () => events.push(["search"]),
+    navigate: page => events.push(["navigate", page]),
+  });
+  try {
+    const input = find(mounted.root, node => node.type === "input" && node.props.type === "search");
+    input.props.onKeydown({ key: "Enter", preventDefault() {}, stopPropagation() {} });
+    const downloadsCard = find(mounted.root, node => node.type === "button" && node.props.class === "sanctuary-card" && /下载中心/.test(textContent(node)));
+    downloadsCard.props.onClick();
+    assert.deepEqual(events, [["navigate", "downloads"]]);
+    assert.doesNotMatch(source, /update:query.*value\.trim/);
   } finally {
     mounted.unmount();
   }

@@ -6,6 +6,8 @@ import IsleButton from "./IsleButton.vue";
 import IsleBanner from "./IsleBanner.vue";
 import IsleBadge from "./IsleBadge.vue";
 import AppleSelect from "./AppleSelect.vue";
+import IsleCharts from "./IsleCharts.vue";
+import { ISLE_CHART_COLORS } from "./isleChartsMath.ts";
 import { createScopedRootApi } from "./apiClient.ts";
 import { rootApiPath } from "./rootApi.ts";
 import { describeUserFacingError } from "./userFacingError.ts";
@@ -114,6 +116,24 @@ const activeRootGeneration = computed(() => {
 });
 
 const isRunning = computed(() => startingScan.value || Boolean(snapshot.value?.running));
+
+const dedupeSavingsChart = computed(() => {
+  const result = snapshot.value?.result;
+  if (!result || !result.groups.length) return null;
+  const keepBytes = result.groups.reduce((sum, g) => sum + Math.max(0, g.size), 0);
+  const reclaimableBytes = Math.max(0, result.totalReclaimableBytes);
+  const totalBytes = keepBytes + reclaimableBytes;
+  if (totalBytes <= 0) return null;
+  const savedPercent = Math.round((reclaimableBytes / totalBytes) * 100);
+  return {
+    totalBytes,
+    savedPercent,
+    segments: [
+      { key: "keep", label: "保留原件体积", value: keepBytes, color: ISLE_CHART_COLORS.blue, displayValue: formatBytes(keepBytes) },
+      { key: "reclaim", label: "可释放冗余空间", value: reclaimableBytes, color: ISLE_CHART_COLORS.green, displayValue: formatBytes(reclaimableBytes) },
+    ],
+  };
+});
 
 const progressLabel = computed(() => {
   const p = snapshot.value?.progress;
@@ -406,28 +426,51 @@ onUnmounted(() => {
 
     <template v-else-if="snapshot?.result">
       <div class="dup-summary-bar">
-        <div class="dup-metrics">
-          <span>已检查 <strong>{{ snapshot.result.scannedFiles }}</strong> 个文件</span>
-          <span>发现 <strong>{{ snapshot.result.totalGroups }}</strong> 组重复</span>
-          <span>可释放逻辑配额 <strong>{{ formatBytes(snapshot.result.totalReclaimableBytes) }}</strong></span>
-          <span v-if="snapshot.result.totalReclaimablePhysicalBytes !== snapshot.result.totalReclaimableBytes">
-            物理磁盘可释放 <strong>{{ formatBytes(snapshot.result.totalReclaimablePhysicalBytes) }}</strong>
-          </span>
+        <div v-if="dedupeSavingsChart" class="dup-chart-overview">
+          <IsleCharts
+            kind="donut"
+            :size="56"
+            :stroke-width="6"
+            :segments="dedupeSavingsChart.segments"
+            :total="dedupeSavingsChart.totalBytes"
+            :show-legend="false"
+            :center-label="`省 ${dedupeSavingsChart.savedPercent}%`"
+            center-sublabel="冗余占比"
+            :aria-label="`可释放冗余空间占重复集合的 ${dedupeSavingsChart.savedPercent}%`"
+          />
+          <IsleCharts
+            kind="segmented"
+            :segments="dedupeSavingsChart.segments"
+            :total="dedupeSavingsChart.totalBytes"
+            :bar-height="10"
+            compact-legend
+            aria-label="保留原件体积与可释放冗余空间对比"
+          />
         </div>
-        <div v-if="snapshot.result.groups.length" class="dup-strategy-bar">
-          <span class="dup-strategy-label">保留策略：</span>
-          <button type="button" class="dup-chip" :class="{ active: strategy === 'shortest_path' }" @click="setStrategy('shortest_path')">保留最短路径</button>
-          <button type="button" class="dup-chip" :class="{ active: strategy === 'oldest' }" @click="setStrategy('oldest')">保留最早文件</button>
-          <button type="button" class="dup-chip" :class="{ active: strategy === 'newest' }" @click="setStrategy('newest')">保留最新修改</button>
-          <IsleButton
-            variant="danger"
-            size="sm"
-            :loading="trashing"
-            :disabled="totalSelectedTrashCount === 0 || isRunning"
-            @click="trashSelectedDuplicates"
-          >
-            <Trash2 :size="14" /><span>移入回收站 ({{ totalSelectedTrashCount }})</span>
-          </IsleButton>
+        <div class="dup-summary-controls">
+          <div class="dup-metrics">
+            <span>已检查 <strong>{{ snapshot.result.scannedFiles }}</strong> 个文件</span>
+            <span>发现 <strong>{{ snapshot.result.totalGroups }}</strong> 组重复</span>
+            <span>可释放逻辑配额 <strong>{{ formatBytes(snapshot.result.totalReclaimableBytes) }}</strong></span>
+            <span v-if="snapshot.result.totalReclaimablePhysicalBytes !== snapshot.result.totalReclaimableBytes">
+              物理磁盘可释放 <strong>{{ formatBytes(snapshot.result.totalReclaimablePhysicalBytes) }}</strong>
+            </span>
+          </div>
+          <div v-if="snapshot.result.groups.length" class="dup-strategy-bar">
+            <span class="dup-strategy-label">保留策略：</span>
+            <button type="button" class="dup-chip" :class="{ active: strategy === 'shortest_path' }" @click="setStrategy('shortest_path')">保留最短路径</button>
+            <button type="button" class="dup-chip" :class="{ active: strategy === 'oldest' }" @click="setStrategy('oldest')">保留最早文件</button>
+            <button type="button" class="dup-chip" :class="{ active: strategy === 'newest' }" @click="setStrategy('newest')">保留最新修改</button>
+            <IsleButton
+              variant="danger"
+              size="sm"
+              :loading="trashing"
+              :disabled="totalSelectedTrashCount === 0 || isRunning"
+              @click="trashSelectedDuplicates"
+            >
+              <Trash2 :size="14" /><span>移入回收站 ({{ totalSelectedTrashCount }})</span>
+            </IsleButton>
+          </div>
         </div>
       </div>
 
@@ -514,15 +557,27 @@ onUnmounted(() => {
 }
 .dup-summary-bar {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px 14px;
   border-radius: 12px;
   background: rgba(120, 120, 128, 0.07);
   margin-bottom: 12px;
   font-size: 13px;
+}
+.dup-chart-overview {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding-bottom: 10px;
+  border-bottom: 1px solid color-mix(in srgb, var(--border-subtle, rgba(142, 142, 147, 0.25)) 60%, transparent);
+}
+.dup-summary-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
 }
 .dup-metrics {
   display: flex;
@@ -592,6 +647,7 @@ onUnmounted(() => {
 }
 .dup-item-path {
   flex: 1;
+  min-width: 0;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   overflow: hidden;
   text-overflow: ellipsis;

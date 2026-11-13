@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { Network, Copy, RefreshCw, ExternalLink } from "lucide-vue-next";
+import { Network, Copy, RefreshCw, ExternalLink, ChevronRight } from "lucide-vue-next";
 import { apiRequest } from "./apiClient.ts";
+import { copyTextToClipboard } from "./clipboard.ts";
 import { describeUserFacingError } from "./userFacingError.ts";
 import IsleCard from "./IsleCard.vue";
 import IsleButton from "./IsleButton.vue";
@@ -40,14 +41,16 @@ async function refresh() {
   }
 }
 
-function copyText(text: string, label: string) {
+async function copyText(text: string, label: string) {
   if (!text) return;
-  navigator.clipboard?.writeText(text).then(() => {
+  if (await copyTextToClipboard(text)) {
     copied.value = label;
     setTimeout(() => {
       if (copied.value === label) copied.value = "";
     }, 2000);
-  });
+  } else {
+    error.value = "浏览器限制自动复制，请手动选中上方组网地址后复制。";
+  }
 }
 
 onMounted(() => {
@@ -116,6 +119,7 @@ onMounted(() => {
 
       <details class="apple-disclosure-card">
         <summary>
+          <ChevronRight class="disclosure-chevron" :size="16" />
           <div class="disclosure-title"><span>高级穿透选项（Cloudflare Tunnel / FRP）</span></div>
         </summary>
         <div class="disclosure-body">
@@ -175,6 +179,10 @@ onMounted(() => {
   border: 1px solid var(--fluid-card-border, rgba(0, 0, 0, 0.08));
   background: var(--fluid-card-item-fill, rgba(255, 255, 255, 0.6));
 }
+.ts-url-box > div {
+  min-width: 0;
+  flex: 1 1 220px;
+}
 .ts-url-box strong {
   display: block;
   font-size: 12.5px;
@@ -184,6 +192,7 @@ onMounted(() => {
   font-size: 12.5px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   user-select: all;
+  overflow-wrap: anywhere;
 }
 .ts-hint {
   margin: 0;

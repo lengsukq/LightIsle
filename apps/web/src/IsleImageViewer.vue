@@ -43,7 +43,6 @@ const props = withDefaults(
 const emit = defineEmits<{
   (e: "prev"): void;
   (e: "next"): void;
-  (e: "close"): void;
 }>();
 
 const scale = ref(1);
@@ -592,6 +591,18 @@ onUnmounted(() => {
   .hud-btn {
     width: 40px;
     height: 40px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .viewer-img,
+  .nav-btn,
+  .viewer-hud,
+  .hud-btn {
+    transition: none;
+  }
+  .spin-icon {
+    animation: none;
   }
 }
 </style>

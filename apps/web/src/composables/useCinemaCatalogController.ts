@@ -19,6 +19,8 @@ export function useCinemaCatalogController({
   props,
   movies,
   mode,
+  watchedFilter,
+  sortBy,
   query,
   view,
   selected,
@@ -34,6 +36,8 @@ export function useCinemaCatalogController({
   props: { admin: boolean; rootId?: string; rootGeneration?: number };
   movies: Ref<Movie[]>;
   mode: Ref<string>;
+  watchedFilter: Ref<"all" | "unwatched" | "watched">;
+  sortBy: Ref<"recent" | "rating" | "year" | "title">;
   query: Ref<string>;
   view: Ref<"films" | "series">;
   selected: Ref<Movie | null>;
@@ -71,7 +75,7 @@ export function useCinemaCatalogController({
     return mediaQueryKey({
       root: props.rootId ?? "",
       generation: props.rootGeneration ?? 0,
-      mode: mode.value,
+      mode: `${mode.value}:${watchedFilter.value}:${sortBy.value}`,
       query: query.value.trim(),
     });
   }
@@ -80,9 +84,20 @@ export function useCinemaCatalogController({
   const featuredFilm = computed(() => continueShelf.value[0] ?? recentShelf.value[0] ?? movies.value[0] ?? null);
   const showRecentShelf = computed(() => recentShelf.value.length > 0 && shouldShowCinemaRecentShelf(movies.value.length, next.value));
   const duplicateTitleSet = computed(() => duplicateCinemaTitleKeys(movies.value));
+  const disambiguationMap = computed<ReadonlyMap<number, string>>(() => {
+    const map = new Map<number, string>();
+    const dupes = duplicateTitleSet.value;
+    if (!dupes.size) return map;
+    for (const movie of movies.value) {
+      if (!dupes.has(normalizeCinemaTitleKey(movie.title))) continue;
+      const badge = filmFolderBadge(movie.path);
+      if (badge) map.set(movie.id, badge);
+    }
+    return map;
+  });
 
   function disambiguationBadge(movie: Movie): string {
-    return duplicateTitleSet.value.has(normalizeCinemaTitleKey(movie.title)) ? filmFolderBadge(movie.path) : "";
+    return disambiguationMap.value.get(movie.id) ?? "";
   }
 
   function toggleTrashFilm(id: number) {
@@ -135,6 +150,8 @@ export function useCinemaCatalogController({
     try {
       const params = new URLSearchParams({ limit: "48", cursor: String(reset ? 0 : next.value) });
       if (mode.value !== "all") params.set("kind", mode.value);
+      if (watchedFilter.value !== "all") params.set("watched", watchedFilter.value);
+      if (sortBy.value !== "recent") params.set("sort", sortBy.value);
       if (query.value.trim()) params.set("query", query.value.trim());
       const page = await api<{ films: Movie[]; nextCursor: number }>(apiPath("/api/v2/cinema") + "?" + params);
       if (generation !== loadGeneration) return;
@@ -315,7 +332,9 @@ export function useCinemaCatalogController({
     scanStatusPoller.dispose();
   }
 
-  const filteredView = computed(() => mode.value !== "all" || !!query.value.trim());
+  const filteredView = computed(
+    () => mode.value !== "all" || watchedFilter.value !== "all" || sortBy.value !== "recent" || !!query.value.trim(),
+  );
   const emptyTitle = computed(() =>
     query.value.trim()
       ? "没有找到匹配的影片"
@@ -364,6 +383,7 @@ export function useCinemaCatalogController({
     emptyTitle,
     emptyMessage,
     continueCount,
+    disambiguationMap,
     disambiguationBadge,
     toggleTrashFilm,
     loadHomeShelves,
