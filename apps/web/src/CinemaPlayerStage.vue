@@ -112,7 +112,15 @@ const {
   startDockDrag,
 } = useCinemaDockDrag();
 let hideTimer: number | undefined;
+let singleClickTimer: number | undefined;
 let lastMoveRevealAt = 0;
+
+function clearSingleClickTimer() {
+  if (singleClickTimer !== undefined) {
+    window.clearTimeout(singleClickTimer);
+    singleClickTimer = undefined;
+  }
+}
 
 const effectiveDuration = computed(() =>
   Math.max(
@@ -280,12 +288,21 @@ function handleStageClick(event: MouseEvent) {
     return;
   }
   revealChrome();
+  if (event.detail > 1) {
+    clearSingleClickTimer();
+    return;
+  }
   if (props.canDirect || props.hlsSession) {
-    emit("toggle-play");
+    clearSingleClickTimer();
+    singleClickTimer = window.setTimeout(() => {
+      singleClickTimer = undefined;
+      emit("toggle-play");
+    }, 200);
   }
 }
 
 function handleStageDblClick(event: MouseEvent) {
+  clearSingleClickTimer();
   if ((event.target as HTMLElement | null)?.closest(".cinema-stage-card, .cinema-player-dock, .cinema-player-inspector-backdrop")) {
     return;
   }
@@ -345,6 +362,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   clearHideTimer();
+  clearSingleClickTimer();
   window.removeEventListener("pointerdown", handleGlobalPointerDown, true);
   document.removeEventListener("fullscreenchange", handleFullscreenChange);
 });

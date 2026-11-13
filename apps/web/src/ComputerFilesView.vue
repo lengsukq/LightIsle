@@ -6,6 +6,7 @@ import { readApiFailure } from "./apiFailure.ts";
 import { describeUserFacingError } from "./userFacingError.ts";
 import { requestConfirm } from "./useConfirmDialog.ts";
 import AppleSelect from "./AppleSelect.vue";
+import IsleModal from "./IsleModal.vue";
 import IsleCard from "./IsleCard.vue";
 import IsleButton from "./IsleButton.vue";
 import IsleBanner from "./IsleBanner.vue";
@@ -215,18 +216,21 @@ onMounted(loadStatus);
       </IsleCard>
     </div>
 
-    <div v-if="preview" class="computer-preview" role="dialog" aria-modal="true" aria-label="文件预览">
-      <div class="computer-preview-inner">
-        <div class="computer-toolbar">
-          <strong style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis">{{ preview.name }}</strong>
-          <a class="computer-download-link" :href="fileUrl('content', preview.path)" download>
-            <Download :size="14" /> 下载
-          </a>
-          <IsleButton variant="glass" size="sm" @click="preview = null">关闭</IsleButton>
-        </div>
-        <iframe :src="fileUrl('preview', preview.path)" title="文件只读预览" sandbox="allow-same-origin" />
-      </div>
-    </div>
+    <IsleModal
+      :open="Boolean(preview)"
+      :title="preview?.name || ''"
+      size="wide"
+      role="dialog"
+      aria-label="文件预览"
+      @close="preview = null"
+    >
+      <template #header-actions>
+        <a v-if="preview" class="computer-download-link" :href="fileUrl('content', preview.path)" download>
+          <Download :size="14" /> 下载
+        </a>
+      </template>
+      <iframe v-if="preview" class="computer-preview-frame" :src="fileUrl('preview', preview.path)" title="文件只读预览" sandbox="allow-same-origin" />
+    </IsleModal>
   </div>
 </template>
 
@@ -289,31 +293,9 @@ onMounted(loadStatus);
   flex-direction: column;
   gap: 12px;
 }
-.computer-preview {
-  position: fixed;
-  inset: 0;
-  background: rgba(8, 11, 20, 0.65);
-  backdrop-filter: blur(20px);
-  z-index: 1000;
-  display: grid;
-  place-items: center;
-  padding: 20px;
-}
-.computer-preview-inner {
-  background: var(--fluid-card-fill);
-  border: 1px solid var(--fluid-card-border);
-  box-shadow: var(--fluid-card-shadow);
-  width: min(100%, 1000px);
-  height: min(90vh, 850px);
-  padding: 18px;
-  border-radius: 22px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-.computer-preview iframe {
+.computer-preview-frame {
   width: 100%;
-  flex: 1;
+  height: min(72vh, 680px);
   border: 0;
   border-radius: 12px;
   background: white;

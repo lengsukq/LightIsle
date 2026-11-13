@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { ChevronLeft, ChevronRight, Folder, LoaderCircle } from "lucide-vue-next";
 import { describeUserFacingError } from "./userFacingError.ts";
 import AppleSelect from "./AppleSelect.vue";
@@ -31,6 +31,7 @@ const emit = defineEmits<{
 
 const dir = ref(".");
 const name = ref(props.item.name);
+const nameInputRef = ref<HTMLInputElement | null>(null);
 const folders = ref<FolderEntry[]>([]);
 const nextCursor = ref("");
 const canWrite = ref(false);
@@ -39,6 +40,18 @@ const busy = ref(false);
 const error = ref("");
 const conflict = ref<Conflict>("rename");
 let generation = 0;
+
+onMounted(() => {
+  void nextTick(() => {
+    const el = nameInputRef.value;
+    if (!el) return;
+    el.focus();
+    const raw = el.value;
+    const dot = props.item.type === "folder" ? -1 : raw.lastIndexOf(".");
+    const end = dot > 0 ? dot : raw.length;
+    el.setSelectionRange(0, end);
+  });
+});
 
 const breadcrumbs = computed(() => {
   if (dir.value === ".") return [{ label: "共享根目录", path: "." }];
@@ -161,7 +174,7 @@ async function submit() {
 
       <label class="file-operation-label">
         <span>目标文件名</span>
-        <input v-model="name" maxlength="240" type="text" autocomplete="off" :disabled="busy" />
+        <input ref="nameInputRef" v-model="name" autofocus maxlength="240" type="text" autocomplete="off" :disabled="busy" @keydown.enter.prevent="submit" />
       </label>
 
       <label class="file-operation-label">

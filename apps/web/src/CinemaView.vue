@@ -19,6 +19,7 @@ import { useCinemaCatalogController } from "./composables/useCinemaCatalogContro
 import { continueAfterPlaybackEnd } from "./cinemaAutoAdvance.ts";
 import { confirmCinemaExit } from "./cinemaSafeExit.ts";
 import { createBrowserMediaBackstack } from "./browserMediaBackstack.ts";
+import { pushModalLayer, type ModalLayerHandle } from "./modalStack.ts";
 import IsleModal from "./IsleModal.vue";
 import IsleButton from "./IsleButton.vue";
 import IsleChip from "./IsleChip.vue";
@@ -39,7 +40,28 @@ const playerControlsHidden = ref(false);
 const leavingPlayer = ref(false);
 const exitSaveBlocked = ref(false);
 let mediaBackstack: ReturnType<typeof createBrowserMediaBackstack> | null = null;
+let cinemaLayerHandle: ModalLayerHandle | null = null;
 const cinemaDialog = ref<HTMLElement | null>(null);
+
+watch(selected, (film) => {
+  if (film) {
+    cinemaLayerHandle?.dispose();
+    cinemaLayerHandle = pushModalLayer({
+      onEsc: () => {
+        if (viewerPlaying.value && showPlayerPlaylist.value) {
+          showPlayerPlaylist.value = false;
+        } else {
+          if (viewerPlaying.value) returnToOverview();
+          else close();
+        }
+      },
+      lockScroll: true,
+    });
+  } else {
+    cinemaLayerHandle?.dispose();
+    cinemaLayerHandle = null;
+  }
+});
 let returnFocus: HTMLElement | null = null;
 const seriesDialog = ref<HTMLElement | null>(null);
 const posterFailed = ref<Record<number, boolean>>({});
@@ -325,7 +347,8 @@ function close() {
 }
 
 function keydown(event: KeyboardEvent) {
-  if (props.active === false) return;
+  if (props.active === false || event.defaultPrevented) return;
+  if (cinemaLayerHandle && !cinemaLayerHandle.isTop()) return;
   const playing = selected.value !== null && viewerPlaying.value;
   handleCinemaKeydown(event, {
     dialog: selected.value ? cinemaDialog.value : seriesDetail.value ? seriesDialog.value : null,
@@ -373,6 +396,7 @@ watch(() => props.active, (val) => {
 
 onBeforeUnmount(() => { void save(); });
 onUnmounted(() => {
+  cinemaLayerHandle?.dispose(); cinemaLayerHandle = null;
   disposed = true; rootEpoch += 1; rootScopeAbort.abort(); syncCinemaActiveBindings(false); resetDirectoryPlaylist();
   mediaBackstack?.dispose(); mediaBackstack = null; playbackGeneration += 1; disposeSeriesAndHistory();
   if (searchTimer) clearTimeout(searchTimer); selectedController?.abort(); disposeMetadata(); destroyHls(); disposeCatalog();
@@ -557,6 +581,7 @@ onUnmounted(() => {
     <details class="cinema-foot"><summary>播放兼容性说明</summary><p>优先原画直出；浏览器不兼容时可在线转码（需 FFmpeg，不改动原片）或下载后用本地播放器打开。</p></details>
 
     <Teleport to="body">
+      <Transition name="isle-overlay-fade">
       <div v-if="selected && props.active !== false" class="cinema-backdrop" :class="{'cinema-backdrop--media':!!seriesDetail,'cinema-backdrop--playing':viewerPlaying}" @click.self="close">
         <section ref="cinemaDialog" class="cinema-dialog" :class="{'cinema-dialog-playing':viewerPlaying,'cinema-controls-hidden':viewerPlaying&&playerControlsHidden}" role="dialog" aria-modal="true" :aria-label="selected.title+(viewerPlaying?' · 播放':' · 影片详情')" tabindex="-1">
           <header :class="{'cinema-player-topbar':viewerPlaying}">
@@ -648,6 +673,7 @@ onUnmounted(() => {
           />
         </section>
       </div>
+      </Transition>
     </Teleport>
     <Teleport to="body">
       <div v-if="seriesDetail && props.active !== false">

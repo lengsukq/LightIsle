@@ -16,7 +16,7 @@
   <div v-else-if="authServiceError" class="auth-scene">
     <div class="auth-card">
       <div class="auth-logo"><img src="/brand-icon.svg" alt="轻屿 Logo" class="brand-image" /></div>
-      <span class="eyebrow">LOCAL SERVICE</span>
+      <span class="eyebrow">本机私有服务</span>
       <h1>暂时无法连接轻屿</h1>
       <p class="form-error" role="alert">{{ authServiceError }}</p>
       <button type="button" class="auth-submit" :disabled="authChecking" @click="checkAuth">{{authChecking?"正在重试…":"重试连接"}}</button>
@@ -25,7 +25,7 @@
   <div v-else-if="!configured" class="auth-scene">
     <div class="auth-card">
       <div class="auth-logo"><img src="/brand-icon.svg" alt="轻屿 Logo" class="brand-image" /></div>
-      <span class="eyebrow">FIRST RUN SETUP</span>
+      <span class="eyebrow">首次启用向导</span>
       <h1>请先在 Mac 上初始化轻屿</h1>
       <p>首次管理员账号请在 Mac 端 LightIsle.app 中创建，Web 不开放未授权注册。</p>
       <button type="button" class="auth-submit" @click="checkAuth">已完成初始化，刷新状态</button>
@@ -35,11 +35,18 @@
   <div v-else-if="!user" class="auth-scene">
     <form class="auth-card" @submit.prevent="submitAuth">
       <div class="auth-logo"><img src="/brand-icon.svg" alt="轻屿 Logo" class="brand-image" /></div>
-      <span class="eyebrow">YOUR PRIVATE SPACE</span>
+      <span class="eyebrow">个人私密空间</span>
       <h1>欢迎回到轻屿</h1>
       <p>登录你的本地私有空间。</p>
-      <label>用户名<input v-model.trim="authUsername" required maxlength="32" minlength="3" autocomplete="username" placeholder="输入账号用户名" /></label>
-      <label>密码<input v-model="authPassword" required type="password" minlength="12" autocomplete="current-password" placeholder="输入至少 12 位密码" /></label>
+      <label>用户名<input v-model.trim="authUsername" autofocus required maxlength="32" minlength="3" autocomplete="username" placeholder="输入账号用户名" /></label>
+      <label>密码
+        <div class="password-input-wrap">
+          <input v-model="authPassword" required :type="showAuthPassword ? 'text' : 'password'" minlength="12" autocomplete="current-password" placeholder="输入至少 12 位密码" />
+          <button type="button" class="password-eye-btn" :title="showAuthPassword ? '隐藏密码' : '显示密码'" :aria-label="showAuthPassword ? '隐藏密码' : '显示密码'" @click="showAuthPassword = !showAuthPassword">
+            <EyeOff v-if="showAuthPassword" :size="16" /><Eye v-else :size="16" />
+          </button>
+        </div>
+      </label>
       <p v-if="authError" class="form-error" role="alert">{{ authError }}</p>
       <button class="auth-submit" :disabled="authSubmitting" type="submit">{{ authSubmitting ? "正在验证…" : "登录轻屿空间" }}</button>
       <small>数据安全保护 · 原片与文件均存放于本地 Mac</small>
@@ -51,11 +58,11 @@
         <span class="brand-symbol" role="button" tabindex="0" :title="sidebarExpanded ? '收起导航 (⌃⌘S)' : '展开导航 (⌃⌘S)'" @click="toggleSidebar" @keydown.enter="toggleSidebar">
           <img src="/brand-icon.svg" alt="轻屿 Logo" class="brand-image" />
         </span>
-        <div class="brand-meta" v-show="sidebarExpanded">
+        <div class="brand-meta">
           <div class="brand-title-line"><b>轻屿</b><span class="brand-version-badge">v0.1</span></div>
           <small>LightIsle Space</small>
         </div>
-        <button v-show="sidebarExpanded" class="dock-toggle-btn" type="button" @click="toggleSidebar" title="收起导航 (⌃⌘S)">
+        <button class="dock-toggle-btn" type="button" :tabindex="sidebarExpanded ? 0 : -1" @click="toggleSidebar" title="收起导航 (⌃⌘S)">
           <ChevronLeft :size="13" />
         </button>
       </div>
@@ -63,23 +70,23 @@
       <nav aria-label="主导航" class="side-nav-sections">
         <!-- 生活空间：主页概览 / 私人文件 / 时光相册 / 私人影院 / 下载中心 / 应用中心 (apps) -->
         <div class="side-section">
-          <span class="side-label" v-show="sidebarExpanded">生活空间</span>
+          <span class="side-label">生活空间</span>
           <div class="side-nav side-group-card">
             <button v-for="item in items.filter(i => i.group === 'space' && (i.key !== 'computer' || showComputerFilesNav))" :key="item.key" :class="{ chosen: active === item.key }" :title="!sidebarExpanded ? item.title : undefined" @click="active = item.key" type="button">
               <span :class="['nav-squircle', item.color]"><component :is="item.icon" :size="14" :stroke-width="2.1" /></span>
-              <span class="nav-item-label" v-show="sidebarExpanded">{{ item.title }}</span>
-              <ChevronRight v-show="sidebarExpanded" :size="13" class="nav-chevron" />
+              <span class="nav-item-label">{{ item.title }}</span>
+              <ChevronRight :size="13" class="nav-chevron" />
             </button>
           </div>
         </div>
 
         <div class="side-section">
-          <span class="side-label" v-show="sidebarExpanded">{{user.role==='admin'?'系统管理':'个人设置'}}</span>
+          <span class="side-label">{{user.role==='admin'?'系统管理':'个人设置'}}</span>
           <div class="side-nav side-group-card">
             <button v-for="item in items.filter(i => i.group === 'system' && (i.key !== 'automation' || isAdminDashboard))" :key="item.key" :class="{ chosen: active === item.key }" :title="!sidebarExpanded ? item.title : undefined" @click="active = item.key" type="button">
               <span :class="['nav-squircle', item.color]"><component :is="item.icon" :size="14" :stroke-width="2.1" /></span>
-              <span class="nav-item-label" v-show="sidebarExpanded">{{ item.title }}</span>
-              <ChevronRight v-show="sidebarExpanded" :size="13" class="nav-chevron" />
+              <span class="nav-item-label">{{ item.title }}</span>
+              <ChevronRight :size="13" class="nav-chevron" />
             </button>
           </div>
         </div>
@@ -87,7 +94,7 @@
 
       <div class="sidebar-bottom">
         <span class="host-status-squircle" :class="{ off: !!error }"><span class="dot" :class="{ off: !!error }"></span></span>
-        <div class="host-status-text" v-show="sidebarExpanded">
+        <div class="host-status-text">
           <small>宿主状态</small>
           <span>{{ error ? "服务已断开" : "已登录 · " + user.username }}</span>
         </div>
@@ -139,16 +146,16 @@
 
       <Transition name="ios-fade" mode="out-in">
         <div v-if="!rootSwitching">
-          <OverviewPage v-show="active === 'overview'" :identity="overviewIdentity" :search="overviewSearch" :telemetry="overviewTelemetry" :personal-space="overviewPersonalSpace" :pending="overviewPending" @update:query="fileSearch = $event" @update:spotlight="searchViaSpotlight = $event" @update:expanded="showHardwareSpecs = $event" @search="runFileSearch" @return-to-files="loadFiles()" @refresh="update" @navigate="active = $event" @open-account-settings="active = 'settings'; settingsGroup = 'account'" @open-pending="active = 'settings'; settingsGroup = 'ops'" />
-          <ComputerFilesView v-if="active === 'computer'" :admin="user.role === 'admin'" />
-          <div v-if="personalRouteError&&['files','photos','cinema'].includes(active)&&!manualRootSection" class="content">
+          <OverviewPage v-show="active === 'overview'" class="isle-tab-pane" :identity="overviewIdentity" :search="overviewSearch" :telemetry="overviewTelemetry" :personal-space="overviewPersonalSpace" :pending="overviewPending" @update:query="fileSearch = $event" @update:spotlight="searchViaSpotlight = $event" @update:expanded="showHardwareSpecs = $event" @search="runFileSearch" @return-to-files="loadFiles()" @refresh="update" @navigate="active = $event" @open-account-settings="active = 'settings'; settingsGroup = 'account'" @open-pending="active = 'settings'; settingsGroup = 'ops'" />
+          <ComputerFilesView v-if="active === 'computer'" class="isle-tab-pane" :admin="user.role === 'admin'" />
+          <div v-if="personalRouteError&&['files','photos','cinema'].includes(active)&&!manualRootSection" class="content isle-tab-pane">
             <section class="content-empty root-state-card root-state-offline" role="alert">
               <HardDrive :size="40" aria-hidden="true"/><h2>个人存储位置暂不可用</h2>
               <p>{{personalRouteError}}</p>
               <button type="button" class="content-empty-action" @click="async()=>{await refreshRootDiscovery();await loadPersonalStoragePolicy();await autoRouteSection();}">重新检查配置</button>
             </section>
           </div>
-          <div v-else-if="rootContextPageVisible" class="content">
+          <div v-else-if="rootContextPageVisible" class="content isle-tab-pane">
             <section class="content-empty root-state-card" :class="'root-state-'+rootContextPresentation.kind" :role="rootContextPresentation.role" :aria-live="rootContextPresentation.role==='status'?'polite':undefined">
               <RefreshCcw v-if="rootContextPresentation.kind==='loading'" :size="40" :stroke-width="1.5" class="spinning" aria-hidden="true"/>
               <WifiOff v-else-if="rootContextPresentation.kind==='error'" :size="40" :stroke-width="1.5" aria-hidden="true"/>
@@ -163,12 +170,17 @@
               </button>
             </section>
           </div>
-          <div v-if="visitedPages.files" v-show="active === 'files' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)" class="content">
+          <div v-if="visitedPages.files" v-show="active === 'files' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)" class="content isle-tab-pane">
             <div class="section-heading">
               <div><h2>文件管理<template v-if="sharedRootName"> · {{ sharedRootName }}</template></h2></div>
               <button class="refresh" type="button" @click="showingTrash?loadTrash():loadFiles()" :disabled="showingTrash?trashLoading:filesLoading"><RefreshCcw :size="16" :class="{spinning:showingTrash&&trashLoading}" /> 刷新</button>
             </div>
-            <section class="files-panel">
+            <section class="files-panel" :class="{ 'files-panel-dropping': uploadDropActive }" @dragover="dragOverUpload" @dragleave="dragLeaveUpload" @drop="dropUpload">
+              <div v-if="uploadDropActive && currentFolderCanWrite && !showingTrash && !uploadBusy" class="files-drop-mask" aria-hidden="true">
+                <UploadCloud :size="34" :stroke-width="1.8" />
+                <strong>松开鼠标，上传至当前目录</strong>
+                <small>{{ filesPath === '.' ? '共享根目录' : filesPath }} · 自动断点续传且不覆盖同名文件</small>
+              </div>
               <div class="files-toolbar">
                 <div class="file-crumbs" aria-label="当前位置">
                   <button v-for="(segment,index) in pathSegments" :key="segment.path" type="button" @click="loadFiles(segment.path)">
@@ -178,7 +190,24 @@
                 <div class="file-actions">
                   <form v-if="!showingTrash" class="file-inline-search" @submit.prevent="runFileSearch">
                     <Search :size="15" />
-                    <input v-model.trim="fileSearch" type="search" placeholder="搜索文件名…" aria-label="搜索授权目录文件" />
+                    <input
+                      v-model.trim="fileSearch"
+                      type="search"
+                      :placeholder="searchViaSpotlight ? '搜索文件名或正文内容…' : '搜索文件名…'"
+                      aria-label="搜索授权目录文件"
+                    />
+                    <label
+                      class="file-spotlight-pill"
+                      :class="{ active: searchViaSpotlight }"
+                      title="开启后使用 macOS Spotlight 检索文件内容；未建索引时自动回退文件名搜索"
+                    >
+                      <input
+                        v-model="searchViaSpotlight"
+                        type="checkbox"
+                        aria-label="使用 macOS Spotlight 全文搜索"
+                      />
+                      <span>全文搜索</span>
+                    </label>
                     <button v-if="searchingFiles||fileSearch" type="button" class="file-search-clear" title="清除搜索" @click="fileSearch='';if(searchingFiles)loadFiles(filesPath)"><X :size="14" /></button>
                   </form>
                   <div v-if="!showingTrash&&!searchingFiles" class="file-sort-control">
@@ -205,9 +234,9 @@
                   <input ref="selectedUpload" type="file" class="visually-hidden" multiple @change="startUpload" />
                 </div>
               </div>
-              <form v-if="!showingTrash&&currentFolderCanWrite&&createFolderOpen" class="create-folder-form" @submit.prevent="makeFolder();createFolderOpen=false" @keydown.esc="createFolderOpen=false">
+              <form v-if="!showingTrash&&currentFolderCanWrite&&createFolderOpen" class="create-folder-form" @submit.prevent="makeFolder();createFolderOpen=false" @keydown.esc.stop="createFolderOpen=false">
                 <FolderPlus :size="18" />
-                <input v-model="newFolderName" maxlength="150" placeholder="输入新建文件夹名称，按回车创建" aria-label="新建文件夹名称" />
+                <input ref="newFolderInputRef" v-model="newFolderName" maxlength="150" placeholder="输入新建文件夹名称，按回车创建" aria-label="新建文件夹名称" />
                 <button :disabled="!newFolderName.trim()" type="submit">创建</button>
                 <button type="button" class="create-folder-cancel" @click="createFolderOpen=false">取消</button>
               </form>
@@ -284,8 +313,8 @@
               <div v-if="!showingTrash && filesLoading" class="files-empty">{{searchingFiles?"正在搜索授权目录…":"正在读取目录…"}}</div>
               <div v-else-if="!showingTrash && !fileEntries.length" class="files-empty"><Folder :size="30"/><span>{{filesError?(searchingFiles?"搜索失败，请查看上方原因并重试。":"目录读取失败，请查看上方原因并重试。"):searchingFiles?"没有找到匹配的文件或文件夹":"此文件夹目前是空的"}}</span><button v-if="filesError&&!searchingFiles&&!filesLoading" type="button" class="refresh" @click="loadFiles(filesPath)">重试读取目录</button></div>
               <div class="file-entries-container" :class="{ 'file-grid-mode': fileViewMode === 'grid' && !showingTrash }">
-              <div v-for="entry in showingTrash ? [] : fileEntries" :key="entry.path" class="file-entry">
-                <input type="checkbox" :value="entry.path" v-model="checkedFiles" :disabled="checkedFiles.length>=50&&!checkedFiles.includes(entry.path)" :aria-label="'选择 '+entry.name+(canWriteEntry(entry)?'':'（只读，可选择）')" class="file-checkbox"/>
+              <div v-for="(entry, idx) in showingTrash ? [] : fileEntries" :key="entry.path" class="file-entry" @contextmenu.prevent="openFileContextMenu($event)">
+                <input type="checkbox" :value="entry.path" v-model="checkedFiles" :disabled="checkedFiles.length>=50&&!checkedFiles.includes(entry.path)" :aria-label="'选择 '+entry.name+(canWriteEntry(entry)?'':'（只读，可选择）')" class="file-checkbox" @click="onFileCheckboxClick(entry, idx, $event)"/>
                 <button type="button" class="file-open" @click="entry.type === 'folder' ? loadFiles(entry.path) : previewFile(entry)" :title="entry.name">
                   <span class="file-icon" :class="entry.type">
                     <Folder v-if="entry.type === 'folder'" :size="21"/>
@@ -299,7 +328,7 @@
                 <div class="file-entry-actions">
                   <button v-if="entry.type === 'file'" type="button" @click="previewFile(entry)" title="预览" :aria-label="'预览 '+entry.name"><Images :size="17"/></button>
                   <button type="button" @click="downloadFile(entry)" :title="entry.type==='folder'?'下载文件夹 ZIP（最多 2 GiB / 2000 项）':'下载'" :aria-label="'下载 '+entry.name"><Download :size="17"/></button>
-                  <details class="file-entry-more" @keydown.esc.prevent.stop="closeFileMenu($event)">
+                  <details class="file-entry-more" @toggle="onFileMenuToggle($event)" @keydown.esc.prevent.stop="closeFileMenu($event)">
                     <summary :aria-label="'更多文件操作：'+entry.name" title="更多操作">···</summary>
                     <div class="file-entry-more-list">
                       <button v-if="searchingFiles" type="button" @click="closeFileMenu($event);loadFiles(entry.path.includes('/')?entry.path.slice(0,entry.path.lastIndexOf('/')):'.')">打开所在目录</button>
@@ -317,25 +346,25 @@
                 <button type="button" :disabled="filesLoading" @click="loadFiles(filesPath,true)">{{filesLoading?"加载中…":"加载更多文件"}}</button>
               </div>
             </section>
-            <p class="footnote">支持断点续传与文件夹打包下载；单次批量移入回收站上限 50 项。</p>
+            <p class="footnote">支持整面板拖放上传、Shift 连续多选、右键快捷菜单与断点续传；单次批量操作上限 50 项。</p>
           </div>
-          <div v-show="active === 'photos' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)">
+          <div v-show="active === 'photos' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)" class="isle-tab-pane">
             <PhotosView v-if="visitedPages.photos" v-show="active === 'photos' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)" :key="rootViewKey" :active="active === 'photos'" :admin="user.role==='admin'" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" :root-name="multiRootMode?selectedRoot?.name:undefined" :has-other-roots="multiRootMode&&sharedRoots.length>1" />
           </div>
-          <div v-show="active === 'cinema' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)">
+          <div v-show="active === 'cinema' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)" class="isle-tab-pane">
             <CinemaView v-if="visitedPages.cinema" v-show="active === 'cinema' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)" :key="rootViewKey" :active="active === 'cinema'" :admin="user.role==='admin'" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
           </div>
-          <div v-if="active === 'downloads'" class="content">
+          <div v-if="active === 'downloads'" class="content isle-tab-pane">
             <div class="section-heading"><div><h2>下载中心</h2><p>支持链接、磁力与种子任务，下载至所选目录。</p></div></div>
             <DownloadsView :active="active === 'downloads'" :api="downloadsApi" />
           </div>
-          <div v-if="active === 'apps'" class="content">
+          <div v-if="active === 'apps'" class="content isle-tab-pane">
             <AppsCenterView :active="active === 'apps'" :admin="user.role === 'admin'" />
           </div>
-          <div v-if="active === 'automation' && user.role === 'admin'" class="content">
+          <div v-if="active === 'automation' && user.role === 'admin'" class="content isle-tab-pane">
             <AutomationView :active="active === 'automation'"/>
           </div>
-          <div v-if="active === 'settings'" class="content settings-page">
+          <div v-if="active === 'settings'" class="content settings-page isle-tab-pane">
             <div class="section-heading">
               <div><h2>偏好设置</h2><p>管理账号安全、WebDAV 挂载、文件分享、缓存与存储服务。</p></div>
               <IsleButton variant="glass" size="sm" @click="logout"><template #icon><LogOut :size="14" /></template>退出登录</IsleButton>
@@ -345,12 +374,14 @@
                 :class="{active:settingsGroup===group.key}" @click="settingsGroup=group.key">{{group.label}}</button>
             </nav>
 
-            <div class="settings-stack">
+            <Transition name="ios-fade" mode="out-in">
+            <div :key="settingsGroup" class="settings-stack">
               <CacheManagementPanel v-if="settingsGroup==='cache'" :is-admin="user.role==='admin'" :active="active==='settings'" />
               <BetaDiagnosticReport v-if="settingsGroup==='account'" />
 
               <template v-if="settingsGroup==='files'">
                 <DavAccess :admin="user.role==='admin'" />
+                <TailscaleGuideCard v-if="user.role==='admin'" />
                 <IsleCard title="我的文件分享" subtitle="分享链接最长 7 天有效，可随时撤销；完整链接仅在创建时展示一次。">
                   <template #icon><Folder :size="18" /></template>
                   <template #actions>
@@ -381,7 +412,6 @@
                 <UserStoragePanel v-if="user.role==='admin'" mode="roots" :admin="true" />
                 <DiskManagement v-if="user.role==='admin'" />
                 <SmbManagement v-if="user.role==='admin'" />
-                <TailscaleGuideCard v-if="user.role==='admin'" />
                 <details v-if="user.role==='admin'&&rootFeatureContextReady" class="apple-disclosure-card" @toggle="toggleAdvanced('uploads',$event)">
                   <summary>
                     <div class="disclosure-title"><UploadCloud :size="15" class="disclosure-icon" /><span>高级排障：未完成上传与暂存规则</span></div>
@@ -431,16 +461,25 @@
 
               <IsleCard v-if="settingsGroup==='account'" title="缺失媒体记录核对" subtitle="当照片或影片文件被移动或重命名时，在此找回并重新关联原有的收藏、相册和观看进度。">
                 <template #icon><Images :size="18" /></template>
-                <details v-if="rootFeatureContextReady" class="apple-disclosure-card" style="margin-top:0" @toggle="togglePendingMedia(false,$event)">
-                  <summary>
-                    <div class="disclosure-title"><Images :size="15" class="disclosure-icon" /><span>展开检查我的缺失媒体</span></div>
-                    <ChevronRight :size="14" class="disclosure-chevron" />
-                  </summary>
-                  <div class="disclosure-body">
-                    <PendingMedia v-if="pendingMediaOpen" :key="rootViewKey" :root-id="selectedRootID" :root-generation="selectedRootGeneration" :admin="user.role==='admin'" />
+                <div v-if="user.role==='admin'" class="account-row" style="margin:0">
+                  <div>
+                    <strong class="settings-row-title">管理员请前往「任务与通知」统一核对</strong>
+                    <small>缺失媒体核对与预约处理已收口至任务中心，避免多处入口重复。</small>
                   </div>
-                </details>
-                <p v-else class="footnote" style="margin:0">选择硬盘后可检查自己的缺失媒体。</p>
+                  <IsleButton variant="secondary" size="sm" @click="settingsGroup='ops'">前往任务与通知</IsleButton>
+                </div>
+                <template v-else>
+                  <details v-if="rootFeatureContextReady" class="apple-disclosure-card" style="margin-top:0" @toggle="togglePendingMedia(false,$event)">
+                    <summary>
+                      <div class="disclosure-title"><Images :size="15" class="disclosure-icon" /><span>展开检查我的缺失媒体</span></div>
+                      <ChevronRight :size="14" class="disclosure-chevron" />
+                    </summary>
+                    <div class="disclosure-body">
+                      <PendingMedia v-if="pendingMediaOpen" :key="rootViewKey" :root-id="selectedRootID" :root-generation="selectedRootGeneration" :admin="false" />
+                    </div>
+                  </details>
+                  <p v-else class="footnote" style="margin:0">选择硬盘后可检查自己的缺失媒体。</p>
+                </template>
               </IsleCard>
 
               <IsleCard v-if="settingsGroup==='account'" title="登录设备与会话管理" subtitle="查看当前已登录的终端型号、客户端 IP 与最近活跃时间，支持单设备远程下线。">
@@ -471,8 +510,6 @@
                 <IsleBanner v-if="sessionsError" type="error" compact role="alert" :message="sessionsError" />
                 <IsleBanner v-if="sessionsMessage" type="info" compact role="status" :message="sessionsMessage" />
               </IsleCard>
-
-              <AgentConnections v-if="settingsGroup==='account'" :key="user.username" />
 
               <IsleCard v-if="settingsGroup==='account'" title="修改我的密码" subtitle="修改密码后会退出所有已登录设备，请使用新密码重新登录。">
                 <template #icon><ShieldCheck :size="18" /></template>
@@ -577,6 +614,7 @@
                 <p style="margin:0;font-size:13px;color:var(--text-secondary)">家庭成员账号与目录配额由管理员统一创建和维护。</p>
               </IsleCard>
             </div>
+            </Transition>
           </div>
         </div>
       </Transition>
@@ -615,7 +653,7 @@
         </div>
       </div>
       <IsleBanner v-if="previewError" type="error" compact :message="previewError" />
-      <pre v-else-if="previewItem && /\.(txt|md|json|log)$/i.test(previewItem.name)" class="preview-text">{{ previewText }}</pre>
+      <pre v-else-if="previewItem && /\.(txt|md|json|log|ya?ml|toml|csv|xml|ini|conf|sh|py|ts|js|vue|go|swift|css|html)$/i.test(previewItem.name)" class="preview-text">{{ previewText }}</pre>
       <IsleImageViewer
         v-else-if="previewItem && /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(previewItem.name)"
         :src="previewURL"
@@ -639,6 +677,15 @@
         @next="nextPreviewVideo && previewFile(nextPreviewVideo)"
         @ended="onPreviewVideoEnded"
       />
+      <div v-else-if="previewItem && /\.(mp3|m4a|flac|wav|ogg|aac)$/i.test(previewItem.name)" style="padding: 20px 8px; display: flex; flex-direction: column; align-items: center; gap: 14px">
+        <audio :key="previewItem.path" :src="previewURL" controls autoplay style="width: min(100%, 480px)" />
+        <small style="color: var(--text-secondary)">{{ bytes(previewItem.size) }}</small>
+      </div>
+      <IsleEmpty v-else-if="previewItem" compact :icon="FileText" title="暂不支持在线直接预览该格式" description="可直接下载到本地，使用系统对应应用打开查看。">
+        <template #action>
+          <IsleButton variant="primary" size="sm" @click="downloadFile(previewItem)"><template #icon><Download :size="14" /></template>下载到本地</IsleButton>
+        </template>
+      </IsleEmpty>
     </IsleModal>
     <IsleModal
       :open="Boolean(sharingFile)"
@@ -688,6 +735,7 @@
       :list-folders="listOperationFolders" :perform="commitFileOperation"
       @close="fileOperationDialog=null" @complete="finishFileOperation"/>
     <ConfirmModal />
+    <Transition name="mobile-drawer">
     <div v-if="moreMenuOpen" class="mobile-more-backdrop" @click.self="moreMenuOpen = false">
       <div class="mobile-more-sheet glass" role="dialog" aria-modal="true" aria-label="更多功能与设置">
         <div class="mobile-more-head">
@@ -733,6 +781,7 @@
         </div>
       </div>
     </div>
+    </Transition>
     <nav class="mobile-nav glass" aria-label="移动导航">
       <button
         v-for="item in items.filter(i => ['overview','files','photos','cinema'].includes(i.key))"

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
-import { ArrowDownToLine, Link2, Pause, Play, RefreshCw, RotateCcw, Trash2 } from "lucide-vue-next";
+import { ArrowDownToLine, ChevronLeft, ChevronRight, Folder, Link2, LoaderCircle, Pause, Play, RefreshCw, RotateCcw, Trash2 } from "lucide-vue-next";
 import { requestConfirm } from "./useConfirmDialog.ts";
 import { apiRequest } from "./apiClient.ts";
 import IsleCard from "./IsleCard.vue";
@@ -8,10 +8,15 @@ import IsleButton from "./IsleButton.vue";
 import IsleBanner from "./IsleBanner.vue";
 import IsleBadge from "./IsleBadge.vue";
 import IsleEmpty from "./IsleEmpty.vue";
+import IsleModal from "./IsleModal.vue";
 import {readDownloadCenter,type DownloadTask} from "./downloadCenterTransport.ts";
 import {createMediaStatusPoller} from "./mediaStatusPoller.ts";
 import {describeRootOperationFailure} from "./rootDiscovery.ts";
 import {describeUserFacingError} from "./userFacingError.ts";
+
+type FolderItem = { name: string; path: string; type: "file" | "folder"; canWrite?: boolean };
+type FolderListReply = { entries: FolderItem[]; nextCursor?: string; canWrite?: boolean };
+
 const props=withDefaults(defineProps<{active?:boolean;api?:(path:string,init?:RequestInit)=>Promise<unknown>}>(),{active:true});
 const requestApi=(path:string,init?:RequestInit)=>(props.api?props.api(path,init):apiRequest(path,init));
 const tasks=ref<DownloadTask[]>([]);
@@ -19,6 +24,64 @@ const hasSnapshot=ref(false);
 const status=ref<{available:boolean;networkAllowed?:boolean;version?:string;reason?:string}>({available:false});
 const loading=ref(false),error=ref(""),busy=ref(""),newURL=ref(""),newDestination=ref("."),newMaxGB=ref("");
 const creating=ref(false);
+
+const folderPickerOpen=ref(false);
+const pickerDir=ref(".");
+const pickerFolders=ref<FolderItem[]>([]);
+const pickerNextCursor=ref("");
+const pickerCanWrite=ref(true);
+const pickerLoading=ref(false);
+const pickerError=ref("");
+let pickerGen=0;
+
+const pickerBreadcrumbs=computed(()=>{
+ if(pickerDir.value===".")return[{label:"共享根目录",path:"."}];
+ const parts=pickerDir.value.split("/");
+ return[{label:"共享根目录",path:"."},...parts.map((part,i)=>({label:part,path:parts.slice(0,i+1).join("/")}))];
+});
+
+async function loadPickerFolders(more=false){
+ const req=++pickerGen;
+ const target=pickerDir.value;
+ pickerLoading.value=true;
+ pickerError.value="";
+ try{
+  const query=new URLSearchParams({path:target,limit:"100"});
+  if(more&&pickerNextCursor.value)query.set("cursor",pickerNextCursor.value);
+  const data=await requestApi("/api/v2/files?"+query.toString()) as FolderListReply;
+  if(req!==pickerGen||target!==pickerDir.value)return;
+  const dirs=(data.entries??[]).filter(item=>item.type==="folder");
+  pickerFolders.value=more?[...pickerFolders.value,...dirs]:dirs;
+  pickerNextCursor.value=data.nextCursor??"";
+  pickerCanWrite.value=data.canWrite!==false;
+ }catch(e){
+  if(req===pickerGen)pickerError.value="读取文件夹失败："+describeUserFacingError(e);
+ }finally{
+  if(req===pickerGen)pickerLoading.value=false;
+ }
+}
+
+function openFolderPicker(){
+ const current=newDestination.value.trim().replace(/^\/+|\/+$/g,"")||".";
+ pickerDir.value=current;
+ pickerFolders.value=[];
+ pickerNextCursor.value="";
+ folderPickerOpen.value=true;
+ void loadPickerFolders(false);
+}
+
+function navigatePicker(nextPath:string){
+ pickerDir.value=nextPath;
+ pickerFolders.value=[];
+ pickerNextCursor.value="";
+ void loadPickerFolders(false);
+}
+
+function confirmPickerFolder(){
+ newDestination.value=pickerDir.value;
+ folderPickerOpen.value=false;
+}
+
 let timer:number|undefined,disposed=false;
 const activePollMs=3000,idlePollMs=15000;
 let lastLoadAt=0;
@@ -124,15 +187,61 @@ onUnmounted(()=>{disposed=true;poller.dispose();syncPollTimer(false)});
     <input v-model="newURL" type="text" placeholder="https://example.com/file.iso 或 magnet:?xt=urn:btih:…" required />
    </label>
    <div class="download-form-row">
-    <label>保存位置
-     <input v-model="newDestination" type="text" placeholder="例如 Downloads 或 .（根目录）" />
-    </label>
+    <div class="download-dest-field">
+     <div class="download-dest-head">
+      <span>保存位置</span>
+      <div class="download-dest-chips">
+       <button type="button" class="dest-quick-chip" :class="{active:(newDestination.trim()||'.')==='.'}" @click="newDestination='.'">根目录 (.)</button>
+       <button type="button" class="dest-quick-chip" :class="{active:newDestination.trim()==='Downloads'}" @click="newDestination='Downloads'">Downloads</button>
+       <button type="button" class="dest-browse-btn" @click="openFolderPicker"><Folder :size="13"/> 浏览目录…</button>
+      </div>
+     </div>
+     <input v-model="newDestination" type="text" aria-label="保存位置" placeholder="例如 Downloads 或 .（根目录）" />
+    </div>
     <label>大小上限（GiB，选填）
      <input v-model="newMaxGB" type="number" min="0.1" max="1024" step="0.1" placeholder="默认不限" />
     </label>
     <IsleButton type="submit" variant="primary" :loading="creating">{{creating?"正在创建…":"新建下载"}}</IsleButton>
    </div>
   </form>
+  <IsleModal
+   :open="folderPickerOpen"
+   title="选择下载保存目录"
+   :description="'当前位置：' + (pickerDir === '.' ? '共享根目录' : pickerDir)"
+   size="md"
+   @close="folderPickerOpen = false"
+  >
+   <div class="picker-crumbs" aria-label="目录层级">
+    <button
+     v-for="crumb in pickerBreadcrumbs"
+     :key="crumb.path"
+     type="button"
+     :disabled="pickerLoading || crumb.path === pickerDir"
+     @click="navigatePicker(crumb.path)"
+    >
+     {{ crumb.label }} <ChevronRight :size="13" />
+    </button>
+   </div>
+   <div class="picker-folder-list">
+    <p v-if="pickerLoading" class="picker-feedback"><LoaderCircle :size="15" class="spin-icon" /> 正在读取文件夹…</p>
+    <template v-else>
+     <button v-if="pickerDir !== '.'" type="button" class="picker-folder-row" @click="navigatePicker(pickerDir.split('/').slice(0, -1).join('/') || '.')">
+      <ChevronLeft :size="16" /> <span>返回上一级</span>
+     </button>
+     <button v-for="folder in pickerFolders" :key="folder.path" type="button" class="picker-folder-row" @click="navigatePicker(folder.path)">
+      <Folder :size="17" /> <span>{{ folder.name }}</span> <ChevronRight :size="14" />
+     </button>
+     <p v-if="!pickerFolders.length && !pickerError" class="picker-feedback">当前文件夹下没有子文件夹，可直接选择当前位置。</p>
+     <IsleButton v-if="pickerNextCursor" variant="glass" size="sm" style="margin:6px auto;display:flex" @click="loadPickerFolders(true)">加载更多文件夹</IsleButton>
+    </template>
+   </div>
+   <IsleBanner v-if="!pickerCanWrite && !pickerLoading" type="warning" compact message="当前目录为只读，请选择有写入权限的文件夹。" />
+   <IsleBanner v-if="pickerError" type="error" compact :message="pickerError" />
+   <template #footer>
+    <IsleButton variant="glass" @click="folderPickerOpen = false">取消</IsleButton>
+    <IsleButton variant="primary" :disabled="!pickerCanWrite || pickerLoading" @click="confirmPickerFolder">保存到此目录</IsleButton>
+   </template>
+  </IsleModal>
   <IsleBanner v-if="error" type="error" compact :message="error" style="margin-top: 10px" />
   <IsleEmpty
     v-if="hasSnapshot&&!tasks.length&&!loading&&!error"
@@ -184,7 +293,44 @@ onUnmounted(()=>{disposed=true;poller.dispose();syncPollTimer(false)});
 <style scoped>
 .account-row>div{min-width:0}
 .account-row strong,.account-row small,details li{overflow-wrap:anywhere}
-.download-form-row{display:grid;grid-template-columns:minmax(180px,1.5fr) minmax(140px,1fr) auto;gap:12px;align-items:end}
+.download-form-row{display:grid;grid-template-columns:minmax(220px,1.7fr) minmax(140px,1fr) auto;gap:12px;align-items:end}
+.download-dest-field{display:grid;gap:6px;min-width:0}
+.download-dest-head{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;font-size:13px;font-weight:600}
+.download-dest-chips{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap}
+.dest-quick-chip,.dest-browse-btn{
+  display:inline-flex;align-items:center;gap:4px;padding:3px 9px;border-radius:999px;
+  font-size:11.5px;font-weight:600;cursor:pointer;
+  border:1px solid var(--fluid-card-border);background:var(--fluid-card-item-fill);color:var(--text-secondary);
+  transition:background 0.15s ease,color 0.15s ease,border-color 0.15s ease;
+}
+.dest-quick-chip:hover,.dest-browse-btn:hover{color:var(--text-primary);background:var(--fluid-card-hover)}
+.dest-quick-chip.active{
+  color:var(--accent-primary);
+  border-color:color-mix(in srgb,var(--accent-primary) 45%,var(--fluid-card-border));
+  background:color-mix(in srgb,var(--accent-primary) 12%,transparent);
+}
+.dest-browse-btn{color:var(--accent-primary)}
+.picker-crumbs{display:flex;flex-wrap:wrap;gap:6px}
+.picker-crumbs button{
+  display:inline-flex;align-items:center;gap:4px;font-size:12px;padding:5px 10px;
+  border-radius:var(--radius-xs,8px);border:1px solid var(--fluid-card-border);
+  background:var(--fluid-card-item-fill);color:var(--text-primary);cursor:pointer;
+}
+.picker-crumbs button:disabled{opacity:0.65;cursor:default}
+.picker-folder-list{
+  border:1px solid var(--fluid-card-border);border-radius:var(--radius-md,16px);
+  padding:8px;min-height:110px;max-height:220px;overflow:auto;background:var(--fluid-card-item-fill);
+}
+.picker-folder-row{
+  width:100%;padding:8px 12px;display:flex;align-items:center;gap:10px;text-align:left;
+  border-radius:var(--radius-sm,10px);border:0;background:transparent;color:var(--text-primary);
+  cursor:pointer;font-size:13.5px;transition:background 0.15s ease;
+}
+.picker-folder-row:hover{background:var(--fluid-card-hover)}
+.picker-folder-row span{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.picker-feedback{margin:0;padding:12px;font-size:13px;color:var(--text-secondary);display:flex;align-items:center;gap:8px}
+.spin-icon{animation:spin 1s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
 .download-submit{margin-top:0;white-space:nowrap;height:44px}
 @media(max-width:720px){.download-form-row{grid-template-columns:1fr}.download-submit{width:100%}}
 .download-row {

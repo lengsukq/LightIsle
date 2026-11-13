@@ -1,12 +1,15 @@
 <script setup lang="ts">
+import { ref } from "vue";
 import {
   RefreshCcw, Trash2, Clock, Bell, ScrollText, Settings2,
   Play, Square, RotateCw, ExternalLink, Maximize2, Minimize2,
-  ArrowLeft, Sparkles, Cpu, Globe, Lock, Users, Copy, Power, Terminal,
-  Download, Upload,
+  ArrowLeft, Sparkles, Cpu, Globe, Lock, Users, Copy, Terminal,
+  Download, Upload, Eye, EyeOff, KeyRound, ChevronRight,
 } from "lucide-vue-next";
 import { describeUserFacingError } from "./userFacingError.ts";
 import AppsMcpDebugModal from "./AppsMcpDebugModal.vue";
+import McpClientWizardModal from "./McpClientWizardModal.vue";
+import AgentConnections from "./AgentConnections.vue";
 import AppleSelect from "./AppleSelect.vue";
 import IsleModal from "./IsleModal.vue";
 import IsleButton from "./IsleButton.vue";
@@ -56,6 +59,7 @@ const {
   lanSseUrl,
   mcpLogs,
   showingMcpDebugModal,
+  showingClientWizard,
   configuredChannels,
   busy,
   error,
@@ -90,6 +94,10 @@ const {
   applyAppsPayload,
   reload,
   toggleMcp,
+  toggleMcpLan,
+  rotateMcpToken,
+  refreshMcpLogs,
+  clearMcpLogs,
   copyMcpPrompt,
   handleDebugCopy,
   openApp,
@@ -109,6 +117,12 @@ const {
   removeApp,
   installOfficialTemplate,
 } = useAppsCenterController(props);
+
+const showMasterMcpToken = ref(false);
+function maskedToken(tok: string): string {
+  if (!tok) return "尚未生成";
+  return tok.length <= 12 ? "••••••••" : `${tok.slice(0, 6)}••••••${tok.slice(-4)}`;
+}
 </script>
 
 <template>
@@ -150,31 +164,147 @@ const {
         </IsleButton>
       </header>
 
-      <section v-if="isAdmin" class="mcp-bar" aria-label="AI Agent (MCP) 开发者服务">
-        <div class="mcp-bar-info">
-          <div class="mcp-title-row">
-            <Terminal :size="17" />
-            <strong>AI Agent (MCP) 开发者服务：{{ mcpEnabled ? "已开启" : "已关闭" }}</strong>
-            <IsleBadge :variant="mcpEnabled ? 'online' : 'offline'" dot size="sm">
-              {{ mcpEnabled ? "允许本机 stdio MCP" : "默认关闭" }}
-            </IsleBadge>
+      <section v-if="isAdmin" class="mcp-unified-card" aria-label="AI Agent (MCP) 服务">
+        <!-- 主开关层级：默认启用本机免令牌直连 -->
+        <div class="mcp-layer-row">
+          <div class="mcp-bar-info">
+            <div class="mcp-title-row">
+              <Terminal :size="17" />
+              <strong>AI Agent (MCP) 服务</strong>
+              <IsleBadge :variant="mcpEnabled ? 'online' : 'offline'" dot size="sm">
+                {{ mcpEnabled ? (mcpLanEnabled ? "本机直连 + 远程已开启" : "本机免令牌直连已开启") : "已关闭" }}
+              </IsleBadge>
+            </div>
+            <small>打开主开关默认启用本机免令牌直连（<code>lightisled mcp</code>，兼容 Gemini 桌面端沙盒桥接、Claude Desktop 与 Cursor）；关闭主开关将联动关闭局域网 / Cloud MCP 访问。</small>
           </div>
-          <small>开启后，AI Agent 可通过本机 <code>lightisled mcp</code> 或局域网 <code>/api/v2/mcp</code> 查询系统与磁盘指标、管理文件与安全回收站、调控相册影视与下载、配置成员配额与定时脚本并开发轻应用（全量记入 SQLite 审计，高危能力已物理隔离）。</small>
+          <div class="mcp-bar-actions">
+            <IsleButton variant="primary" :disabled="busy" @click="showingClientWizard = true">
+              <Sparkles :size="14" /> 客户端接入向导
+            </IsleButton>
+            <IsleButton variant="glass" :disabled="busy" @click="copyMcpPrompt(false)">
+              <Copy :size="14" /> 复制提示词
+            </IsleButton>
+            <button
+              type="button"
+              role="switch"
+              :aria-checked="mcpEnabled"
+              aria-label="开启或关闭 AI Agent (MCP) 服务"
+              class="isle-switch"
+              :class="{ on: mcpEnabled }"
+              :disabled="busy"
+              @click="toggleMcp()"
+            >
+              <span class="isle-switch-thumb"></span>
+              <span class="isle-switch-text">{{ mcpEnabled ? "已开启" : "已关闭" }}</span>
+            </button>
+          </div>
         </div>
-        <div class="mcp-bar-actions">
-          <IsleButton :variant="!mcpEnabled ? 'primary' : 'glass'" :disabled="busy" @click="toggleMcp">
-            <Power :size="14" /> {{ mcpEnabled ? "关闭 MCP 服务" : "开启 MCP 服务" }}
-          </IsleButton>
-          <IsleButton variant="glass" :disabled="busy" @click="copyMcpPrompt(false)">
-            <Copy :size="14" /> 复制 AI Agent (MCP) 接入提示词
-          </IsleButton>
-          <IsleButton v-if="!mcpEnabled" variant="primary" :disabled="busy" @click="copyMcpPrompt(true)">
-            <Sparkles :size="14" /> 开启 MCP 并复制提示词
-          </IsleButton>
-          <IsleButton variant="glass" :disabled="busy" @click="showingMcpDebugModal = true">
-            <Terminal :size="14" /> 局域网 MCP 与调试台
-          </IsleButton>
-        </div>
+
+        <!-- 从属子开关：仅主开关开启后展示 -->
+        <Transition name="mcp-slide">
+          <div v-if="mcpEnabled" class="mcp-sub-container">
+            <div class="mcp-layer-row mcp-sub-row">
+              <div class="mcp-bar-info">
+                <div class="mcp-title-row">
+                  <Globe :size="16" />
+                  <strong>允许局域网 / Cloud MCP 访问</strong>
+                  <IsleBadge :variant="mcpLanEnabled ? 'accent' : 'neutral'" size="sm">
+                    {{ mcpLanEnabled ? "/api/v2/mcp 已就绪" : "仅本机直连" }}
+                  </IsleBadge>
+                </div>
+                <small>开启后可在局域网或 Gemini Cloud MCP 中通过 Streamable HTTP (<code>/api/v2/mcp</code>) 与 SSE 持 Bearer Token 接入，并可查看实时调用日志。</small>
+              </div>
+              <div class="mcp-bar-actions">
+                <IsleButton variant="glass" size="sm" :disabled="busy" @click="showingMcpDebugModal = true">
+                  <Terminal :size="14" /> MCP 交互调试台
+                </IsleButton>
+                <button
+                  type="button"
+                  role="switch"
+                  :aria-checked="mcpLanEnabled"
+                  aria-label="允许局域网或 Cloud MCP 访问"
+                  class="isle-switch"
+                  :class="{ on: mcpLanEnabled }"
+                  :disabled="busy"
+                  @click="toggleMcpLan()"
+                >
+                  <span class="isle-switch-thumb"></span>
+                  <span class="isle-switch-text">{{ mcpLanEnabled ? "已允许" : "未开启" }}</span>
+                </button>
+              </div>
+            </div>
+
+            <!-- 打开子开关才平滑展开：远程 URL、鉴权 Token 管理与底部可折叠调用日志 -->
+            <Transition name="mcp-slide">
+              <div v-if="mcpLanEnabled" class="mcp-lan-expanded">
+                <div class="mcp-remote-urls">
+                  <div class="mcp-endpoint-item">
+                    <span>Streamable HTTP / Cloud MCP URL</span>
+                    <div class="mcp-endpoint-line">
+                      <code>{{ lanHttpUrl || "/api/v2/mcp" }}</code>
+                      <IsleButton variant="glass" size="sm" @click="handleDebugCopy(lanHttpUrl || '/api/v2/mcp', '已复制 Streamable HTTP 端点 URL')">
+                        <Copy :size="13" /> 复制 URL
+                      </IsleButton>
+                    </div>
+                  </div>
+                  <div class="mcp-endpoint-item">
+                    <span>备用 SSE 端点 URL</span>
+                    <div class="mcp-endpoint-line">
+                      <code>{{ lanSseUrl || "/api/v2/mcp/sse" }}</code>
+                      <IsleButton variant="glass" size="sm" @click="handleDebugCopy(lanSseUrl || '/api/v2/mcp/sse', '已复制 SSE 端点 URL')">
+                        <Copy :size="13" /> 复制 SSE
+                      </IsleButton>
+                    </div>
+                  </div>
+                </div>
+
+                <div class="mcp-token-box">
+                  <div class="mcp-token-row">
+                    <div>
+                      <strong>系统管理员 Master Token</strong>
+                      <code class="mcp-token-value">{{ showMasterMcpToken ? mcpToken : maskedToken(mcpToken) }}</code>
+                    </div>
+                    <div class="mcp-bar-actions">
+                      <IsleButton variant="glass" size="sm" @click="showMasterMcpToken = !showMasterMcpToken">
+                        <EyeOff v-if="showMasterMcpToken" :size="13" />
+                        <Eye v-else :size="13" />
+                        {{ showMasterMcpToken ? "隐藏" : "显示" }}
+                      </IsleButton>
+                      <IsleButton variant="glass" size="sm" :disabled="!mcpToken" @click="handleDebugCopy(mcpToken, '已复制系统级 MCP Bearer Token')">
+                        <Copy :size="13" /> 复制 Token
+                      </IsleButton>
+                      <IsleButton variant="glass" size="sm" :disabled="busy" @click="rotateMcpToken">
+                        <KeyRound :size="13" /> 轮换 Token
+                      </IsleButton>
+                    </div>
+                  </div>
+                  <div class="mcp-agent-tokens-divider">
+                    <AgentConnections compact />
+                  </div>
+                </div>
+
+                <details class="mcp-logs-collapse">
+                  <summary>
+                    <span class="mcp-logs-title"><ChevronRight :size="14" class="mcp-log-chev" /> 最近 MCP 调用日志（{{ mcpLogs.length }} 条）</span>
+                    <span class="mcp-logs-summary-actions" @click.stop>
+                      <button type="button" class="mcp-mini-btn" :disabled="busy" @click="refreshMcpLogs">刷新</button>
+                      <button v-if="mcpLogs.length" type="button" class="mcp-mini-btn" :disabled="busy" @click="clearMcpLogs">清空</button>
+                    </span>
+                  </summary>
+                  <div class="mcp-logs-body">
+                    <p v-if="!mcpLogs.length" class="mcp-logs-empty">暂无最近调用记录。</p>
+                    <div v-else class="mcp-logs-list">
+                      <div v-for="(entry, idx) in mcpLogs.slice(0, 15)" :key="idx" class="mcp-log-entry" :class="{ err: entry.isError }">
+                        <code>[{{ entry.transport }}] {{ entry.method }} {{ entry.target || "" }}</code>
+                        <small>{{ entry.durationMs }} ms · {{ entry.remoteAddr || "local" }}</small>
+                      </div>
+                    </div>
+                  </div>
+                </details>
+              </div>
+            </Transition>
+          </div>
+        </Transition>
       </section>
 
       <IsleBanner v-if="launchingAppId" type="info" compact style="margin-bottom: 14px">
@@ -293,7 +423,7 @@ const {
         <strong>选择允许访问的家庭成员</strong>
         <p v-if="nonAdminMembers.length === 0" class="apps-hint">暂无普通家庭成员账号。</p>
         <label v-for="m in nonAdminMembers" :key="m.id" class="apps-check-item">
-          <input type="checkbox" :checked="accessAllowedUserIDs.includes(m.id)" @change="accessAllowedUserIDs = flipItem(accessAllowedUserIDs, m.id)" />
+          <input type="checkbox" class="isle-checkbox" :checked="accessAllowedUserIDs.includes(m.id)" @change="accessAllowedUserIDs = flipItem(accessAllowedUserIDs, m.id)" />
           <span>{{ m.username }}</span>
         </label>
       </div>
@@ -337,13 +467,13 @@ const {
         <div class="apps-checks">
           <strong><Bell :size="14" /> 通知事件</strong>
           <label v-for="ev in [{ id: 'failure', name: '执行失败' }, { id: 'timeout', name: '执行超时' }, { id: 'success', name: '执行成功' }]" :key="ev.id">
-            <input type="checkbox" :checked="cronEvents.includes(ev.id)" @change="cronEvents = flipItem(cronEvents, ev.id)" />{{ ev.name }}
+            <input type="checkbox" class="isle-checkbox" :checked="cronEvents.includes(ev.id)" @change="cronEvents = flipItem(cronEvents, ev.id)" />{{ ev.name }}
           </label>
         </div>
         <div class="apps-checks">
           <strong>通知渠道</strong>
           <label v-for="ch in AVAILABLE_CHANNELS" :key="ch.id">
-            <input type="checkbox" :disabled="!configuredChannels.includes(ch.id)" :checked="cronChannels.includes(ch.id)" @change="cronChannels = flipItem(cronChannels, ch.id)" />
+            <input type="checkbox" class="isle-checkbox" :disabled="!configuredChannels.includes(ch.id)" :checked="cronChannels.includes(ch.id)" @change="cronChannels = flipItem(cronChannels, ch.id)" />
             {{ ch.label }}<small v-if="!configuredChannels.includes(ch.id)">未配置</small>
           </label>
         </div>
@@ -406,6 +536,22 @@ const {
       @close="showingMcpDebugModal = false"
       @updated="applyAppsPayload"
       @copy="handleDebugCopy"
+    />
+
+    <McpClientWizardModal
+      :open="showingClientWizard"
+      :mcp-enabled="mcpEnabled"
+      :mcp-lan-enabled="mcpLanEnabled"
+      :mcp-token="mcpToken"
+      :mcp-prompt="mcpPrompt"
+      :lan-mcp-prompt="lanMcpPrompt"
+      :lan-http-url="lanHttpUrl"
+      :lan-sse-url="lanSseUrl"
+      :busy="busy"
+      @close="showingClientWizard = false"
+      @copy="handleDebugCopy"
+      @enable-mcp="toggleMcp(true)"
+      @enable-lan-mcp="toggleMcpLan(true)"
     />
   </section>
 </template>

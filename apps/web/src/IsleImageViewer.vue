@@ -229,12 +229,11 @@ function handleWheel(event: WheelEvent) {
 }
 
 function handleKeydown(event: KeyboardEvent) {
+  if (event.defaultPrevented) return;
   if (event.key === "ArrowLeft" && props.hasPrev) {
     emit("prev");
   } else if (event.key === "ArrowRight" && props.hasNext) {
     emit("next");
-  } else if (event.key === "Escape") {
-    emit("close");
   } else if (event.key === "+" || event.key === "=") {
     zoomIn();
   } else if (event.key === "-") {
@@ -576,8 +575,8 @@ onUnmounted(() => {
 
 @media (max-width: 640px) {
   .nav-btn {
-    width: 38px;
-    height: 38px;
+    width: 42px;
+    height: 42px;
   }
   .nav-btn.prev {
     left: 8px;
@@ -587,6 +586,12 @@ onUnmounted(() => {
   }
   .viewer-hud {
     bottom: 10px;
+    gap: 6px;
+    padding: 6px 10px;
+  }
+  .hud-btn {
+    width: 40px;
+    height: 40px;
   }
 }
 </style>

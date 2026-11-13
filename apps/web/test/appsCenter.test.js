@@ -162,9 +162,12 @@ test("AppsCenterView SFC parses cleanly and includes sandboxed iframe workbench,
   assert.match(template, /退出全屏/);
   assert.match(template, /新标签页打开/);
   assert.match(template, /正在唤醒轻应用\.\.\./);
-  assert.match(template, /AI Agent \(MCP\) 开发者服务/);
-  assert.match(template, /复制 AI Agent \(MCP\) 接入提示词/);
-  assert.match(template, /开启 MCP 并复制提示词/);
+  assert.match(template, /AI Agent \(MCP\) 服务/);
+  assert.match(template, /允许局域网 \/ Cloud MCP 访问/);
+  assert.match(template, /客户端接入向导/);
+  assert.match(template, /<AgentConnections compact \/>/);
+  assert.match(template, /<McpClientWizardModal/);
+  assert.match(template, /复制提示词/);
   assert.match(template, /刷新应用列表/);
   assert.match(template, /成员权限/);
   assert.match(template, /生命周期与定时/);
@@ -176,8 +179,28 @@ test("AppsCenterView SFC parses cleanly and includes sandboxed iframe workbench,
   assert.match(template, /value="all_members"/);
 });
 
+test("McpClientWizardModal provides 1:1 Gemini Desktop form fields and sandbox warning", () => {
+  const wizardSource = readFileSync(
+    new URL("../src/McpClientWizardModal.vue", import.meta.url),
+    "utf8",
+  );
+  const parsed = parse(wizardSource, { filename: "McpClientWizardModal.vue" });
+  assert.equal(parsed.errors.length, 0);
+  const template = parsed.descriptor.template?.content ?? "";
+  assert.match(template, /Gemini 桌面端/);
+  assert.match(template, /Claude Desktop/);
+  assert.match(template, /Cursor/);
+  assert.match(template, /局域网 \/ Cloud MCP/);
+  assert.match(template, /沙盒设置避坑说明/);
+  assert.match(wizardSource, /轻屿 LightIsle/);
+  assert.match(wizardSource, /\/Applications\/LightIsle\.app\/Contents\/Resources\/core\/lightisled mcp/);
+});
+
 test("App.vue and AppShell.html integrate the Apps Center tab under 生活空间 for both admins and members", () => {
   assert.match(appVueSource, /key:\s*"apps"\s*as\s*Page,\s*title:\s*"应用中心".*group:\s*"space"/);
   assert.match(appVueSource, /validTabs/);
   assert.match(appShellSource, /<AppsCenterView\s+:active="active === 'apps'"/);
+  assert.doesNotMatch(appShellSource, /<AgentConnections/);
+  assert.match(appShellSource, /file-spotlight-pill/);
+  assert.match(appShellSource, /管理员请前往「任务与通知」统一核对/);
 });

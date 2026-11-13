@@ -188,11 +188,11 @@ watch(()=>props.active, active=>{if(active)void reload(true)}, {immediate:true})
         <label><input v-model="enabled" type="checkbox"/> 启用此任务</label>
         <div class="auto-checks"><strong><Bell :size="15"/> 通知事件</strong>
           <label v-for="e in [{id:'failure',name:'执行失败'},{id:'timeout',name:'执行超时'},{id:'success',name:'执行成功'}]" :key="e.id">
-            <input type="checkbox" :checked="events.includes(e.id)" @change="events=flip(events,e.id)"/>{{e.name}}
+            <input type="checkbox" class="isle-checkbox" :checked="events.includes(e.id)" @change="events=flip(events,e.id)"/>{{e.name}}
           </label>
         </div>
         <div class="auto-checks"><strong>通知渠道</strong>
-          <label v-for="ch in available" :key="ch.id"><input type="checkbox" :disabled="!channelIDs.includes(ch.id)" :checked="channels.includes(ch.id)" @change="channels=flip(channels,ch.id)"/>{{ch.label}}<small v-if="!channelIDs.includes(ch.id)">未配置</small></label>
+          <label v-for="ch in available" :key="ch.id"><input type="checkbox" class="isle-checkbox" :disabled="!channelIDs.includes(ch.id)" :checked="channels.includes(ch.id)" @change="channels=flip(channels,ch.id)"/>{{ch.label}}<small v-if="!channelIDs.includes(ch.id)">未配置</small></label>
         </div>
         <div class="auto-actions">
           <IsleButton variant="primary" size="sm" :disabled="busy" @click="save">保存设置</IsleButton>

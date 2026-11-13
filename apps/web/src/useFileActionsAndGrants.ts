@@ -323,7 +323,7 @@ export function useFileActionsAndGrants(options: {
     previewText.value = "";
     previewError.value = "";
     const scopeEpoch = options.rootContextEpoch();
-    if (/\.(txt|md|json|log)$/i.test(item.name)) {
+    if (/\.(txt|md|json|log|ya?ml|toml|csv|xml|ini|conf|sh|py|ts|js|vue|go|swift|css|html)$/i.test(item.name)) {
       try {
         const response = await options.rootFetch(
           options.scopedApiPath("/api/v2/files/preview") + "?path=" + encodeURIComponent(item.path),
@@ -337,8 +337,6 @@ export function useFileActionsAndGrants(options: {
           previewError.value = describeUserFacingError(e);
         }
       }
-    } else if (!/\.(jpe?g|png|gif|webp|heic|heif|pdf|mp4|webm|m4v|mov)$/i.test(item.name)) {
-      previewError.value = "该文件暂不支持在线预览，请下载后使用本机应用打开。";
     }
     if (!isPreviewVideo(item)) {
       showPreviewPlaylist.value = false;

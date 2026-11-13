@@ -134,8 +134,9 @@ const emit = defineEmits<{
     </IsleCard>
 
     <IsleCard
+      v-if="privateAlbums.length > 0 || privateAlbumsError"
       :title="`旧版私人相册 (${privateAlbums.length})`"
-      subtitle="仅当前账号可见，保留原有照片收藏集关联。"
+      subtitle="仅当前账号可见，保留历史照片收藏集关联。"
     >
       <template #icon><Images :size="18" /></template>
       <IsleBanner v-if="privateAlbumsError" type="error" compact role="alert" :message="'私人相册读取失败：' + privateAlbumsError">
@@ -152,12 +153,12 @@ const emit = defineEmits<{
           <strong :title="album.name">{{ album.name }}</strong><small>{{ album.count }} 项 · 仅自己可见</small>
         </button>
       </div>
-      <IsleEmpty v-else-if="!privateAlbumsError" compact :icon="Images" description="还没有私人相册。创建后可将照片加入个人收藏集。" />
     </IsleCard>
 
     <IsleCard
+      v-if="albums.length > 0 || sharedAlbumsError"
       :title="`旧版共享相册 (${albums.length})`"
-      subtitle="家庭成员共同浏览的精选相册。"
+      subtitle="保留历史共享相册记录，新相册建议直接使用上方「文件夹相册」。"
     >
       <template #icon><Images :size="18" /></template>
       <IsleBanner v-if="sharedAlbumsError" type="error" compact role="alert" :message="'共享相册读取失败：' + sharedAlbumsError">
@@ -174,7 +175,6 @@ const emit = defineEmits<{
           <strong :title="album.name">{{ album.name }}</strong><small>{{ album.count }} 项 · 共享</small>
         </button>
       </div>
-      <IsleEmpty v-else-if="!sharedAlbumsError" compact :icon="Images" :description="admin ? '还没有共享相册，可以创建一个与家人共享。' : '管理员创建的共享相册会显示在这里。'" />
     </IsleCard>
   </section>
 </template>

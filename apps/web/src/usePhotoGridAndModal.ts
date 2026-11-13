@@ -1,5 +1,6 @@
 import { computed, nextTick, ref, watch, type ComputedRef, type Ref } from "vue";
 import { createBrowserMediaBackstack } from "./browserMediaBackstack.ts";
+import { pushModalLayer, type ModalLayerHandle } from "./modalStack.ts";
 import { createPhotoTimelineLayout, getPhotoTimelineWindow } from "./photoTimelineLayout.ts";
 import type { MapStripAsset, MapTransport } from "./photoMapTransport.ts";
 import { usePhotoSlideshow } from "./usePhotoSlideshow.ts";
@@ -55,8 +56,25 @@ export function usePhotoGridAndModal<TAsset extends BatchAsset>(options: {
   let resizeObserver: ResizeObserver | undefined;
   let loadObserver: IntersectionObserver | undefined;
   let viewerBackstack: ReturnType<typeof createBrowserMediaBackstack> | null = null;
+  let modalLayerHandle: ModalLayerHandle | null = null;
   let restoreTileFocus = true;
   let windowListenersAttached = false;
+
+  watch(
+    () => options.selected.value,
+    (asset) => {
+      if (asset) {
+        modalLayerHandle?.dispose();
+        modalLayerHandle = pushModalLayer({
+          onEsc: () => closeModal(),
+          lockScroll: true,
+        });
+      } else {
+        modalLayerHandle?.dispose();
+        modalLayerHandle = null;
+      }
+    },
+  );
 
   function attachWindowListeners() {
     if (windowListenersAttached) return;
@@ -264,7 +282,8 @@ export function usePhotoGridAndModal<TAsset extends BatchAsset>(options: {
   }
 
   function modalKeydown(event: KeyboardEvent) {
-    if (!options.selected.value) return;
+    if (!options.selected.value || event.defaultPrevented) return;
+    if (modalLayerHandle && !modalLayerHandle.isTop()) return;
     if (event.key === "Escape") {
       event.preventDefault();
       closeModal();
@@ -352,6 +371,8 @@ export function usePhotoGridAndModal<TAsset extends BatchAsset>(options: {
   }
 
   function unmountGridAndModal() {
+    modalLayerHandle?.dispose();
+    modalLayerHandle = null;
     viewerBackstack?.dispose();
     viewerBackstack = null;
     stopSlideshow();

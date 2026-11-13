@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted } from "vue";
+import { computed, nextTick, onUnmounted, ref, watch } from "vue";
 import { X } from "lucide-vue-next";
+import { pushModalLayer, type ModalLayerHandle } from "./modalStack.ts";
 
 const props = withDefaults(
   defineProps<{
@@ -35,6 +36,10 @@ const emit = defineEmits<{
   (e: "update:open", val: boolean): void;
 }>();
 
+const cardRef = ref<HTMLElement | null>(null);
+let layerHandle: ModalLayerHandle | null = null;
+let previousFocus: HTMLElement | null = null;
+
 const isOpen = computed(() => {
   if (typeof props.open === "boolean") return props.open;
   if (typeof props.modelValue === "boolean") return props.modelValue;
@@ -53,77 +58,116 @@ function onBackdropClick() {
   }
 }
 
-function onKeydown(e: KeyboardEvent) {
-  if (!isOpen.value || !props.closeOnEsc) return;
-  if (e.key === "Escape") {
-    e.preventDefault();
-    e.stopPropagation();
-    handleClose();
+function releaseLayer(restoreFocus = true) {
+  if (layerHandle) {
+    layerHandle.dispose();
+    layerHandle = null;
+  }
+  if (restoreFocus && previousFocus && typeof previousFocus.focus === "function") {
+    const target = previousFocus;
+    previousFocus = null;
+    if (target.isConnected) {
+      void nextTick(() => target.focus());
+    }
+  } else {
+    previousFocus = null;
   }
 }
 
-onMounted(() => {
-  window.addEventListener("keydown", onKeydown);
-});
+watch(
+  isOpen,
+  (openState) => {
+    if (openState) {
+      if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) {
+        previousFocus = document.activeElement;
+      }
+      layerHandle?.dispose();
+      layerHandle = pushModalLayer({
+        onEsc: () => {
+          if (props.closeOnEsc) {
+            handleClose();
+          }
+        },
+        lockScroll: true,
+      });
+      void nextTick(() => {
+        const root = cardRef.value;
+        if (!root) return;
+        const autoTarget = root.querySelector<HTMLElement>("[autofocus]:not([disabled])");
+        if (autoTarget) {
+          autoTarget.focus();
+        } else {
+          root.focus();
+        }
+      });
+    } else {
+      releaseLayer(true);
+    }
+  },
+  { immediate: true }
+);
 
 onUnmounted(() => {
-  window.removeEventListener("keydown", onKeydown);
+  releaseLayer(false);
 });
 </script>
 
 <template>
   <Teleport to="body">
-    <div
-      v-if="isOpen"
-      class="isle-modal-backdrop"
-      :style="zIndex ? { zIndex: typeof zIndex === 'number' ? zIndex : zIndex } : undefined"
-      tabindex="-1"
-      @click.self="onBackdropClick"
-    >
+    <Transition name="isle-modal">
       <div
-        class="isle-modal-card"
-        :class="[`size-${size}`]"
-        :role="role"
-        aria-modal="true"
-        :aria-label="title || undefined"
+        v-if="isOpen"
+        class="isle-modal-backdrop"
+        :style="zIndex ? { zIndex: typeof zIndex === 'number' ? zIndex : zIndex } : undefined"
         tabindex="-1"
+        @click.self="onBackdropClick"
       >
-        <header v-if="$slots.header || title" class="isle-modal-header">
-          <slot name="header">
-            <div class="isle-modal-title-wrap">
-              <span v-if="$slots.icon" class="isle-modal-icon-badge" aria-hidden="true">
-                <slot name="icon" />
-              </span>
-              <div class="isle-modal-headings">
-                <h3 class="isle-modal-title">{{ title }}</h3>
-                <p v-if="description" class="isle-modal-desc">{{ description }}</p>
+        <div
+          ref="cardRef"
+          class="isle-modal-card"
+          :class="[`size-${size}`]"
+          :role="role"
+          aria-modal="true"
+          :aria-label="title || undefined"
+          tabindex="-1"
+        >
+          <header v-if="$slots.header || title" class="isle-modal-header">
+            <slot name="header">
+              <div class="isle-modal-title-wrap">
+                <span v-if="$slots.icon" class="isle-modal-icon-badge" aria-hidden="true">
+                  <slot name="icon" />
+                </span>
+                <div class="isle-modal-headings">
+                  <h3 class="isle-modal-title">{{ title }}</h3>
+                  <p v-if="description" class="isle-modal-desc">{{ description }}</p>
+                </div>
               </div>
-            </div>
-            <div class="isle-modal-header-actions">
-              <slot name="header-actions" />
-              <button
-                v-if="showClose"
-                type="button"
-                class="isle-modal-close-btn"
-                title="关闭 (Esc)"
-                aria-label="关闭弹框"
-                @click="handleClose"
-              >
-                <X :size="16" />
-              </button>
-            </div>
-          </slot>
-        </header>
+              <div class="isle-modal-header-actions">
+                <slot name="header-actions" />
+                <button
+                  v-if="showClose"
+                  type="button"
+                  class="isle-modal-close-btn"
+                  title="关闭 (Esc)"
+                  aria-label="关闭弹框"
+                  @click="handleClose"
+                >
+                  <X :size="16" />
+                </button>
+              </div>
+            </slot>
+          </header>
 
-        <div class="isle-modal-body">
-          <slot />
+          <div class="isle-modal-body">
+            <slot />
+          </div>
+
+          <footer v-if="$slots.footer" class="isle-modal-footer">
+            <slot name="footer" />
+          </footer>
         </div>
-
-        <footer v-if="$slots.footer" class="isle-modal-footer">
-          <slot name="footer" />
-        </footer>
       </div>
-    </div>
+    </Transition>
   </Teleport>
 </template>
 
@@ -154,7 +198,36 @@ onUnmounted(() => {
     0 0 0 1px var(--stroke-subtle, rgba(0, 0, 0, 0.05));
   color: var(--text-primary);
   overflow: hidden;
-  animation: isleModalZoomIn 0.28s cubic-bezier(0.16, 1, 0.3, 1) both;
+  outline: none;
+}
+
+.isle-modal-enter-active {
+  transition: opacity 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.isle-modal-leave-active {
+  transition: opacity 0.16s cubic-bezier(0.32, 0, 0.67, 0);
+}
+.isle-modal-enter-active .isle-modal-card {
+  transition:
+    opacity 0.24s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.24s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.isle-modal-leave-active .isle-modal-card {
+  transition:
+    opacity 0.16s cubic-bezier(0.32, 0, 0.67, 0),
+    transform 0.16s cubic-bezier(0.32, 0, 0.67, 0);
+}
+.isle-modal-enter-from,
+.isle-modal-leave-to {
+  opacity: 0;
+}
+.isle-modal-enter-from .isle-modal-card {
+  opacity: 0;
+  transform: scale(0.96) translateY(8px);
+}
+.isle-modal-leave-to .isle-modal-card {
+  opacity: 0;
+  transform: scale(0.975) translateY(6px);
 }
 
 .isle-modal-card.size-sm {
@@ -231,8 +304,8 @@ onUnmounted(() => {
 }
 
 .isle-modal-close-btn {
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   border-radius: 999px;
   border: 1px solid transparent;
   background: color-mix(in srgb, var(--text-primary) 6%, transparent);
@@ -273,28 +346,6 @@ onUnmounted(() => {
   flex-shrink: 0;
 }
 
-@keyframes isleModalZoomIn {
-  from {
-    opacity: 0;
-    transform: scale(0.96) translateY(8px);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1) translateY(0);
-  }
-}
-
-@keyframes isleModalSlideUp {
-  from {
-    opacity: 0;
-    transform: translateY(100%);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
-}
-
 @media (max-width: 768px) {
   .isle-modal-backdrop {
     padding: 0;
@@ -304,7 +355,10 @@ onUnmounted(() => {
     max-height: 86vh;
     border-radius: 24px 24px 0 0;
     border-bottom: none;
-    animation: isleModalSlideUp 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
+  }
+  .isle-modal-enter-from .isle-modal-card,
+  .isle-modal-leave-to .isle-modal-card {
+    transform: translateY(100%);
   }
   .isle-modal-header {
     padding: 16px 18px 12px;
@@ -318,11 +372,16 @@ onUnmounted(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .isle-modal-card {
-    animation: none !important;
-  }
+  .isle-modal-enter-active,
+  .isle-modal-leave-active,
+  .isle-modal-enter-active .isle-modal-card,
+  .isle-modal-leave-active .isle-modal-card,
   .isle-modal-close-btn {
     transition: none !important;
+  }
+  .isle-modal-enter-from .isle-modal-card,
+  .isle-modal-leave-to .isle-modal-card {
+    transform: none !important;
   }
 }
 </style>

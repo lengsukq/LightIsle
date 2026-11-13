@@ -1,16 +1,16 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, h, ref } from "vue";
+import { computed, defineAsyncComponent, h, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import {
   Activity, ArrowDownToLine, ArrowUpRight, Clapperboard, CloudOff,
-  Folder, HardDrive, Images, LayoutDashboard, Moon, Monitor,
+  Eye, EyeOff, Folder, HardDrive, Images, LayoutDashboard, Moon, Monitor,
   RefreshCcw, Server, Settings2, ShieldCheck, Sun, WifiOff, FileText, FolderPlus,
   UploadCloud, ChevronRight, ChevronLeft, Download, Trash2, CopyCheck,
   Search, LogOut, Sparkles, Laptop, Workflow, LayoutGrid, List, MoreHorizontal, X
 } from "lucide-vue-next";
+import { hasActiveModalLayer, pushModalLayer, type ModalLayerHandle } from "./modalStack.ts";
 import { useShellAppearance } from "./useShellAppearance.ts";
 import { useHostTelemetry } from "./useHostTelemetry.ts";
 import { useAccountSessions } from "./useAccountSessions.ts";
-import AgentConnections from "./AgentConnections.vue";
 import { useAccountManagement } from "./useAccountManagement.ts";
 import { useFileBrowser } from "./useFileBrowser.ts";
 import { useFileUploads } from "./useFileUploads.ts";
@@ -141,17 +141,21 @@ const authServiceError = ref("");
 const user = ref<{ username: string; role: "admin" | "member" } | null>(null);
 const authUsername = ref("");
 const authPassword = ref("");
+const showAuthPassword = ref(false);
 const authError = ref("");
 const authSubmitting = ref(false);
 const showDuplicatesModal = ref(false);
 const shareOutcomeWarning = ref(false);
 const photoBatchOutcomeWarning = ref(false);
 const settingsGroup = ref<SettingsGroup>("account");
+const newFolderInputRef = ref<HTMLInputElement | null>(null);
+const lastCheckedFileIndex = ref<number | null>(null);
+let moreMenuLayer: ModalLayerHandle | null = null;
 
 const settingsGroups = computed(() => {
   const options: Array<{ key: SettingsGroup; label: string }> = [
     { key: "account", label: "账号与安全" },
-    { key: "files", label: "文件与分享" },
+    { key: "files", label: "文件与连接" },
     { key: "cache", label: "缓存管理" },
   ];
   if (user.value?.role === "admin") {
@@ -473,6 +477,106 @@ const {
   theme, atmosphere, atmospheres, sidebarExpanded, moreMenuOpen, fileViewMode,
   setFileViewMode, createFolderOpen, cycleAtmosphere, switchTheme, toggleSidebar,
 } = useShellAppearance();
+
+watch(createFolderOpen, (openState) => {
+  if (openState) void nextTick(() => newFolderInputRef.value?.focus());
+});
+
+watch(filesPath, () => {
+  lastCheckedFileIndex.value = null;
+});
+
+watch(moreMenuOpen, (openState) => {
+  if (openState) {
+    moreMenuLayer?.dispose();
+    moreMenuLayer = pushModalLayer({
+      onEsc: () => { moreMenuOpen.value = false; },
+      lockScroll: true,
+    });
+  } else {
+    moreMenuLayer?.dispose();
+    moreMenuLayer = null;
+  }
+});
+
+function closeOtherFileMenus(except?: HTMLDetailsElement | null) {
+  if (typeof document === "undefined") return;
+  document.querySelectorAll<HTMLDetailsElement>("details.file-entry-more[open]").forEach((el) => {
+    if (el !== except) el.open = false;
+  });
+}
+
+function onFileMenuToggle(event: Event) {
+  const el = event.currentTarget as HTMLDetailsElement | null;
+  if (el?.open) closeOtherFileMenus(el);
+}
+
+function openFileContextMenu(event: MouseEvent) {
+  const row = event.currentTarget as HTMLElement | null;
+  const details = row?.querySelector<HTMLDetailsElement>("details.file-entry-more");
+  if (!details) return;
+  closeOtherFileMenus(details);
+  details.open = true;
+  void nextTick(() => details.querySelector<HTMLElement>("button")?.focus());
+}
+
+function onFileCheckboxClick(entry: FileEntry, index: number, event: MouseEvent) {
+  if (event.shiftKey && lastCheckedFileIndex.value !== null && lastCheckedFileIndex.value !== index) {
+    const start = Math.min(lastCheckedFileIndex.value, index);
+    const end = Math.max(lastCheckedFileIndex.value, index);
+    const targetChecked = !checkedFiles.value.includes(entry.path);
+    const next = new Set(checkedFiles.value);
+    for (let i = start; i <= end; i += 1) {
+      const candidate = fileEntries.value[i];
+      if (!candidate) continue;
+      if (targetChecked) {
+        if (next.size < 50) next.add(candidate.path);
+      } else {
+        next.delete(candidate.path);
+      }
+    }
+    checkedFiles.value = Array.from(next);
+    event.preventDefault();
+  }
+  lastCheckedFileIndex.value = index;
+}
+
+function handleShellPointerDown(event: PointerEvent) {
+  const target = event.target as HTMLElement | null;
+  const insideMenu = target?.closest("details.file-entry-more") as HTMLDetailsElement | null;
+  closeOtherFileMenus(insideMenu);
+}
+
+function handleShellKeydown(event: KeyboardEvent) {
+  if (event.defaultPrevented || hasActiveModalLayer() || !user.value) return;
+  const target = event.target as HTMLElement | null;
+  if (target?.closest("input, textarea, select, [contenteditable='true']")) return;
+  if (active.value === "files" && !showingTrash.value && !filesLoading.value) {
+    if (event.key === "Escape" && checkedFiles.value.length > 0) {
+      event.preventDefault();
+      checkedFiles.value = [];
+      return;
+    }
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "a" && fileEntries.value.length > 0) {
+      event.preventDefault();
+      const slice = fileEntries.value.slice(0, 50).map((item) => item.path);
+      const allChecked = slice.every((p) => checkedFiles.value.includes(p));
+      checkedFiles.value = allChecked ? [] : slice;
+    }
+  }
+}
+
+onMounted(() => {
+  window.addEventListener("pointerdown", handleShellPointerDown, true);
+  window.addEventListener("keydown", handleShellKeydown);
+});
+
+onUnmounted(() => {
+  moreMenuLayer?.dispose();
+  moreMenuLayer = null;
+  window.removeEventListener("pointerdown", handleShellPointerDown, true);
+  window.removeEventListener("keydown", handleShellKeydown);
+});
 
 function clearClientSessionState(expiredMessage = "") {
   resetDiagnostics();

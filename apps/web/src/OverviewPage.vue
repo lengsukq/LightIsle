@@ -41,7 +41,7 @@ const spotlight = computed({
   <!-- 1. Hero with warm welcoming & integrated Spotlight Search -->
   <div class="hero">
     <div class="hero-text">
-      <p class="eyebrow">LIGHTISLE SANCTUARY</p>
+      <p class="eyebrow">轻屿家庭数字空间</p>
       <h1 v-if="identity.isAdmin">管理你的家庭空间，<br /><span>查看这台 Mac 上的轻屿。</span></h1>
       <h1 v-else>欢迎回来，{{ identity.username }}。<br /><span>你的文件与回忆都在这里。</span></h1>
       <p class="hero-desc">{{identity.isAdmin?'查看本机状态、成员空间与家庭影音。':'浏览已授权的文件、相册与家庭影院。'}}</p>

@@ -57,8 +57,8 @@ onMounted(() => {
 
 <template>
   <IsleCard
-    title="Tailscale 零配置异地组网"
-    subtitle="无需公网 IP 或云服务器，开启 Mac 局域网访问后自动双栈绑定本机 100.x 虚拟组网接口与多域名 TLS 证书。"
+    title="远程访问与组网连接（主推方案 + 高级穿透）"
+    subtitle="主推 Tailscale 零配置加密组网：无需公网 IP 或云服务器，开启 Mac 局域网访问后自动双栈绑定本机 100.x 虚拟组网接口与多域名 TLS 证书。"
   >
     <template #icon><Network :size="18" /></template>
     <template #actions>
@@ -69,6 +69,10 @@ onMounted(() => {
     </template>
 
     <div class="ts-body">
+      <div class="ts-recommend-banner">
+        <strong>主推方案：Tailscale 零配置加密组网</strong>
+        <IsleBadge variant="accent" size="sm">推荐日常使用</IsleBadge>
+      </div>
       <IsleBanner v-if="error" type="error" compact :message="error" />
 
       <template v-if="status">
@@ -106,14 +110,34 @@ onMounted(() => {
         </div>
 
         <p class="ts-hint">
-          提示：在 Mac 与手机安装登录同一 Tailscale 账号后，于轻屿 Mac 端打开「网络与连接 → 局域网访问」，即可在异地通过上方地址满速直连看原图与 4K 影片。
+          在 Mac 与手机安装登录同一 Tailscale 账号后，于轻屿 Mac 端打开「网络与连接 → 局域网访问」，即可在异地通过上方地址满速直连看原图与 4K 影片。
         </p>
       </template>
+
+      <details class="apple-disclosure-card">
+        <summary>
+          <div class="disclosure-title"><span>高级穿透选项（Cloudflare Tunnel / FRP）</span></div>
+        </summary>
+        <div class="disclosure-body">
+          <p class="ts-hint" style="margin:0">
+            若需向未安装 Tailscale 的访客提供免客户端域名访问，可在 LightIsle Mac 端「网络与连接」中配置
+            <strong>Cloudflare Tunnel</strong>（支持临时 trycloudflare.com 或自定义域名）或自建 <strong>FRP 客户端（frpc）</strong>。日常个人与家庭使用建议保持以上 Tailscale 主推直连方案，延迟更低且全链路端到端加密。
+          </p>
+        </div>
+      </details>
     </div>
   </IsleCard>
 </template>
 
 <style scoped>
+.ts-recommend-banner {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--text-primary);
+}
 .ts-body {
   display: flex;
   flex-direction: column;

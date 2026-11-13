@@ -158,6 +158,7 @@ export function useAppsCenterController(props: { active?: boolean; admin?: boole
   const lanSseUrl = ref("");
   const mcpLogs = ref<McpCallLogEntry[]>([]);
   const showingMcpDebugModal = ref(false);
+  const showingClientWizard = ref(false);
   const members = ref<AppMemberSummary[]>([]);
   const configuredChannels = ref<string[]>([]);
   const busy = ref(false);
@@ -238,19 +239,92 @@ export function useAppsCenterController(props: { active?: boolean; admin?: boole
     }
   }
 
-  async function toggleMcp() {
+  async function toggleMcp(explicitNext?: boolean) {
     if (busy.value) return;
     busy.value = true;
     error.value = "";
     notice.value = "";
-    const next = !mcpEnabled.value;
+    const next = typeof explicitNext === "boolean" ? explicitNext : !mcpEnabled.value;
     try {
-      const res = await apiClient.setMcpEnabled(next);
+      const res = await apiClient.setMcpConfig(
+        next ? { mcpEnabled: true } : { mcpEnabled: false, mcpLanEnabled: false },
+      );
+      applyAppsPayload(res as unknown as Record<string, unknown>);
       mcpEnabled.value = typeof res.mcpEnabled === "boolean" ? res.mcpEnabled : next;
+      if (!mcpEnabled.value) mcpLanEnabled.value = false;
       if (typeof res.mcpPrompt === "string" && res.mcpPrompt) mcpPrompt.value = res.mcpPrompt;
-      notice.value = mcpEnabled.value ? "已开启 AI Agent (MCP) 开发者服务。" : "已关闭 AI Agent (MCP) 开发者服务。";
+      notice.value = mcpEnabled.value
+        ? "已开启 AI Agent (MCP) 服务（本机免令牌直连已就绪）。"
+        : "已关闭 AI Agent (MCP) 服务，并同步关闭局域网 / Cloud MCP 访问。";
     } catch (e) {
-      error.value = "切换 MCP 开发者服务失败：" + describeUserFacingError(e);
+      error.value = "切换 MCP 服务失败：" + describeUserFacingError(e);
+    } finally {
+      busy.value = false;
+    }
+  }
+
+  async function toggleMcpLan(explicitNext?: boolean) {
+    if (busy.value) return;
+    busy.value = true;
+    error.value = "";
+    notice.value = "";
+    const next = typeof explicitNext === "boolean" ? explicitNext : !mcpLanEnabled.value;
+    try {
+      const res = await apiClient.setMcpConfig({
+        mcpEnabled: next ? true : mcpEnabled.value,
+        mcpLanEnabled: next,
+      });
+      applyAppsPayload(res as unknown as Record<string, unknown>);
+      notice.value = mcpLanEnabled.value
+        ? "已开启局域网 / Cloud MCP 访问，可使用远程 URL 与鉴权 Token 接入。"
+        : "已关闭局域网 / Cloud MCP 访问，当前仅保留本机免令牌直连。";
+    } catch (e) {
+      error.value = "切换局域网 / Cloud MCP 失败：" + describeUserFacingError(e);
+    } finally {
+      busy.value = false;
+    }
+  }
+
+  async function rotateMcpToken() {
+    if (busy.value) return;
+    busy.value = true;
+    error.value = "";
+    notice.value = "";
+    try {
+      const res = await apiClient.rotateMcpToken();
+      applyAppsPayload(res as unknown as Record<string, unknown>);
+      notice.value = "已轮换系统级 MCP Bearer Token，旧 Token 已立即失效。";
+    } catch (e) {
+      error.value = "轮换 MCP Token 失败：" + describeUserFacingError(e);
+    } finally {
+      busy.value = false;
+    }
+  }
+
+  async function refreshMcpLogs() {
+    if (busy.value) return;
+    busy.value = true;
+    error.value = "";
+    try {
+      const res = await apiClient.fetchMcpLogs();
+      mcpLogs.value = Array.isArray(res.logs) ? res.logs : [];
+    } catch (e) {
+      error.value = "读取 MCP 调用日志失败：" + describeUserFacingError(e);
+    } finally {
+      busy.value = false;
+    }
+  }
+
+  async function clearMcpLogs() {
+    if (busy.value) return;
+    busy.value = true;
+    error.value = "";
+    try {
+      await apiClient.clearMcpLogs();
+      mcpLogs.value = [];
+      notice.value = "已清空最近 MCP 调用记录。";
+    } catch (e) {
+      error.value = "清空 MCP 调用日志失败：" + describeUserFacingError(e);
     } finally {
       busy.value = false;
     }
@@ -547,6 +621,7 @@ export function useAppsCenterController(props: { active?: boolean; admin?: boole
     lanSseUrl,
     mcpLogs,
     showingMcpDebugModal,
+    showingClientWizard,
     members,
     configuredChannels,
     busy,
@@ -582,6 +657,10 @@ export function useAppsCenterController(props: { active?: boolean; admin?: boole
     applyAppsPayload,
     reload,
     toggleMcp,
+    toggleMcpLan,
+    rotateMcpToken,
+    refreshMcpLogs,
+    clearMcpLogs,
     copyMcpPrompt,
     handleDebugCopy,
     openApp,

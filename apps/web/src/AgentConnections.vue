@@ -23,6 +23,10 @@ interface ConnectionState {
   lanUrl: string;
 }
 
+const props = defineProps<{
+  compact?: boolean;
+}>();
+
 const endpoint = "/api/v2/auth/mcp-connections";
 const state = ref<ConnectionState>();
 const label = ref("");
@@ -97,19 +101,31 @@ onMounted(() => void run(load));
 </script>
 
 <template>
-  <IsleCard
+  <component
+    :is="props.compact ? 'div' : IsleCard"
     class="agent-connections"
-    aria-label="Agent 接入"
+    :class="{ 'agent-connections-compact': props.compact }"
+    aria-label="Agent 连接令牌"
     title="Agent 接入 (MCP)"
     subtitle="每个连接继承当前账号的目录授权与角色权限（全部调用实时写入操作审计；磁盘格式化、删除存储根与物理粉碎文件已隔离禁止）。令牌有效期 30 天，可随时撤销。"
   >
-    <template #icon><Bot :size="18" /></template>
-    <template #actions>
+    <template v-if="!props.compact" #icon><Bot :size="18" /></template>
+    <template v-if="!props.compact" #actions>
       <IsleButton variant="glass" size="sm" :loading="busy" @click="run(load)">
         <template #icon><RefreshCw :size="14" /></template>
         刷新
       </IsleButton>
     </template>
+    <div v-if="props.compact" class="agent-compact-head">
+      <div>
+        <strong>客户端专属连接令牌</strong>
+        <small>支持多客户端独立撤销（如 Gemini / Cursor / 家庭成员 AI），继承当前账号目录权限，30 天有效。</small>
+      </div>
+      <IsleButton variant="glass" size="sm" :loading="busy" @click="run(load)">
+        <template #icon><RefreshCw :size="14" /></template>
+        刷新
+      </IsleButton>
+    </div>
 
     <div class="agent-body">
       <IsleBanner
@@ -204,7 +220,7 @@ onMounted(() => void run(load));
         </div>
       </div>
     </div>
-  </IsleCard>
+  </component>
 </template>
 
 <style scoped>
@@ -293,5 +309,27 @@ onMounted(() => void run(load));
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+.agent-connections-compact {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.agent-compact-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.agent-compact-head strong {
+  display: block;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+.agent-compact-head small {
+  display: block;
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 </style>

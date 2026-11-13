@@ -56,6 +56,9 @@ const selectedIndex = ref(-1);
 const thumbnailFailed = ref<Record<number, boolean>>({});
 const pendingFavorites = ref<Record<number, boolean>>({});
 const photosPage = ref<HTMLElement | null>(null);
+const privateAlbumInputRef = ref<HTMLInputElement | null>(null);
+const sharedAlbumInputRef = ref<HTMLInputElement | null>(null);
+const albumOrganizerOpen = ref(false);
 const focusedIndex = ref(0);
 const nextCursor = ref(0);
 const viewMode = ref<PhotoViewMode>("timeline");
@@ -244,6 +247,17 @@ function openSmartMemory(mem: SmartMemoryItem) {
     if (yr > 1970) { yearFilter.value = yr; onExifFilterChange(); }
   }
 }
+
+watch(creatingPrivate, (openState) => {
+  if (openState) void nextTick(() => { privateAlbumInputRef.value?.focus(); privateAlbumInputRef.value?.select(); });
+});
+watch(creating, (openState) => {
+  if (openState) void nextTick(() => { sharedAlbumInputRef.value?.focus(); sharedAlbumInputRef.value?.select(); });
+});
+watch(selected, (asset) => {
+  if (!asset) albumOrganizerOpen.value = false;
+  else if (activeAlbum.value || activePrivateAlbum.value) albumOrganizerOpen.value = true;
+});
 
 watch(searchInput, (value) => {
   if (searchTimer) clearTimeout(searchTimer);
@@ -444,9 +458,9 @@ onUnmounted(() => {
       <button type="button" :disabled="albumBusy" @click="editPrivateAlbum(currentPrivateAlbum)"><Pencil :size="14"/> 改名</button>
       <button type="button" :disabled="albumBusy" class="album-delete" @click="deletePrivateAlbum"><Trash2 :size="14"/> 删除</button>
     </div>
-    <form v-if="creatingPrivate" class="album-new" @submit.prevent="savePrivateAlbum">
+    <form v-if="creatingPrivate" class="album-new" @submit.prevent="savePrivateAlbum" @keydown.esc.stop="cancelPrivateAlbum">
       <FolderPlus :size="18"/>
-      <input v-model="privateAlbumName" maxlength="120" aria-label="私人相册名称" placeholder="私人相册名称（最多60个字符）" required/>
+      <input ref="privateAlbumInputRef" v-model="privateAlbumName" maxlength="120" aria-label="私人相册名称" placeholder="私人相册名称（最多60个字符）" required/>
       <button type="submit" :disabled="albumBusy">{{albumBusy?"保存中…":editingPrivate?"保存修改":"创建私人相册"}}</button>
       <button type="button" class="album-cancel" :disabled="albumBusy" @click="cancelPrivateAlbum">取消</button>
     </form>
@@ -455,8 +469,8 @@ onUnmounted(() => {
       <button type="button" :disabled="albumBusy" @click="beginAlbumRename(currentAlbum)"><Pencil :size="14"/>改名</button>
       <button type="button" class="album-delete" :disabled="albumBusy" @click="deleteCurrentAlbum"><Trash2 :size="14"/>删除相册</button>
     </div>
-    <form v-if="admin&&creating" class="album-new" @submit.prevent="createAlbum">
-      <FolderPlus :size="18"/><input v-model="albumName" maxlength="120" aria-label="相册名称，最多60个字符" placeholder="相册名称（最多60个字符）" required/>
+    <form v-if="admin&&creating" class="album-new" @submit.prevent="createAlbum" @keydown.esc.stop="cancelAlbumForm">
+      <FolderPlus :size="18"/><input ref="sharedAlbumInputRef" v-model="albumName" maxlength="120" aria-label="相册名称，最多60个字符" placeholder="相册名称（最多60个字符）" required/>
       <button type="submit" :disabled="albumBusy">{{albumBusy?"保存中…":editingAlbum?"保存修改":"创建"}}</button>
       <button type="button" class="album-cancel" :disabled="albumBusy" @click="cancelAlbumForm">取消</button>
     </form>
@@ -581,6 +595,7 @@ onUnmounted(() => {
     />
 
     <Teleport to="body">
+      <Transition name="isle-overlay-fade">
       <div v-if="selected && props.active !== false" class="dialog-backdrop" @click.self="closeModal()">
         <div ref="galleryDialog" class="gallery-modal" :class="{'gallery-modal--info':viewerInfo}" role="dialog" aria-modal="true" aria-label="照片详细信息" tabindex="-1">
           <div class="gallery-modal-toolbar">
@@ -589,6 +604,7 @@ onUnmounted(() => {
               <button v-if="canWriteAsset(selected)" type="button" :disabled="pendingFavorites[selected.id]" @click="toggleFavorite(selected)" :title="selected.favorite?'取消收藏':'收藏'"><Heart :size="19" :fill="selected.favorite?'currentColor':'none'"/></button>
               <span v-else class="gallery-readonly-favorite">此共享收藏仅可查看</span>
               <button type="button" :disabled="pendingFavorites[selected.id]" @click="togglePersonalFavorite(selected)" :title="selected.personalFavorite?'从我的收藏移除':'加入我的收藏'"><Star :size="19" :fill="selected.personalFavorite?'currentColor':'none'"/></button>
+              <button type="button" :class="{chosen:albumOrganizerOpen}" :aria-expanded="albumOrganizerOpen" title="整理到相册" @click="albumOrganizerOpen=!albumOrganizerOpen"><FolderPlus :size="18"/><span>相册</span></button>
               <button v-if="selected.type==='photo'&&modalAssets.length>1" type="button" @click="toggleSlideshow" :title="slideshow?'暂停幻灯片':'开始幻灯片，每4秒一张'">{{slideshow?'暂停轮播':'幻灯片'}}</button>
               <button type="button" :class="{chosen:viewerInfo}" :aria-expanded="viewerInfo" aria-controls="photo-viewer-info" aria-label="拍摄信息与相册" @click="viewerInfo=!viewerInfo" title="拍摄信息"><Info :size="19"/></button>
               <button v-if="canWriteAsset(selected)" type="button" :disabled="trashBusy" @click="trashPhotos([selected])" title="移入回收站"><Trash2 :size="19"/></button>
@@ -632,30 +648,32 @@ onUnmounted(() => {
             <button v-if="selectedIndex+1<modalAssets.length" type="button" class="viewer-nav next" title="下一张" aria-label="下一张" @click="showAssetAt(selectedIndex+1)"><ChevronRight :size="26"/></button>
           </div>
           </div>
-          <div class="gallery-modal-footer">
+          <div v-if="albumOrganizerOpen || sharedAlbumsError || privateAlbumsError" class="gallery-modal-footer">
             <div v-if="folderAlbums.length" class="private-album-picker">
               <span>文件夹相册</span><AppleSelect v-model="folderTarget" :options="folderAlbumOptions" size="sm" aria-label="选择文件夹相册" />
               <button type="button" :disabled="!folderTarget||albumBusy" @click="addSelectedToFolder('copy')">复制到相册</button>
               <button type="button" :disabled="!folderTarget||albumBusy||!canWriteAsset(selected)" @click="addSelectedToFolder('move')">移动到相册</button>
             </div>
-            <template v-if="admin">
-            <AppleSelect v-model="addAlbum" :options="albumOptions" size="sm" aria-label="选择相册" />
-            <button type="button" :disabled="!addAlbum||albumBusy" @click="addSelected">加入相册 <ChevronDown :size="14"/></button>
-            <button v-if="activeAlbum" type="button" class="album-remove-photo" :disabled="albumBusy" @click="removeSelectedFromAlbum">移出此相册</button>
-            </template>
+            <span v-else class="private-album-hint">可在相册页新建「文件夹相册」，以真实目录整理照片。</span>
+            <div v-if="admin && albums.length" class="private-album-picker">
+              <span>旧版共享相册</span>
+              <AppleSelect v-model="addAlbum" :options="albumOptions" size="sm" aria-label="选择相册" />
+              <button type="button" :disabled="!addAlbum||albumBusy" @click="addSelected">加入 <ChevronDown :size="14"/></button>
+              <button v-if="activeAlbum" type="button" class="album-remove-photo" :disabled="albumBusy" @click="removeSelectedFromAlbum">移出此相册</button>
+            </div>
             <div v-if="sharedAlbumsError&&selected" class="gallery-modal-feedback" role="alert">共享相册读取失败：{{sharedAlbumsError}} <button type="button" class="refresh" :disabled="sharedAlbumsLoading" @click="refreshAlbums">{{sharedAlbumsLoading?"正在重试…":"重试"}}</button></div>
             <div v-if="privateAlbums.length" class="private-album-picker">
-              <span>私人相册</span>
+              <span>旧版私人相册</span>
               <AppleSelect v-model="addPrivateAlbum" :options="privateAlbumOptions" size="sm" aria-label="选择我的私人相册" />
               <button type="button" :disabled="!addPrivateAlbum||albumBusy" @click="addSelectedPrivate">加入 <ChevronDown :size="14"/></button>
             </div>
             <span v-else-if="privateAlbumsError&&selected" class="private-album-hint" role="alert">私人相册读取失败：{{privateAlbumsError}} <button type="button" class="refresh" :disabled="privateAlbumsLoading" @click="refreshPrivateAlbums()">{{privateAlbumsLoading?"正在重试…":"重试"}}</button></span>
-            <span v-else-if="!privateAlbumsError" class="private-album-hint">没有旧版私人相册；可在相册页新建文件夹相册。</span>
             <button v-if="activePrivateAlbum" type="button" class="album-remove-photo" :disabled="albumBusy" @click="removeSelectedPrivate">移出此相册</button>
           </div>
           <p v-if="message" class="gallery-modal-feedback" role="status">{{message}}</p>
         </div>
       </div>
+      </Transition>
     </Teleport>
   </div>
 </template>
