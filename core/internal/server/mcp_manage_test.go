@@ -456,6 +456,56 @@ func TestMCPStdioLoopbackBridgeAndSSERoundtrip(t *testing.T) {
 	if !strings.Contains(sseMessage, f.rootA.ID) || !strings.Contains(sseMessage, `"id":99`) {
 		t.Fatalf("SSE response did not contain list_roots payload: %s", sseMessage)
 	}
+
+	// 4. Gemini sandboxed stdio bridge discovery via sandbox bridge file (Application Support blocked)
+	bridgeFile := filepath.Join(t.TempDir(), "mcp-bridge.json")
+	appsMgr.SetBridgePathsForTest(bridgeFile)
+	t.Setenv("LIGHTISLE_MCP_BRIDGE_FILE", bridgeFile)
+	t.Setenv("LIGHTISLE_CORE_URL", "")
+	blockedDir := filepath.Join(t.TempDir(), "blocked-app-support")
+	if err := os.MkdirAll(blockedDir, 0000); err != nil {
+		t.Fatal(err)
+	}
+	defer os.Chmod(blockedDir, 0700)
+
+	var sandboxOut bytes.Buffer
+	sandboxIn := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}`,
+		`{"jsonrpc":"2.0","method":"notifications/initialized"}`,
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"lightisle_list_roots","arguments":{}}}`,
+	}, "\n") + "\n"
+	if err := apps.RunMCP(context.Background(), blockedDir, "lightisled", strings.NewReader(sandboxIn), &sandboxOut); err != nil {
+		t.Fatalf("sandboxed RunMCP failed: %v", err)
+	}
+	sandboxLines := strings.Split(strings.TrimSpace(sandboxOut.String()), "\n")
+	if len(sandboxLines) != 2 || !strings.Contains(sandboxLines[0], "2025-06-18") || !strings.Contains(sandboxLines[1], f.rootA.ID) {
+		t.Fatalf("expected sandbox bridge to negotiate 2025-06-18 and list roots, got:\n%s", sandboxOut.String())
+	}
+
+	// 5. Streamable HTTP Mcp-Session-Id header & DELETE teardown (Cloud MCP)
+	initReq, _ := http.NewRequest(http.MethodPost, srv.URL+"/api/v2/mcp", strings.NewReader(`{"jsonrpc":"2.0","id":10,"method":"initialize","params":{"protocolVersion":"2025-06-18"}}`))
+	initReq.Header.Set("Authorization", "Bearer "+agentBearer)
+	initReq.Header.Set("Content-Type", "application/json")
+	initReq.Header.Set("Accept", "application/json, text/event-stream")
+	initResp, err := http.DefaultClient.Do(initReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initResp.Body.Close()
+	if initResp.StatusCode != http.StatusOK || initResp.Header.Get("Mcp-Session-Id") == "" {
+		t.Fatalf("expected 200 OK with Mcp-Session-Id header, got %d header=%q", initResp.StatusCode, initResp.Header.Get("Mcp-Session-Id"))
+	}
+	delReq, _ := http.NewRequest(http.MethodDelete, srv.URL+"/api/v2/mcp", nil)
+	delReq.Header.Set("Authorization", "Bearer "+agentBearer)
+	delReq.Header.Set("Mcp-Session-Id", initResp.Header.Get("Mcp-Session-Id"))
+	delResp, err := http.DefaultClient.Do(delReq)
+	if err != nil {
+		t.Fatal(err)
+	}
+	delResp.Body.Close()
+	if delResp.StatusCode != http.StatusNoContent {
+		t.Fatalf("expected DELETE /api/v2/mcp -> 204 No Content, got %d", delResp.StatusCode)
+	}
 }
 
 func mustJSON(v any) string {

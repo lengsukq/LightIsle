@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -73,7 +74,7 @@ func RunMCP(ctx context.Context, dataDir, execPath string, in io.Reader, out io.
 		if len(req.ID) == 0 || string(req.ID) == "null" || strings.HasPrefix(req.Method, "notifications/") {
 			continue
 		}
-		if isMCPEnabledOnDisk(dataDir) {
+		if shouldTryDaemonBridge(dataDir) {
 			if bridged, ok := forwardStdioToLocalDaemon(ctx, dataDir, line); ok {
 				_, _ = out.Write(append(bridged, '\n'))
 				continue
@@ -85,58 +86,99 @@ func RunMCP(ctx context.Context, dataDir, execPath string, in io.Reader, out io.
 	return scanner.Err()
 }
 
+func shouldTryDaemonBridge(dataDir string) bool {
+	if dataDir != "" {
+		cfg, err := readSystemConfigFile(filepath.Join(dataDir, "apps-config.json"))
+		if err == nil {
+			if cfg.MCPEnabled {
+				return true
+			}
+			// Explicit on-disk apps-config.json with MCPEnabled=false without sandbox error: honor offline toggle check.
+			return len(readSandboxBridgeTargets()) > 0
+		}
+		// Non-NotExist error (e.g. Gemini Desktop sandbox EPERM/EACCES blocking Application Support): allow bridge discovery.
+		if !errors.Is(err, os.ErrNotExist) {
+			return true
+		}
+	}
+	return len(readSandboxBridgeTargets()) > 0
+}
+
 func forwardStdioToLocalDaemon(ctx context.Context, dataDir string, rawRPC []byte) ([]byte, bool) {
-	tokenBytes, err := os.ReadFile(filepath.Join(dataDir, ".mcp-reload-token"))
-	if err != nil {
+	var targets []mcpBridgePayload
+	seen := make(map[string]struct{}, 4)
+	addTarget := func(localURL, token string) {
+		localURL = strings.TrimRight(strings.TrimSpace(localURL), "/")
+		token = strings.TrimSpace(token)
+		if localURL == "" || token == "" {
+			return
+		}
+		key := localURL + "|" + token
+		if _, ok := seen[key]; ok {
+			return
+		}
+		seen[key] = struct{}{}
+		targets = append(targets, mcpBridgePayload{LocalURL: localURL, Token: token})
+	}
+	if dataDir != "" {
+		if tokenBytes, err := os.ReadFile(filepath.Join(dataDir, ".mcp-reload-token")); err == nil {
+			baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("LIGHTISLE_CORE_URL")), "/")
+			if baseURL == "" {
+				baseURL = "http://127.0.0.1:16666"
+			}
+			addTarget(baseURL, string(tokenBytes))
+		}
+	}
+	for _, b := range readSandboxBridgeTargets() {
+		if envBase := strings.TrimRight(strings.TrimSpace(os.Getenv("LIGHTISLE_CORE_URL")), "/"); envBase != "" && isLoopbackBridgeURL(envBase) {
+			addTarget(envBase, b.Token)
+		}
+		addTarget(b.LocalURL, b.Token)
+	}
+	if len(targets) == 0 {
 		return nil, false
 	}
-	token := strings.TrimSpace(string(tokenBytes))
-	if token == "" {
-		return nil, false
-	}
-	baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("LIGHTISLE_CORE_URL")), "/")
-	if baseURL == "" {
-		baseURL = "http://127.0.0.1:16666"
-	}
+
 	reqCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, baseURL+"/api/v2/mcp", bytes.NewReader(rawRPC))
-	if err != nil {
-		return nil, false
+	for _, target := range targets {
+		httpReq, err := http.NewRequestWithContext(reqCtx, http.MethodPost, target.LocalURL+"/api/v2/mcp", bytes.NewReader(rawRPC))
+		if err != nil {
+			continue
+		}
+		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Accept", "application/json, text/event-stream")
+		httpReq.Header.Set("Authorization", "Bearer "+target.Token)
+		httpReq.Header.Set("X-LightIsle-MCP-Token", target.Token)
+		httpReq.Header.Set("X-LightIsle-MCP-Transport", "stdio")
+		httpReq.Header.Set("X-LightIsle-Request", "1")
+		resp, err := http.DefaultClient.Do(httpReq)
+		if err != nil {
+			continue
+		}
+		rawResp, readErr := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+		resp.Body.Close()
+		if readErr != nil || resp.StatusCode != http.StatusOK {
+			continue
+		}
+		trimmed := bytes.TrimSpace(rawResp)
+		if len(trimmed) == 0 {
+			continue
+		}
+		var envelope struct {
+			JSONRPC string `json:"jsonrpc"`
+		}
+		if json.Unmarshal(trimmed, &envelope) != nil || envelope.JSONRPC != "2.0" {
+			continue
+		}
+		// Collapse into a single line as required by MCP stdio JSON-RPC framing.
+		var compact bytes.Buffer
+		if json.Compact(&compact, trimmed) == nil {
+			return compact.Bytes(), true
+		}
+		return trimmed, true
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+token)
-	httpReq.Header.Set("X-LightIsle-MCP-Token", token)
-	httpReq.Header.Set("X-LightIsle-MCP-Transport", "stdio")
-	httpReq.Header.Set("X-LightIsle-Request", "1")
-	resp, err := http.DefaultClient.Do(httpReq)
-	if err != nil {
-		return nil, false
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, false
-	}
-	rawResp, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
-	if err != nil {
-		return nil, false
-	}
-	trimmed := bytes.TrimSpace(rawResp)
-	if len(trimmed) == 0 {
-		return nil, false
-	}
-	var envelope struct {
-		JSONRPC string `json:"jsonrpc"`
-	}
-	if json.Unmarshal(trimmed, &envelope) != nil || envelope.JSONRPC != "2.0" {
-		return nil, false
-	}
-	// Collapse into a single line as required by MCP stdio JSON-RPC framing.
-	var compact bytes.Buffer
-	if json.Compact(&compact, trimmed) == nil {
-		return compact.Bytes(), true
-	}
-	return trimmed, true
+	return nil, false
 }
 
 // ExecuteMCPJSONRPC handles a single JSON-RPC 2.0 request (or notification) over HTTP/SSE/IPC
@@ -239,14 +281,27 @@ func isMCPEnabledOnDisk(dataDir string) bool {
 	return cfg.MCPEnabled
 }
 
+func negotiateMCPProtocolVersion(requested string) string {
+	switch strings.TrimSpace(requested) {
+	case "2024-11-05", "2025-03-26", "2025-06-18", "2025-11-25":
+		return strings.TrimSpace(requested)
+	default:
+		return "2025-06-18"
+	}
+}
+
 func handleMCPRequest(ctx context.Context, dataDir, execPath string, mgr *Manager, req jsonRPCRequest) jsonRPCResponse {
 	switch req.Method {
 	case "initialize":
+		var params struct {
+			ProtocolVersion string `json:"protocolVersion"`
+		}
+		_ = json.Unmarshal(req.Params, &params)
 		return jsonRPCResponse{
 			JSONRPC: "2.0",
 			ID:      req.ID,
 			Result: map[string]any{
-				"protocolVersion": "2024-11-05",
+				"protocolVersion": negotiateMCPProtocolVersion(params.ProtocolVersion),
 				"capabilities": map[string]any{
 					"resources": map[string]any{},
 					"tools":     map[string]any{},
@@ -255,6 +310,7 @@ func handleMCPRequest(ctx context.Context, dataDir, execPath string, mgr *Manage
 					"name":    "lightisle-mcp",
 					"version": "2.0.0",
 				},
+				"instructions": "LightIsle 全功能管理与控制 MCP：可读取系统/磁盘状态、文件与回收站、相册影视、下载、成员与轻应用配置；若客户端运行于沙盒中且未桥接到本机 LightIsle 守护进程，请确认 LightIsle.app 正在运行并已开启 AI Agent (MCP) 服务。",
 			},
 		}
 	case "ping":

@@ -668,7 +668,7 @@ func verifyActivationPreconditions(
 	dataDir string,
 	stage string,
 	expectedManifestSHA256 string,
-) ([]ManifestEntry, error) {
+) ([]File, error) {
 	if err := validatePrivateOwnedDir(dataDir); err != nil {
 		return nil, err
 	}
@@ -694,7 +694,7 @@ func verifyActivationPreconditions(
 func stageActivationInstallFiles(
 	root *os.Root,
 	stage string,
-	entries []ManifestEntry,
+	entries []File,
 	p *activationPlan,
 ) (*os.Root, error) {
 	sourceRoot, err := root.OpenRoot(stage)

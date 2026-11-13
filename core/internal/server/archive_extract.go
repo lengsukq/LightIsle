@@ -175,7 +175,7 @@ func (a *API) decodeAndAuthorizeZipTarget(w http.ResponseWriter, r *http.Request
 	return srcPath, baseTarget, true
 }
 
-func (a *API) openBoundedZipReader(w http.ResponseWriter, srcPath string) (files.ReadSeekCloser, *zip.Reader, bool) {
+func (a *API) openBoundedZipReader(w http.ResponseWriter, srcPath string) (*os.File, *zip.Reader, bool) {
 	zipFile, zipInfo, err := a.files.Read(srcPath)
 	if err != nil {
 		fileError(w, err)

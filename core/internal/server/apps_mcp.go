@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -54,6 +55,11 @@ func newMCPSSEHub() *mcpSSEHub {
 	return &mcpSSEHub{
 		sessions: make(map[string]*mcpSSESession, maxMCPSSESessions),
 	}
+}
+
+func (h *mcpSSEHub) sessionHeaderForKey(ownerKey string) string {
+	sum := sha256.Sum256([]byte("lightisle-mcp:" + ownerKey))
+	return hex.EncodeToString(sum[:16])
 }
 
 func (h *mcpSSEHub) sweepExpiredLocked(now time.Time) {
@@ -558,8 +564,18 @@ func handleHTTPMCPEndpoint(
 		return
 	}
 
+	if r.Method == http.MethodDelete {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
 	if r.Method != http.MethodPost {
+		w.Header().Set("Allow", "GET, POST, DELETE")
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if version := strings.TrimSpace(r.Header.Get("MCP-Protocol-Version")); version != "" && !managementMCPVersion(version) {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "mcp_unsupported_protocol_version"})
 		return
 	}
 
@@ -592,8 +608,21 @@ func handleHTTPMCPEndpoint(
 	}
 
 	respBytes, hasResp := execRPC(transport, rawBody)
+	if sessionID := strings.TrimSpace(r.Header.Get("Mcp-Session-Id")); sessionID != "" {
+		w.Header().Set("Mcp-Session-Id", sessionID)
+	} else {
+		w.Header().Set("Mcp-Session-Id", sseHub.sessionHeaderForKey(sseOwnerKey))
+	}
 	if !hasResp {
 		w.WriteHeader(http.StatusAccepted)
+		return
+	}
+	accept := strings.ToLower(r.Header.Get("Accept"))
+	if strings.Contains(accept, "text/event-stream") && !strings.Contains(accept, "application/json") && !strings.Contains(accept, "*/*") {
+		w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
+		w.Header().Set("Cache-Control", "no-cache")
+		w.WriteHeader(http.StatusOK)
+		fmt.Fprintf(w, "event: message\ndata: %s\n\n", bytes.TrimSpace(respBytes))
 		return
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")

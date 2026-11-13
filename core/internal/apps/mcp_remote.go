@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -114,6 +115,7 @@ func (m *Manager) SetEndpointProvider(fn func() (localURL, lanURL string)) {
 	m.mu.Lock()
 	m.endpointFn = fn
 	m.mu.Unlock()
+	m.SyncSandboxBridge()
 }
 
 func (m *Manager) Endpoints() (localURL, lanURL string) {
@@ -241,6 +243,7 @@ func (m *Manager) SetMCPConfig(mcpEnabled, mcpLanEnabled *bool) (AppsSystemConfi
 	} else {
 		_ = os.Remove(m.reloadTokenPath)
 	}
+	m.SyncSandboxBridge()
 	return cfg, nil
 }
 
@@ -277,6 +280,7 @@ func (m *Manager) RotateMCPToken() (string, error) {
 	if err := os.WriteFile(m.reloadTokenPath, []byte(token+"\n"), 0600); err != nil {
 		return "", err
 	}
+	m.SyncSandboxBridge()
 	return token, nil
 }
 
@@ -296,10 +300,30 @@ func (m *Manager) VerifyReloadToken(token string) bool {
 	return subtle.ConstantTimeCompare([]byte(token), []byte(expected)) == 1
 }
 
+func (m *Manager) isDefaultDataDir() bool {
+	if strings.TrimSpace(m.dataDir) == "" {
+		return true
+	}
+	if root, err := os.UserConfigDir(); err == nil && root != "" {
+		return filepath.Clean(m.dataDir) == filepath.Clean(filepath.Join(root, "LightIsle"))
+	}
+	return false
+}
+
+func (m *Manager) mcpArgs() []string {
+	if m.isDefaultDataDir() {
+		return []string{"mcp"}
+	}
+	return []string{"mcp", "--data-dir", m.dataDir}
+}
+
 func (m *Manager) MCPCommand() string {
 	bin := m.execPath
 	if bin == "" {
 		bin = "/Applications/LightIsle.app/Contents/Resources/core/lightisled"
+	}
+	if m.isDefaultDataDir() {
+		return bin + " mcp"
 	}
 	return fmt.Sprintf("%s mcp --data-dir %q", bin, m.dataDir)
 }
@@ -351,7 +375,7 @@ func (m *Manager) MCPClientConfigJSON(lanBaseURL string) string {
 		"mcpServers": map[string]any{
 			"lightisle-local": map[string]any{
 				"command": bin,
-				"args":    []string{"mcp", "--data-dir", m.dataDir},
+				"args":    m.mcpArgs(),
 			},
 			"lightisle-lan": map[string]any{
 				"type": "streamable-http",

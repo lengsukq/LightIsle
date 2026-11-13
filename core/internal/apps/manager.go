@@ -51,6 +51,8 @@ type Manager struct {
 	sessionGrants                                                              map[string]sessionGrant
 	cookieSecret                                                               []byte
 	reapInterval                                                               time.Duration
+	sandboxBridgeEnabled                                                       bool
+	bridgePaths                                                                []string
 	stopCh                                                                     chan struct{}
 	wg                                                                         sync.WaitGroup
 	closed                                                                     bool
@@ -194,6 +196,7 @@ func (m *Manager) Close() error {
 		inst.Close()
 	}
 	m.wg.Wait()
+	m.ClearSandboxBridge()
 	return nil
 }
 

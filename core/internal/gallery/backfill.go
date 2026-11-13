@@ -91,7 +91,7 @@ func (l *Library) backfillTick() (int, bool) {
 		}
 	}
 	l.refreshBackfillStatus(share)
-	return processed, true
+	return processed, processed > 0
 }
 
 // backfillRow re-derives one row's capture columns. Failures still stamp the
@@ -99,6 +99,9 @@ func (l *Library) backfillTick() (int, bool) {
 // next pass, and rescans re-extract when mtime or size actually changes. The
 // modified/size guards keep the update from racing a concurrent rescan.
 func (l *Library) backfillRow(share string, id int64, assetPath, name, kind string, size, modified int64) bool {
+	if l.worker == nil && (kind == "video" || (kind == "photo" && isWorkerPhoto(name))) {
+		return false
+	}
 	ctx, cancel := l.operationContext(nil)
 	defer cancel()
 	probe, taken := l.captureForAsset(ctx, assetPath, name, kind, size, modified)

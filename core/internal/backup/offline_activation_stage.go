@@ -13,7 +13,7 @@ func inspectLiveAndStageEntry(
 	root *os.Root,
 	sourceRoot *os.Root,
 	installRoot *os.Root,
-	entry ManifestEntry,
+	entry File,
 	originalBytes *int64,
 ) (activationFile, error) {
 	_, originalErr := root.Lstat(entry.Path)
@@ -52,7 +52,7 @@ func inspectLiveAndStageEntry(
 	}, nil
 }
 
-func copyVerifiedStageEntry(sourceRoot, installRoot *os.Root, entry ManifestEntry) error {
+func copyVerifiedStageEntry(sourceRoot, installRoot *os.Root, entry File) error {
 	src, err := sourceRoot.Open(entry.Path)
 	if err != nil {
 		return err

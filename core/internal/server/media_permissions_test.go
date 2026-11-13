@@ -48,8 +48,8 @@ func TestMediaMemberScopedBeforePaginationAndPerAssetRequest(t *testing.T) {
 		if err := shared.Mkdir(dir); err != nil {
 			t.Fatal(err)
 		}
-		for _, ext := range []string{"mp4", "jpg"} {
-			if _, err := shared.Upload(dir+"/sample."+ext, bytes.NewBufferString("media-fixture-"+dir)); err != nil {
+		for _, name := range []string{"video.mp4", "sample.jpg"} {
+			if _, err := shared.Upload(dir+"/"+name, bytes.NewBufferString("media-fixture-"+dir)); err != nil {
 				t.Fatal(err)
 			}
 		}

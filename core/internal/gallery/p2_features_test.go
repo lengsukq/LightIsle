@@ -11,8 +11,8 @@ import (
 )
 
 func TestLivePhotoPairingMemoriesAndPersonShare(t *testing.T) {
-	shareDir := t.TempDir()
 	dataDir := t.TempDir()
+	shareDir := filepath.Join(dataDir, "SharedFiles")
 
 	userPhotos := filepath.Join(shareDir, "Users", "u1", "photos")
 	if err := os.MkdirAll(userPhotos, 0700); err != nil {
@@ -31,7 +31,7 @@ func TestLivePhotoPairingMemoriesAndPersonShare(t *testing.T) {
 		}
 	}
 
-	store, err := files.NewManagerWithShare(dataDir, shareDir)
+	store, err := files.NewManager(dataDir)
 	if err != nil {
 		t.Fatal(err)
 	}

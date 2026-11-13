@@ -3,6 +3,8 @@ package apps
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -126,5 +128,42 @@ func TestMCPLanConfigTokenRotationAndDebugTools(t *testing.T) {
 	}
 	if cfgOff.MCPEnabled || cfgOff.MCPLanEnabled {
 		t.Fatalf("expected both flags false after disabling MCP, got %+v", cfgOff)
+	}
+}
+
+func TestMCPSandboxBridgeLifecycle(t *testing.T) {
+	dataDir := t.TempDir()
+	bridgePath := filepath.Join(t.TempDir(), "cache", "mcp-bridge.json")
+	mgr := NewManager(dataDir, "lightisled", nil)
+	defer mgr.Close()
+	mgr.SetBridgePathsForTest(bridgePath)
+	mgr.SetEndpointProvider(func() (string, string) {
+		return "http://127.0.0.1:17777", ""
+	})
+	if err := mgr.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(bridgePath); !os.IsNotExist(err) {
+		t.Fatalf("expected no sandbox bridge file while MCP is disabled, got err=%v", err)
+	}
+
+	enabled := true
+	if _, err := mgr.SetMCPConfig(&enabled, nil); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(bridgePath)
+	if err != nil {
+		t.Fatalf("expected sandbox bridge file when MCP is enabled: %v", err)
+	}
+	if !strings.Contains(string(raw), "127.0.0.1:17777") || !strings.Contains(string(raw), mgr.ReadMCPToken()) {
+		t.Fatalf("unexpected bridge payload: %s", string(raw))
+	}
+
+	disabled := false
+	if _, err := mgr.SetMCPConfig(&disabled, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(bridgePath); !os.IsNotExist(err) {
+		t.Fatalf("expected sandbox bridge file removed when MCP is disabled, got err=%v", err)
 	}
 }

@@ -243,6 +243,7 @@ func main() {
 		}
 		return localBase, ""
 	})
+	appsManager.EnableSandboxBridge()
 
 	rootCommands := newDaemonRootControl(dataDir, rootRegistry, accountStore, rootServer, taskJournal, backupService, backupSchedule)
 	defer rootCommands.Close()
@@ -306,12 +307,11 @@ func runMCPSubcommand(args []string) {
 		dir = os.Getenv("LIGHTISLE_DATA_DIR")
 	}
 	if dir == "" {
-		root, err := os.UserConfigDir()
-		if err != nil {
-			fmt.Fprintln(os.Stderr, "cannot locate application support:", err)
-			os.Exit(exitCriticalData)
+		if root, err := os.UserConfigDir(); err == nil && root != "" {
+			dir = filepath.Join(root, "LightIsle")
+		} else if home, herr := os.UserHomeDir(); herr == nil && home != "" {
+			dir = filepath.Join(home, "Library", "Application Support", "LightIsle")
 		}
-		dir = filepath.Join(root, "LightIsle")
 	}
 	execPath, _ := os.Executable()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -562,7 +562,7 @@ func syncInitialRootGenerations(ctx context.Context, rootRegistry *roots.Registr
 type ipcCommandDispatcher struct {
 	dataDir                 string
 	port                    int
-	localDiagnostics        *diagnostics.Recorder
+	localDiagnostics        *diagnostics.Logger
 	accountStore            *auth.Store
 	rootRegistry            *roots.Registry
 	rootServer              *server.RootServer
