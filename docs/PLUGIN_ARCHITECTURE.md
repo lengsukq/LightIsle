@@ -218,24 +218,24 @@ core/internal/apps/
   - **MCP 控制台与调试**：提供本机 Stdio MCP 与局域网 HTTP/SSE MCP 双开关、Bearer Token 查看/复制/轮换、一键复制本机/局域网提示词与 `mcpServers` JSON、**MCP 交互式调试器（MCP Inspector，支持动态拉取并调用全量 82 个系统管理与插件开发工具）**、**轻应用网关 HTTP 探针（Gateway Probe）** 以及 **MCP 实时调用追踪日志（最近 50 条）**。
 - **Web 与 Flutter 管理员视图**：
   - 查看实时状态（`静态就绪 0 MB` / `休眠中 0 MB` / `运行中 28 MB`）、活跃连接数与授权范围徽章；
-  - 提供本机与局域网 MCP 开关、Token 轮换、提示词复制、成员权限分配、生命周期抽屉、各账户独立 Agent 连接令牌（`AgentConnections.vue`），以及内嵌的**「局域网 MCP 与调试台」**弹窗（动态加载 `tools/list` 全量 82 个管理与插件工具、发送网关 HTTP 探针与查看/清空调用追踪日志）。
+  - 聚焦家庭轻应用管理与内嵌工作台：提供应用数据存储位置（最多 1 个内置盘 + 1 个其他盘）槽位管理、官方内置模板一键安装、成员权限分配、生命周期抽屉及 `plugin-data` 一致性备份与恢复（MCP 服务开关、令牌轮换、调试台与脚手架已统一收敛至 macOS 原生客户端）。
 
 ---
 
 ## 七、全功能管理与开发者 MCP Server（Unified `lightisle-mcp` v2.0）
 
 ```bash
-# 方式 1：本机 Stdio 接入（优先通过回环桥接运行中的 lightisled 守护进程，共享全部 82 个管理与开发工具）
+# 方式 1：本机 Stdio 接入（优先通过回环桥接运行中的 lightisled 守护进程，共享全部 89 个管理与开发工具）
 lightisled mcp --data-dir "$HOME/Library/Application Support/LightIsle"
 
-# 方式 2：局域网 Streamable HTTP / SSE 远程接入（支持管理员 MCP Token 或各账户独立 li_mcp_... 令牌）
+# 方式 2：局域网 Streamable HTTP / SSE 远程接入（携带 macOS 管理端统一 MCP Bearer Token）
 POST http://<Mac-LAN-IP>:16666/api/v2/mcp
 GET  http://<Mac-LAN-IP>:16666/api/v2/mcp/sse
-Authorization: Bearer <MCP_TOKEN_OR_LI_MCP_TOKEN>
+Authorization: Bearer <MCP_TOKEN>
 ```
 
 ### 7.1 开关控制、身份分级、强制审计与极高危隔离边界
-- **持久化与三端同步**：系统级开关保存在 `<DataDir>/apps-config.json`（`{"mcpEnabled": false, "mcpLanEnabled": false}`，**默认全部关闭**）。管理员可在 **macOS 原生 App**、**Web 应用中心** 或 **Flutter 应用中心** 随时开启/关闭（`PUT /api/v2/apps/mcp`）或轮换 256-bit 管理员令牌（`POST /api/v2/apps/mcp/token/rotate`）；普通 `/api/v2/apps` 响应绝不附带 `mcpToken` 明文（仅专用 `/api/v2/apps/mcp` 接口对已认证管理员返回）。此外，家庭成员与管理员均可在「设置 → Agent 连接」签发独立可撤销的 `li_mcp_...` 令牌（`POST /api/v2/auth/mcp-connections`，支持只读 `canWrite=false` 或读写 `canWrite=true`）。
+- **macOS 原生私有 IPC 统一管控**：系统级开关保存在 `<DataDir>/apps-config.json`（`{"mcpEnabled": false, "mcpLanEnabled": false}`，**默认全部关闭**）。管理员仅通过 **macOS 原生 App**（「Docker 与应用 → MCP 控制台与调试」，走本机私有 IPC `apps set-mcp-config` / `rotate-mcp-token`）开启或关闭服务、轮换 256-bit 管理员令牌与调试工具；HTTP `/api/v2/apps` 绝不附带 `mcpToken` 或 MCP 管理状态，历史 HTTP MCP 管理与多账户连接端点已下线。
 - **局域网与反代阻断边界**：`/api/v2/mcp*` 仅允许本机回环（`127.0.0.1`/`::1`）及 RFC1918/ULA 私有局域网地址直连；凡公网来源 IP 或携带 `Forwarded`、`X-Forwarded-*`、`CF-Connecting-IP`、`X-Real-IP` 等反向代理头的请求一律返回 `403 mcp_lan_only`，防止经本机 Cloudflare/FRP 隧道绕过局域网限制。
 - **全量持久审计与脱敏追踪**：每一次 `tools/call`（无论只读查询还是配置修改）均通过 `BeginMCPAudit` → `FinishMCPAudit` 记入 SQLite `audit_events` 持久审计表，并同步写入 `mcp-debug-log.json`（最近 50 条，自动对 `password`、`secret`、`token`、URL 查询串/磁力链接、`env.json` 与 `content` 文件正文脱敏）。
 - **极高危操作硬隔离（永不向 MCP 开放）**：严禁开放磁盘抹除/格式化/分区、存储根注销删除（`DELETE /roots/{id}`）、回收站永久物理清空（文件删除仅提供移入可恢复回收站的 `lightisle_move_to_trash`）、任意宿主机 Shell 命令执行、密码哈希或 Mac Keychain 凭据读取（SMTP/Bark/Cloudflare/TMDB 等）、停用管理员账户或重置管理员密码，以及未激活插件自批准（`pendingActivation: true` 仍必须在 UI 显式确认）。

@@ -4,6 +4,24 @@
 
 已实施的资源回收和并发保护统一记录在本页。**代码/合成基准通过不等于长期实盘性能达标**；重要数据仍需独立备份。
 
+### 2026-11-13 首屏热路径读写双池解耦、N+1 消除与四端切页流畅度打磨
+
+基于 darwin arm64 / Go 1.26.1 / Swift 6 的本地微基准与回归实测（`go test -bench -benchmem -benchtime=500ms`，仅覆盖合成样本下的局部函数与热路径，**不外推为整进程常驻 RSS 降幅或 24–72 小时真机性能结论**）：
+
+| 局部测量项 | 优化前 | 优化后 | 口径与边界 |
+| --- | --- | --- | --- |
+| `auth/BenchmarkHotPath_FirstScreenUnderWriteContention`（后台活跃写事务下并发 `/me/storage` + 成员目录鉴权） | 820,650 ns/op（20,846 B/op） | **84,022 ns/op**（19,122 B/op，延迟 **-89.8%**） | 仅纯只读查询切至 4 连接 `readDB()`（`query_only=ON`），写事务与 TOCTOU 变更前校验继续串行于单写库 `db`；`StoragePolicy` 5 次 SQL 合并为 3 次，`enforcement=pending` 不变 |
+| `gallery/BenchmarkHotPath_ListPersons60`（60 人物相册列表聚合） | 218,214 ns/op（54,934 B/op，1,260 allocs/op） | **113,119 ns/op**（**19,703 B/op**，**300 allocs/op**） | 外层单次 `LEFT JOIN asset_faces` 消除逐人 `SELECT asset_id` N+1 查询并改走 `readDB()` |
+| `gallery/BenchmarkHotPath_GalleryReadsUnderWriteContention`（后台写事务下并发时间轴/筛选项/人脸框读取） | 362,439 ns/op（9,447 B/op） | **117,429 ns/op**（9,376 B/op，延迟 **-67.6%**） | 缩略图校验、时间轴、EXIF 筛选项、相册、地理聚合、相似图与 `AIStatus` 纯读路径统一切至 `readDB()` |
+| `automation/BenchmarkReadEnv20Keys`（20 键 `env.json` 校验解析） | 256,646 ns/op（1,060,109 B/op，14,745 allocs/op） | **15,197 ns/op**（**5,001 B/op**，**63 allocs/op**） | 将循环内 `regexp.MustCompile` 提升为包级预编译变量 `envKeyRule` |
+
+本轮四端同步落地的首屏与切页渲染优化：
+
+- **Go Core**：`cinema` 剧集列表/详情切至 `readDB()` 并下推续播点 `LIMIT 1`；`VerifyDAVCredential` 在 `60s` 窗口内跳过重复 `last_used_at` 写锁；`serveCachedJPEG` 与 `ServeIcon` 命中 `If-None-Match` 直接返回 `304 Not Modified`（省去 `Seek` 及冗余 `Stat`）；Web 静态构建产物 `assets/*` 设为 `public, max-age=31536000, immutable` + `ETag`，`index.html` 设为 `no-cache` + `ETag` + `304`（`/api/v2/*` 保持 `no-store`）；多外置盘容积探测改为并发采集。
+- **Web**：清零全站 `transition: all`、空闲无限背景关键帧与网格卡片局部 `backdrop-filter`；新增单例 `Intl.DateTimeFormat` 有界缓存（`dateTimeFormat.ts`）与影院标题去重 `computed` 映射；`AppleSelect`、`useCinemaDockDrag`、`usePhotoTimelineScrubber` 统一使用 `{ passive: true }`、首帧缓存 `DOMRect` 与 `requestAnimationFrame` 合帧；独立卡片启用 `content-visibility: auto` 与 `decoding="async"`；保持 `PhotosView`/`CinemaView` 单根 `v-show` 保活，统一主/子视图、弹层与多选 HUD 阻尼过渡并全量覆盖 `prefers-reduced-motion: reduce`。
+- **Flutter**：新增 `isle_route.dart`（桌面端阻尼微缩放+淡入、Android 预测返回、iOS 边缘侧滑返回、减弱动态效果直切），替换全仓 42 处裸 `MaterialPageRoute`；`RepaintBoundary` 扩展至 36 处隔离顶底毛玻璃栏、播放进度条与大滚动视口；`IsleFluidTabSwitcher` 支持连点打断平滑衔接与静止态零活跃 Ticker；`OverviewPage` 5s 轮询数据未变时零重建，`PhotosPage`/`CinemaPage` SWR 缓存命中零闪烁直出。
+- **macOS Swift**：新增 `IsleFormatters` 静态共享格式化器与 `LightIsleMediaWorker` 静态正则/日期解析锁，消除渲染热路径与媒体解析重复构造；为 3s 周期 IPC 模型补齐 `Equatable` 相等跳过赋值，避免空闲无谓 `@Published` 整页重绘；固定卡片悬停阴影模糊半径，新增 `AnyTransition.isleRoute(isSubroute:reduceMotion:)` 全端接入 `accessibilityReduceMotion`。
+
 ### 2026-11-11 全端内存泄漏治理、紧凑索引与解码限幅
 
 基于 Apple M4 Pro / darwin arm64 / Go 1.26.1 / Swift 6 的本地实测与自动化回归（仅覆盖代码级泄漏根除与合成/隔离样本，**不等同于 24–72 小时真实图库与真机验收**）：

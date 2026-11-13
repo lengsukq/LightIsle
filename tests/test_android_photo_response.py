@@ -7,9 +7,32 @@ import tempfile
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
-CACHE = Path(os.environ.get("GRADLE_USER_HOME", Path.home() / ".gradle")) / "caches/modules-2/files-2.1"
-version = re.search(r'id\("org.jetbrains.kotlin.android"\) version "([^"]+)"',
-                    (ROOT / "apps/flutter/android/settings.gradle.kts").read_text()).group(1)
+
+
+def resolve_gradle_cache() -> Path:
+    candidates = []
+    if os.environ.get("GRADLE_USER_HOME"):
+        candidates.append(Path(os.environ["GRADLE_USER_HOME"]))
+    candidates.extend([Path.home() / ".gradle", Path("/Volumes/lightlsle/dependencies/gradle")])
+    for base in candidates:
+        cache = base / "caches/modules-2/files-2.1"
+        if cache.is_dir():
+            return cache
+    return (Path.home() / ".gradle") / "caches/modules-2/files-2.1"
+
+
+CACHE = resolve_gradle_cache()
+configured_version = re.search(
+    r'id\("org.jetbrains.kotlin.android"\) version "([^"]+)"',
+    (ROOT / "apps/flutter/android/settings.gradle.kts").read_text(),
+).group(1)
+embeddable_dir = CACHE / "org.jetbrains.kotlin" / "kotlin-compiler-embeddable"
+if (embeddable_dir / configured_version).is_dir():
+    version = configured_version
+elif embeddable_dir.is_dir() and any(p.is_dir() for p in embeddable_dir.iterdir()):
+    version = sorted(p.name for p in embeddable_dir.iterdir() if p.is_dir())[-1]
+else:
+    version = configured_version
 
 
 def cached(group, artifact, version, suffix):

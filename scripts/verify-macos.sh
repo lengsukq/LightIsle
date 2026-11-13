@@ -91,6 +91,13 @@ run_swift_check lightisle-tunnel-payload-check \
   apps/macos/Sources/LightIsle/TunnelSupport.swift \
   apps/macos/Sources/LightIsle/TunnelPayloadParser.swift \
   tests/TunnelPayloadParserCheck.swift
+run_swift_check lightisle-host-secret-vault-check -swift-version 5 -parse-as-library \
+  apps/macos/Sources/LightIsle/NotifySupport.swift \
+  apps/macos/Sources/LightIsle/MapServiceSupport.swift \
+  apps/macos/Sources/LightIsle/TmdbSupport.swift \
+  apps/macos/Sources/LightIsle/HostKeychainBackend.swift \
+  apps/macos/Sources/LightIsle/HostSecretVault.swift \
+  tests/HostSecretVaultCheck.swift
 
 python3 -B tests/test_offline_recovery_runner.py
 python3 -B tests/test_media_worker.py "$(swift build -c debug --show-bin-path)/lightisle-media-worker"

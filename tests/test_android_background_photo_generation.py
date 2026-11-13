@@ -7,11 +7,39 @@ import tempfile
 import xml.etree.ElementTree as ET
 
 ROOT = Path(__file__).resolve().parents[1]
-CACHE = Path(os.environ.get("GRADLE_USER_HOME", Path.home() / ".gradle")) / "caches/modules-2/files-2.1"
-version = re.search(
+
+
+def resolve_gradle_cache() -> Path:
+    candidates = []
+    if os.environ.get("GRADLE_USER_HOME"):
+        candidates.append(Path(os.environ["GRADLE_USER_HOME"]))
+    candidates.extend([Path.home() / ".gradle", Path("/Volumes/lightlsle/dependencies/gradle")])
+    for base in candidates:
+        cache = base / "caches/modules-2/files-2.1"
+        if cache.is_dir():
+            return cache
+    return (Path.home() / ".gradle") / "caches/modules-2/files-2.1"
+
+
+CACHE = resolve_gradle_cache()
+configured_version = re.search(
     r'id\("org.jetbrains.kotlin.android"\) version "([^"]+)"',
     (ROOT / "apps/flutter/android/settings.gradle.kts").read_text(),
 ).group(1)
+
+
+def resolve_kotlin_compiler_version(preferred: str) -> str:
+    embeddable = CACHE / "org.jetbrains.kotlin" / "kotlin-compiler-embeddable"
+    if (embeddable / preferred).is_dir():
+        return preferred
+    if embeddable.is_dir():
+        versions = sorted(p.name for p in embeddable.iterdir() if p.is_dir())
+        if versions:
+            return versions[-1]
+    return preferred
+
+
+version = resolve_kotlin_compiler_version(configured_version)
 
 
 def cached(group, artifact, version, suffix):

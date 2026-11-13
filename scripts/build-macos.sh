@@ -48,6 +48,14 @@ swiftc apps/macos/Sources/LightIsle/StorageVolumeSelection.swift tests/StorageVo
 "$ROOT/.build/lightisle-storage-volume-check"
 swiftc apps/macos/Sources/LightIsle/NativeUpgradePreflight.swift tests/NativeUpgradePreflightCheck.swift -lsqlite3 -o "$ROOT/.build/lightisle-upgrade-check"
 "$ROOT/.build/lightisle-upgrade-check"
+swiftc -swift-version 5 -parse-as-library \
+  apps/macos/Sources/LightIsle/NotifySupport.swift \
+  apps/macos/Sources/LightIsle/MapServiceSupport.swift \
+  apps/macos/Sources/LightIsle/TmdbSupport.swift \
+  apps/macos/Sources/LightIsle/HostKeychainBackend.swift \
+  apps/macos/Sources/LightIsle/HostSecretVault.swift \
+  tests/HostSecretVaultCheck.swift -o "$ROOT/.build/lightisle-host-secret-vault-check"
+"$ROOT/.build/lightisle-host-secret-vault-check"
 SWIFT_BIN="$(swift build -c release --show-bin-path)/LightIsle"
 cp "$SWIFT_BIN" "$APP/Contents/MacOS/LightIsle"
 swift build -c release --product lightisle-media-worker
