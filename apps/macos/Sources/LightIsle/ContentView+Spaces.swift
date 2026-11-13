@@ -13,7 +13,6 @@ extension ContentView {
                     subtitle: model.sharedFolderPath == nil ? "存储待设置" : "当前目录：\(model.sharedFolderName)",
                     detail: "在浏览器中直接管理共享与私人文件",
                     icon: "folder",
-                    gradientColors: [],
                     badgeText: "直接打开"
                 ) { model.openUserWeb(page: "files") }
                 LiquidSanctuaryTile(
@@ -21,7 +20,6 @@ extension ContentView {
                     subtitle: "缓存上限 \(thumbnailCacheMiB >= 1024 ? "\(thumbnailCacheMiB / 1024) GiB" : "\(thumbnailCacheMiB) MiB")",
                     detail: "浏览时间线、精选回忆与文件夹相册",
                     icon: "photo.on.rectangle",
-                    gradientColors: [],
                     badgeText: "直接打开"
                 ) { model.openUserWeb(page: "photos") }
                 LiquidSanctuaryTile(
@@ -29,7 +27,6 @@ extension ContentView {
                     subtitle: "海报墙与多端续播",
                     detail: "浏览电影与剧集，支持原画直放与字幕",
                     icon: "film",
-                    gradientColors: [],
                     badgeText: "直接打开"
                 ) { model.openUserWeb(page: "cinema") }
             }

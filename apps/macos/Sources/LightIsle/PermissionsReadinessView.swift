@@ -312,13 +312,12 @@ struct PermissionsReadinessView: View {
                     }
 
                     if item.online {
-                        Button {
+                        IsleIconButton(
+                            icon: "folder",
+                            help: "在访达中打开此目录"
+                        ) {
                             NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: item.path)
-                        } label: {
-                            Image(systemName: "folder")
                         }
-                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                        .help("在访达中打开此目录")
                     }
                 }
             }
@@ -446,6 +445,7 @@ struct PermissionsReadinessView: View {
                             }
                         }
                     ))
+                    .labelsHidden()
                     .toggleStyle(.switch)
 
                     if notificationAuthStatus == .denied {

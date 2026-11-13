@@ -19,7 +19,7 @@ enum ManagementSection: String, CaseIterable, Identifiable {
 }
 enum StorageDetail: String, CaseIterable, Identifiable {
     case disks = "磁盘设备", locations = "存储位置", capacity = "空间与告警"
-    case backup = "配置备份与恢复", timeMachine = "Time Machine"
+    case backup = "备份与恢复"
     var id: Self { self }
     var icon: String {
         switch self {
@@ -27,7 +27,6 @@ enum StorageDetail: String, CaseIterable, Identifiable {
         case .locations: return "folder.badge.gearshape"
         case .capacity: return "chart.bar"
         case .backup: return "clock.arrow.circlepath"
-        case .timeMachine: return "clock.badge.checkmark"
         }
     }
     var subtitle: String {
@@ -35,8 +34,7 @@ enum StorageDetail: String, CaseIterable, Identifiable {
         case .disks: return "挂载状态、容量及按需健康检查"
         case .locations: return "查看目录登记，连接或重新选择存储位置"
         case .capacity: return "查看可用空间并设置低空间提醒"
-        case .backup: return "每周保存应用配置，保留最近 5 份"
-        case .timeMachine: return "核对原始文件的独立备份保护"
+        case .backup: return "每周保存应用配置，并核对 Time Machine 原片保护"
         }
     }
 }
@@ -111,28 +109,26 @@ enum NativeFormValidation {
 }
 
 enum PreferencesSection: String, CaseIterable, Hashable, Identifiable {
-    case permissions, general, media, notifications, security, tools, about
+    case permissions, general, media, notifications, security, tools
     var id: Self { self }
     var title: String {
         switch self {
         case .permissions: return "权限与初始化"
-        case .general: return "通用"
+        case .general: return "通用与关于"
         case .media: return "媒体服务"
         case .notifications: return "通知"
         case .security: return "账号与安全"
         case .tools: return "工具"
-        case .about: return "关于"
         }
     }
     var subtitle: String {
         switch self {
         case .permissions: return "整盘读写权限、系统隐私授权与必备初始化预检"
-        case .general: return "登录启动、轻量模式及本机端口"
+        case .general: return "登录启动、轻量模式、本机端口与版本信息"
         case .media: return "媒体信息、照片地图与缩略图缓存"
         case .notifications: return "系统通知与外发通知渠道"
         case .security: return "管理员身份、密码与 Touch ID 保护"
-        case .tools: return "外部依赖、MCP 开发者工具与高级诊断"
-        case .about: return "版本信息与轻屿介绍"
+        case .tools: return "高级诊断、外部依赖与 AI / 脚本扩展工具"
         }
     }
     var icon: String {
@@ -143,7 +139,6 @@ enum PreferencesSection: String, CaseIterable, Hashable, Identifiable {
         case .notifications: return "bell"
         case .security: return "lock.shield"
         case .tools: return "wrench.and.screwdriver"
-        case .about: return "info.circle"
         }
     }
 }

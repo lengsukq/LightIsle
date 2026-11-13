@@ -71,6 +71,90 @@ extension PersonalSpacesManagementView {
     }
 
     func formatBytes(_ bytes: Int64) -> String {
-        ByteCountFormatter.string(fromByteCount: bytes, countStyle: .binary)
+        IsleFormatters.binarySize(bytes)
+    }
+
+    var unregisteredVolumesBanner: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            ForEach(unregisteredExternalVolumes) { vol in
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 10) {
+                        unregisteredVolumeHeader(vol)
+                        Spacer()
+                        unregisteredVolumeButtons(vol)
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        unregisteredVolumeHeader(vol)
+                        HStack(spacing: 8) {
+                            unregisteredVolumeButtons(vol)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(IsleFluidPalette.brandCyan.opacity(0.1)))
+    }
+
+    private func unregisteredVolumeHeader(_ vol: HostVolume) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "externaldrive.fill.badge.plus")
+                .foregroundStyle(IsleFluidPalette.brandCyan)
+            Text("检测到外置硬盘「\(vol.name)」（可用 \(formatBytes(Int64(vol.free)))）")
+                .font(.system(size: 12.5, weight: .semibold))
+        }
+    }
+
+    @ViewBuilder
+    private func unregisteredVolumeButtons(_ vol: HostVolume) -> some View {
+        Button("添加为目标盘（推荐）") {
+            appModel.addPresetSharedFolder(
+                path: "\(vol.mount)/LightIsle",
+                name: "\(vol.name)-LightIsle"
+            )
+        }
+        .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+        .disabled(!appModel.canAddOrSwitchStorageRoot)
+        Button("设为主存储…") {
+            appModel.selectPresetSharedFolder(
+                path: "\(vol.mount)/LightIsle",
+                name: "\(vol.name)-LightIsle",
+                confirmSwitch: true
+            )
+        }
+        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+        .disabled(!appModel.canAddOrSwitchStorageRoot)
+        Button("选择文件夹…") {
+            appModel.selectSharedFolder(onVolume: vol)
+        }
+        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+        .disabled(!appModel.canAddOrSwitchStorageRoot)
+    }
+
+    var emptyOnlineRootsNotice: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                Text("当前没有在线的 NAS 存储硬盘，请接入外置硬盘或前往「存储位置」设置。")
+                    .font(.caption).foregroundStyle(IsleTheme.warningText)
+                Spacer()
+                emptyOnlineRootsButtons
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                Text("当前没有在线的 NAS 存储硬盘，请接入外置硬盘或前往「存储位置」设置。")
+                    .font(.caption).foregroundStyle(IsleTheme.warningText)
+                HStack(spacing: 8) {
+                    emptyOnlineRootsButtons
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var emptyOnlineRootsButtons: some View {
+        Button("选择外置盘设为主存储…") { appModel.rootManagement.selectFolderAndSwitch(preferVolumes: true) }
+            .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+            .disabled(!appModel.canAddOrSwitchStorageRoot)
+        Button("前往存储位置…") { appModel.navigateToStorageDetail(.locations) }
+            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
     }
 }

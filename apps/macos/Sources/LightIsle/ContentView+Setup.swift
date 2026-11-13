@@ -79,18 +79,6 @@ extension ContentView {
         )
     }
 
-    var cachedSetupStorageProbe: StoragePermissionHelper.AccessProbeResult {
-        if model.isPresentationPreview { return .writable }
-        return setupStorageProbeCache ?? .writable
-    }
-
-    var isFormValid: Bool {
-        cachedSetupStorageProbe.isWritable &&
-        AccountInputValidator.validateUsername(firstUsername).isValid &&
-        AccountInputValidator.validatePassword(firstPassword).isValid &&
-        firstPassword == confirmPassword
-    }
-
     var defaultSharedFolderPath: String {
         let supportURL = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first
             ?? URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent("Library/Application Support", isDirectory: true)

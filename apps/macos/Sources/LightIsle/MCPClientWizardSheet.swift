@@ -23,12 +23,21 @@ struct MCPClientWizardSheet: View {
     @State private var selectedTab: Tab = .gemini
     @State private var copiedKey: String?
     @State private var copyFeedback: String?
+    @State private var copyResetTask: Task<Void, Never>?
 
     private var snap: NativeMCPConfigSnapshot { appsCenter.mcp }
 
     private var effectiveCommand: String {
         let trimmed = snap.command.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? GeminiCopy.localCommand : trimmed
+    }
+
+    private var effectiveBinaryPath: String {
+        let trimmed = effectiveCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+        let raw = trimmed.hasSuffix(" mcp")
+            ? String(trimmed.dropLast(4)).trimmingCharacters(in: .whitespacesAndNewlines)
+            : trimmed
+        return raw.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
     }
 
     private var effectiveHttpUrl: String {
@@ -52,7 +61,7 @@ struct MCPClientWizardSheet: View {
         {
           "mcpServers": {
             "lightisle": {
-              "command": "/Applications/LightIsle.app/Contents/Resources/core/lightisled",
+              "command": "\(effectiveBinaryPath)",
               "args": [
                 "mcp"
               ]
@@ -68,7 +77,7 @@ struct MCPClientWizardSheet: View {
             {
               "mcpServers": {
                 "lightisle": {
-                  "command": "/Applications/LightIsle.app/Contents/Resources/core/lightisled",
+                  "command": "\(effectiveBinaryPath)",
                   "args": [
                     "mcp"
                   ]
@@ -436,5 +445,12 @@ struct MCPClientWizardSheet: View {
         NSPasteboard.general.setString(text, forType: .string)
         copiedKey = key
         copyFeedback = notice
+        copyResetTask?.cancel()
+        copyResetTask = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(2.5))
+            guard !Task.isCancelled else { return }
+            if copiedKey == key { copiedKey = nil }
+            if copyFeedback == notice { copyFeedback = nil }
+        }
     }
 }

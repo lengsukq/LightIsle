@@ -353,11 +353,14 @@ final class NativeRootsModel: ObservableObject {
             message = "目录列表无法读取，请刷新。"
             return
         }
-        roots = entries
-        onRootsChanged?(entries)
-        onDefaultChanged?(defaultRoot)
+        if roots != entries {
+            roots = entries
+            onRootsChanged?(entries)
+            onDefaultChanged?(defaultRoot)
+        }
         if !additionalRoots.contains(where: { $0.rootID == selectedID }) {
-            selectedID = additionalRoots.first?.rootID ?? ""
+            let fallback = additionalRoots.first?.rootID ?? ""
+            if selectedID != fallback { selectedID = fallback }
         }
     }
 

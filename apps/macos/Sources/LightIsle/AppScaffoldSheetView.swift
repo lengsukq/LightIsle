@@ -53,11 +53,12 @@ struct AppScaffoldSheetView: View {
                                 Picker("应用存储位置", selection: $locationID) {
                                     Text("跟随默认（\(locations.first(where: { $0.isDefault })?.name ?? "Mac 内置盘")）").tag("")
                                     ForEach(locations) { loc in
-                                        Text("\(loc.kind == "external" ? "其他盘" : "内置盘") · \(loc.name)\(loc.online ? "" : "（离线）")").tag(loc.id)
+                                        let suffix = !loc.online ? "（离线）" : (loc.writable ? "" : "（只读）")
+                                        Text("\(loc.kind == "external" ? "其他盘" : "内置盘") · \(loc.name)\(suffix)").tag(loc.id)
                                     }
                                 }
                                 .labelsHidden()
-                                .frame(width: 220)
+                                .frame(width: 240)
                             }
                         }
                         IsleGroupSpacing(height: 4).padding(.leading, 14)
@@ -137,9 +138,34 @@ struct AppScaffoldSheetView: View {
     private func createScaffold() {
         let trimmedID = idText.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedName = nameText.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedCron = cronExpr.trimmingCharacters(in: .whitespacesAndNewlines)
+        let effectiveCron = hasCron || mode == "none"
         guard !trimmedID.isEmpty, !trimmedName.isEmpty else {
             validationError = "请填写插件 ID 与显示名称。"
             return
+        }
+        guard trimmedID.range(of: "^[a-z0-9][a-z0-9-]{1,62}$", options: .regularExpression) != nil else {
+            validationError = "插件 ID 需由 2~63 位小写字母、数字或短横线组成，且以字母或数字开头。"
+            return
+        }
+        if effectiveCron && trimmedCron.split(whereSeparator: \.isWhitespace).count != 5 {
+            validationError = "Cron 表达式须为 5 段（分 时 日 月 周），例如 0 * * * *。"
+            return
+        }
+        if let locations = appsCenter.appStorage?.locations, !locations.isEmpty {
+            let target = locationID.isEmpty
+                ? (locations.first(where: { $0.isDefault }) ?? locations.first)
+                : locations.first(where: { $0.id == locationID })
+            if let target {
+                if !target.online {
+                    validationError = "所选存储位置「\(target.name)」当前已离线，请先接入硬盘或改选其他位置。"
+                    return
+                }
+                if !target.writable {
+                    validationError = "所选存储位置「\(target.name)」当前不可写，请检查权限后再创建。"
+                    return
+                }
+            }
         }
         validationError = nil
         appsCenter.scaffoldApp(NativeAppScaffoldPayload(
@@ -150,8 +176,8 @@ struct AppScaffoldSheetView: View {
             mode: mode,
             runtime: mode == "static" ? "static" : runtime,
             locationId: locationID.isEmpty ? nil : locationID,
-            hasCron: hasCron || mode == "none",
-            cron: cronExpr.trimmingCharacters(in: .whitespacesAndNewlines)
+            hasCron: effectiveCron,
+            cron: effectiveCron ? trimmedCron : "0 * * * *"
         ))
         isPresented = false
     }

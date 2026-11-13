@@ -4,7 +4,7 @@ import Foundation
 
 @MainActor
 enum StoragePermissionHelper {
-    enum AccessProbeResult: Equatable {
+    enum AccessProbeResult: Equatable, Sendable {
         case writable
         case readOnlyVolume
         case tccOrSandboxBlocked(String)
@@ -68,7 +68,7 @@ enum StoragePermissionHelper {
     }
 
     /// Extracts `/Volumes/<VolumeName>` if the path resides on an external mounted volume.
-    static func externalVolumeMountPath(forPath path: String) -> String? {
+    nonisolated static func externalVolumeMountPath(forPath path: String) -> String? {
         let clean = URL(fileURLWithPath: path, isDirectory: true).resolvingSymlinksInPath().path
         let components = URL(fileURLWithPath: clean, isDirectory: true).pathComponents
         guard components.count >= 3, components[1] == "Volumes", !components[2].isEmpty else {
@@ -93,7 +93,7 @@ enum StoragePermissionHelper {
     /// On `/Volumes/...`, probing the volume root immediately triggers macOS TCC
     /// (`NSRemovableVolumesUsageDescription`) and verifies whole-disk write access while the user is at the Mac,
     /// ensuring persistent background access for `lightisled` when accessed or migrated later.
-    static func probeDirectoryReadWrite(at directoryURL: URL) -> AccessProbeResult {
+    nonisolated static func probeDirectoryReadWrite(at directoryURL: URL) -> AccessProbeResult {
         let canonical = directoryURL.resolvingSymlinksInPath()
         let ancestor = closestExistingDirectory(forPath: canonical.path)
         if let values = try? ancestor.resourceValues(forKeys: [.volumeIsReadOnlyKey]),
@@ -139,7 +139,7 @@ enum StoragePermissionHelper {
         return .writable
     }
 
-    private static func probeNestedUserDirectories(at usersPath: String) -> AccessProbeResult {
+    nonisolated private static func probeNestedUserDirectories(at usersPath: String) -> AccessProbeResult {
         guard let userEntries = try? FileManager.default.contentsOfDirectory(atPath: usersPath) else {
             return .posixPermissionDenied("无法读取用户空间目录 \(usersPath)")
         }
@@ -455,7 +455,7 @@ enum StoragePermissionHelper {
         }
     }
 
-    private static func probeSingleDirectoryReadWrite(_ dirPath: String) -> AccessProbeResult {
+    nonisolated private static func probeSingleDirectoryReadWrite(_ dirPath: String) -> AccessProbeResult {
         do {
             _ = try FileManager.default.contentsOfDirectory(atPath: dirPath)
         } catch {
@@ -483,7 +483,7 @@ enum StoragePermissionHelper {
         return .writable
     }
 
-    private static func classifyError(_ error: Error, detail: String) -> AccessProbeResult {
+    nonisolated private static func classifyError(_ error: Error, detail: String) -> AccessProbeResult {
         let nsError = error as NSError
         if nsError.domain == NSCocoaErrorDomain && nsError.code == NSFileWriteVolumeReadOnlyError {
             return .readOnlyVolume
@@ -494,7 +494,7 @@ enum StoragePermissionHelper {
         return .posixPermissionDenied("\(detail)（\(nsError.localizedDescription)）")
     }
 
-    private static func extractPOSIXErrno(from error: NSError) -> Int32? {
+    nonisolated private static func extractPOSIXErrno(from error: NSError) -> Int32? {
         if error.domain == NSPOSIXErrorDomain {
             return Int32(error.code)
         }
@@ -504,7 +504,7 @@ enum StoragePermissionHelper {
         return nil
     }
 
-    private static func classifyErrno(_ code: Int32, detail: String) -> AccessProbeResult {
+    nonisolated private static func classifyErrno(_ code: Int32, detail: String) -> AccessProbeResult {
         switch code {
         case EROFS:
             return .readOnlyVolume
@@ -516,7 +516,7 @@ enum StoragePermissionHelper {
         }
     }
 
-    private static func closestExistingDirectory(forPath path: String) -> URL {
+    nonisolated private static func closestExistingDirectory(forPath path: String) -> URL {
         var current = URL(fileURLWithPath: path, isDirectory: true)
         while !FileManager.default.fileExists(atPath: current.path) && current.path != "/" {
             current.deleteLastPathComponent()

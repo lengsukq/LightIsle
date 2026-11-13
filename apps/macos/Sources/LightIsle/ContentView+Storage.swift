@@ -11,7 +11,6 @@ extension ContentView {
                     case .locations: storageLocationsContent.disabled(model.isPresentationPreview)
                     case .capacity: storageCapacityContent.disabled(model.isPresentationPreview)
                     case .backup: storageBackupContent.disabled(model.isPresentationPreview)
-                    case .timeMachine: storageTimeMachineContent.disabled(model.isPresentationPreview)
                     }
                 }
             } else {
@@ -40,7 +39,6 @@ extension ContentView {
         case .locations: return IsleFluidPalette.brandCyan
         case .capacity: return .orange
         case .backup: return IsleFluidPalette.brandIndigo
-        case .timeMachine: return .teal
         }
     }
     private func storageBadge(for detail: StorageDetail) -> (String, IsleStatusTone) {
@@ -62,10 +60,8 @@ extension ContentView {
         case .backup:
             if model.backupStatus?.running == true { return ("正在备份…", .accent) }
             if model.backupSchedule?.enabled == true { return ("每周自动备份", .success) }
-            return ("手动备份", .neutral)
-        case .timeMachine:
             if let summary = model.timeMachineDiagnostics?.summary { return (summary, .neutral) }
-            return ("系统备份核查", .neutral)
+            return ("配置与 Time Machine", .neutral)
         }
     }
     var storageSummary: some View {
@@ -100,10 +96,12 @@ extension ContentView {
                     }
                     Spacer(minLength: 8)
                     if let path = defaultPath, isOnline {
-                        Button("在访达中打开") {
+                        IsleIconButton(
+                            icon: "folder",
+                            help: "在访达中打开默认存储目录"
+                        ) {
                             NSWorkspace.shared.open(URL(fileURLWithPath: path))
                         }
-                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                     }
                     Button("管理存储位置") {
                         requestLocalNavigation { storageDetail = .locations }
@@ -114,26 +112,42 @@ extension ContentView {
                 if let volume = matchedVolume, volume.total > 0 {
                     let used = volume.total - min(volume.free, volume.total)
                     let ratio = Double(used) / Double(max(volume.total, 1))
-                    VStack(alignment: .leading, spacing: 6) {
-                        HStack {
-                            Text("所在磁盘：\(volume.mount == "/" ? "Mac 系统盘" : volume.name)（\(volume.filesystem)）")
-                                .font(.system(size: 12, weight: .medium))
-                                .foregroundStyle(IsleTheme.secondaryText)
-                            Spacer()
-                            Text("可用 \(formatBytes(volume.free)) / 共 \(formatBytes(volume.total))")
-                                .font(.system(size: 11.5, design: .monospaced))
-                                .foregroundStyle(IsleTheme.secondaryText)
-                        }
-                        GeometryReader { proxy in
-                            ZStack(alignment: .leading) {
-                                Capsule().fill(Color.primary.opacity(0.065))
-                                Capsule()
-                                    .fill(LinearGradient(colors: [IsleFluidPalette.brandCyan, IsleFluidPalette.brandBlue], startPoint: .leading, endPoint: .trailing))
-                                    .frame(width: max(6, min(proxy.size.width * CGFloat(max(0, min(1, ratio))), proxy.size.width)))
-                                    .animation(reduceMotion ? nil : IsleMotion.fluid, value: ratio)
+                    let slices = IsleStorageChartBuilder.volumeSlices(
+                        total: volume.total,
+                        free: volume.free,
+                        rootID: root?.rootID,
+                        rootGeneration: root?.generation,
+                        users: model.personalSpaces.users
+                    )
+                    HStack(alignment: .center, spacing: 14) {
+                        IsleDonutGauge(
+                            progress: ratio,
+                            centerText: "\(Int(round(ratio * 100)))%",
+                            centerSubtext: "已用",
+                            tint: ratio > 0.88 ? .orange : IsleFluidPalette.brandCyan,
+                            size: 56,
+                            lineWidth: 6,
+                            accessibilityLabel: "默认存储所在磁盘占用比例"
+                        )
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack {
+                                Text("所在磁盘：\(volume.mount == "/" ? "Mac 系统盘" : volume.name)（\(volume.filesystem)）")
+                                    .font(.system(size: 12, weight: .medium))
+                                    .foregroundStyle(IsleTheme.secondaryText)
+                                Spacer()
+                                Text("可用 \(formatBytes(volume.free)) / 共 \(formatBytes(volume.total))")
+                                    .font(.system(size: 11.5, design: .monospaced))
+                                    .foregroundStyle(IsleTheme.secondaryText)
                             }
+                            IsleSegmentedBar(
+                                slices: slices,
+                                total: Double(volume.total),
+                                barHeight: 10,
+                                showsLegend: true,
+                                legendMinimumWidth: 138,
+                                accessibilityTitle: "默认存储磁盘与成员空间构成"
+                            )
                         }
-                        .frame(height: 6)
                     }
                     .padding(12)
                     .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
@@ -147,6 +161,17 @@ extension ContentView {
                             .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                     }
                 }
+                IsleQuickJumpBar(items: [
+                    IsleQuickJumpItem("个人空间与配额", icon: "person.2.fill", tint: .purple, help: "管理成员、可用空间限额与存储目录归属") {
+                        model.navigate(to: .spaces)
+                    },
+                    IsleQuickJumpItem("Mac 文件共享 (SMB)", icon: "externaldrive.connected.to.line.below", tint: .teal, help: "通过 macOS SMB 在访达挂载轻屿共享目录") {
+                        model.navigateToConnectionDetail(.sharing)
+                    },
+                    IsleQuickJumpItem("权限预检", icon: "checkmark.shield.fill", tint: .green, help: "检查外置盘整盘读写权限与隐私授权") {
+                        model.navigateToSettingsDetail(.permissions)
+                    }
+                ])
             }
         }
     }
@@ -165,9 +190,11 @@ extension ContentView {
         VStack(alignment: .leading, spacing: 22) {
             AppleSettingsGroup(title: "硬盘基础管理", footer: "硬盘操作由 Go Core 与管理员 Web 共用一套受控逻辑。系统盘和正在作为 NAS 存储使用的硬盘不能执行危险操作；不支持强制卸载或自动格式化。") {
                 AppleSettingsRow(title: "外置磁盘设备", subtitle: "读取挂载状态、容量、文件系统与按需 SMART 健康报告", icon: "externaldrive", iconTint: .blue) {
-                    Button("刷新设备列表") { model.refreshManagedDisks() }
-                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                        .disabled(model.isPresentationPreview || model.state != .online || model.diskOperationPending)
+                    IsleIconButton(
+                        icon: "arrow.clockwise",
+                        help: "刷新外置磁盘与挂载状态"
+                    ) { model.refreshManagedDisks() }
+                    .disabled(model.isPresentationPreview || model.state != .online || model.diskOperationPending)
                 }
                 if model.diskOperationPending {
                     ProgressView("正在等待 macOS 完成磁盘操作…")
@@ -289,107 +316,26 @@ extension ContentView {
     }
     var storageLocationsContent: some View {
         VStack(alignment: .leading, spacing: 22) {
-            if !model.rootManagement.enabled {
-            if model.sharedFolderPath == nil, let offlinePath = model.offlineSharedFolderPath {
-                AppleSettingsGroup(title: "共享存储已离线", footer: "默认保留旧盘绑定和照片、影视等本地记录；只有你主动确认清理时才会放弃旧盘绑定。") {
-                    VStack(alignment: .leading, spacing: 11) {
-                        Label("请连接原来的存储磁盘，然后点击「重新连接」", systemImage: "externaldrive.badge.exclamationmark")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(IsleTheme.warningText)
-                        Text("原共享路径：\(offlinePath)")
-                            .font(.caption.monospaced())
-                            .foregroundStyle(IsleTheme.secondaryText)
-                            .textSelection(.enabled)
-                        Text("如果暂时不连接，可以保留所有绑定和媒体资料，待将来接回磁盘；也可以清理该盘在轻屿中的旧记录，并改用 Mac 本机存储。不会删除离线盘上的原始文件。")
-                            .font(.caption)
-                            .foregroundStyle(IsleTheme.secondaryText)
-                        HStack(spacing: 10) {
-                            Button("重新连接原磁盘") { model.retrySharedFolder() }
-                                .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
-                                .disabled(model.state != .online || model.offlineCleanupPending)
-                            Button("保留记录，稍后连接") { model.keepOfflineShare() }
-                                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                                .disabled(model.offlineCleanupPending)
-                            Button("清理离线盘的记录…") { model.forgetOfflineShare() }
-                                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                                .disabled(!model.canForgetOfflineShare)
-                        }
-                        if model.offlineCleanupPending {
-                            ProgressView("正在校验并清理离线记录…").controlSize(.small)
-                        }
-                        if let result = model.offlineCleanupMessage {
-                            Text(result).font(.caption).textSelection(.enabled).foregroundStyle(IsleTheme.secondaryText)
-                        }
-                    }
-                    .padding(14)
-                }
-            }
-            AppleSettingsGroup(title: "当前 NAS 存储位置", footer: "此处管理当前共享目录；多目录登记在开发预览中按原开关开放。成员的分类存储分配在 Web 管理，切换不会自动迁移文件。") {
-                AppleSettingsRow(title: "当前共享根目录", icon: "folder.fill", iconTint: .blue) {
-                    HStack(spacing: 10) {
-                        Text(model.sharedFolderName)
-                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                        Spacer(minLength: 0)
-                        if let path = model.sharedFolderPath {
-                            Button("在访达中打开") {
-                                NSWorkspace.shared.open(URL(fileURLWithPath: path))
+            if let message = model.storageSelectionMessage {
+                AppleSettingsGroup(title: "存储选择提示") {
+                    AppleSettingsRow(title: "结果与说明", icon: "info.circle", iconTint: .orange) {
+                        HStack(alignment: .top, spacing: 10) {
+                            Text(message)
+                                .font(.caption)
+                                .foregroundStyle(IsleTheme.secondaryText)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                            Spacer(minLength: 0)
+                            Button("知道了") {
+                                withAnimation(reduceMotion ? nil : IsleMotion.quick) {
+                                    model.storageSelectionMessage = nil
+                                }
                             }
                             .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         }
-                        Button("选择其他文件夹…") {
-                            model.selectSharedFolder()
-                        }
-                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                        .disabled(!model.canChangeSharedStorage)
-                        Button("重新连接") {
-                            model.retrySharedFolder()
-                        }
-                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                        .disabled(model.state != .online || model.storageSelectionPending)
                     }
                 }
-                IsleGroupSpacing(height: 4).padding(.leading, 14)
-                AppleSettingsRow(title: "实际存储路径", icon: "externaldrive", iconTint: .teal) {
-                    VStack(alignment: .leading, spacing: 5) {
-                        Text(model.sharedFolderPath ?? "共享目录离线或尚未完成设置")
-                            .font(.caption.monospaced())
-                            .textSelection(.enabled)
-                            .fixedSize(horizontal: false, vertical: true)
-                        if let volumes = model.metrics?.volumes,
-                           let mount = StorageVolumeSelection.matchingMount(
-                                for: model.sharedFolderPath, mounts: volumes.map(\.mount)
-                           ),
-                           let volume = volumes.first(where: { $0.mount == mount }) {
-                            Text("所在磁盘：\(volume.name) · 可用 \(formatBytes(volume.free)) / 共 \(formatBytes(volume.total))")
-                                .font(.caption)
-                                .foregroundStyle(IsleTheme.secondaryText)
-                        } else if model.sharedFolderPath != nil {
-                            Text("尚未识别所属磁盘，请刷新服务指标并确认磁盘挂载状态。")
-                                .font(.caption)
-                                .foregroundStyle(IsleTheme.warningText)
-                        }
-                    }
-                }
-                if model.storageSelectionPending {
-                    IsleGroupSpacing(height: 4).padding(.leading, 14)
-                    AppleSettingsRow(title: "正在切换", icon: "hourglass", iconTint: .blue) {
-                        ProgressView("正在等待 NAS Core 验证磁盘身份…").controlSize(.small)
-                    }
-                }
-                if let message = model.storageSelectionMessage {
-                    IsleGroupSpacing(height: 4).padding(.leading, 14)
-                    AppleSettingsRow(title: "设置结果", icon: "info.circle", iconTint: .blue) {
-                        Text(message).font(.caption).foregroundStyle(IsleTheme.secondaryText).textSelection(.enabled)
-                    }
-                }
-                if let error = model.sharedFolderError {
-                    IsleGroupSpacing(height: 4).padding(.leading, 14)
-                    AppleSettingsRow(title: "目录异常", icon: "exclamationmark.triangle.fill", iconTint: .red) {
-                        Text(error).font(.caption).foregroundStyle(IsleTheme.errorText)
-                    }
-                }
-            }
-
+                .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
             }
             if model.rootManagement.enabled {
                 RootManagementView(model: model.rootManagement)
@@ -452,28 +398,34 @@ extension ContentView {
                                     .background(Capsule().fill((volume.readOnly ? Color.orange : Color.green).opacity(0.12)))
                                     .foregroundStyle(volume.readOnly ? .orange : .green)
                             }
-                            HStack(spacing: 12) {
-                                GeometryReader { proxy in
-                                    ZStack(alignment: .leading) {
-                                        Capsule()
-                                            .fill(Color.primary.opacity(0.06))
-                                            .frame(height: 6)
-                                        Capsule()
-                                            .fill(
-                                                LinearGradient(
-                                                    colors: [tintColor, tintColor.opacity(0.72)],
-                                                    startPoint: .leading,
-                                                    endPoint: .trailing
-                                                )
-                                            )
-                                            .frame(width: max(0, min(proxy.size.width * CGFloat(max(0, min(1, usedRatio))), proxy.size.width)), height: 6)
-                                    }
+                            let matchingRoot = model.personalSpaces.roots.first(where: { root in
+                                StorageVolumeSelection.matchingMount(for: root.path, mounts: volumes.map(\.mount)) == volume.mount
+                            })
+                            let volumeSlices = IsleStorageChartBuilder.volumeSlices(
+                                total: volume.total,
+                                free: volume.free,
+                                rootID: matchingRoot?.rootID,
+                                rootGeneration: matchingRoot?.generation,
+                                users: model.personalSpaces.users
+                            )
+                            VStack(alignment: .leading, spacing: 6) {
+                                HStack {
+                                    Text("占比 \(Int(round(max(0, min(1, usedRatio)) * 100)))%")
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundStyle(IsleTheme.secondaryText)
+                                    Spacer()
+                                    Text("可用 \(formatBytes(volume.free)) / 共 \(formatBytes(volume.total))")
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundStyle(IsleTheme.secondaryText)
                                 }
-                                .frame(height: 6)
-
-                                Text("可用 \(formatBytes(volume.free)) / 共 \(formatBytes(volume.total))")
-                                    .font(.system(size: 11, design: .monospaced))
-                                    .foregroundStyle(IsleTheme.secondaryText)
+                                IsleSegmentedBar(
+                                    slices: volumeSlices,
+                                    total: Double(volume.total),
+                                    barHeight: 9,
+                                    showsLegend: matchingRoot != nil,
+                                    legendMinimumWidth: 135,
+                                    accessibilityTitle: "\(volume.mount == "/" ? "系统磁盘" : volume.name)空间构成"
+                                )
                             }
                             if let disk = model.managedDisks.first(where: { $0.mount == volume.mount }) {
                                 let warning = ["failing", "failed", "failure"].contains(disk.smart.lowercased())
@@ -549,7 +501,7 @@ extension ContentView {
                                         model.openDiskFormattingGuide(for: volume)
                                     }
                                     .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                                    .disabled(isCurrentDisk || model.offlineCleanupPending)
+                                    .disabled(isCurrentDisk)
                                 }
                                 if isCurrentDisk && physicalDisk != nil && StorageVolumeSelection.canInspectExternalVolume(mount: volume.mount) {
                                     Text("NAS 正在使用，切换存储目录后才可格式化")
@@ -571,15 +523,30 @@ extension ContentView {
                         HStack {
                             Text("请确认外置磁盘已挂载，然后刷新服务状态。")
                                 .font(.caption).foregroundStyle(IsleTheme.secondaryText)
-                            Button("刷新") { model.refreshMetrics() }
-                                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                            IsleIconButton(icon: "arrow.clockwise", help: "刷新磁盘列表与主机状态") { model.refreshMetrics() }
                                 .disabled(model.state != .online)
                         }
                     }
                 }
             }
 
+            IsleQuickJumpBar(items: [
+                IsleQuickJumpItem("个人空间与配额", icon: "person.2.fill", tint: .purple, help: "查看或调整成员专属目录及配额") {
+                    model.navigate(to: .spaces)
+                },
+                IsleQuickJumpItem("Mac 文件共享 (SMB)", icon: "externaldrive.connected.to.line.below", tint: .teal, help: "查看当前通过 SMB 共享的存储目录") {
+                    model.navigateToConnectionDetail(.sharing)
+                },
+                IsleQuickJumpItem("磁盘设备", icon: "externaldrive", tint: .blue, help: "查看物理磁盘挂载状态与 SMART 健康度") {
+                    storageDetail = .disks
+                },
+                IsleQuickJumpItem("权限预检", icon: "checkmark.shield.fill", tint: .green, help: "检查 macOS 隐私与外置卷读写授权") {
+                    model.navigateToSettingsDetail(.permissions)
+                }
+            ])
+
         }
+        .animation(reduceMotion ? nil : IsleMotion.quick, value: model.storageSelectionMessage)
     }
     var storageCapacityContent: some View {
         VStack(alignment: .leading, spacing: 22) {
@@ -617,16 +584,38 @@ extension ContentView {
             .onChange(of: model.storageThreshold) { _, _ in syncThresholdDraft() }
 
             AppleSettingsGroup(title: "宿主 Mac 磁盘体征") {
-                if let m = model.metrics {
-                    AppleSettingsRow(title: "系统盘总容量", icon: "internaldrive", iconTint: .blue) {
-                        Text(formatBytes(m.diskTotal)).font(.system(size: 12, design: .monospaced))
+                if let m = model.metrics, m.diskTotal > 0 {
+                    let clampedFree = min(m.diskFree, m.diskTotal)
+                    let used = m.diskTotal - clampedFree
+                    let ratio = Double(used) / Double(m.diskTotal)
+                    let systemSlices = IsleStorageChartBuilder.volumeSlices(total: m.diskTotal, free: clampedFree)
+                    AppleSettingsRow(
+                        title: "系统盘空间构成",
+                        subtitle: "总容量 \(formatBytes(m.diskTotal)) · 剩余 \(formatBytes(clampedFree))",
+                        icon: "chart.pie.fill",
+                        iconTint: ratio > 0.88 ? .orange : .teal
+                    ) {
+                        IsleDonutGauge(
+                            progress: ratio,
+                            centerText: "\(Int(round(ratio * 100)))%",
+                            centerSubtext: "已用",
+                            tint: ratio > 0.88 ? .orange : .teal,
+                            size: 52,
+                            lineWidth: 5.5,
+                            accessibilityLabel: "宿主系统盘占用比例"
+                        )
                     }
-                    IsleGroupSpacing(height: 4).padding(.leading, 14)
-                    AppleSettingsRow(title: "系统盘剩余可用", icon: "chart.pie.fill", iconTint: .teal) {
-                        Text(formatBytes(m.diskFree))
-                            .font(.system(size: 12, weight: .semibold, design: .monospaced))
-                            .foregroundStyle(IsleTheme.successText)
+                    VStack(alignment: .leading, spacing: 8) {
+                        IsleSegmentedBar(
+                            slices: systemSlices,
+                            total: Double(m.diskTotal),
+                            barHeight: 10,
+                            showsLegend: true,
+                            accessibilityTitle: "宿主 Mac 系统盘空间构成"
+                        )
                     }
+                    .padding(.horizontal, 16)
+                    .padding(.bottom, 14)
                 } else {
                     AppleSettingsRow(title: "系统盘信息", icon: "info.circle", iconTint: .indigo) {
                         Text("正在采样…").font(.caption).foregroundStyle(IsleTheme.secondaryText)

@@ -26,18 +26,35 @@ struct AppStorageLocationsSection: View {
     var body: some View {
         if let storage {
             VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .center, spacing: 8) {
-                    Text("应用数据存储位置")
-                        .font(.system(size: 15, weight: .semibold))
-                    IsleStatusPill(
-                        text: "\(storage.locations.count)/\(storage.maxLocations) 位置",
-                        tone: .neutral
-                    )
-                    Spacer()
-                    Text("最多 1 个内置盘 + 1 个其他盘 · 移除仅解绑，不删文件")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(IsleTheme.secondaryText)
-                        .lineLimit(1)
+                ViewThatFits(in: .horizontal) {
+                    HStack(alignment: .center, spacing: 8) {
+                        HStack(spacing: 8) {
+                            Text("应用数据存储位置")
+                                .font(.system(size: 15, weight: .semibold))
+                            IsleStatusPill(
+                                text: "\(storage.locations.count)/\(storage.maxLocations) 位置",
+                                tone: .neutral
+                            )
+                        }
+                        Spacer(minLength: 8)
+                        Text("最多 1 个内置盘 + 1 个其他盘 · 移除仅解绑，不删文件")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(IsleTheme.secondaryText)
+                            .lineLimit(1)
+                    }
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 8) {
+                            Text("应用数据存储位置")
+                                .font(.system(size: 15, weight: .semibold))
+                            IsleStatusPill(
+                                text: "\(storage.locations.count)/\(storage.maxLocations) 位置",
+                                tone: .neutral
+                            )
+                        }
+                        Text("最多 1 个内置盘 + 1 个其他盘 · 移除仅解绑，不删文件")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(IsleTheme.secondaryText)
+                    }
                 }
 
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 320), spacing: 14)], spacing: 14) {
@@ -102,34 +119,57 @@ struct AppStorageLocationsSection: View {
                 .foregroundStyle(IsleTheme.secondaryText)
                 .lineLimit(1)
 
+            if loc.online, let total = loc.totalBytes, let free = loc.freeBytes, total > 0 {
+                IsleSegmentedBar(
+                    slices: IsleStorageChartBuilder.volumeSlices(total: total, free: free),
+                    total: Double(total),
+                    barHeight: 7,
+                    showsLegend: true,
+                    legendMinimumWidth: 115,
+                    accessibilityTitle: "\(loc.name) 磁盘空间占比"
+                )
+            }
+
             Divider().opacity(0.45)
 
-            HStack(spacing: 8) {
-                if !loc.isDefault {
-                    Button("设为默认") {
-                        appsCenter.mutateAppStorage(action: "set_default", defaultLocationID: "internal")
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                    .disabled(appsCenter.busy)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    internalActions(loc)
+                    Spacer(minLength: 0)
                 }
-                Button("更改目录…") {
-                    chooseFolder(kind: "internal", action: "set")
+                VStack(alignment: .leading, spacing: 8) {
+                    internalActions(loc)
                 }
-                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                .disabled(appsCenter.busy)
-                if loc.isCustomPath {
-                    Button("恢复默认") {
-                        appsCenter.mutateAppStorage(action: "reset_internal")
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .borderless, size: .small))
-                    .disabled(appsCenter.busy)
-                }
-                Spacer(minLength: 0)
             }
         }
         .padding(18)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .modifier(IsleEmbossedSurface())
+    }
+
+    @ViewBuilder
+    private func internalActions(_ loc: NativeAppStorageLocation) -> some View {
+        HStack(spacing: 8) {
+            if !loc.isDefault {
+                Button("设为默认") {
+                    appsCenter.mutateAppStorage(action: "set_default", defaultLocationID: "internal")
+                }
+                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                .disabled(appsCenter.busy)
+            }
+            Button("更改目录…") {
+                chooseFolder(kind: "internal", action: "set")
+            }
+            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+            .disabled(appsCenter.busy)
+            if loc.isCustomPath {
+                Button("恢复默认") {
+                    appsCenter.mutateAppStorage(action: "reset_internal")
+                }
+                .buttonStyle(LiquidButtonStyle(variant: .borderless, size: .small))
+                .disabled(appsCenter.busy)
+            }
+        }
     }
 
     private func externalConfiguredCard(_ loc: NativeAppStorageLocation) -> some View {
@@ -178,32 +218,66 @@ struct AppStorageLocationsSection: View {
                 .foregroundStyle(loc.error == nil ? IsleTheme.secondaryText : IsleTheme.warningText)
                 .lineLimit(2)
 
+            if loc.online, let total = loc.totalBytes, let free = loc.freeBytes, total > 0 {
+                IsleSegmentedBar(
+                    slices: IsleStorageChartBuilder.volumeSlices(total: total, free: free),
+                    total: Double(total),
+                    barHeight: 7,
+                    showsLegend: true,
+                    legendMinimumWidth: 115,
+                    accessibilityTitle: "\(loc.name) 磁盘空间占比"
+                )
+            }
+
             Divider().opacity(0.45)
 
-            HStack(spacing: 8) {
-                if !loc.isDefault {
-                    Button("设为默认") {
-                        appsCenter.mutateAppStorage(action: "set_default", defaultLocationID: "external")
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    externalConfiguredPrimaryActions(loc, healthy: healthy)
+                    Spacer(minLength: 4)
+                    Button("移除登记", role: .destructive) {
+                        confirmRemoveExternal = true
                     }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                    .disabled(appsCenter.busy || !healthy)
+                    .buttonStyle(LiquidButtonStyle(variant: .borderless, size: .small))
+                    .disabled(appsCenter.busy)
                 }
-                Button("更换目录…") {
-                    chooseFolder(kind: "external", action: "set")
+                VStack(alignment: .leading, spacing: 8) {
+                    externalConfiguredPrimaryActions(loc, healthy: healthy)
+                    Button("移除登记", role: .destructive) {
+                        confirmRemoveExternal = true
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: .borderless, size: .small))
+                    .disabled(appsCenter.busy)
                 }
-                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                .disabled(appsCenter.busy)
-                Spacer(minLength: 4)
-                Button("移除登记", role: .destructive) {
-                    confirmRemoveExternal = true
-                }
-                .buttonStyle(LiquidButtonStyle(variant: .borderless, size: .small))
-                .disabled(appsCenter.busy)
             }
         }
         .padding(18)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .modifier(IsleEmbossedSurface())
+    }
+
+    @ViewBuilder
+    private func externalConfiguredPrimaryActions(_ loc: NativeAppStorageLocation, healthy: Bool) -> some View {
+        HStack(spacing: 8) {
+            if !healthy {
+                Button("重新检测") {
+                    appsCenter.refresh()
+                }
+                .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                .disabled(appsCenter.busy)
+            } else if !loc.isDefault {
+                Button("设为默认") {
+                    appsCenter.mutateAppStorage(action: "set_default", defaultLocationID: "external")
+                }
+                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                .disabled(appsCenter.busy)
+            }
+            Button("更换目录…") {
+                chooseFolder(kind: "external", action: "set")
+            }
+            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+            .disabled(appsCenter.busy)
+        }
     }
 
     private func externalEmptyCard(_ volumes: [NativeAppStorageVolumeOption]) -> some View {
@@ -228,30 +302,42 @@ struct AppStorageLocationsSection: View {
 
             Spacer(minLength: 0)
 
-            HStack(spacing: 8) {
-                ForEach(writableVolumes.prefix(2)) { vol in
-                    Button("使用「\(vol.name)」") {
-                        appsCenter.setAppStorageWithPermission(
-                            action: "add",
-                            kind: "external",
-                            path: vol.suggestedPath,
-                            name: vol.name
-                        )
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                    .disabled(appsCenter.busy)
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) {
+                    externalEmptyButtons(writableVolumes)
+                    Spacer(minLength: 0)
                 }
-                Button("选择其他盘…") {
-                    chooseFolder(kind: "external", action: "add")
+                VStack(alignment: .leading, spacing: 8) {
+                    externalEmptyButtons(writableVolumes)
                 }
-                .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
-                .disabled(appsCenter.busy)
-                Spacer(minLength: 0)
             }
         }
         .padding(18)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .modifier(IsleEmbossedSurface())
+    }
+
+    @ViewBuilder
+    private func externalEmptyButtons(_ writableVolumes: [NativeAppStorageVolumeOption]) -> some View {
+        HStack(spacing: 8) {
+            ForEach(writableVolumes.prefix(2)) { vol in
+                Button("使用「\(vol.name)」") {
+                    appsCenter.setAppStorageWithPermission(
+                        action: "add",
+                        kind: "external",
+                        path: vol.suggestedPath,
+                        name: vol.name
+                    )
+                }
+                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                .disabled(appsCenter.busy)
+            }
+            Button("选择其他盘…") {
+                chooseFolder(kind: "external", action: "add")
+            }
+            .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+            .disabled(appsCenter.busy)
+        }
     }
 
     private func formatFreeSpace(_ loc: NativeAppStorageLocation) -> String? {

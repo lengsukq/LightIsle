@@ -82,7 +82,7 @@ struct IsleCascade: ViewModifier {
     func body(content: Content) -> some View {
         content.opacity(appeared ? 1 : 0)
             .offset(y: appeared || reduceMotion ? 0 : 9)
-            .animation(reduceMotion ? .easeOut(duration: 0.08) : IsleMotion.fluid.delay(Double(min(index, 6)) * 0.035), value: appeared)
+            .animation(reduceMotion ? nil : IsleMotion.fluid.delay(Double(min(index, 6)) * 0.035), value: appeared)
             .onAppear { appeared = true }
             .onDisappear { appeared = false }
     }

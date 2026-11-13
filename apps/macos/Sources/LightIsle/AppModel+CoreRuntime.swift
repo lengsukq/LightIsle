@@ -50,9 +50,7 @@ extension AppModel {
         diskOperationDeadline?.cancel()
         diskOperationPending = false
         managedDisks = []
-        offlineCleanupPending = false
         offlineSharedFolderPath = nil
-        clearPendingStorageSelection()
         cancelStartupDeadline()
         finishRemoteChange()
         coreOutputFramer.reset()
@@ -63,10 +61,6 @@ extension AppModel {
         appsCenter.disconnect()
         endServicePolling()
         sharedFolderPath = nil
-        if exportRunning {
-            exportMessage = "Go Core 已停止，跨磁盘复制已中断；原文件不会自动删除，请检查目标磁盘有无未发布的临时副本。"
-        }
-        exportRunning = false
         let port = preferredLocalPort
         guard let bootstrap = CoreProcessBootstrap.make(
             port: port,
@@ -123,8 +117,6 @@ extension AppModel {
             prefersTunnelMode = TunnelPersistencePolicy.preferredMode()
             remoteError = nil
             sharedFolderPath = nil
-            exportRunning = false
-            exportMessage = nil
             metricHistory = []
             initializing = false
             initializationError = nil
@@ -167,12 +159,9 @@ extension AppModel {
             refreshTunnel()
             refreshFRP()
             refreshSMBState()
-            refreshTrashRetention()
             // The fresh Core knows nothing about the tunnel API token; the
-            // Keychain copy is re-validated once so the UI stays usable.
-            if TunnelSecretVault.load() != nil {
-                loadTunnelSecretAndResend()
-            }
+            // cached Keychain copy is re-validated once so the UI stays usable.
+            loadTunnelSecretAndResend()
             // Same for the TMDB token; when none is stored just sync the
             // configured flag so the settings row reflects Core reality.
             loadTmdbSecretAndResend()
@@ -283,14 +272,6 @@ extension AppModel {
         tunnelList = []
         tunnelIngress = []
         tunnelSelectedID = TunnelPersistencePolicy.selectedTunnelID()
-        if offlineCleanupPending {
-            offlineCleanupMessage = "Core 中断，无法确认离线盘清理状态。重启后检查当前共享路径及元数据。"
-        }
-        offlineCleanupPending = false
-        if storageSelectionPending {
-            storageSelectionMessage = "Core 已退出，无法确认存储切换结果；请重新启动并检查当前目录。"
-        }
-        clearPendingStorageSelection()
     }
 
     /// Release process-owned watchers, IPC pipes and metrics as a single

@@ -31,6 +31,17 @@ struct SmbSharingSectionView: View {
             serviceAndAuthorizationSection
             sharesListSection
             addShareSection
+            IsleQuickJumpBar(items: [
+                IsleQuickJumpItem("存储位置管理", icon: "folder.badge.gearshape", tint: IsleFluidPalette.brandCyan, help: "检查当前 SMB 关联目录的默认盘与外置盘绑定") {
+                    model.navigateToStorageDetail(.locations)
+                },
+                IsleQuickJumpItem("个人空间与配额", icon: "person.2.fill", tint: .purple, help: "调整成员目录边界与可用配额，减少越权暴露风险") {
+                    model.navigate(to: .spaces)
+                },
+                IsleQuickJumpItem("局域网连接", icon: "wifi", tint: .teal, help: "查看 Web/App 局域网 HTTPS 与扫码接入地址") {
+                    model.navigateToConnectionDetail(.lan)
+                }
+            ])
         }
         .onAppear {
             model.refreshSMBState()
@@ -74,9 +85,10 @@ struct SmbSharingSectionView: View {
                     .labelsHidden()
                     .toggleStyle(.switch)
                     .disabled(model.state != .online || model.smbBusy || model.smbState?.remoteManageReady != true)
-                    Button("刷新") { model.refreshSMBState() }
-                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                        .disabled(model.state != .online || model.smbBusy)
+                    IsleIconButton(icon: "arrow.clockwise", help: "刷新 SMB 服务、端口监听与共享列表") {
+                        model.refreshSMBState()
+                    }
+                    .disabled(model.state != .online || model.smbBusy)
                 }
             }
             IsleGroupSpacing(height: 4).padding(.leading, 14)
@@ -98,12 +110,11 @@ struct SmbSharingSectionView: View {
                             .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
                             .disabled(model.smbBusy)
                     }
-                    Button("系统共享设置…") {
+                    IsleIconButton(icon: "gearshape", help: "打开 macOS 系统「文件共享」与 Windows 文件共享账号设置") {
                         if let url = URL(string: "x-apple.systempreferences:com.apple.Sharing-Settings.extension") {
                             NSWorkspace.shared.open(url)
                         }
                     }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                 }
             }
             if let bonjour = model.smbState?.bonjourUrl, !bonjour.isEmpty {
@@ -139,15 +150,15 @@ struct SmbSharingSectionView: View {
                 .font(.system(size: 12, design: .monospaced))
                 .foregroundStyle(IsleTheme.accent)
                 .textSelection(.enabled)
-            Button {
+            IsleIconButton(
+                icon: "doc.on.doc",
+                variant: .borderless,
+                help: "复制 SMB 地址"
+            ) {
                 NSPasteboard.general.clearContents()
                 NSPasteboard.general.setString(url, forType: .string)
                 showNotice("已复制 \(url)")
-            } label: {
-                Image(systemName: "doc.on.doc")
             }
-            .buttonStyle(LiquidButtonStyle(variant: .borderless, size: .small))
-            .help("复制 SMB 地址")
         }
     }
 
@@ -210,18 +221,21 @@ struct SmbSharingSectionView: View {
                 }
                 Spacer()
                 HStack(spacing: 8) {
-                    Button {
+                    IsleIconButton(
+                        icon: "folder",
+                        variant: .borderless,
+                        help: "在访达中打开该共享目录"
+                    ) {
                         NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: share.path)
-                    } label: {
-                        Image(systemName: "folder")
                     }
-                    .buttonStyle(LiquidButtonStyle(variant: .borderless, size: .small))
-                    .help("在访达中查看")
 
-                    Button("移除") {
+                    IsleIconButton(
+                        icon: "trash",
+                        variant: .destructive,
+                        help: "从 SMB 共享列表移除（不会删除硬盘中的原始文件）"
+                    ) {
                         model.removeSMBShare(share)
                     }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                     .disabled(!canEdit)
                 }
             }

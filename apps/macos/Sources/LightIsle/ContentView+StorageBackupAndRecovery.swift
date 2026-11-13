@@ -73,8 +73,46 @@ extension ContentView {
                 if let inventory = model.backupInventory {
                     IsleGroupSpacing(height: 4).padding(.leading, 14)
                     AppleSettingsRow(title: "备份清单", icon: "archivebox", iconTint: .blue) {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(inventory.destination).font(.caption.monospaced()).textSelection(.enabled)
+                        let slotCount = min(inventory.snapshots.count, 5)
+                        let slotProgress = Double(slotCount) / 5.0
+                        let totalSnapBytes = inventory.snapshots.reduce(Int64(0)) { $0 + max(0, $1.sizeBytes) }
+                        let metadataBytes = inventory.snapshots.filter { $0.backupType == "metadata" }.reduce(Int64(0)) { $0 + max(0, $1.sizeBytes) }
+                        let legacyBytes = max(0, totalSnapBytes - metadataBytes)
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(spacing: 12) {
+                                IsleDonutGauge(
+                                    progress: slotProgress,
+                                    centerText: "\(slotCount)/5",
+                                    centerSubtext: "保留槽位",
+                                    tint: .indigo,
+                                    size: 50,
+                                    lineWidth: 5,
+                                    accessibilityLabel: "每周配置备份保留槽位使用率"
+                                )
+                                VStack(alignment: .leading, spacing: 3) {
+                                    Text("共识别 \(inventory.snapshots.count) 份快照 · 累计 \(IsleFormatters.fileSize(totalSnapBytes))")
+                                        .font(.system(size: 12, weight: .medium))
+                                    Text(inventory.destination)
+                                        .font(.caption.monospaced())
+                                        .foregroundStyle(IsleTheme.secondaryText)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                        .textSelection(.enabled)
+                                }
+                            }
+                            if totalSnapBytes > 0 {
+                                IsleSegmentedBar(
+                                    slices: [
+                                        IsleChartSlice(label: "应用配置快照", value: Double(metadataBytes), displayValue: IsleFormatters.fileSize(metadataBytes), color: IsleFluidPalette.brandIndigo),
+                                        IsleChartSlice(label: "旧整盘快照", value: Double(legacyBytes), displayValue: IsleFormatters.fileSize(legacyBytes), color: Color.orange.opacity(0.65))
+                                    ].filter { $0.value > 0 },
+                                    total: Double(totalSnapBytes),
+                                    barHeight: 8,
+                                    showsLegend: true,
+                                    legendMinimumWidth: 130,
+                                    accessibilityTitle: "备份快照体积构成"
+                                )
+                            }
                             if inventory.snapshots.isEmpty {
                                 Text("此目录未找到可识别的备份快照。")
                                     .font(.caption).foregroundStyle(IsleTheme.secondaryText)
@@ -86,7 +124,7 @@ extension ContentView {
                                         Text(snapshot.backupType == "metadata" ? "应用配置快照" : "旧整盘快照（不支持恢复）")
                                             .font(.caption2).foregroundStyle(IsleTheme.secondaryText)
                                     }
-                                    Text("\(snapshot.createdAt > 0 ? Date(timeIntervalSince1970: TimeInterval(snapshot.createdAt)).formatted() : "时间未知") · 清单容量 \(ByteCountFormatter.string(fromByteCount: snapshot.sizeBytes, countStyle: .file))")
+                                    Text("\(snapshot.createdAt > 0 ? IsleFormatters.dateTime(unixSeconds: snapshot.createdAt) : "时间未知") · 清单容量 \(IsleFormatters.fileSize(snapshot.sizeBytes))")
                                         .font(.caption2).foregroundStyle(IsleTheme.secondaryText)
                                     Text(snapshot.integrity == "invalid" ? "清单异常，不能据此确认可恢复" : snapshot.integrity == "not_verified_limit" ? "超出本次检查上限，内容尚未校验" : "清单可读，内容 SHA-256 尚未校验")
                                         .font(.caption2).foregroundStyle(snapshot.integrity == "invalid" ? IsleTheme.warningText : IsleTheme.secondaryText)
@@ -117,7 +155,7 @@ extension ContentView {
                                  ? "暂不可用" : s.enabled ? "仅应用配置 · 每周 · 保留最近 5 份" : "未启用")
                                 .font(.caption).foregroundStyle(IsleTheme.secondaryText)
                             if s.enabled, s.nextRun > 0 {
-                                Text("下次运行：\(Date(timeIntervalSince1970: TimeInterval(s.nextRun)).formatted())").font(.caption2).foregroundStyle(IsleTheme.secondaryText)
+                                Text("下次运行：\(IsleFormatters.dateTime(unixSeconds: s.nextRun))").font(.caption2).foregroundStyle(IsleTheme.secondaryText)
                             }
                             if let destination = s.destination, !destination.isEmpty {
                                 Text(destination).font(.caption2.monospaced()).foregroundStyle(IsleTheme.secondaryText).lineLimit(1).truncationMode(.middle).textSelection(.enabled)
@@ -133,6 +171,7 @@ extension ContentView {
 
             upgradePreflightView
             metadataRollbackView
+            storageTimeMachineContent
         }
     }
     var storageTimeMachineContent: some View {
@@ -148,8 +187,12 @@ extension ContentView {
                         }
                         .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         .disabled(model.timeMachineChecking)
-                        Button("打开系统设置…") { model.openTimeMachineSettings() }
-                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        IsleIconButton(
+                            icon: "gearshape",
+                            help: "打开 macOS「时间机器」系统设置"
+                        ) {
+                            model.openTimeMachineSettings()
+                        }
                     }
                 }
                 if let status = model.timeMachineDiagnostics {
@@ -299,7 +342,7 @@ extension ContentView {
                 }
                 ForEach(inventory.transactions) { transaction in
                     IsleGroupSpacing(height: 4).padding(.leading, 14)
-                    AppleSettingsRow(title: transaction.activatedAt > 0 ? Date(timeIntervalSince1970: TimeInterval(transaction.activatedAt)).formatted() : "旧版恢复记录") {
+                    AppleSettingsRow(title: transaction.activatedAt > 0 ? IsleFormatters.dateTime(unixSeconds: transaction.activatedAt) : "旧版恢复记录") {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("\(transaction.fileCount) 个元数据文件 · \(transaction.id)")
                                 .font(.caption.monospaced()).textSelection(.enabled)

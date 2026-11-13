@@ -163,7 +163,6 @@ final class NativeSpacesModel: ObservableObject {
     @Published private(set) var lastErrorCode: String?
     @Published var lastTransferResult: NativeStorageSwitchResult?
     @Published private(set) var lastCreatedUser: NativeSpaceUserAccount?
-    @Published private(set) var lastCompletedOperation: String?
 
     private var writer: ((String) throws -> Void)?
     private var activeRequestID: String?
@@ -177,12 +176,6 @@ final class NativeSpacesModel: ObservableObject {
 
     var onlineRoots: [NativeSpaceRootInfo] {
         roots.filter(\.online)
-    }
-
-    var systemAppDataPath: String {
-        let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first?.path
-            ?? (NSHomeDirectory() + "/Library/Application Support")
-        return base + "/LightIsle"
     }
 
     func rootInfo(for rootID: String) -> NativeSpaceRootInfo? {
@@ -212,7 +205,6 @@ final class NativeSpacesModel: ObservableObject {
 
     func clearLastOperationState() {
         lastCreatedUser = nil
-        lastCompletedOperation = nil
         errorMessage = nil
     }
 
@@ -412,29 +404,29 @@ final class NativeSpacesModel: ObservableObject {
         timeoutTask?.cancel()
         timeoutTask = nil
         activeRequestID = nil
-        busy = false
+        if busy { busy = false }
         let wasSilentStatus = silentIfTaskMissing
         silentIfTaskMissing = false
         if let result = envelope.result {
-            users = result.users
-            roots = result.roots
-            if let transfer = result.transfer {
+            if users != result.users { users = result.users }
+            if roots != result.roots { roots = result.roots }
+            if let transfer = result.transfer, lastTransferResult != transfer {
                 lastTransferResult = transfer
             }
             if let created = result.createdUser {
                 lastCreatedUser = created
-                selectedUserID = created.id
+                if selectedUserID != created.id { selectedUserID = created.id }
             } else if !users.contains(where: { $0.id == selectedUserID }), let first = users.first {
-                selectedUserID = first.id
+                if selectedUserID != first.id { selectedUserID = first.id }
             }
         }
         if let errCode = envelope.error, !errCode.isEmpty {
             if wasSilentStatus && errCode == "storage_switch_task_not_found" {
-                lastErrorCode = nil
-                errorMessage = nil
+                if lastErrorCode != nil { lastErrorCode = nil }
+                if errorMessage != nil { errorMessage = nil }
                 return
             }
-            lastErrorCode = errCode
+            if lastErrorCode != errCode { lastErrorCode = errCode }
             let baseError = humanizeSpacesError(
                 errCode,
                 detail: envelope.result?.transfer?.errorDetail,
@@ -443,21 +435,20 @@ final class NativeSpacesModel: ObservableObject {
             if envelope.operation == "create-user", let created = envelope.result?.createdUser {
                 errorMessage = "账号「\(created.username)」已创建成功，但初始存储空间分配未完成：\(baseError)"
             } else {
-                errorMessage = baseError
+                if errorMessage != baseError { errorMessage = baseError }
             }
             return
         }
-        lastErrorCode = nil
-        errorMessage = nil
-        lastCompletedOperation = envelope.operation
+        if lastErrorCode != nil { lastErrorCode = nil }
+        if errorMessage != nil { errorMessage = nil }
         if let result = envelope.result {
             if let transfer = result.transfer {
-                lastTransferResult = transfer
+                if lastTransferResult != transfer { lastTransferResult = transfer }
                 switch transfer.phase {
                 case "queued", "copying", "committing":
                     message = transfer.phase == "committing"
                         ? "正在切换空间并核对源盘…"
-                        : "正在复制并核验，已复制 \(ByteCountFormatter.string(fromByteCount: transfer.copiedBytes, countStyle: .binary))。"
+                        : "正在复制并核验，已复制 \(IsleFormatters.binarySize(transfer.copiedBytes))。"
                     scheduleTransferPoll(transfer)
                 case "verified":
                     message = "已核验 \(transfer.verifiedFiles) 个文件，影响 \(transfer.affectedShares) 项分享。"

@@ -5,16 +5,8 @@ import Foundation
 /// Neither setting starts a listener or grants access to any shared directory.
 @MainActor
 final class NativeServicePresenceCoordinator {
-    var onBonjourStatusChange: ((String) -> Void)?
-
     private var sleepActivity: NSObjectProtocol?
-    private lazy var bonjourPublisher: BonjourPublisher = {
-        let publisher = BonjourPublisher()
-        publisher.onStatusChange = { [weak self] status in
-            self?.onBonjourStatusChange?(status)
-        }
-        return publisher
-    }()
+    private let bonjourPublisher = BonjourPublisher()
 
     func updateSleepPolicy(serviceOnline: Bool, keepAwake: Bool) {
         let preventIdleSleep = serviceOnline && keepAwake

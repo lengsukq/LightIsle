@@ -109,19 +109,30 @@ struct AppPluginDetailView: View {
             } else if let err = appsCenter.errorMessage {
                 AppleSettingsGroup(title: "操作提示") {
                     AppleSettingsRow(title: "错误详情", icon: "exclamationmark.triangle.fill", iconTint: .orange) {
-                        Text(err)
-                            .font(.caption)
-                            .foregroundStyle(IsleTheme.warningText)
-                            .textSelection(.enabled)
+                        HStack(spacing: 8) {
+                            Text(err)
+                                .font(.caption)
+                                .foregroundStyle(IsleTheme.warningText)
+                                .textSelection(.enabled)
+                            IsleIconButton(icon: "xmark", variant: .borderless, help: "关闭错误提示") {
+                                appsCenter.errorMessage = nil
+                            }
+                        }
                     }
                 }
             }
             if let msg = appsCenter.message {
-                Text(msg)
-                    .font(.caption)
-                    .foregroundStyle(IsleTheme.successText)
-                    .textSelection(.enabled)
-                    .padding(.horizontal, 4)
+                HStack(spacing: 8) {
+                    Text(msg)
+                        .font(.caption)
+                        .foregroundStyle(IsleTheme.successText)
+                        .textSelection(.enabled)
+                    Spacer()
+                    IsleIconButton(icon: "xmark", variant: .borderless, help: "关闭提示") {
+                        appsCenter.message = nil
+                    }
+                }
+                .padding(.horizontal, 4)
             }
 
             runtimeControlSection
@@ -197,7 +208,7 @@ struct AppPluginDetailView: View {
                             )
                             if let rss = app.web.rssBytes, rss > 0 {
                                 IsleStatusPill(
-                                    text: ByteCountFormatter.string(fromByteCount: rss, countStyle: .memory),
+                                    text: IsleFormatters.memorySize(rss),
                                     tone: .neutral
                                 )
                             }
@@ -378,7 +389,7 @@ struct AppPluginDetailView: View {
 
     private var accessSection: some View {
         AppleSettingsGroup(title: "家庭成员访问权限") {
-            AppleSettingsRow(title: "可见范围", subtitle: "控制 Web 与移动端应用中心对家庭成员的展示与网关授权", icon: "person.2.badge.key.fill", iconTint: .blue) {
+            AppleSettingsRow(title: "可见范围", subtitle: "控制 Web 与移动端应用中心对普通成员的展示与网关授权；管理员始终可访问全部应用", icon: "person.2.badge.key.fill", iconTint: .blue) {
                 Picker("可见范围", selection: $policy) {
                     Text("仅管理员可见 (admin_only)").tag("admin_only")
                     Text("全体成员可见 (all_members)").tag("all_members")
@@ -620,7 +631,17 @@ struct AppPluginDetailView: View {
         )
         var webPayload: NativeAppWebUpdatePayload?
         if app.web.mode != "none" {
-            let idle = Int(idleTimeoutText.trimmingCharacters(in: .whitespaces))
+            var idle: Int?
+            if app.web.mode != "static" && webMode == "on-demand" {
+                guard let parsed = Int(idleTimeoutText.trimmingCharacters(in: .whitespaces)),
+                      (30...86400).contains(parsed) else {
+                    edits.error = "空闲自动休眠秒数须为 30 ~ 86400 之间的整数。"
+                    return
+                }
+                idle = parsed
+            } else {
+                idle = Int(idleTimeoutText.trimmingCharacters(in: .whitespaces))
+            }
             webPayload = NativeAppWebUpdatePayload(
                 enabled: webEnabled,
                 mode: app.web.mode == "static" ? nil : webMode,
@@ -630,14 +651,24 @@ struct AppPluginDetailView: View {
         }
         var cronPayload: NativeAppCronUpdatePayload?
         if app.cron != nil {
+            let trimmedCron = cronExpr.trimmingCharacters(in: .whitespacesAndNewlines)
+            if cronEnabled && trimmedCron.split(whereSeparator: \.isWhitespace).count != 5 {
+                edits.error = "Cron 表达式须为 5 段（分 时 日 月 周），例如 */15 * * * *。"
+                return
+            }
+            guard let timeoutSec = Int(cronTimeoutText.trimmingCharacters(in: .whitespaces)),
+                  (10...86400).contains(timeoutSec) else {
+                edits.error = "定时任务超时秒数须为 10 ~ 86400 之间的整数。"
+                return
+            }
             var evs: [String] = []
             if notifySuccess { evs.append("success") }
             if notifyFailure { evs.append("failure") }
             if notifyTimeout { evs.append("timeout") }
             cronPayload = NativeAppCronUpdatePayload(
                 enabled: cronEnabled,
-                cron: cronExpr.trimmingCharacters(in: .whitespacesAndNewlines),
-                timeoutSeconds: Int(cronTimeoutText.trimmingCharacters(in: .whitespaces)),
+                cron: trimmedCron,
+                timeoutSeconds: timeoutSec,
                 notification: NativeAppCronNotification(
                     events: evs,
                     channels: Array(selectedChannels).sorted()

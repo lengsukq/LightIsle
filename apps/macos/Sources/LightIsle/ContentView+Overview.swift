@@ -15,6 +15,7 @@ struct ConnectionQRCodePopoverButton: View {
         }
         .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
         .help("显示手机扫码连接二维码")
+        .accessibilityLabel("显示\(label)二维码")
         .popover(isPresented: $showingPopover, arrowEdge: .bottom) {
             VStack(spacing: 10) {
                 Text(label)
@@ -100,15 +101,14 @@ extension ContentView {
                                 .truncationMode(.middle)
                                 .textSelection(.enabled)
                             if let endpoint = model.endpoint?.absoluteString {
-                                Button {
+                                IsleIconButton(
+                                    icon: "doc.on.doc",
+                                    help: "复制本机访问地址"
+                                ) {
                                     NSPasteboard.general.clearContents()
                                     NSPasteboard.general.setString(endpoint, forType: .string)
                                     showNotice("已复制本机访问地址")
-                                } label: {
-                                    Image(systemName: "doc.on.doc")
                                 }
-                                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                                .help("复制本机访问地址")
                             }
                         }
                         if let lan = model.remoteAddress {
@@ -197,9 +197,9 @@ extension ContentView {
                 Button("查看全部") { requestNavigation(.spaces) }.buttonStyle(LiquidButtonStyle(variant: .borderless))
             }
             LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 14)], spacing: 14) {
-                LiquidSanctuaryTile(title: "私人文件", subtitle: "文件与共享目录", detail: "在 Web 空间打开", icon: "folder", gradientColors: [], badgeText: nil) { model.openUserWeb(page: "files") }
-                LiquidSanctuaryTile(title: "时光相册", subtitle: "照片与视频回忆", detail: "在 Web 空间打开", icon: "photo.on.rectangle", gradientColors: [], badgeText: nil) { model.openUserWeb(page: "photos") }
-                LiquidSanctuaryTile(title: "私人影院", subtitle: "影片与剧集", detail: "在 Web 空间打开", icon: "film", gradientColors: [], badgeText: nil) { model.openUserWeb(page: "cinema") }
+                LiquidSanctuaryTile(title: "私人文件", subtitle: "文件与共享目录", detail: "在 Web 空间打开", icon: "folder", badgeText: nil) { model.openUserWeb(page: "files") }
+                LiquidSanctuaryTile(title: "时光相册", subtitle: "照片与视频回忆", detail: "在 Web 空间打开", icon: "photo.on.rectangle", badgeText: nil) { model.openUserWeb(page: "photos") }
+                LiquidSanctuaryTile(title: "私人影院", subtitle: "影片与剧集", detail: "在 Web 空间打开", icon: "film", badgeText: nil) { model.openUserWeb(page: "cinema") }
             }.disabled(model.state != .online)
         }
     }
@@ -302,25 +302,146 @@ extension ContentView {
             HStack {
                 Text("Mac 运行状态").font(.system(size: 15, weight: .semibold))
                 Spacer()
-                Text(model.lastMetricsAt.map { "采样于 " + $0.formatted(date: .omitted, time: .standard) } ?? "等待采样")
+                Text(model.lastMetricsAt.map { "采样于 " + IsleFormatters.timeHMS($0) } ?? "等待采样")
                     .font(.system(size: 12)).foregroundStyle(IsleTheme.secondaryText)
             }
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 180), spacing: 14)], spacing: 14) {
-                LiquidHealthGauge(title: "处理器", valueText: m?.cpuPercent.map { String(format: "%.1f%%", $0) } ?? "等待采样",
-                                  subtext: m.map { "\($0.cpuCount) 个核心" } ?? "尚无读数", progress: m?.cpuPercent.map { $0 / 100 }, tint: IsleTheme.accent, icon: "cpu")
-                LiquidHealthGauge(title: "内存", valueText: memTotal > 0 ? formatBytes(memUsed) : "等待采样",
-                                  subtext: memTotal > 0 ? "总计 \(formatBytes(memTotal))" : "尚无读数", progress: memTotal > 0 ? Double(memUsed) / Double(memTotal) : nil, tint: IsleFluidPalette.brandViolet, icon: "memorychip")
-                LiquidHealthGauge(title: "网络下载", valueText: m?.networkDownBps.map { formatRate($0) + "/s" } ?? "等待采样",
-                                  subtext: "本机所有网络接口合计", progress: nil, tint: IsleFluidPalette.brandCyan, icon: "arrow.down")
-                LiquidHealthGauge(title: "网络上传", valueText: m?.networkUpBps.map { formatRate($0) + "/s" } ?? "等待采样",
-                                  subtext: "本机所有网络接口合计", progress: nil, tint: IsleFluidPalette.brandIndigo, icon: "arrow.up")
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 205), spacing: 14)], spacing: 14) {
+                let appRss = LightIsleHostMemory.residentBytes() ?? 0
+                let coreRss = m?.coreRssBytes ?? 0
+                let memSlices = memTotal > 0 ? IsleStorageChartBuilder.memorySlices(
+                    total: memTotal,
+                    used: memUsed,
+                    appRss: appRss,
+                    coreRss: coreRss
+                ) : nil
+                LiquidHealthGauge(
+                    title: "处理器",
+                    valueText: m?.cpuPercent.map { String(format: "%.1f%%", $0) } ?? "等待采样",
+                    subtext: m.map { "\($0.cpuCount) 个核心" } ?? "尚无读数",
+                    progress: m?.cpuPercent.map { $0 / 100 },
+                    tint: IsleTheme.accent,
+                    icon: "cpu",
+                    sparklineValues: model.metricHistory.map(\.cpu),
+                    sparklineMax: 100
+                )
+                LiquidHealthGauge(
+                    title: "内存",
+                    valueText: memTotal > 0 ? formatBytes(memUsed) : "等待采样",
+                    subtext: memTotal > 0 ? "总计 \(formatBytes(memTotal))" : "尚无读数",
+                    progress: memTotal > 0 ? Double(memUsed) / Double(memTotal) : nil,
+                    tint: IsleFluidPalette.brandViolet,
+                    icon: "memorychip",
+                    sparklineValues: model.metricHistory.map(\.memory),
+                    sparklineMax: 100,
+                    segmentedSlices: memSlices,
+                    segmentedTotal: memTotal > 0 ? Double(memTotal) : nil
+                )
+                LiquidHealthGauge(
+                    title: "网络下载",
+                    valueText: m?.networkDownBps.map { formatRate($0) + "/s" } ?? "等待采样",
+                    subtext: "本机所有网络接口合计",
+                    progress: nil,
+                    tint: IsleFluidPalette.brandCyan,
+                    icon: "arrow.down",
+                    sparklineValues: model.metricHistory.map(\.download)
+                )
+                LiquidHealthGauge(
+                    title: "网络上传",
+                    valueText: m?.networkUpBps.map { formatRate($0) + "/s" } ?? "等待采样",
+                    subtext: "本机所有网络接口合计",
+                    progress: nil,
+                    tint: IsleFluidPalette.brandIndigo,
+                    icon: "arrow.up",
+                    sparklineValues: model.metricHistory.map(\.upload)
+                )
                 if let pwr = model.powerSnapshot, pwr.available {
-                    LiquidHealthGauge(title: "供电与 UPS", valueText: pwr.statusLabel,
-                                      subtext: pwr.detailLabel, progress: pwr.percent >= 0 ? Double(pwr.percent) / 100.0 : nil, tint: pwr.onBattery ? .orange : .green, icon: pwr.onBattery ? "bolt.batteryblock.fill" : "powerplug")
+                    LiquidHealthGauge(
+                        title: "供电与 UPS",
+                        valueText: pwr.statusLabel,
+                        subtext: pwr.detailLabel,
+                        progress: pwr.percent >= 0 ? Double(pwr.percent) / 100.0 : nil,
+                        tint: pwr.onBattery ? .orange : .green,
+                        icon: pwr.onBattery ? "bolt.batteryblock.fill" : "powerplug"
+                    )
                 }
+            }
+            if let volumeSnapshot = overviewVolumeChartSnapshot {
+                overviewVolumeDistributionCard(volumeSnapshot)
             }
         }
         .onAppear { model.refreshPowerSnapshotIfNeeded() }
+    }
+
+    private var overviewVolumeChartSnapshot: (title: String, subtitle: String, total: UInt64, free: UInt64, rootID: String?, generation: UInt64?)? {
+        let defaultRoot = model.rootManagement.defaultRoot
+        let defaultPath = defaultRoot?.path ?? model.sharedFolderPath
+        if let volumes = model.metrics?.volumes,
+           let mount = StorageVolumeSelection.matchingMount(for: defaultPath, mounts: volumes.map(\.mount)),
+           let vol = volumes.first(where: { $0.mount == mount }),
+           vol.total > 0 {
+            return (
+                title: "主存储空间构成 · \(vol.mount == "/" ? "Mac 系统盘" : vol.name)",
+                subtitle: "\(vol.filesystem) · 可用 \(formatBytes(vol.free)) / 共 \(formatBytes(vol.total))",
+                total: vol.total,
+                free: vol.free,
+                rootID: defaultRoot?.rootID,
+                generation: defaultRoot?.generation
+            )
+        }
+        if let m = model.metrics, m.diskTotal > 0 {
+            return (
+                title: "宿主 Mac 磁盘空间构成",
+                subtitle: "可用 \(formatBytes(m.diskFree)) / 共 \(formatBytes(m.diskTotal))",
+                total: m.diskTotal,
+                free: m.diskFree,
+                rootID: nil,
+                generation: nil
+            )
+        }
+        return nil
+    }
+
+    private func overviewVolumeDistributionCard(_ snap: (title: String, subtitle: String, total: UInt64, free: UInt64, rootID: String?, generation: UInt64?)) -> some View {
+        let clampedFree = min(snap.free, snap.total)
+        let usedRatio = Double(snap.total - clampedFree) / Double(max(snap.total, 1))
+        let slices = IsleStorageChartBuilder.volumeSlices(
+            total: snap.total,
+            free: clampedFree,
+            rootID: snap.rootID,
+            rootGeneration: snap.generation,
+            users: model.personalSpaces.users
+        )
+        return HStack(alignment: .center, spacing: 16) {
+            IsleDonutGauge(
+                progress: usedRatio,
+                centerText: "\(Int(round(usedRatio * 100)))%",
+                centerSubtext: "已用",
+                tint: usedRatio > 0.88 ? .orange : IsleFluidPalette.brandCyan,
+                size: 62,
+                lineWidth: 6.5,
+                accessibilityLabel: snap.title
+            )
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Text(snap.title)
+                        .font(.system(size: 13.5, weight: .semibold))
+                    Spacer(minLength: 4)
+                    Text(snap.subtitle)
+                        .font(.system(size: 11.5, design: .monospaced))
+                        .foregroundStyle(IsleTheme.secondaryText)
+                }
+                IsleSegmentedBar(
+                    slices: slices,
+                    total: Double(snap.total),
+                    barHeight: 10,
+                    showsLegend: true,
+                    legendMinimumWidth: 140,
+                    accessibilityTitle: snap.title
+                )
+            }
+        }
+        .padding(16)
+        .modifier(IsleEmbossedSurface())
     }
     var diagnosticsView: some View {
         VStack(alignment: .leading, spacing: 20) {

@@ -112,60 +112,62 @@ struct RootManagementView: View {
                 }
 
                 Spacer()
-
-                HStack(spacing: 6) {
-                    if root.online && root.isDefault != true {
-                        Button("设为默认") {
-                            model.selectedID = root.rootID
-                            model.makeSelectedDefault()
-                        }
-                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                    }
-
-                    if root.online {
-                        Button(isWritable ? "校验读写" : "获取读写权限…") {
-                            Task { @MainActor in
-                                let access = await StoragePermissionHelper.requestReadWriteAccess(
-                                    forPath: root.path,
-                                    reason: "需要获取并验证「\(root.name)」及其所属整盘的读写权限，以确保数据读写与跨目录迁移正常执行。",
-                                    initialProbe: probe
-                                )
-                                guard access.ok else {
-                                    model.message = access.errorMessage
-                                    return
-                                }
-                                model.verifyAccess(path: root.path, autoRepairOnDenied: true)
-                            }
-                        }
-                        .buttonStyle(LiquidButtonStyle(variant: isWritable ? .secondary : .prominent, size: .small))
-                    }
-
-                    Button("迁移此目录数据…") {
-                        AppModel.shared.navigate(to: .spaces)
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-
-                    if !root.online || root.pending {
-                        Button("重新连接…") {
-                            model.selectedID = root.rootID
-                            model.reconnectSelected()
-                        }
-                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                    }
-
-                    Button("移除登记…") {
-                        model.selectedID = root.rootID
-                        model.removeSelected()
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .destructive, size: .small))
-                }
-                .disabled(!model.connected || model.busy)
             }
 
             Text(root.path)
                 .font(.system(size: 11.5, design: .monospaced))
                 .foregroundStyle(IsleTheme.secondaryText)
                 .textSelection(.enabled)
+
+            HStack(spacing: 8) {
+                if root.online && root.isDefault != true {
+                    Button("设为默认") {
+                        model.selectedID = root.rootID
+                        model.makeSelectedDefault()
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                }
+
+                if root.online {
+                    Button(isWritable ? "校验读写" : "获取读写权限…") {
+                        Task { @MainActor in
+                            let access = await StoragePermissionHelper.requestReadWriteAccess(
+                                forPath: root.path,
+                                reason: "需要获取并验证「\(root.name)」及其所属整盘的读写权限，以确保数据读写与跨目录迁移正常执行。",
+                                initialProbe: probe
+                            )
+                            guard access.ok else {
+                                model.message = access.errorMessage
+                                return
+                            }
+                            model.verifyAccess(path: root.path, autoRepairOnDenied: true)
+                        }
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: isWritable ? .secondary : .prominent, size: .small))
+                }
+
+                Button("迁移此目录数据…") {
+                    AppModel.shared.navigate(to: .spaces)
+                }
+                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+
+                if !root.online || root.pending {
+                    Button("重新连接…") {
+                        model.selectedID = root.rootID
+                        model.reconnectSelected()
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                }
+
+                Spacer(minLength: 0)
+
+                Button("移除登记…") {
+                    model.selectedID = root.rootID
+                    model.removeSelected()
+                }
+                .buttonStyle(LiquidButtonStyle(variant: .destructive, size: .small))
+            }
+            .disabled(!model.connected || model.busy)
 
             if !root.online {
                 Label("硬盘未连接。请检查供电、数据线和访达挂载状态后刷新；轻屿不会自动删除旧目录文件。", systemImage: "externaldrive.badge.exclamationmark")

@@ -41,9 +41,26 @@ enum QuotaValidationResult: Equatable {
     }
 }
 
+private final class SafeByteFormatter: @unchecked Sendable {
+    private let lock = NSLock()
+    private let formatter: ByteCountFormatter
+
+    init(style: ByteCountFormatter.CountStyle) {
+        let instance = ByteCountFormatter()
+        instance.countStyle = style
+        self.formatter = instance
+    }
+
+    func string(fromByteCount count: Int64) -> String {
+        lock.withLock { formatter.string(fromByteCount: count) }
+    }
+}
+
 enum QuotaInputValidator {
     static let maxQuotaGiB: Int64 = 1_048_576
     static let bytesPerGiB: Int64 = 1 << 30
+    fileprivate static let fileFormatter = SafeByteFormatter(style: .file)
+    fileprivate static let binaryFormatter = SafeByteFormatter(style: .binary)
 
     static func validateGiB(_ raw: String, currentUsedBytes: Int64 = 0) -> QuotaValidationResult {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -63,7 +80,7 @@ enum QuotaInputValidator {
             return .unlimited
         }
         if currentUsedBytes > 0 && bytes < currentUsedBytes {
-            let formattedUsed = ByteCountFormatter.string(fromByteCount: currentUsedBytes, countStyle: .file)
+            let formattedUsed = Self.fileFormatter.string(fromByteCount: currentUsedBytes)
             return .validWithWarning(
                 bytes: bytes,
                 warning: "设定额度低于当前已计入用量（\(formattedUsed)），保存后该盘新增上传将受阻，已有文件不会删除。"
@@ -201,8 +218,8 @@ struct StorageSwitchStagePresentation: Equatable {
         let totalB = totalBytes ?? 0
         let totalF = totalFiles ?? 0
         let fraction: Double? = totalB > 0 ? min(max(Double(copiedBytes) / Double(totalB), 0), 1) : nil
-        let copiedStr = ByteCountFormatter.string(fromByteCount: copiedBytes, countStyle: .binary)
-        let totalStr = totalB > 0 ? ByteCountFormatter.string(fromByteCount: totalB, countStyle: .binary) : nil
+        let copiedStr = QuotaInputValidator.binaryFormatter.string(fromByteCount: copiedBytes)
+        let totalStr = totalB > 0 ? QuotaInputValidator.binaryFormatter.string(fromByteCount: totalB) : nil
         let filesSummary = totalF > 0 ? "\(verifiedFiles) / \(totalF) 个文件" : "\(verifiedFiles) 个文件"
         let bytesSummary = totalStr.map { "\(copiedStr) / \($0)" } ?? copiedStr
 

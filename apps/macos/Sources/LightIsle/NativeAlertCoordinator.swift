@@ -1,7 +1,7 @@
 import Foundation
 
 /// The wire payload emitted by Go Core's durable alert journal.
-struct CorePersistentAlert: Decodable {
+struct CorePersistentAlert: Decodable, Equatable {
     let code: String
     let severity: String
     let message: String

@@ -16,6 +16,4 @@ struct NativeSaveSignal: Equatable {
     let pending: [Bool]
     let messages: [String?]
     let threshold: [Int?]
-    let trashDays: Int
-    let trashEnabled: Bool
 }

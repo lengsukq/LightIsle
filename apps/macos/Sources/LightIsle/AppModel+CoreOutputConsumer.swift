@@ -10,21 +10,22 @@ extension AppModel {
         switch event {
         case .mapState(let configured):
             if let configured {
-                mapKeyConfigured = configured
-                mapCoreAcknowledged = true
-                mapKeyBusy = false
-                mapKeyError = nil
+                if mapKeyConfigured != configured { mapKeyConfigured = configured }
+                if !mapCoreAcknowledged { mapCoreAcknowledged = true }
+                if mapKeyBusy { mapKeyBusy = false }
+                if mapKeyError != nil { mapKeyError = nil }
             }
         case .mapError:
-            mapKeyBusy = false
-            mapKeyError = "Core 未能接收天地图 Key，请重新保存或重启服务。"
+            if mapKeyBusy { mapKeyBusy = false }
+            let message = "Core 未能接收天地图 Key，请重新保存或重启服务。"
+            if mapKeyError != message { mapKeyError = message }
         case .frpState(let state):
             if let state {
-                frpState = state
+                if frpState != state { frpState = state }
                 autoRestoreFRPIfReady(state)
             }
         case .frpVersions(let releases):
-            frpVersionsLoading = false
+            if frpVersionsLoading { frpVersionsLoading = false }
             if let releases {
                 let available = releases.filter(\.installable)
                 frpVersions = available
@@ -32,36 +33,26 @@ extension AppModel {
                     selectedFRPVersion = available.first(where: { !$0.prerelease })?.version ??
                         available.first?.version ?? ""
                 }
-                frpError = nil
+                if frpError != nil { frpError = nil }
             } else {
                 frpError = "FRP 版本列表解析失败，请重试。"
             }
         case .frpError(let reason):
-            frpVersionsLoading = false
-            frpError = reason
-        case .trashRetention(let retention):
-            if let retention {
-                trashDeadline?.cancel()
-                trashRetentionBusy = false
-                trashRetention = retention
-                trashRetentionError = nil
-            }
-        case .trashRetentionError:
-            trashDeadline?.cancel()
-            trashRetentionBusy = false
-            trashRetentionError = "保留策略无效：天数需在 1 至 365 之间，或关闭自动清理。"
+            if frpVersionsLoading { frpVersionsLoading = false }
+            if frpError != reason { frpError = reason }
         case .tmdbState(let state):
             if let state {
-                tmdbTokenConfigured = state.configured
-                tmdbCoreAcknowledged = true
-                tmdbTokenBusy = false
-                tmdbTokenError = nil
+                if tmdbTokenConfigured != state.configured { tmdbTokenConfigured = state.configured }
+                if !tmdbCoreAcknowledged { tmdbCoreAcknowledged = true }
+                if tmdbTokenBusy { tmdbTokenBusy = false }
+                if tmdbTokenError != nil { tmdbTokenError = nil }
             }
         case .tmdbError(let code):
-            tmdbTokenBusy = false
-            tmdbTokenError = code == "invalid_tmdb_token"
+            if tmdbTokenBusy { tmdbTokenBusy = false }
+            let message = code == "invalid_tmdb_token"
                 ? "Token 格式不正确：应为 TMDB v4 Read Access Token（长度 20 以上的连续字符串，不含空格换行）。"
                 : "TMDB Token 命令失败，请重试。"
+            if tmdbTokenError != message { tmdbTokenError = message }
         }
         return true
     }
@@ -73,45 +64,49 @@ extension AppModel {
         switch event {
         case .alerts(let alerts):
             if let alerts {
-                activeAlerts = Array(alerts.filter(\.active).prefix(100))
+                let nextActive = Array(alerts.filter(\.active).prefix(100))
+                if activeAlerts != nextActive { activeAlerts = nextActive }
                 nativeAlertCoordinator.presentCoreAlerts(Array(alerts.prefix(100)), enabled: nativeAlertsEnabled)
             }
         case .backupInventory(let inventory):
-            backupInventoryLoading = false
+            if backupInventoryLoading { backupInventoryLoading = false }
             if let inventory {
-                backupInventory = inventory
+                if backupInventory != inventory { backupInventory = inventory }
             } else {
-                backupError = "无法读取备份清单，请重试。"
+                let message = "无法读取备份清单，请重试。"
+                if backupError != message { backupError = message }
             }
         case .disks(let disks):
             if let disks {
-                managedDisks = disks
+                if managedDisks != disks { managedDisks = disks }
                 let validDevices = Set(
                     disks.flatMap { [$0.id, $0.parent] }
                         .filter { !$0.isEmpty }
                         .flatMap { [$0, "/dev/\($0)", $0.replacingOccurrences(of: "/dev/", with: "")] }
                 )
-                diskHealthReports = diskHealthReports.filter { validDevices.contains($0.key) }
-                diskManagementError = nil
+                let filteredHealth = diskHealthReports.filter { validDevices.contains($0.key) }
+                if diskHealthReports != filteredHealth { diskHealthReports = filteredHealth }
+                if diskManagementError != nil { diskManagementError = nil }
             } else {
-                diskManagementError = "无法解析磁盘状态，请刷新。"
+                let message = "无法解析磁盘状态，请刷新。"
+                if diskManagementError != message { diskManagementError = message }
             }
-            diskOperationPending = false
+            if diskOperationPending { diskOperationPending = false }
             diskOperationDeadline?.cancel()
         case .diskHealth(let report):
-            if let report { diskHealthReports[report.device] = report }
+            if let report, diskHealthReports[report.device] != report { diskHealthReports[report.device] = report }
         case .storageThreshold(let threshold):
-            if let threshold { storageThreshold = threshold }
+            if let threshold, storageThreshold != threshold { storageThreshold = threshold }
         case .tunnel(let state):
             if let state {
-                tunnelState = state
+                if tunnelState != state { tunnelState = state }
                 autoRestoreTunnelIfReady()
             }
         case .notify(let stats):
             if let stats {
-                notifyStats = stats
-                notifyConfigured = stats.configured
-                notifyCoreAcknowledged = true
+                if notifyStats != stats { notifyStats = stats }
+                if notifyConfigured != stats.configured { notifyConfigured = stats.configured }
+                if !notifyCoreAcknowledged { notifyCoreAcknowledged = true }
             }
         case .backupStatus(let report):
             if let report, backupStatus != report { backupStatus = report }
@@ -126,7 +121,7 @@ extension AppModel {
     private func applyHostMetricsReading(_ reading: HostMetrics) {
         nativeAlertCoordinator.checkLowDiskSpace(reading.volumes ?? [], enabled: nativeAlertsEnabled)
         guard samplesManagementUI else { return }
-        metrics = reading
+        if metrics != reading { metrics = reading }
         lastMetricsAt = Date()
         metricHistory.append(MetricHistoryPoint(
             time: Date(),
@@ -156,8 +151,8 @@ extension AppModel {
             applySubsystemIPC(channel)
         case .computerFiles(let signal):
             applyComputerFilesIPC(signal)
-        case .export(let signal):
-            applyExportIPC(signal)
+        case .export:
+            break
         case .admin(let signal):
             applyAdminIPC(signal)
         case .disksError(let raw):
@@ -205,39 +200,11 @@ extension AppModel {
     private func applyComputerFilesIPC(_ signal: CoreIPCDomainEvent.ComputerFilesSignal) {
         switch signal {
         case .state(let enabled):
-            computerFilesEnabled = enabled
-            computerFilesError = nil
+            if computerFilesEnabled != enabled { computerFilesEnabled = enabled }
+            if computerFilesError != nil { computerFilesError = nil }
         case .error:
-            computerFilesError = "无法保存设置，请检查轻屿服务后重试。"
-        }
-    }
-
-    private func applyExportIPC(_ signal: CoreIPCDomainEvent.ExportSignal) {
-        switch signal {
-        case .started:
-            exportRunning = true
-            exportMessage = activeExportMode == "move"
-                ? "正在跨盘安全移动，源文件会在完整发布之后进入回收站。"
-                : "跨磁盘复制正在执行，校验完成后才会显示目标文件。"
-        case .history(let raw):
-            if let text = decodeExportResult(raw),
-               let bytes = text.data(using: .utf8),
-               let items = try? JSONDecoder().decode([FileTransferReceipt].self, from: bytes) {
-                transferHistory = items
-            }
-        case .historyError(let raw):
-            exportMessage = "无法读取迁移记录：" + (decodeExportResult(raw) ?? "未知错误")
-        case .succeeded(let raw):
-            exportRunning = false
-            let location = decodeExportResult(raw) ?? "目标文件"
-            exportMessage = activeExportMode == "move"
-                ? "安全移动已完成：\(location)。源文件位于轻屿回收站，可恢复；历史记录保留在本机。"
-                : "复制并校验完成：\(location)"
-            requestTransferHistory()
-        case .failed(let raw):
-            exportRunning = false
-            let reason = decodeExportResult(raw) ?? "unknown_error"
-            exportMessage = reason == "context canceled" ? "复制已取消，源文件保持不变。" : "跨磁盘复制未完成：\(reason)"
+            let message = "无法保存设置，请检查轻屿服务后重试。"
+            if computerFilesError != message { computerFilesError = message }
         }
     }
 
@@ -379,9 +346,6 @@ extension AppModel {
             sharedFolderError = nil
         case .path(let raw):
             applyLegacySharePath(raw)
-        case .accessRevoked(let state):
-            guard storageSelectionPending else { return }
-            legacyAccessRevokedForPendingRoot = state
         case .statusOnline(let online):
             guard !online else { return }
             if sharedFolderPath != nil || sharedFolderError == nil {
@@ -395,21 +359,9 @@ extension AppModel {
                path.hasPrefix("/"), path.utf8.count <= 4096 {
                 offlineSharedFolderPath = path
             }
-        case .forgot:
-            offlineCleanupPending = false
-            offlineSharedFolderPath = nil
-            offlineCleanupMessage = "已解除离线盘绑定并撤销旧成员文件授权和公开分享链接，授权记录保存在本机但不会自动用于新目录。原盘文件未删除；旧路径的图库、影院记录正在清理，NAS 正切换到本机目录。新目录需重新授权。用户、登录会话和 WebDAV 凭据保留。"
-        case .forgetError(let error):
-            offlineCleanupPending = false
-            offlineCleanupMessage = CoreIPCDomainMessages.shareForgetErrorMessage(for: error)
-        case .forgetWarning(let warning):
-            offlineCleanupMessage = "已切回本机目录，但有部分媒体索引未完成清理：\(warning)。请先备份并检查元数据。"
+        case .accessRevoked, .forgot, .forgetError, .forgetWarning:
+            break
         case .error(let error):
-            if storageSelectionPending {
-                clearPendingStorageSelection()
-                storageSelectionMessage = CoreIPCDomainMessages.pendingStorageSelectionErrorMessage(for: error)
-                return
-            }
             sharedFolderError = error
             sharedFolderPath = nil
             notifyImportantEvent("volume-unavailable", title: "NAS 存储目录不可用", message: "共享目录可能已断开连接；LightIsle 不会自动改用其他同名目录。")
@@ -420,23 +372,8 @@ extension AppModel {
         guard let data = Data(base64URLEncoded: raw),
               let path = String(data: data, encoding: .utf8),
               path.hasPrefix("/") else { return }
-        if storageSelectionPending, let pendingStorageTarget,
-           URL(fileURLWithPath: pendingStorageTarget).resolvingSymlinksInPath().standardizedFileURL.path ==
-           URL(fileURLWithPath: path).standardizedFileURL.path {
-            let old = previousStorageRoot
-            let accessRevoked = legacyAccessRevokedForPendingRoot
-            clearPendingStorageSelection()
-            storageSelectionMessage = CoreIPCDomainMessages.storageSelectionTransitionMessage(
-                newPath: path,
-                previousRoot: old,
-                accessRevoked: accessRevoked
-            )
-        }
         sharedFolderPath = path
         offlineSharedFolderPath = nil
-        if offlineCleanupMessage?.hasPrefix("已解除离线盘绑定") == true {
-            offlineCleanupMessage = "离线磁盘的本地媒体索引和旧共享权限已清理。现在使用本机存储目录 \(path)；原外接盘上的文件未删除。"
-        }
         if timeMachineDiagnostics == nil { refreshTimeMachineDiagnostics() }
         nativeAlertCoordinator.clear(key: "volume-unavailable")
     }

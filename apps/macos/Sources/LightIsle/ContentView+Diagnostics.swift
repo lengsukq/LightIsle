@@ -85,11 +85,12 @@ extension ContentView {
     }
 
     func formatBytes(_ value: UInt64) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(clamping: value), countStyle: .file)
+        IsleFormatters.fileSize(value)
     }
 
     func formatRate(_ value: Double) -> String {
-        ByteCountFormatter.string(fromByteCount: Int64(value), countStyle: .file)
+        guard value.isFinite else { return "0 B" }
+        return IsleFormatters.fileSize(Int64(max(0, min(value, Double(1 << 60)))))
     }
 
     /// volume.device is a partition BSD name ("disk4s1"); counters are keyed

@@ -19,7 +19,7 @@ enum CoreState: Equatable {
         }
     }
 }
-struct ManagedDisk: Decodable, Identifiable {
+struct ManagedDisk: Decodable, Identifiable, Equatable {
     let id: String
     let name: String
     let mount: String
@@ -36,32 +36,6 @@ struct ManagedDisk: Decodable, Identifiable {
     enum CodingKeys: String, CodingKey {
         case id, name, mount, parent, filesystem, smart, total, free, readOnly, mounted, external, identity
         case protocolName = "protocol"
-    }
-}
-
-struct FileTransferReceipt: Decodable, Identifiable {
-    let id: String
-    let source: String
-    let destination: String
-    let phase: String
-    let error: String?
-    let startedAt: Int64
-    let updatedAt: Int64
-    let sourceSize: Int64
-    let trashId: String?
-
-    var statusDescription: String {
-        switch phase {
-        case "source_in_trash": return "已完成 · 源文件在回收站"
-        case "published": return "目标已发布 · 请核对源文件位置"
-        case "copy_incomplete": return "复制中断 · 源文件保留"
-        case "copy_published_unconfirmed": return "目标已出现，落盘未确认 · 源文件保留"
-        case "source_changed_restored": return "校验未通过 · 源文件已还原，请核对两个副本"
-        case "source_trash_unresolved": return "移动未完成 · 待核对的文件保存在回收站"
-        case "source_move_uncertain": return "源文件位置待核对 · 请保留目标与回收站副本"
-        case "source_trash_failed": return "移入回收站失败 · 请核对源文件与目标"
-        default: return "尚未完成 · 请核对源文件与目标"
-        }
     }
 }
 
@@ -110,6 +84,8 @@ final class AppModel: ObservableObject {
     }
     var navigationRequest: ((SidebarPage) -> Void)?
     var storageDetailNavigationRequest: ((StorageDetail) -> Void)?
+    var connectionDetailNavigationRequest: ((ConnectionDetail) -> Void)?
+    var appsSectionNavigationRequest: ((AppsAndContainersSection) -> Void)?
     var settingsDetailNavigationRequest: ((PreferencesSection) -> Void)?
     func navigate(to page: SidebarPage) {
         if let navigationRequest { navigationRequest(page) } else { selectedSidebarPage = page }
@@ -119,6 +95,21 @@ final class AppModel: ObservableObject {
             storageDetailNavigationRequest(detail)
         } else {
             selectedSidebarPage = .storage
+        }
+    }
+    func navigateToConnectionDetail(_ detail: ConnectionDetail) {
+        if let connectionDetailNavigationRequest {
+            connectionDetailNavigationRequest(detail)
+        } else {
+            selectedSidebarPage = .services
+        }
+    }
+    func navigateToAppsSection(_ section: AppsAndContainersSection) {
+        appsCenter.workspaceSection = section
+        if let appsSectionNavigationRequest {
+            appsSectionNavigationRequest(section)
+        } else {
+            selectedSidebarPage = .containers
         }
     }
     func navigateToSettingsDetail(_ detail: PreferencesSection) {
@@ -159,12 +150,7 @@ final class AppModel: ObservableObject {
     @Published var remoteAddress: String? {
         didSet { if !isPresentationPreview { servicePresence.updateBonjour(serviceOnline: state == .online, remoteAddress: remoteAddress) } }
     }
-    @Published var bonjourStatus = "未广播（局域网监听未开启）"
-    lazy var servicePresence: NativeServicePresenceCoordinator = {
-        let coordinator = NativeServicePresenceCoordinator()
-        coordinator.onBonjourStatusChange = { [weak self] status in self?.bonjourStatus = status }
-        return coordinator
-    }()
+    let servicePresence = NativeServicePresenceCoordinator()
     @Published var remoteFingerprint: String?
     @Published var remoteError: String?
     @Published var remoteBusy = false
@@ -179,19 +165,8 @@ final class AppModel: ObservableObject {
     }
     @Published var sharedFolderError: String?
     @Published var offlineSharedFolderPath: String?
-    @Published var offlineCleanupPending = false
-    @Published var offlineCleanupMessage: String?
     @Published var storageSelectionMessage: String?
-    @Published var storageSelectionPending = false
-    var pendingStorageTarget: String?
-    var previousStorageRoot: String?
-    var legacyAccessRevokedForPendingRoot: Bool?
-    var storageSelectionDeadline: Task<Void, Never>?
 
-    @Published var exportRunning = false
-    @Published var exportMessage: String?
-    @Published var transferHistory: [FileTransferReceipt] = []
-    var activeExportMode = "copy"
     @Published var isConfigured: Bool?
     @Published var initializationError: String?
     @Published var initializing = false
@@ -229,7 +204,6 @@ final class AppModel: ObservableObject {
 
     @Published var backupSchedule: NASBackupSchedule?
     @Published var portError: String?
-    @Published var thumbnailCacheError: String?
     @Published var webOpenError: String?
     @Published var vaultMessage: String?
     @Published var unlockedAdminCredentials: AdminCredentials?
@@ -289,14 +263,8 @@ final class AppModel: ObservableObject {
     @Published var prefersRemoteAccess = LANAccessPolicy.isPreferred()
     var lastAutomaticLANAttemptAt = Date.distantPast
 
-    var canChangeSharedStorage: Bool {
-        state == .online && !rootManagement.enabled && !storageSelectionPending &&
-            !offlineCleanupPending && !exportRunning && !activatingMetadata && backupStatus?.running != true
-    }
-
     var canAddOrSwitchStorageRoot: Bool {
         state == .online && rootManagement.connected && !rootManagement.busy &&
-            !storageSelectionPending && !offlineCleanupPending && !exportRunning &&
             !activatingMetadata && backupStatus?.running != true
     }
 
@@ -334,12 +302,6 @@ final class AppModel: ObservableObject {
         remove: TunnelSecretVault.remove
     )
 
-    // Trash auto-cleanup (opt-in): configured here, enforced by Core's
-    // sweeper, mirrored read-only to Web/Flutter over HTTP.
-    @Published var trashRetention: TrashRetention = .disabled
-    @Published var trashRetentionError: String?
-    @Published var trashRetentionBusy = false
-    var trashDeadline: Task<Void, Never>?
     // TMDB automatic scraping: the token lives in the local Keychain and is
     // mirrored to Core memory over the private pipe; Web and Flutter only
     // read the resulting configured flag.
@@ -368,11 +330,6 @@ final class AppModel: ObservableObject {
     @Published var hasSavedTmdbToken = false
     @Published var hasSavedMapKey = false
     @Published var hasSavedNotifySecret = false
-
-    var canForgetOfflineShare: Bool {
-        canChangeSharedStorage && sharedFolderPath == nil &&
-            offlineSharedFolderPath != nil
-    }
 
     private init() {
         if !isPresentationPreview {

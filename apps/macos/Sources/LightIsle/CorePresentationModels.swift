@@ -2,7 +2,7 @@ import Foundation
 
 // Read-only, typed Core status models shared by the native management UI.
 // Kept separate from AppModel's process and IPC lifecycle.
-struct HostVolume: Decodable, Identifiable {
+struct HostVolume: Decodable, Identifiable, Equatable {
     let name: String
     let mount: String
     let device: String
@@ -40,7 +40,7 @@ struct NASBackupStatus: Decodable, Equatable {
     let retentionRemoved: Int?
 }
 
-struct NASBackupSnapshot: Decodable, Identifiable {
+struct NASBackupSnapshot: Decodable, Identifiable, Equatable {
     let name: String
     let path: String
     let version: String
@@ -52,14 +52,14 @@ struct NASBackupSnapshot: Decodable, Identifiable {
     var id: String { path }
 }
 
-struct NASBackupInventory: Decodable {
+struct NASBackupInventory: Decodable, Equatable {
     let destination: String
     let snapshots: [NASBackupSnapshot]
     let truncated: Bool
     let scannedEntries: Int
 }
 
-struct HostProcess: Decodable, Identifiable {
+struct HostProcess: Decodable, Identifiable, Equatable {
     let pid: Int
     let name: String
     let cpuPercent: Double?
@@ -67,7 +67,7 @@ struct HostProcess: Decodable, Identifiable {
     var id: Int { pid }
 }
 
-struct HostMetrics: Decodable {
+struct HostMetrics: Decodable, Equatable {
     let hostname: String
     let architecture: String
     let cpuCount: Int
@@ -86,13 +86,13 @@ struct HostMetrics: Decodable {
     let processesAvailable: Bool?
 }
 
-struct HostDiskIO: Decodable {
+struct HostDiskIO: Decodable, Equatable {
     let device: String
     let readBps: Double?
     let writeBps: Double?
 }
 
-struct DiskHealthReport: Decodable {
+struct DiskHealthReport: Decodable, Equatable {
     let device: String
     let source: String
     let reason: String?
@@ -117,5 +117,77 @@ struct MetricHistoryPoint: Identifiable {
     let memory: Double
     let download: Double
     let upload: Double
+}
+
+/// Shared main-actor formatter cache so SwiftUI body passes avoid allocating
+/// temporary ByteCountFormatter or DateFormatter instances per render.
+@MainActor
+enum IsleFormatters {
+    private static let fileBytes: ByteCountFormatter = {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        return formatter
+    }()
+
+    private static let binaryBytes: ByteCountFormatter = {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .binary
+        return formatter
+    }()
+
+    private static let memoryBytes: ByteCountFormatter = {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .memory
+        return formatter
+    }()
+
+    private static let dateTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .short
+        formatter.timeStyle = .short
+        return formatter
+    }()
+
+    private static let abbreviatedDateTimeFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .short
+        return formatter
+    }()
+
+    private static let timeHMSFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateStyle = .none
+        formatter.timeStyle = .medium
+        return formatter
+    }()
+
+    static func fileSize(_ bytes: Int64) -> String {
+        fileBytes.string(fromByteCount: bytes)
+    }
+
+    static func fileSize(_ bytes: UInt64) -> String {
+        fileBytes.string(fromByteCount: Int64(clamping: bytes))
+    }
+
+    static func binarySize(_ bytes: Int64) -> String {
+        binaryBytes.string(fromByteCount: bytes)
+    }
+
+    static func memorySize(_ bytes: Int64) -> String {
+        memoryBytes.string(fromByteCount: bytes)
+    }
+
+    static func dateTime(unixSeconds: Int64) -> String {
+        dateTimeFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(unixSeconds)))
+    }
+
+    static func abbreviatedDateTime(unixSeconds: Int64) -> String {
+        abbreviatedDateTimeFormatter.string(from: Date(timeIntervalSince1970: TimeInterval(unixSeconds)))
+    }
+
+    static func timeHMS(_ date: Date) -> String {
+        timeHMSFormatter.string(from: date)
+    }
 }
 

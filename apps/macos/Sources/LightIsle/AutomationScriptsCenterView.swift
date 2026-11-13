@@ -32,6 +32,20 @@ struct AutomationScriptsCenterView: View {
                 tasksGridSection
             }
             footerSecurityNote
+            IsleQuickJumpBar(items: [
+                IsleQuickJumpItem("轻应用与插件", icon: "square.grid.2x2.fill", tint: IsleFluidPalette.brandIndigo, help: "查看轻应用与插件自带 Cron 任务的运行状态") {
+                    appsCenter.workspaceSection = .plugins
+                },
+                IsleQuickJumpItem("AI Agent (MCP)", icon: "cpu.fill", tint: .purple, help: "配置外部 Agent 通过 MCP 调起或测试定时脚本") {
+                    appsCenter.workspaceSection = .mcp
+                },
+                IsleQuickJumpItem("通知渠道（邮件 / Bark）", icon: "bell.fill", tint: .orange, help: "配置邮件 SMTP、Bark、企业微信或钉钉送达凭据") {
+                    AppModel.shared.navigateToSettingsDetail(.notifications)
+                },
+                IsleQuickJumpItem("工具与诊断", icon: "wrench.and.screwdriver", tint: .teal, help: "前往设置「工具」页查看高级诊断与本机目录") {
+                    AppModel.shared.navigateToSettingsDetail(.tools)
+                }
+            ])
         }
         .sheet(item: $editingTask) { task in
             AutomationTaskEditorSheet(appsCenter: appsCenter, task: task)
@@ -134,19 +148,22 @@ struct AutomationScriptsCenterView: View {
                     .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .regular))
                     .disabled(appsCenter.busy)
 
-                    Button {
+                    IsleIconButton(
+                        icon: "folder",
+                        size: .regular,
+                        help: "在访达中打开本机脚本目录（automation/scripts）"
+                    ) {
                         appsCenter.openAutomationScriptsDirectory()
-                    } label: {
-                        Label("打开脚本目录", systemImage: "folder")
                     }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .regular))
 
-                    Button {
+                    IsleIconButton(
+                        icon: copiedPromptNotice ? "checkmark" : "doc.on.doc",
+                        tint: copiedPromptNotice ? IsleTheme.successText : nil,
+                        size: .regular,
+                        help: copiedPromptNotice ? "已复制本机定时脚本与邮件模板规范" : "复制 Agent 规范提示词（发给外部 AI Agent 自动生成脚本）"
+                    ) {
                         copyAgentSpecification()
-                    } label: {
-                        Label(copiedPromptNotice ? "已复制规范" : "复制 Agent 规范", systemImage: copiedPromptNotice ? "checkmark" : "doc.on.doc")
                     }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .regular))
                 }
             }
         }
@@ -195,7 +212,7 @@ struct AutomationScriptsCenterView: View {
                 )
                 Text("暂无本机定时脚本")
                     .font(.system(size: 15, weight: .semibold))
-                Text("你可以点击右上角「复制 Agent 规范」，让本地外部 AI Agent 在 automation/scripts/<任务ID>/ 下生成 task.json 与可执行脚本，再点击「刷新脚本」加载。")
+                Text("你可以点击下方「复制 Agent 规范」或右上角复制图标，让本地外部 AI Agent 在 automation/scripts/<任务ID>/ 下生成 task.json 与可执行脚本，再点击「刷新脚本」加载。")
                     .font(.system(size: 12.5))
                     .foregroundStyle(IsleTheme.secondaryText)
                     .multilineTextAlignment(.center)
@@ -454,7 +471,7 @@ struct AutomationScriptsCenterView: View {
     }
 
     static func formatTimestamp(_ unixSeconds: Int64) -> String {
-        Date(timeIntervalSince1970: TimeInterval(unixSeconds)).formatted(date: .abbreviated, time: .shortened)
+        IsleFormatters.abbreviatedDateTime(unixSeconds: unixSeconds)
     }
 
     static func runStateLabel(_ state: String) -> String {
@@ -527,7 +544,7 @@ private struct AutomationTaskEditorSheet: View {
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(IsleTheme.secondaryText)
                     TextField("例如：0 8 * * *", text: $cron)
-                        .textFieldStyle(.roundedBorder)
+                        .liquidInput()
                         .font(.system(.body, design: .monospaced))
                 }
                 VStack(alignment: .leading, spacing: 4) {
@@ -535,7 +552,7 @@ private struct AutomationTaskEditorSheet: View {
                         .font(.system(size: 12, weight: .medium))
                         .foregroundStyle(IsleTheme.secondaryText)
                     TextField("例如：Asia/Shanghai", text: $timezone)
-                        .textFieldStyle(.roundedBorder)
+                        .liquidInput()
                         .font(.system(.body, design: .monospaced))
                 }
             }

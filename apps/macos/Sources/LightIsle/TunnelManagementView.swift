@@ -241,31 +241,37 @@ struct TunnelManagementView: View {
         LiquidCard {
             VStack(alignment: .leading, spacing: 10) {
                 Text("公共主机名（一键绑定域名 + 路由）").font(.system(size: 13, weight: .semibold))
-                HStack(spacing: 8) {
-                    Picker("", selection: $selectedZoneID) {
-                        Text("选择域名").tag("")
-                        ForEach(model.tunnelZones) { zone in
-                            Text(zone.name).tag(zone.id)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Picker("域名区域", selection: $selectedZoneID) {
+                            Text("选择域名").tag("")
+                            ForEach(model.tunnelZones) { zone in
+                                Text(zone.name).tag(zone.id)
+                            }
                         }
+                        .labelsHidden()
+                        .frame(width: 170)
+                        TextField("nas.example.com", text: $hostnameDraft)
+                            .liquidInput()
                     }
-                    .frame(width: 170)
-                    TextField("nas.example.com", text: $hostnameDraft)
-                        .liquidInput()
-                    TextField("http://127.0.0.1:16666", text: $serviceDraft)
-                        .liquidInput()
-                    Button("绑定") {
-                        guard let zone = model.tunnelZones.first(where: { $0.id == selectedZoneID }) else { return }
-                        let zoneName = zone.name
-                        let host = hostnameDraft.trimmingCharacters(in: .whitespaces)
-                        let fullHostname = host.contains(".") ? host : "\(host).\(zoneName)"
-                        pendingHostname = fullHostname
-                        model.bindHostname(fullHostname, zoneID: selectedZoneID, service: serviceDraft)
+                    HStack(spacing: 8) {
+                        TextField("http://127.0.0.1:16666", text: $serviceDraft)
+                            .liquidInput()
+                        Button("绑定") {
+                            guard let zone = model.tunnelZones.first(where: { $0.id == selectedZoneID }) else { return }
+                            let zoneName = zone.name
+                            let host = hostnameDraft.trimmingCharacters(in: .whitespaces)
+                            let fullHostname = host.contains(".") ? host : "\(host).\(zoneName)"
+                            pendingHostname = fullHostname
+                            model.bindHostname(fullHostname, zoneID: selectedZoneID, service: serviceDraft)
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                        .disabled(selectedZoneID.isEmpty || hostnameDraft.trimmingCharacters(in: .whitespaces).isEmpty || model.tunnelAPIBusy)
                     }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                    .disabled(selectedZoneID.isEmpty || hostnameDraft.trimmingCharacters(in: .whitespaces).isEmpty || model.tunnelAPIBusy)
                 }
                 Text("绑定会自动创建指向隧道的 CNAME 记录并更新 Ingress 规则；其他主机名规则不会被修改。")
                     .font(.caption).foregroundStyle(IsleTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
                 if model.tunnelIngress.isEmpty {
                     Text("暂无路由规则。").font(.caption).foregroundStyle(IsleTheme.secondaryText)
                 }
@@ -309,7 +315,7 @@ struct TunnelManagementView: View {
             HStack {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("API Token").font(.system(size: 13, weight: .semibold))
-                    Text("保存在本机钥匙串（dev.lightisle.tunnel）。")
+                    Text("保存在本机钥匙串（dev.lightisle.host-secrets）。")
                         .font(.caption).foregroundStyle(IsleTheme.secondaryText)
                 }
                 Spacer()

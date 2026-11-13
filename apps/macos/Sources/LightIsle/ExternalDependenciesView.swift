@@ -34,13 +34,13 @@ struct ExternalDependenciesView: View {
                             Button("查看官网") { openOfficialURL("https://brew.sh/zh-cn/") }
                             .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         }
-                        Button {
+                        IsleIconButton(
+                            icon: "arrow.clockwise",
+                            variant: .borderless,
+                            help: "重新检测外部依赖"
+                        ) {
                             store.refresh()
-                        } label: {
-                            Image(systemName: "arrow.clockwise")
                         }
-                        .help("重新检测外部依赖")
-                        .buttonStyle(LiquidButtonStyle(variant: .borderless, size: .small))
                         .disabled(isBusy)
                     }
                 }

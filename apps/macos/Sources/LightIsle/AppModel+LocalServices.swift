@@ -151,46 +151,6 @@ extension AppModel {
         writeCinemaIPC("cinema tmdb status")
     }
 
-    // MARK: Trash retention
-
-    func refreshTrashRetention() {
-        guard state == .online, let pipe = coreCommands else { return }
-        do {
-            try pipe.write(contentsOf: Data("trash retention\n".utf8))
-        } catch {
-            trashRetentionError = "无法读取回收站保留规则：\(error.localizedDescription)"
-        }
-    }
-
-    func applyTrashRetention(days: Int, enabled: Bool) {
-        guard state == .online, !trashRetentionBusy, let pipe = coreCommands else {
-            trashRetentionError = "核心服务未就绪，保留规则尚未保存。"
-            return
-        }
-        guard (1...365).contains(days) || !enabled else {
-            trashRetentionError = "保留天数需在 1 至 365 之间。"
-            return
-        }
-        struct Payload: Codable { let enabled: Bool; let days: Int }
-        guard let data = try? JSONEncoder().encode(Payload(enabled: enabled, days: days)) else { return }
-        trashRetentionError = nil
-        trashRetentionBusy = true
-        trashDeadline?.cancel()
-        trashDeadline = Task { @MainActor [weak self] in
-            try? await Task.sleep(for: .seconds(10))
-            guard !Task.isCancelled, let self else { return }
-            self.trashRetentionBusy = false
-            self.trashRetentionError = "尚未收到保留规则的保存结果，请刷新后重试。"
-        }
-        do {
-            try pipe.write(contentsOf: Data(("trash retention " + data.base64URLEncodedString + "\n").utf8))
-        } catch {
-            trashDeadline?.cancel()
-            trashRetentionBusy = false
-            trashRetentionError = "保存保留规则失败，请检查服务状态。"
-        }
-    }
-
     func loadTmdbSecretAndResend() {
         let loaded = TmdbSecretVault.load()
         hasSavedTmdbToken = loaded != nil

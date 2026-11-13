@@ -107,13 +107,13 @@ struct FRPConfigEditorView: View {
                             SecureField("FRP Token", text: $draft.token)
                         }
                     }.liquidInput().frame(width: 250)
-                    Button {
+                    IsleIconButton(
+                        icon: revealToken ? "eye.slash" : "eye",
+                        variant: .borderless,
+                        help: revealToken ? "隐藏 Token" : "显示 Token"
+                    ) {
                         revealToken.toggle()
-                    } label: {
-                        Image(systemName: revealToken ? "eye.slash" : "eye")
                     }
-                    .buttonStyle(LiquidButtonStyle(variant: .borderless, size: .small))
-                    .help(revealToken ? "隐藏 Token" : "显示 Token")
                 }
             }
         }

@@ -37,7 +37,6 @@ struct ContentView: View {
     @State var firstPassword = ""
     @State var confirmPassword = ""
     @State var copiedNotice: String?
-    @State var backupRetentionDraft: Int?
     @State var showingRollbackRecovery = false
     @State var localPortText = ""
     @State var thumbnailCacheMiB = AppModel.shared.preferredThumbnailCacheMiB
@@ -46,7 +45,6 @@ struct ContentView: View {
     @State var resetAdminPassword = ""
     @State var resetAdminConfirmation = ""
     @State var processSortByMemory = false
-    @State var showAdvancedDiagnostics = false
     @AppStorage("lightisle.sidebarExpanded") var sidebarExpanded = false
     @AppStorage("lightisle.sidebarWidth") var sidebarWidth: Double = 224
     @Namespace var sidebarSelection
@@ -95,8 +93,6 @@ struct ContentView: View {
     @State var notifySMTPPasswordDraft = ""
     @State var notifySMTPFromDraft = ""
     @State var notifySMTPToDraft = ""
-    @State var trashRetentionDaysText = "30"
-    @State var trashRetentionEnabled = false
     @State var preferencesSection: PreferencesSection = .general
     @State var manualTunnelToken = ""
     @State var presentingSudoersGuide = false
@@ -132,6 +128,24 @@ struct ContentView: View {
                     model.selectedSidebarPage = .storage
                     confirmedRoute = .storage
                     storageDetail = detail
+                }
+            }
+            model.connectionDetailNavigationRequest = { detail in
+                requestLocalNavigation {
+                    model.selectedSidebarPage = .services
+                    confirmedRoute = .services
+                    connectionDetail = detail
+                    editingFRPConfig = false
+                    presentingTunnelManager = false
+                }
+            }
+            model.appsSectionNavigationRequest = { section in
+                requestLocalNavigation {
+                    model.selectedSidebarPage = .containers
+                    confirmedRoute = .containers
+                    model.appsCenter.workspaceSection = section
+                    selectedPluginAppID = nil
+                    selectedDockerContainer = nil
                 }
             }
             model.settingsDetailNavigationRequest = { detail in
@@ -196,7 +210,7 @@ struct ContentView: View {
             }.frame(minWidth: 600, idealWidth: 660, maxWidth: 720, minHeight: 400, idealHeight: 480, maxHeight: 550)
                 .interactiveDismissDisabled(model.activatingMetadata)
         }
-        .onDisappear { model.navigationRequest = nil; model.storageDetailNavigationRequest = nil; model.settingsDetailNavigationRequest = nil; previews.dismiss(); childEdits.reset(); noticeTask?.cancel(); draftTimeout?.cancel(); model.setDiagnosticsVisible(false) }
+        .onDisappear { model.navigationRequest = nil; model.storageDetailNavigationRequest = nil; model.connectionDetailNavigationRequest = nil; model.appsSectionNavigationRequest = nil; model.settingsDetailNavigationRequest = nil; previews.dismiss(); childEdits.reset(); noticeTask?.cancel(); draftTimeout?.cancel(); model.setDiagnosticsVisible(false) }
     }
 
     var managementShell: some View {
@@ -239,6 +253,7 @@ struct ContentView: View {
                 Button { model.refreshMetrics() } label: { Image(systemName: "arrow.clockwise") }
                     .disabled(model.state != .online)
                     .help(model.state == .online ? "重新读取本机状态" : "核心服务就绪后可刷新")
+                    .accessibilityLabel(model.state == .online ? "重新读取本机状态" : "核心服务就绪后可刷新")
             }
         }
         .onAppear {
@@ -256,7 +271,7 @@ struct ContentView: View {
             if let notice = copiedNotice {
                 Label(notice, systemImage: "checkmark.circle")
                     .font(.system(size: 13)).padding(14).modifier(IsleFloatingChrome()).padding(20)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
+                    .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
             }
         }
     }
@@ -384,8 +399,14 @@ struct ContentView: View {
                         detail.title, detail.subtitle, detail.icon)
             }
         case .dependencies:
-            return ("设置 · 工具", { requestNavigation(.settings); settingsDetail = .tools },
-                    SidebarPage.dependencies.rawValue, SidebarPage.dependencies.subtitle, SidebarPage.dependencies.icon)
+            return ("设置 · 工具", {
+                requestLocalNavigation {
+                    model.selectedSidebarPage = .settings
+                    confirmedRoute = .settings
+                    settingsDetail = .tools
+                    settingsTool = nil
+                }
+            }, SidebarPage.dependencies.rawValue, SidebarPage.dependencies.subtitle, SidebarPage.dependencies.icon)
         case .files, .photos, .cinema:
             return ("个人空间", { requestNavigation(.spaces) },
                     model.selectedSidebarPage.rawValue, model.selectedSidebarPage.subtitle, model.selectedSidebarPage.icon)
@@ -397,11 +418,13 @@ struct ContentView: View {
     var detailView: some View {
         let info = activeHeaderInfo
         let tint = model.selectedSidebarPage.section.tint
+        let isSubroute = info.backAction != nil
         return VStack(spacing: 0) {
             HStack(alignment: .center, spacing: 14) {
                 if let backAction = info.backAction, let parentTitle = info.parentTitle {
                     IsleBackButton(title: parentTitle, action: backAction)
                         .keyboardShortcut("[", modifiers: .command)
+                        .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .leading)))
                     IsleHeaderIconBadge(icon: info.icon, tint: tint, size: 36)
                 } else if model.selectedSidebarPage == .overview {
                     BrandMark(size: 38)
@@ -439,7 +462,7 @@ struct ContentView: View {
                         .environment(\.isleAccent, tint)
                         .tint(tint)
                         .id(routeKey)
-                        .transition(reduceMotion ? .opacity : .asymmetric(insertion: .offset(y: 10).combined(with: .opacity), removal: .opacity))
+                        .transition(.isleRoute(isSubroute: isSubroute, reduceMotion: reduceMotion))
                 }
                 .padding(.horizontal, 28).padding(.top, 8).padding(.bottom, 28)
                 .frame(maxWidth: 1100, alignment: .leading).frame(maxWidth: .infinity, alignment: .top)
@@ -447,6 +470,7 @@ struct ContentView: View {
             }.clipped()
         }
         .animation(reduceMotion ? nil : IsleMotion.navigation, value: routeKey)
+        .animation(reduceMotion ? nil : IsleMotion.navigation, value: isSubroute)
         .onChange(of: routeKey) { _, _ in previews.dismiss(); model.setDiagnosticsVisible(settingsDetail == .tools && settingsTool == .diagnostics && model.selectedSidebarPage == .settings) }
     }
     var headerStatusButton: some View {
@@ -510,6 +534,7 @@ struct ContentView: View {
                         } label: {
                             Image(systemName: copiedPopoverKey == "local" ? "checkmark" : "doc.on.doc")
                                 .foregroundStyle(copiedPopoverKey == "local" ? IsleTheme.successText : .primary)
+                                .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
                         }
                         .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         .help("复制本机地址")
@@ -540,6 +565,7 @@ struct ContentView: View {
                         } label: {
                             Image(systemName: copiedPopoverKey == "lan" ? "checkmark" : "doc.on.doc")
                                 .foregroundStyle(copiedPopoverKey == "lan" ? IsleTheme.successText : .primary)
+                                .contentTransition(reduceMotion ? .identity : .symbolEffect(.replace))
                         }
                         .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         .help("复制局域网地址")

@@ -1,6 +1,6 @@
 import SwiftUI
 
-enum NativeDraft: Hashable { case tmdb, map, notification, credentials, password, threshold, trash }
+enum NativeDraft: Hashable { case tmdb, map, notification, credentials, password, threshold }
 
 extension ContentView {
     var draftSaveSignal: NativeSaveSignal {
@@ -8,9 +8,8 @@ extension ContentView {
                                    model.resettingAdmin, childEdits.dirty, childEdits.busy,
                                    model.administratorSaveSucceeded, model.administratorResetSucceeded],
                          messages: [model.tmdbTokenError, model.mapKeyError, model.notifyError, model.vaultMessage,
-                                    model.resetAdminMessage, childEdits.error, model.trashRetentionError],
-                         threshold: [model.storageThreshold?.freeMiB, model.storageThreshold?.percent],
-                         trashDays: model.trashRetention.days, trashEnabled: model.trashRetention.enabled)
+                                    model.resetAdminMessage, childEdits.error],
+                         threshold: [model.storageThreshold?.freeMiB, model.storageThreshold?.percent])
     }
 
     var notificationFields: [String] {
@@ -48,7 +47,6 @@ extension ContentView {
         resetAdminPassword = ""; resetAdminConfirmation = ""; manualTunnelToken = ""
         localPortText = String(model.preferredLocalPort)
         thresholdFreeMiBText = ""; thresholdPercentText = ""
-        trashRetentionDaysText = String(model.trashRetention.days); trashRetentionEnabled = model.trashRetention.enabled
         resetNotificationDraft(); draftError = nil
     }
     func saveMediaDraft(_ kind: NativeDraft) {
@@ -146,9 +144,6 @@ extension ContentView {
                 else { failure = model.resetAdminMessage ?? "密码尚未更新，请完成设备验证。" }
             case .threshold:
                 if thresholdDirty { continue }
-            case .trash:
-                if let error = model.trashRetentionError { failure = error }
-                else if trashRetentionDaysText != String(model.trashRetention.days) { continue }
             }
             pendingDraftSaves.remove(kind)
             if let failure { draftError = failure; saveBeforeLeaving = false }

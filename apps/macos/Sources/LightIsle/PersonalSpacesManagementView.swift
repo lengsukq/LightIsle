@@ -4,6 +4,7 @@ import SwiftUI
 struct PersonalSpacesManagementView: View {
     @ObservedObject var appModel: AppModel
     @ObservedObject var spaces: NativeSpacesModel
+    @Environment(\.isleReduceMotion) private var reduceMotion
 
     @State private var showingCreateUserSheet = false
     @State private var showingSwitchRootSheet = false
@@ -26,7 +27,7 @@ struct PersonalSpacesManagementView: View {
 
     @State private var editingQuotaGiB: [String: String] = [:]
 
-    private var unregisteredExternalVolumes: [HostVolume] {
+    var unregisteredExternalVolumes: [HostVolume] {
         guard let volumes = appModel.metrics?.volumes else { return [] }
         return volumes.filter { vol in
             guard StorageVolumeSelection.canChooseOnVolume(mount: vol.mount, readOnly: vol.readOnly) else { return false }
@@ -46,6 +47,17 @@ struct PersonalSpacesManagementView: View {
             if let entry = spaces.selectedEntry {
                 selectedUserDetailSection(for: entry)
             }
+            IsleQuickJumpBar(items: [
+                IsleQuickJumpItem("存储位置管理", icon: "folder.badge.gearshape", tint: IsleFluidPalette.brandCyan, help: "管理默认主目录、附加盘绑定与离线恢复") {
+                    appModel.navigateToStorageDetail(.locations)
+                },
+                IsleQuickJumpItem("Mac 文件共享 (SMB)", icon: "externaldrive.connected.to.line.below", tint: .orange, help: "配置通过访达与播放器接入的 SMB 共享及隔离提醒") {
+                    appModel.navigateToConnectionDetail(.sharing)
+                },
+                IsleQuickJumpItem("权限与初始化预检", icon: "checkmark.shield.fill", tint: .green, help: "检查整盘读写权限与系统隐私授权") {
+                    appModel.navigateToSettingsDetail(.permissions)
+                }
+            ])
         }
         .onAppear {
             if spaces.connected {
@@ -147,25 +159,23 @@ struct PersonalSpacesManagementView: View {
                         tone: spaces.onlineRoots.isEmpty ? .warning : .success,
                         showDot: true
                     )
-                    Button("切换默认主目录…") {
-                        appModel.rootManagement.selectFolderAndSwitch(preferVolumes: true)
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
-                    .disabled(!appModel.canAddOrSwitchStorageRoot)
                     Button("+ 添加存储目录…") {
                         appModel.rootManagement.addFolder(preferVolumes: true)
                     }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                    .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
                     .disabled(!appModel.canAddOrSwitchStorageRoot)
-                    Button("目录列表管理…") {
-                        appModel.navigateToStorageDetail(.locations)
+                    IsleIconButton(
+                        icon: "arrow.triangle.swap",
+                        help: "切换默认主目录…"
+                    ) {
+                        appModel.rootManagement.selectFolderAndSwitch(preferVolumes: true)
                     }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                    Button("权限与初始化预检…") {
-                        appModel.navigateToSettingsDetail(.permissions)
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                    .disabled(!appModel.canAddOrSwitchStorageRoot)
                 }
+            }
+            if !spaces.onlineRoots.isEmpty {
+                IsleGroupSpacing(height: 4).padding(.leading, 14)
+                PersonalSpacesPoolDistributionView(spaces: spaces)
             }
         }
     }
@@ -191,10 +201,12 @@ struct PersonalSpacesManagementView: View {
                     .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
                     .disabled(!spaces.connected || spaces.busy)
 
-                    Button("刷新") {
+                    IsleIconButton(
+                        icon: "arrow.clockwise",
+                        help: "刷新成员列表、存储目录归属与配额使用情况"
+                    ) {
                         spaces.refresh()
                     }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                     .disabled(!spaces.connected || spaces.busy)
                 }
 
@@ -231,7 +243,7 @@ struct PersonalSpacesManagementView: View {
     private func userSelectorChip(_ entry: NativeSpaceUserEntry) -> some View {
         let isSelected = entry.id == (spaces.selectedEntry?.id ?? 0)
         return Button {
-            withAnimation(IsleMotion.quick) {
+            withAnimation(reduceMotion ? nil : IsleMotion.quick) {
                 spaces.selectedUserID = entry.id
             }
         } label: {
@@ -297,13 +309,14 @@ struct PersonalSpacesManagementView: View {
                             .foregroundStyle(IsleTheme.secondaryText)
                         Spacer()
                     }
+                    PersonalSpacesAdminDiskSummaryView(spaces: spaces, preferredRootID: allocRootID)
                 } else if entry.policy.rootQuotas.isEmpty {
                     Text("该成员尚未分配任何存储硬盘，请在下方选择硬盘并分配存储空间。")
                         .font(.caption)
                         .foregroundStyle(IsleTheme.secondaryText)
                 } else {
                     ForEach(entry.policy.rootQuotas) { rq in
-                        memberRootQuotaRow(user: entry.user, rq: rq)
+                        memberRootQuotaRow(user: entry.user, rq: rq, enforcement: entry.policy.enforcement)
                     }
                 }
             }
@@ -311,7 +324,7 @@ struct PersonalSpacesManagementView: View {
         }
     }
 
-    private func memberRootQuotaRow(user: NativeSpaceUserAccount, rq: NativeStorageRootQuota) -> some View {
+    private func memberRootQuotaRow(user: NativeSpaceUserAccount, rq: NativeStorageRootQuota, enforcement: String) -> some View {
         let rootMeta = spaces.rootInfo(for: rq.rootID)
         let rootTitle = rootMeta?.name ?? "旧硬盘 (\(rq.rootID.prefix(8)))"
         let isRemoved = rootMeta == nil
@@ -320,8 +333,6 @@ struct PersonalSpacesManagementView: View {
         let currentGiBString = editingQuotaGiB[key] ?? (savedGiB > 0 ? String(savedGiB) : "0")
         let usedBytes = rq.accountedBytes + rq.reservedBytes
         let validation = QuotaInputValidator.validateGiB(currentGiBString, currentUsedBytes: usedBytes)
-        let limitBytes = max(rq.quotaBytes ?? (100 << 30), 1)
-        let usedRatio = (rq.quotaBytes ?? 0) > 0 ? min(1.0, Double(usedBytes) / Double(limitBytes)) : 0
         let hasUnsavedChange = editingQuotaGiB[key] != nil && validation.quotaBytes != (rq.quotaBytes ?? 0)
 
         return VStack(alignment: .leading, spacing: 8) {
@@ -348,67 +359,75 @@ struct PersonalSpacesManagementView: View {
                 Text("已计入 \(formatBytes(rq.accountedBytes)) / 配额 \(quotaLabel)")
                     .font(.system(size: 12, weight: .medium))
             }
-            if (rq.quotaBytes ?? 0) > 0 {
-                ProgressView(value: usedRatio)
-                    .tint(usedRatio > 0.85 ? .orange : IsleTheme.accent)
-            }
-            HStack(spacing: 8) {
-                Text("调整该盘配额 (GiB)：")
-                    .font(.caption)
-                    .foregroundStyle(IsleTheme.secondaryText)
-                ForEach([50, 100, 200, 500, 1024], id: \.self) { preset in
-                    Button(preset >= 1024 ? "1 TB" : "\(preset) GB") {
-                        editingQuotaGiB[key] = "\(preset)"
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                    .disabled(spaces.busy)
-                }
-                TextField(
-                    "GiB",
-                    text: Binding(
-                        get: { currentGiBString },
-                        set: { editingQuotaGiB[key] = $0 }
-                    )
+            if let quota = rq.quotaBytes, quota > 0 {
+                PersonalSpacesMemberQuotaMeterView(
+                    quotaBytes: quota,
+                    accountedBytes: rq.accountedBytes,
+                    reservedBytes: rq.reservedBytes,
+                    enforcement: enforcement
                 )
-                .liquidInput()
-                .frame(width: 78)
-                Button(hasUnsavedChange ? "保存配额*" : "保存配额") {
-                    guard let bytes = validation.quotaBytes else { return }
-                    spaces.setRootQuota(
-                        userID: user.id,
-                        rootID: rq.rootID,
-                        generation: rq.rootGeneration,
-                        quotaBytes: bytes
-                    )
-                    editingQuotaGiB.removeValue(forKey: key)
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                HStack(spacing: 8) {
+                    Text("调整该盘配额 (GiB)：")
+                        .font(.caption)
+                        .foregroundStyle(IsleTheme.secondaryText)
+                    ForEach([50, 100, 200, 500, 1024], id: \.self) { preset in
+                        Button(preset >= 1024 ? "1 TB" : "\(preset) GB") {
+                            editingQuotaGiB[key] = "\(preset)"
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        .disabled(spaces.busy)
+                    }
                 }
-                .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
-                .disabled(spaces.busy || !validation.isValid)
-
-                if let entry = spaces.selectedEntry {
-                    let boundCats = Set(
-                        entry.policy.locations
-                            .filter { $0.rootID == rq.rootID && $0.rootGeneration == rq.rootGeneration }
-                            .map(\.category)
-                    )
-                    Button("迁移到新目录…") {
-                        openSwitchSheet(
-                            for: entry,
-                            sourceRootID: rq.rootID,
-                            sourceGeneration: rq.rootGeneration,
-                            categories: boundCats.isEmpty ? ["files", "photos", "videos"] : boundCats
+                HStack(spacing: 8) {
+                    TextField(
+                        "GiB",
+                        text: Binding(
+                            get: { currentGiBString },
+                            set: { editingQuotaGiB[key] = $0 }
                         )
+                    )
+                    .liquidInput()
+                    .frame(width: 84)
+                    Button(hasUnsavedChange ? "保存配额*" : "保存配额") {
+                        guard let bytes = validation.quotaBytes else { return }
+                        spaces.setRootQuota(
+                            userID: user.id,
+                            rootID: rq.rootID,
+                            generation: rq.rootGeneration,
+                            quotaBytes: bytes
+                        )
+                        editingQuotaGiB.removeValue(forKey: key)
                     }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                    .disabled(spaces.busy)
-                }
+                    .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                    .disabled(spaces.busy || !validation.isValid)
 
-                if isRemoved {
-                    Button("放弃该旧盘记录") {
-                        spaces.abandonBinding(userID: user.id, rootID: rq.rootID, generation: rq.rootGeneration, category: nil)
+                    if let entry = spaces.selectedEntry {
+                        let boundCats = Set(
+                            entry.policy.locations
+                                .filter { $0.rootID == rq.rootID && $0.rootGeneration == rq.rootGeneration }
+                                .map(\.category)
+                        )
+                        Button("迁移到新目录…") {
+                            openSwitchSheet(
+                                for: entry,
+                                sourceRootID: rq.rootID,
+                                sourceGeneration: rq.rootGeneration,
+                                categories: boundCats.isEmpty ? ["files", "photos", "videos"] : boundCats
+                            )
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        .disabled(spaces.busy)
                     }
-                    .buttonStyle(LiquidButtonStyle(variant: .destructive, size: .small))
-                    .disabled(spaces.busy)
+
+                    if isRemoved {
+                        Button("放弃该旧盘记录") {
+                            spaces.abandonBinding(userID: user.id, rootID: rq.rootID, generation: rq.rootGeneration, category: nil)
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .destructive, size: .small))
+                        .disabled(spaces.busy)
+                    }
                 }
             }
             if let err = validation.errorMessage {
@@ -530,16 +549,16 @@ struct PersonalSpacesManagementView: View {
             if let loc {
                 HStack(spacing: 8) {
                     if let rootMeta, !rootMeta.isAvailable(for: loc.rootGeneration), rootMeta.online {
-                        Button("同步状态") { spaces.refresh() }
-                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                            .disabled(spaces.busy)
+                        IsleIconButton(icon: "arrow.clockwise", help: "同步当前存储目录在线状态") {
+                            spaces.refresh()
+                        }
+                        .disabled(spaces.busy)
                     }
                     if let rootMeta, rootMeta.online {
-                        Button("在访达中打开") {
+                        IsleIconButton(icon: "folder", help: "在访达中打开该分类专属目录") {
                             let targetURL = URL(fileURLWithPath: rootMeta.path).appendingPathComponent(loc.relativePath)
                             NSWorkspace.shared.open(targetURL)
                         }
-                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                     }
                     if rootMeta == nil {
                         Button("放弃旧绑定") {
@@ -611,57 +630,6 @@ struct PersonalSpacesManagementView: View {
         }
     }
 
-    private var unregisteredVolumesBanner: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(unregisteredExternalVolumes) { vol in
-                HStack(spacing: 10) {
-                    Image(systemName: "externaldrive.fill.badge.plus")
-                        .foregroundStyle(IsleFluidPalette.brandCyan)
-                    Text("检测到外置硬盘「\(vol.name)」（可用 \(formatBytes(Int64(vol.free)))）")
-                        .font(.system(size: 12.5, weight: .semibold))
-                    Spacer()
-                    Button("添加为目标盘（推荐）") {
-                        appModel.addPresetSharedFolder(
-                            path: "\(vol.mount)/LightIsle",
-                            name: "\(vol.name)-LightIsle"
-                        )
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
-                    .disabled(!appModel.canAddOrSwitchStorageRoot)
-                    Button("设为主存储…") {
-                        appModel.selectPresetSharedFolder(
-                            path: "\(vol.mount)/LightIsle",
-                            name: "\(vol.name)-LightIsle",
-                            confirmSwitch: true
-                        )
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                    .disabled(!appModel.canAddOrSwitchStorageRoot)
-                    Button("选择文件夹…") {
-                        appModel.selectSharedFolder(onVolume: vol)
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                    .disabled(!appModel.canAddOrSwitchStorageRoot)
-                }
-            }
-        }
-        .padding(10)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(IsleFluidPalette.brandCyan.opacity(0.1)))
-    }
-
-    private var emptyOnlineRootsNotice: some View {
-        HStack(spacing: 10) {
-            Text("当前没有在线的 NAS 存储硬盘，请接入外置硬盘或前往「存储位置」设置。")
-                .font(.caption).foregroundStyle(IsleTheme.warningText)
-            Spacer()
-            Button("选择外置盘设为主存储…") { appModel.rootManagement.selectFolderAndSwitch(preferVolumes: true) }
-                .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
-                .disabled(!appModel.canAddOrSwitchStorageRoot)
-            Button("前往存储位置…") { appModel.navigateToStorageDetail(.locations) }
-                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-        }
-    }
-
     @ViewBuilder
     private func allocationFormContent(
         for entry: NativeSpaceUserEntry,
@@ -724,7 +692,7 @@ struct PersonalSpacesManagementView: View {
             } else {
                 HStack(spacing: 6) {
                     Text("该盘配额 (GiB)：").font(.caption)
-                    TextField("100", text: $allocQuotaGiB).textFieldStyle(.roundedBorder).frame(width: 72)
+                    TextField("100", text: $allocQuotaGiB).liquidInput().frame(width: 78)
                 }
             }
             Spacer()

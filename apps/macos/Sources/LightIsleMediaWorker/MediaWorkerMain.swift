@@ -415,10 +415,24 @@ enum MediaWorker {
         return Coordinate(latitude: latitude, longitude: longitude)
     }
 
+    private static let iso6709Regex = try? NSRegularExpression(
+        pattern: "^([+-]\\d{1,2}(?:\\.\\d+)?)([+-]\\d{1,3}(?:\\.\\d+)?)"
+    )
+    private static let utcISOFormatStyle = Date.ISO8601FormatStyle(timeZone: TimeZone(secondsFromGMT: 0)!)
+    private static let exifDateLock = NSLock()
+    private static let exifDateParser: DateFormatter = {
+        let parser = DateFormatter()
+        parser.locale = Locale(identifier: "en_US_POSIX")
+        parser.calendar = Calendar(identifier: .gregorian)
+        parser.isLenient = false
+        parser.dateFormat = "yyyy:MM:dd HH:mm:ss"
+        return parser
+    }()
+    private static let utcTimeZone = TimeZone(secondsFromGMT: 0)!
+
     /// QuickTime stores location as ISO 6709 text such as "+31.2311+121.4456/".
     private static func parseISO6709Location(_ value: String) -> Coordinate? {
-        let pattern = "^([+-]\\d{1,2}(?:\\.\\d+)?)([+-]\\d{1,3}(?:\\.\\d+)?)"
-        guard let regex = try? NSRegularExpression(pattern: pattern),
+        guard let regex = iso6709Regex,
               let match = regex.firstMatch(in: value, range: NSRange(value.startIndex..., in: value)),
               let latitudeRange = Range(match.range(at: 1), in: value),
               let longitudeRange = Range(match.range(at: 2), in: value),
@@ -430,10 +444,7 @@ enum MediaWorker {
     }
 
     private static func iso8601String(_ date: Date) -> String {
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        return formatter.string(from: date)
+        utcISOFormatStyle.format(date)
     }
 
     private static func fourCC(_ value: FourCharCode) -> String {
@@ -449,21 +460,13 @@ enum MediaWorker {
     }
 
     private static func formatEXIFDate(_ value: String, offset: String?) -> String? {
-        let parser = DateFormatter()
-        parser.locale = Locale(identifier: "en_US_POSIX")
-        parser.calendar = Calendar(identifier: .gregorian)
-        parser.isLenient = false
-        parser.dateFormat = "yyyy:MM:dd HH:mm:ss"
-        if let offset, let timezone = timezone(offset) {
-            parser.timeZone = timezone
-        } else {
-            parser.timeZone = TimeZone(secondsFromGMT: 0)
+        let resolvedZone = offset.flatMap(timezone) ?? utcTimeZone
+        let parsedDate: Date? = exifDateLock.withLock {
+            exifDateParser.timeZone = resolvedZone
+            return exifDateParser.date(from: value)
         }
-        guard let date = parser.date(from: value) else { return nil }
-        let formatter = ISO8601DateFormatter()
-        formatter.formatOptions = [.withInternetDateTime]
-        formatter.timeZone = TimeZone(secondsFromGMT: 0)
-        return formatter.string(from: date)
+        guard let date = parsedDate else { return nil }
+        return utcISOFormatStyle.format(date)
     }
 
     private static func timezone(_ value: String) -> TimeZone? {

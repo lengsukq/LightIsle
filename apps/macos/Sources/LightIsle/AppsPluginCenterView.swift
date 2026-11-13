@@ -5,9 +5,9 @@ import UniformTypeIdentifiers
 struct AppsPluginCenterView: View {
     @ObservedObject var appsCenter: NativeAppsModel
     @Binding var selectedAppID: String?
+    @Environment(\.isleReduceMotion) private var reduceMotion
     @State private var showingScaffoldSheet = false
     @State private var deletingApp: NativePublicApp?
-    @State private var localNotice: String?
     @State private var selectedInstallLocationID = ""
 
     private static let memoryFormatter: ByteCountFormatter = {
@@ -31,6 +31,8 @@ struct AppsPluginCenterView: View {
                     onRestoreBackup: { restoreBackup(for: $0) },
                     onRequestDelete: { deletingApp = $0 }
                 )
+                .id(detailApp.id)
+                .transition(.isleRoute(isSubroute: true, reduceMotion: reduceMotion))
             } else {
                 VStack(alignment: .leading, spacing: 24) {
                     overviewSection
@@ -38,9 +40,27 @@ struct AppsPluginCenterView: View {
                     AppStorageLocationsSection(appsCenter: appsCenter)
                     templatesSection
                     appsListSection
+                    IsleQuickJumpBar(items: [
+                        IsleQuickJumpItem("定时脚本", icon: "clock.badge.checkmark.fill", tint: IsleFluidPalette.brandViolet, help: "管理 automation/scripts 本机独立定时任务") {
+                            appsCenter.workspaceSection = .automation
+                        },
+                        IsleQuickJumpItem("AI Agent (MCP)", icon: "cpu.fill", tint: .purple, help: "配置本机/局域网 MCP 接入向导、Token 与调试台") {
+                            appsCenter.workspaceSection = .mcp
+                        },
+                        IsleQuickJumpItem("Docker 容器", icon: "shippingbox.fill", tint: .blue, help: "查看 Docker Desktop / Colima 容器与编排服务") {
+                            appsCenter.workspaceSection = .docker
+                        },
+                        IsleQuickJumpItem("通知渠道（邮件 / Bark）", icon: "bell.fill", tint: .orange, help: "配置应用告警与任务结果的外发通知渠道") {
+                            AppModel.shared.navigateToSettingsDetail(.notifications)
+                        }
+                    ])
                 }
+                .transition(.isleRoute(isSubroute: false, reduceMotion: reduceMotion))
             }
         }
+        .animation(reduceMotion ? nil : IsleMotion.navigation, value: selectedAppID)
+        .animation(reduceMotion ? nil : IsleMotion.quick, value: appsCenter.errorMessage)
+        .animation(reduceMotion ? nil : IsleMotion.quick, value: appsCenter.message)
         .sheet(isPresented: $showingScaffoldSheet) {
             AppScaffoldSheetView(appsCenter: appsCenter, isPresented: $showingScaffoldSheet)
         }
@@ -111,13 +131,26 @@ struct AppsPluginCenterView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 }
                 Spacer(minLength: 12)
+                if !appsCenter.apps.isEmpty {
+                    IsleDonutGauge(
+                        progress: Double(runningCount) / Double(max(appsCenter.apps.count, 1)),
+                        centerText: "\(runningCount)/\(appsCenter.apps.count)",
+                        centerSubtext: "运行中",
+                        tint: runningCount > 0 ? IsleTheme.successText : IsleTheme.secondaryText,
+                        size: 50,
+                        lineWidth: 5,
+                        accessibilityLabel: "轻应用活跃比例",
+                        accessibilityValueText: "\(appsCenter.apps.count) 个已安装轻应用中有 \(runningCount) 个正在运行"
+                    )
+                }
                 HStack(spacing: 8) {
-                    Button {
+                    IsleIconButton(
+                        icon: "arrow.clockwise",
+                        size: .regular,
+                        help: appsCenter.busy ? "正在扫描轻应用目录…" : "重新扫描本机与外置盘轻应用目录"
+                    ) {
                         appsCenter.reloadApps()
-                    } label: {
-                        Label(appsCenter.busy ? "扫描中…" : "重新扫描", systemImage: "arrow.clockwise")
                     }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .regular))
                     .disabled(appsCenter.busy)
 
                     Button {
@@ -152,6 +185,7 @@ struct AppsPluginCenterView: View {
                     .menuStyle(.borderlessButton)
                     .frame(width: 30, height: 30)
                     .help("目录入口与 AI Agent (MCP) 工具")
+                    .accessibilityLabel("目录入口与 AI Agent (MCP) 工具")
                 }
             }
         }
@@ -168,11 +202,15 @@ struct AppsPluginCenterView: View {
                     .foregroundStyle(IsleTheme.warningText)
                     .textSelection(.enabled)
                 Spacer()
+                IsleIconButton(icon: "xmark", variant: .borderless, help: "关闭错误提示") {
+                    appsCenter.errorMessage = nil
+                }
             }
             .padding(14)
             .modifier(IsleEmbossedSurface())
+            .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
         }
-        if let msg = localNotice ?? appsCenter.message {
+        if let msg = appsCenter.message {
             HStack(spacing: 10) {
                 Image(systemName: "checkmark.circle.fill")
                     .foregroundStyle(IsleTheme.successText)
@@ -181,10 +219,32 @@ struct AppsPluginCenterView: View {
                     .foregroundStyle(.primary)
                     .textSelection(.enabled)
                 Spacer()
+                IsleIconButton(icon: "xmark", variant: .borderless, help: "关闭提示") {
+                    appsCenter.message = nil
+                }
             }
             .padding(14)
             .modifier(IsleEmbossedSurface())
+            .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
         }
+    }
+
+    private var installTargetBlockedReason: String? {
+        guard let locations = appsCenter.appStorage?.locations, !locations.isEmpty else { return nil }
+        let target: NativeAppStorageLocation?
+        if selectedInstallLocationID.isEmpty {
+            target = locations.first(where: { $0.isDefault }) ?? locations.first
+        } else {
+            target = locations.first(where: { $0.id == selectedInstallLocationID })
+        }
+        guard let loc = target else { return nil }
+        if !loc.online {
+            return "安装目标「\(loc.name)」当前已离线，请先重新连接硬盘或改选其他位置。"
+        }
+        if !loc.writable {
+            return "安装目标「\(loc.name)」当前不可写，请检查磁盘权限后再安装。"
+        }
+        return nil
     }
 
     @ViewBuilder
@@ -205,13 +265,26 @@ struct AppsPluginCenterView: View {
                             Picker("安装位置", selection: $selectedInstallLocationID) {
                                 Text("默认（\(locations.first(where: { $0.isDefault })?.name ?? "内置盘")）").tag("")
                                 ForEach(locations) { loc in
-                                    Text("\(loc.kind == "external" ? "其他盘" : "内置盘") · \(loc.name)\(loc.online ? "" : "（离线）")").tag(loc.id)
+                                    let statusSuffix = !loc.online ? "（离线）" : (loc.writable ? "" : "（只读）")
+                                    Text("\(loc.kind == "external" ? "其他盘" : "内置盘") · \(loc.name)\(statusSuffix)").tag(loc.id)
                                 }
                             }
                             .labelsHidden()
-                            .frame(width: 210)
+                            .frame(width: 220)
                         }
                     }
+                }
+                .onChange(of: appsCenter.appStorage?.locations) { _, newLocations in
+                    guard !selectedInstallLocationID.isEmpty else { return }
+                    if !(newLocations ?? []).contains(where: { $0.id == selectedInstallLocationID }) {
+                        selectedInstallLocationID = ""
+                    }
+                }
+
+                if let blocked = installTargetBlockedReason {
+                    Label(blocked, systemImage: "exclamationmark.triangle.fill")
+                        .font(.caption)
+                        .foregroundStyle(IsleTheme.warningText)
                 }
 
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 250), spacing: 14)], spacing: 14) {
@@ -225,6 +298,7 @@ struct AppsPluginCenterView: View {
 
     private func templateCard(_ tpl: NativeOfficialAppTemplate) -> some View {
         let visual = templateVisual(for: tpl.id)
+        let installBlocked = installTargetBlockedReason != nil
         return VStack(alignment: .leading, spacing: 12) {
             HStack(alignment: .center, spacing: 10) {
                 IsleHeaderIconBadge(icon: visual.icon, tint: visual.tint, size: 36)
@@ -261,12 +335,12 @@ struct AppsPluginCenterView: View {
                     )
                 }
                 .buttonStyle(LiquidButtonStyle(variant: tpl.installed ? .secondary : .prominent, size: .small))
-                .disabled(appsCenter.busy || tpl.installed)
+                .disabled(appsCenter.busy || tpl.installed || installBlocked)
             }
         }
         .padding(16)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .modifier(IsleItemCardSurface(interactive: !tpl.installed))
+        .modifier(IsleItemCardSurface(interactive: !tpl.installed && !installBlocked))
     }
 
     @ViewBuilder
@@ -567,14 +641,18 @@ struct AppDiagnosticDetailSection: View {
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(IsleTheme.warningText)
                     Spacer()
-                    Button("打开代码目录") {
+                    IsleIconButton(
+                        icon: "folder",
+                        help: "在访达中打开该应用的代码目录"
+                    ) {
                         appsCenter.openPluginDirectory(appID: app.id)
                     }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                    Button("重新扫描") {
+                    IsleIconButton(
+                        icon: "arrow.clockwise",
+                        help: "重新扫描轻应用并检查启动状态"
+                    ) {
                         appsCenter.reloadApps()
                     }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                     .disabled(appsCenter.busy)
                 }
 

@@ -50,6 +50,7 @@ struct IsleDetailInfo: View {
                 .frame(width: 28, height: 28).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+        .help("查看\(title)详情")
         .accessibilityLabel("查看" + title + "详情")
         .accessibilityHint("打开可阅读和复制的详细信息")
         .onHover { if $0 { previews.enter(id) } else { previews.leave(id) } }
@@ -59,7 +60,9 @@ struct IsleDetailInfo: View {
                     Text(title).font(.system(size: 14, weight: .semibold))
                     Spacer()
                     if !previews.state.pinned {
-                        Button { previews.pin(id) } label: { Image(systemName: "pin") }.help("固定详情，移开鼠标后继续阅读")
+                        Button { previews.pin(id) } label: { Image(systemName: "pin") }
+                            .help("固定详情，移开鼠标后继续阅读")
+                            .accessibilityLabel("固定详情")
                     }
                 }
                 ForEach(Array(rows.enumerated()), id: \.offset) { _, row in

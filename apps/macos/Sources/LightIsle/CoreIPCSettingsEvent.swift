@@ -8,8 +8,6 @@ enum CoreIPCSettingsEvent {
     case frpState(FRPState?)
     case frpVersions([FRPRelease]?)
     case frpError(String)
-    case trashRetention(TrashRetention?)
-    case trashRetentionError
     case tmdbState(TmdbState?)
     case tmdbError(String?)
 
@@ -32,10 +30,6 @@ enum CoreIPCSettingsEvent {
             let raw = String(line.dropFirst("LIGHTISLE_FRP_ERROR ".count))
             return .frpError(TunnelWireCodec.decodeError(raw) ?? "FRP 操作失败")
         }
-        if line.hasPrefix("LIGHTISLE_TRASH_RETENTION ") {
-            return .trashRetention(json(TrashRetention.self, prefix: "LIGHTISLE_TRASH_RETENTION "))
-        }
-        if line.hasPrefix("LIGHTISLE_TRASH_RETENTION_ERROR ") { return .trashRetentionError }
         if line.hasPrefix("LIGHTISLE_TMDB_STATE ") {
             return .tmdbState(json(TmdbState.self, prefix: "LIGHTISLE_TMDB_STATE "))
         }

@@ -63,9 +63,11 @@ struct DockerManagementView: View {
         VStack(alignment: .leading, spacing: 20) {
             if appsCenter.workspaceSection == .plugins, selectedPluginAppID != nil {
                 AppsPluginCenterView(appsCenter: appsCenter, selectedAppID: $selectedPluginAppID)
+                    .transition(.isleRoute(isSubroute: true, reduceMotion: reduceMotion))
             } else if appsCenter.workspaceSection == .docker, detail == .containers, let current = selectedContainer {
                 let live = snapshot?.containers.first(where: { $0.id == current.id }) ?? current
                 containerDetailView(for: live)
+                    .transition(.isleRoute(isSubroute: true, reduceMotion: reduceMotion))
             } else {
                 LiquidSegmentedPicker(
                     title: "应用与容器模式",
@@ -75,34 +77,52 @@ struct DockerManagementView: View {
                     },
                     style: .tabs
                 )
-                switch appsCenter.workspaceSection {
-                case .plugins:
-                    AppsPluginCenterView(appsCenter: appsCenter, selectedAppID: $selectedPluginAppID)
-                case .automation:
-                    AutomationScriptsCenterView(appsCenter: appsCenter)
-                case .mcp:
-                    MCPDeveloperCenterView(appsCenter: appsCenter)
-                case .docker:
-                    engineSection
-                    LiquidSegmentedPicker(title: "Docker 资源分类", selection: detailBinding,
-                        options: DockerDetail.allCases.map { LiquidMenuOption(value: $0, label: $0.rawValue, icon: $0.icon) }, style: .tabs)
-                    Group {
-                        switch detail {
-                        case .containers: containersSection
-                        case .compose: composeSection
-                        case .images: imagesSection
-                        case .resources: resourcesSection
-                        case .mirrors: mirrorsSection
+                Group {
+                    switch appsCenter.workspaceSection {
+                    case .plugins:
+                        AppsPluginCenterView(appsCenter: appsCenter, selectedAppID: $selectedPluginAppID)
+                    case .automation:
+                        AutomationScriptsCenterView(appsCenter: appsCenter)
+                    case .mcp:
+                        MCPDeveloperCenterView(appsCenter: appsCenter)
+                    case .docker:
+                        engineSection
+                        LiquidSegmentedPicker(title: "Docker 资源分类", selection: detailBinding,
+                            options: DockerDetail.allCases.map { LiquidMenuOption(value: $0, label: $0.rawValue, icon: $0.icon) }, style: .tabs)
+                        Group {
+                            switch detail {
+                            case .containers: containersSection
+                            case .compose: composeSection
+                            case .images: imagesSection
+                            case .resources: resourcesSection
+                            case .mirrors: mirrorsSection
+                            }
                         }
-                    }
-                    if let message {
-                        Text(message)
-                            .font(.caption)
-                            .foregroundStyle(IsleTheme.successText)
-                            .textSelection(.enabled)
-                            .padding(.horizontal, 4)
+                        .id(detail)
+                        .transition(.isleRoute(isSubroute: false, reduceMotion: reduceMotion))
+                        if let message {
+                            Text(message)
+                                .font(.caption)
+                                .foregroundStyle(IsleTheme.successText)
+                                .textSelection(.enabled)
+                                .padding(.horizontal, 4)
+                                .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
+                        }
+                        IsleQuickJumpBar(items: [
+                            IsleQuickJumpItem("外部依赖（Homebrew）", icon: "shippingbox", tint: .orange, help: "检查 Docker CLI / FFmpeg / Smartmontools 等本机依赖状态") {
+                                AppModel.shared.navigate(to: .dependencies)
+                            },
+                            IsleQuickJumpItem("轻应用与插件", icon: "square.grid.2x2.fill", tint: IsleFluidPalette.brandIndigo, help: "浏览免容器按需唤醒的本地轻应用") {
+                                appsCenter.workspaceSection = .plugins
+                            },
+                            IsleQuickJumpItem("AI Agent (MCP)", icon: "cpu.fill", tint: .purple, help: "开启或调试 AI Agent MCP 工具接口") {
+                                appsCenter.workspaceSection = .mcp
+                            }
+                        ])
                     }
                 }
+                .id(appsCenter.workspaceSection)
+                .transition(.isleRoute(isSubroute: false, reduceMotion: reduceMotion))
             }
         }
         .task {
@@ -135,9 +155,11 @@ struct DockerManagementView: View {
             Button("放弃输入并切换", role: .destructive) { edits.discard?(); if let next = draftTab { detail = next } }
             Button("继续编辑", role: .cancel) { draftTab = nil }
         }
+        .animation(reduceMotion ? nil : IsleMotion.navigation, value: appsCenter.workspaceSection)
         .animation(reduceMotion ? nil : IsleMotion.navigation, value: detail)
         .animation(reduceMotion ? nil : IsleMotion.navigation, value: selectedPluginAppID)
         .animation(reduceMotion ? nil : IsleMotion.navigation, value: selectedContainer?.id)
+        .animation(reduceMotion ? nil : IsleMotion.quick, value: message)
         .onChange(of: detail) { _, next in
             selectedContainer = nil
             if !AppModel.shared.isPresentationPreview && (next == .images || next == .resources || next == .compose) { refreshExtras(context: context) }
@@ -174,9 +196,14 @@ struct DockerManagementView: View {
                             message = nil
                             refresh()
                         }
-                        Button(loading ? "读取中…" : "刷新状态") { refresh() }
-                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                            .disabled(loading || runningOperation)
+                        if loading {
+                            ProgressView().controlSize(.small)
+                        }
+                        IsleIconButton(
+                            icon: "arrow.clockwise",
+                            help: loading ? "正在读取 Docker 引擎状态…" : "刷新 Docker 引擎、镜像与容器状态"
+                        ) { refresh() }
+                        .disabled(loading || runningOperation)
                     }
                 }
                 if let snapshot {

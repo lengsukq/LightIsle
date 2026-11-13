@@ -85,7 +85,6 @@ extension AppModel {
         metrics = nil
         metricHistory.removeAll(keepingCapacity: false)
         if !backupInventoryLoading { backupInventory = nil }
-        transferHistory.removeAll(keepingCapacity: false)
         if !metadataRollbacksLoading { metadataRollbacks = nil }
         if !upgradePreflightChecking { upgradePreflight = nil }
     }
@@ -134,42 +133,6 @@ extension AppModel {
         alert.messageText = "脚本目录尚未创建"
         alert.informativeText = "请先启动轻屿，或从自动化页面刷新。路径：\n\(scripts.path)"
         alert.runModal()
-    }
-
-    // MARK: - Local AI Agent (MCP) Bootstrap
-
-    func copyMCPBootstrapPrompt() {
-        if appsCenter.connected && !appsCenter.mcp.mcpEnabled {
-            appsCenter.setMCPConfig(mcpEnabled: true)
-        }
-        let prompt: String
-        if !appsCenter.mcp.mcpPrompt.isEmpty {
-            prompt = appsCenter.mcp.mcpPrompt
-        } else {
-            let corePath = ProcessInfo.processInfo.environment["LIGHTISLE_CORE_PATH"]
-                ?? Bundle.main.resourceURL?.appendingPathComponent("core/lightisled").path
-                ?? "/Applications/LightIsle.app/Contents/Resources/core/lightisled"
-            let dataDir = NativeMetadataRecovery.privateMetadataDirectory
-                ?? (NSHomeDirectory() + "/Library/Application Support/LightIsle")
-            prompt = """
-            请帮我将当前 Mac 上的「LightIsle（轻屿）开发者 MCP Server」安装并注册到你的 MCP 配置文件中：
-
-            - MCP 服务名称：lightisle-dev
-            - 传输方式：stdio
-            - 可执行命令：\(corePath)
-            - 命令参数：["mcp", "--data-dir", "\(dataDir)"]
-
-            操作要求：
-            1. 请自动检测你当前所处的 Agent 环境（如 Claude Code、Codex、Cursor 或 Antigravity MCP 配置），写入上述 lightisle-dev MCP 配置；
-            2. 配置完成后，请立即调用 lightisle_get_environment 工具和读取 lightisle://specs/plugin-v2 资源，验证连接是否成功；
-            3. 今后当我让你为 LightIsle 开发或改造“应用 / 插件 / 定时脚本”时，请始终优先通过该 MCP 读取规范、创建脚手架、读写插件文件、使用 lightisle_probe_app / lightisle_get_app_logs 调试并触发热重载。
-            """
-        }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(prompt, forType: .string)
-        appsCenter.message = appsCenter.connected
-            ? "已复制 MCP 接入提示词（并已开启 MCP 开关），可直接粘贴给 Claude Code / Antigravity / Codex。"
-            : "已复制 MCP 接入提示词；启动核心服务后请在设置或 MCP 调试台开启开关。"
     }
 
     func checkUpgradePreflight() {
@@ -239,11 +202,9 @@ extension AppModel {
 
     func saveThumbnailCacheMiB(_ value: Int) -> Bool {
         guard Self.thumbnailCacheOptions.contains(value) else {
-            thumbnailCacheError = "缩略图缓存必须在 256 MiB–8 GiB 之间。"
             return false
         }
         UserDefaults.standard.set(value, forKey: "lightisle.thumbnailCacheMiB")
-        thumbnailCacheError = nil
         return true
     }
 
