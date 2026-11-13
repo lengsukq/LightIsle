@@ -2,7 +2,6 @@ import { computed, ref, watch } from "vue";
 import { describeUserFacingError } from "../userFacingError.ts";
 import { requestConfirm } from "../useConfirmDialog.ts";
 import {
-  DEFAULT_MCP_PROMPT,
   createAppsCenterClient,
   getAppDataBackupUrl,
   hasCronModule,
@@ -12,7 +11,8 @@ import {
 import type {
   AppCronRunEntry,
   AppMemberSummary,
-  McpCallLogEntry,
+  AppStorageMutationPayload,
+  AppStorageSnapshot,
   OfficialAppTemplateItem,
   PublicAppItem,
 } from "../types/appsCenter.ts";
@@ -148,19 +148,10 @@ export function useAppsCenterController(props: { active?: boolean; admin?: boole
   const apps = ref<PublicAppItem[]>([]);
   const templates = ref<OfficialAppTemplateItem[]>([]);
   const isAdmin = ref(!!props.admin);
-  const mcpEnabled = ref(false);
-  const mcpLanEnabled = ref(false);
-  const mcpToken = ref("");
-  const mcpPrompt = ref("");
-  const lanMcpPrompt = ref("");
-  const mcpConfigJson = ref("");
-  const lanHttpUrl = ref("");
-  const lanSseUrl = ref("");
-  const mcpLogs = ref<McpCallLogEntry[]>([]);
-  const showingMcpDebugModal = ref(false);
-  const showingClientWizard = ref(false);
   const members = ref<AppMemberSummary[]>([]);
   const configuredChannels = ref<string[]>([]);
+  const appStorage = ref<AppStorageSnapshot | null>(null);
+  const selectedInstallLocationId = ref("");
   const busy = ref(false);
   const error = ref("");
   const notice = ref("");
@@ -204,17 +195,14 @@ export function useAppsCenterController(props: { active?: boolean; admin?: boole
     if (Array.isArray(payload.apps)) apps.value = payload.apps as PublicAppItem[];
     if (Array.isArray(payload.templates)) templates.value = payload.templates as OfficialAppTemplateItem[];
     if (typeof payload.isAdmin === "boolean") isAdmin.value = payload.isAdmin;
-    if (typeof payload.mcpEnabled === "boolean") mcpEnabled.value = payload.mcpEnabled;
-    if (typeof payload.mcpLanEnabled === "boolean") mcpLanEnabled.value = payload.mcpLanEnabled;
-    if (typeof payload.mcpToken === "string") mcpToken.value = payload.mcpToken;
-    if (typeof payload.mcpPrompt === "string" && payload.mcpPrompt) mcpPrompt.value = payload.mcpPrompt;
-    if (typeof payload.lanMcpPrompt === "string" && payload.lanMcpPrompt) lanMcpPrompt.value = payload.lanMcpPrompt;
-    if (typeof payload.mcpConfigJson === "string" && payload.mcpConfigJson) mcpConfigJson.value = payload.mcpConfigJson;
-    if (typeof payload.lanHttpUrl === "string") lanHttpUrl.value = payload.lanHttpUrl;
-    if (typeof payload.lanSseUrl === "string") lanSseUrl.value = payload.lanSseUrl;
-    if (Array.isArray(payload.mcpLogs)) mcpLogs.value = payload.mcpLogs as McpCallLogEntry[];
     if (Array.isArray(payload.members)) members.value = payload.members as AppMemberSummary[];
     if (Array.isArray(payload.configuredChannels)) configuredChannels.value = payload.configuredChannels as string[];
+    if (payload.appStorage && typeof payload.appStorage === "object") {
+      appStorage.value = payload.appStorage as AppStorageSnapshot;
+      if (selectedInstallLocationId.value === "external" && !appStorage.value.hasExternal) {
+        selectedInstallLocationId.value = "";
+      }
+    }
   }
 
   function upsertSingleApp(updated?: PublicAppItem) {
@@ -236,127 +224,6 @@ export function useAppsCenterController(props: { active?: boolean; admin?: boole
       error.value = "读取应用列表失败：" + describeUserFacingError(e);
     } finally {
       busy.value = false;
-    }
-  }
-
-  async function toggleMcp(explicitNext?: boolean) {
-    if (busy.value) return;
-    busy.value = true;
-    error.value = "";
-    notice.value = "";
-    const next = typeof explicitNext === "boolean" ? explicitNext : !mcpEnabled.value;
-    try {
-      const res = await apiClient.setMcpConfig(
-        next ? { mcpEnabled: true } : { mcpEnabled: false, mcpLanEnabled: false },
-      );
-      applyAppsPayload(res as unknown as Record<string, unknown>);
-      mcpEnabled.value = typeof res.mcpEnabled === "boolean" ? res.mcpEnabled : next;
-      if (!mcpEnabled.value) mcpLanEnabled.value = false;
-      if (typeof res.mcpPrompt === "string" && res.mcpPrompt) mcpPrompt.value = res.mcpPrompt;
-      notice.value = mcpEnabled.value
-        ? "已开启 AI Agent (MCP) 服务（本机免令牌直连已就绪）。"
-        : "已关闭 AI Agent (MCP) 服务，并同步关闭局域网 / Cloud MCP 访问。";
-    } catch (e) {
-      error.value = "切换 MCP 服务失败：" + describeUserFacingError(e);
-    } finally {
-      busy.value = false;
-    }
-  }
-
-  async function toggleMcpLan(explicitNext?: boolean) {
-    if (busy.value) return;
-    busy.value = true;
-    error.value = "";
-    notice.value = "";
-    const next = typeof explicitNext === "boolean" ? explicitNext : !mcpLanEnabled.value;
-    try {
-      const res = await apiClient.setMcpConfig({
-        mcpEnabled: next ? true : mcpEnabled.value,
-        mcpLanEnabled: next,
-      });
-      applyAppsPayload(res as unknown as Record<string, unknown>);
-      notice.value = mcpLanEnabled.value
-        ? "已开启局域网 / Cloud MCP 访问，可使用远程 URL 与鉴权 Token 接入。"
-        : "已关闭局域网 / Cloud MCP 访问，当前仅保留本机免令牌直连。";
-    } catch (e) {
-      error.value = "切换局域网 / Cloud MCP 失败：" + describeUserFacingError(e);
-    } finally {
-      busy.value = false;
-    }
-  }
-
-  async function rotateMcpToken() {
-    if (busy.value) return;
-    busy.value = true;
-    error.value = "";
-    notice.value = "";
-    try {
-      const res = await apiClient.rotateMcpToken();
-      applyAppsPayload(res as unknown as Record<string, unknown>);
-      notice.value = "已轮换系统级 MCP Bearer Token，旧 Token 已立即失效。";
-    } catch (e) {
-      error.value = "轮换 MCP Token 失败：" + describeUserFacingError(e);
-    } finally {
-      busy.value = false;
-    }
-  }
-
-  async function refreshMcpLogs() {
-    if (busy.value) return;
-    busy.value = true;
-    error.value = "";
-    try {
-      const res = await apiClient.fetchMcpLogs();
-      mcpLogs.value = Array.isArray(res.logs) ? res.logs : [];
-    } catch (e) {
-      error.value = "读取 MCP 调用日志失败：" + describeUserFacingError(e);
-    } finally {
-      busy.value = false;
-    }
-  }
-
-  async function clearMcpLogs() {
-    if (busy.value) return;
-    busy.value = true;
-    error.value = "";
-    try {
-      await apiClient.clearMcpLogs();
-      mcpLogs.value = [];
-      notice.value = "已清空最近 MCP 调用记录。";
-    } catch (e) {
-      error.value = "清空 MCP 调用日志失败：" + describeUserFacingError(e);
-    } finally {
-      busy.value = false;
-    }
-  }
-
-  async function copyMcpPrompt(enableFirst = false) {
-    error.value = "";
-    notice.value = "";
-    try {
-      if (enableFirst && !mcpEnabled.value) {
-        busy.value = true;
-        const res = await apiClient.setMcpEnabled(true);
-        mcpEnabled.value = typeof res.mcpEnabled === "boolean" ? res.mcpEnabled : true;
-        if (typeof res.mcpPrompt === "string" && res.mcpPrompt) mcpPrompt.value = res.mcpPrompt;
-      }
-      await writeAppsClipboard(mcpPrompt.value || DEFAULT_MCP_PROMPT);
-      notice.value = mcpEnabled.value
-        ? "已复制 AI Agent (MCP) 接入提示词，请直接粘贴给你本地的 AI Agent。"
-        : "已复制 MCP 接入提示词（当前 MCP 服务处于关闭状态，可点击「一键开启 MCP 并复制」启用）。";
-    } catch (e) {
-      error.value = "复制提示词失败：" + describeUserFacingError(e);
-    } finally {
-      busy.value = false;
-    }
-  }
-
-  async function handleDebugCopy(text: string, msg: string) {
-    try {
-      await writeAppsClipboard(text);
-      notice.value = msg;
-    } catch (e) {
-      error.value = "复制内容失败：" + describeUserFacingError(e);
     }
   }
 
@@ -593,11 +460,43 @@ export function useAppsCenterController(props: { active?: boolean; admin?: boole
     error.value = "";
     notice.value = "";
     try {
-      const res = await apiClient.installTemplate(tpl.id);
+      const res = await apiClient.installTemplate(tpl.id, selectedInstallLocationId.value || undefined);
       applyAppsPayload(res);
       notice.value = `已一键安装官方精选轻应用「${tpl.name}」（纯静态 · 0 MB 内存驻留）。`;
     } catch (e) {
       error.value = `安装「${tpl.name}」失败：` + describeUserFacingError(e);
+    } finally {
+      busy.value = false;
+    }
+  }
+
+  async function mutateAppStorage(payload: AppStorageMutationPayload) {
+    if (busy.value) return;
+    if (payload.action === "remove_external") {
+      const ok = await requestConfirm({
+        title: "移除其他盘应用存储登记",
+        message: "确认从应用中心注销这个其他盘位置吗？系统会先停止来自该位置的应用进程，但绝不会删除硬盘上的插件源码或业务数据。",
+        confirmText: "确认移除",
+        variant: "danger",
+      });
+      if (!ok) return;
+    }
+    busy.value = true;
+    error.value = "";
+    notice.value = "";
+    try {
+      const res = await apiClient.mutateAppStorage(payload);
+      applyAppsPayload(res);
+      const labelByAction: Record<string, string> = {
+        set_default: "已更新新建与安装轻应用的默认存储位置。",
+        reset_internal: "已恢复 Mac 内置盘为系统默认目录。",
+        remove_external: "已安全移除其他盘登记（硬盘原有文件已完整保留）。",
+        add: "已添加其他盘应用存储位置。",
+        set: "已更新应用数据存储位置。",
+      };
+      notice.value = labelByAction[payload.action] || "应用存储位置已更新。";
+    } catch (e) {
+      error.value = "更新应用存储位置失败：" + describeUserFacingError(e);
     } finally {
       busy.value = false;
     }
@@ -611,19 +510,10 @@ export function useAppsCenterController(props: { active?: boolean; admin?: boole
     apps,
     templates,
     isAdmin,
-    mcpEnabled,
-    mcpLanEnabled,
-    mcpToken,
-    mcpPrompt,
-    lanMcpPrompt,
-    mcpConfigJson,
-    lanHttpUrl,
-    lanSseUrl,
-    mcpLogs,
-    showingMcpDebugModal,
-    showingClientWizard,
     members,
     configuredChannels,
+    appStorage,
+    selectedInstallLocationId,
     busy,
     error,
     notice,
@@ -654,15 +544,7 @@ export function useAppsCenterController(props: { active?: boolean; admin?: boole
     restoreInputRef,
     hasWeb: hasWebModule,
     hasCron: hasCronModule,
-    applyAppsPayload,
     reload,
-    toggleMcp,
-    toggleMcpLan,
-    rotateMcpToken,
-    refreshMcpLogs,
-    clearMcpLogs,
-    copyMcpPrompt,
-    handleDebugCopy,
     openApp,
     closeWorkbench,
     refreshWorkbench,
@@ -679,5 +561,6 @@ export function useAppsCenterController(props: { active?: boolean; admin?: boole
     onRestoreFileChange,
     removeApp,
     installOfficialTemplate,
+    mutateAppStorage,
   };
 }

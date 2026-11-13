@@ -4,7 +4,7 @@ package system
 
 /*
 #cgo CFLAGS: -Wno-deprecated-declarations
-#cgo LDFLAGS: -framework IOKit -framework CoreFoundation
+#cgo LDFLAGS: -framework IOKit -framework CoreFoundation -framework SystemConfiguration
 #include <mach/mach.h>
 #include <mach/host_info.h>
 #include <mach/mach_host.h>
@@ -21,6 +21,7 @@ package system
 #include <IOKit/IOKitLib.h>
 #include <IOKit/IOBSD.h>
 #include <CoreFoundation/CoreFoundation.h>
+#include <SystemConfiguration/SystemConfiguration.h>
 
 #define LIGHTISLE_PROCESS_NAME_SIZE (2 * MAXCOMLEN)
 typedef struct {
@@ -197,6 +198,20 @@ static int lightisle_sample(uint64_t* memoryTotal, uint64_t* memoryUsed, uint64_
   vm_deallocate(mach_task_self(), (vm_address_t)info, (vm_size_t)(infoCount * sizeof(integer_t)));
   return 0;
 }
+
+static int lightisle_computer_name(char *out, int outLen) {
+  if (!out || outLen <= 0) return -1;
+  out[0] = '\0';
+  CFStringEncoding encoding = kCFStringEncodingUTF8;
+  CFStringRef name = SCDynamicStoreCopyComputerName(NULL, &encoding);
+  if (!name) {
+    name = SCDynamicStoreCopyLocalHostName(NULL);
+  }
+  if (!name) return -1;
+  Boolean ok = CFStringGetCString(name, out, (CFIndex)outLen, kCFStringEncodingUTF8);
+  CFRelease(name);
+  return ok ? 0 : -1;
+}
 */
 import "C"
 
@@ -208,7 +223,19 @@ import (
 	"sync"
 	"syscall"
 	"time"
+	"unsafe"
 )
+
+func localComputerName() string {
+	var buf [512]C.char
+	if C.lightisle_computer_name((*C.char)(unsafe.Pointer(&buf[0])), C.int(len(buf))) == 0 {
+		if name := strings.TrimSpace(C.GoString((*C.char)(unsafe.Pointer(&buf[0])))); name != "" {
+			return name
+		}
+	}
+	host, _ := os.Hostname()
+	return strings.TrimSpace(host)
+}
 
 type Volume struct {
 	Name       string `json:"name"`
@@ -412,7 +439,7 @@ func (c *Collector) Collect() (Snapshot, error) {
 	if err := syscall.Statfs("/", &fs); err != nil {
 		return Snapshot{}, err
 	}
-	host, _ := os.Hostname()
+	host := localComputerName()
 	result := Snapshot{
 		Timestamp: time.Now().UTC(), Hostname: host,
 		Architecture: runtime.GOOS + "/" + runtime.GOARCH,

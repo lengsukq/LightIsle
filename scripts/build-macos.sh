@@ -82,9 +82,18 @@ cp LICENSE "$APP/Contents/Resources/LICENSE"
 cp COMMERCIAL.md "$APP/Contents/Resources/COMMERCIAL.md"
 cp THIRD_PARTY_NOTICES.md "$APP/Contents/Resources/THIRD_PARTY_NOTICES.md"
 
-echo "[4/6] Local development code signing (ad hoc)"
-# Production distribution requires an Apple Developer ID and notarization.
-codesign --force --deep --sign - "$APP"
+SIGN_IDENTITY="${LIGHTISLE_CODESIGN_IDENTITY:-}"
+if [[ -z "$SIGN_IDENTITY" ]] && security find-identity -v -p codesigning 2>/dev/null | grep -Fq '"LightIsle Local Dev"'; then
+  SIGN_IDENTITY="LightIsle Local Dev"
+fi
+if [[ -n "$SIGN_IDENTITY" ]]; then
+  echo "[4/6] Local development code signing ($SIGN_IDENTITY)"
+  codesign --force --deep --sign "$SIGN_IDENTITY" "$APP"
+else
+  echo "[4/6] Local development code signing (ad hoc)"
+  # Production distribution requires an Apple Developer ID and notarization.
+  codesign --force --deep --sign - "$APP"
+fi
 
 echo "[5/6] Check bundle metadata"
 plutil -lint "$APP/Contents/Info.plist"

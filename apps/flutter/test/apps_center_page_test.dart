@@ -11,8 +11,11 @@ class _FakeAppsApi extends LightIsleApi {
   bool mcpEnabled = false;
   bool mcpLanEnabled = false;
   String mcpToken = 'mcp-tok-initial';
+  String defaultLocationId = 'internal';
+  Map<String, dynamic>? externalStorageLocation;
   final List<String> calls = <String>[];
   Map<String, dynamic>? lastPutBody;
+  Map<String, dynamic>? lastStorageBody;
   Map<String, dynamic>? lastMcpDebugBody;
   String? lastDownloadedPath;
   String? lastDownloadSavePath;
@@ -80,6 +83,43 @@ class _FakeAppsApi extends LightIsleApi {
       {'id': 2, 'username': 'alice', 'role': 'member'},
     ],
     'configuredChannels': <String>['bark', 'email'],
+    'appStorage': <String, dynamic>{
+      'defaultLocationId': defaultLocationId,
+      'maxInternal': 1,
+      'maxExternal': 1,
+      'maxLocations': 2,
+      'hasExternal': externalStorageLocation != null,
+      'locations': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'internal',
+          'kind': 'internal',
+          'name': 'Mac 内置盘',
+          'path': '/Users/admin/Library/Application Support/LightIsle',
+          'pluginsDir':
+              '/Users/admin/Library/Application Support/LightIsle/plugins',
+          'pluginDataDir':
+              '/Users/admin/Library/Application Support/LightIsle/plugin-data',
+          'isDefault': defaultLocationId == 'internal',
+          'isCustomPath': false,
+          'online': true,
+          'writable': true,
+          'freeBytes': 21474836480,
+          'totalBytes': 107374182400,
+          'appCount': 2,
+        },
+        ?externalStorageLocation,
+      ],
+      'availableVolumes': <Map<String, dynamic>>[
+        <String, dynamic>{
+          'name': 'ExtSSD',
+          'mount': '/Volumes/ExtSSD',
+          'suggestedPath': '/Volumes/ExtSSD/LightIsleApps',
+          'totalBytes': 1000000000000,
+          'freeBytes': 500000000000,
+          'readOnly': false,
+        },
+      ],
+    },
   };
 
   @override
@@ -117,6 +157,43 @@ class _FakeAppsApi extends LightIsleApi {
     calls.add('$method $path');
     if (method == 'POST' && path == '/api/v2/apps/refresh') {
       return _snapshot();
+    }
+    if (method == 'PUT' && path == '/api/v2/apps/storage') {
+      final map = Map<String, dynamic>.from(body as Map);
+      lastStorageBody = map;
+      final act = map['action']?.toString() ?? '';
+      if (act == 'add' || act == 'set') {
+        if (map['kind'] == 'external') {
+          externalStorageLocation = <String, dynamic>{
+            'id': 'external',
+            'kind': 'external',
+            'name': (map['name']?.toString().isNotEmpty ?? false)
+                ? map['name'].toString()
+                : 'ExtSSD',
+            'path': map['path'].toString(),
+            'pluginsDir': '${map['path']}/plugins',
+            'pluginDataDir': '${map['path']}/plugin-data',
+            'isDefault': map['setDefault'] == true || defaultLocationId == 'external',
+            'isCustomPath': true,
+            'online': true,
+            'writable': true,
+            'freeBytes': 500000000000,
+            'totalBytes': 1000000000000,
+            'appCount': 0,
+          };
+          if (map['setDefault'] == true) defaultLocationId = 'external';
+        }
+      } else if (act == 'remove_external') {
+        externalStorageLocation = null;
+        defaultLocationId = 'internal';
+      } else if (act == 'set_default') {
+        defaultLocationId = map['defaultLocationId']?.toString() ?? 'internal';
+      }
+      return _snapshot();
+    }
+    if (method == 'POST' && path == '/api/v2/apps/mcp/logs/clear' ||
+        method == 'DELETE' && path == '/api/v2/apps/mcp/logs') {
+      return {'ok': true};
     }
     if (method == 'PUT' && path == '/api/v2/apps/mcp') {
       final map = Map<String, dynamic>.from(body as Map);
@@ -187,7 +264,7 @@ class _FakeAppsApi extends LightIsleApi {
 
 void main() {
   testWidgets(
-    'Admin AppsCenterPage toggles MCP, updates member ACL, views logs, and launches app',
+    'Admin AppsCenterPage updates member ACL, views logs, and launches app without MCP controls',
     (tester) async {
       tester.view.physicalSize = const Size(1100, 1800);
       tester.view.devicePixelRatio = 1;
@@ -214,17 +291,12 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(api.calls, contains('GET /api/v2/apps'));
-      expect(find.byKey(const ValueKey('adminMcpControlCard')), findsOneWidget);
+      expect(find.byKey(const ValueKey('adminMcpControlCard')), findsNothing);
+      expect(find.text('AI Agent (MCP) 服务'), findsNothing);
       expect(find.text('CPE 流量与设备监控'), findsOneWidget);
       expect(find.text('按需休眠 0 MB'), findsOneWidget);
       expect(find.text('仅管理员'), findsOneWidget);
       expect(find.text('定时 */15 * * * *'), findsOneWidget);
-
-      // Toggle MCP enable switch
-      await tester.tap(find.byKey(const ValueKey('mcpEnableSwitch')));
-      await tester.pumpAndSettle();
-      expect(api.calls, contains('PUT /api/v2/apps/mcp'));
-      expect(api.mcpEnabled, isTrue);
 
       // Open Member Access Sheet and grant access to alice (id: 2)
       await tester.tap(find.byKey(const ValueKey('accessApp_cpe-monitor')));
@@ -318,13 +390,13 @@ void main() {
       // Return to App Center list from Embedded Workbench
       await tester.tap(find.byKey(const ValueKey('workbenchBackButton')));
       await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('adminMcpControlCard')), findsOneWidget);
+      expect(find.byKey(const ValueKey('adminMcpControlCard')), findsNothing);
       expect(find.text('运行中 24 MB'), findsOneWidget);
     },
   );
 
   testWidgets(
-    'Member AppsCenterPage hides admin MCP controls and opens authorized app',
+    'Member AppsCenterPage hides admin controls and opens authorized app',
     (tester) async {
       tester.view.physicalSize = const Size(900, 1400);
       tester.view.devicePixelRatio = 1;
@@ -365,7 +437,7 @@ void main() {
   );
 
   testWidgets(
-    'AppsCenterPage surfaces launch failure, respects cancelled backup picker, and supports resources/read in MCP debug sheet',
+    'AppsCenterPage surfaces launch failure and respects cancelled backup picker',
     (tester) async {
       tester.view.physicalSize = const Size(1100, 1800);
       tester.view.devicePixelRatio = 1;
@@ -402,43 +474,17 @@ void main() {
       await tester.tap(find.text('导出应用数据 (.tar.gz)'));
       await tester.pumpAndSettle();
       expect(api.lastDownloadedPath, isNull);
-
-      // MCP Debug Sheet supports resources/read with the 3 exact spec URIs.
-      await tester.tap(find.byKey(const ValueKey('openMcpDebugSheetButton')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('mcpDebugMethodDropdown')));
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('resources/read (读取规范资源)').last);
-      await tester.pumpAndSettle();
-
-      expect(
-        find.byKey(const ValueKey('mcpDebugResourceUriDropdown')),
-        findsOneWidget,
-      );
-      await tester.tap(
-        find.byKey(const ValueKey('mcpDebugResourceUriDropdown')),
-      );
-      await tester.pumpAndSettle();
-      expect(find.text('lightisle://specs/plugin-v2'), findsWidgets);
-      expect(find.text('lightisle://specs/ui-theme'), findsWidgets);
-      expect(find.text('lightisle://specs/automation-v1'), findsWidgets);
-      await tester.tap(find.text('lightisle://specs/ui-theme').last);
-      await tester.pumpAndSettle();
-
-      await tester.tap(find.byKey(const ValueKey('runMcpDebugButton')));
-      await tester.pumpAndSettle();
-      expect(api.lastMcpDebugBody, {
-        'method': 'resources/read',
-        'tool': '',
-        'uri': 'lightisle://specs/ui-theme',
-        'args': <String, dynamic>{},
-      });
     },
   );
 
-  testWidgets('unified MCP hierarchy cascades switches and opens wizard', (
+  testWidgets('app storage locations card supports 1 internal + 1 external slot lifecycle', (
     tester,
   ) async {
+    tester.view.physicalSize = const Size(1100, 1400);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+
     final api = _FakeAppsApi(isAdmin: true);
     addTearDown(api.close);
 
@@ -447,27 +493,43 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.byKey(const ValueKey('mcpLanEnableSwitch')), findsNothing);
+    expect(find.byKey(const ValueKey('appStorageLocationsCard')), findsOneWidget);
+    expect(find.text('已配置 1/2（1 内置盘 + 1 其他盘）'), findsOneWidget);
+    expect(find.text('内置盘 1/1'), findsOneWidget);
+    expect(find.text('其他盘 0/1'), findsOneWidget);
 
-    await tester.tap(find.byKey(const ValueKey('mcpEnableSwitch')));
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('addExternalAppStorageButton')),
+    );
     await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('mcpLanEnableSwitch')), findsOneWidget);
-
-    await tester.tap(find.byKey(const ValueKey('mcpLanEnableSwitch')));
-    await tester.pumpAndSettle();
-    expect(find.byKey(const ValueKey('mcpCallLogsAccordion')), findsOneWidget);
-
-    await tester.tap(find.byKey(const ValueKey('openMcpWizardSheetButton')));
-    await tester.pumpAndSettle();
-    expect(find.text('Gemini 桌面端'), findsOneWidget);
-    expect(find.text('轻屿 LightIsle'), findsOneWidget);
-    expect(find.byKey(const ValueKey('geminiSandboxWarning')), findsOneWidget);
-    await tester.tap(find.text('完成'));
+    await tester.tap(find.byKey(const ValueKey('addExternalAppStorageButton')));
     await tester.pumpAndSettle();
 
-    await tester.tap(find.byKey(const ValueKey('mcpEnableSwitch')));
+    expect(find.byKey(const ValueKey('appStoragePathField')), findsOneWidget);
+    await tester.tap(
+      find.byKey(const ValueKey('confirmAppStorageDialogButton')),
+    );
     await tester.pumpAndSettle();
-    expect(api.mcpEnabled, isFalse);
-    expect(api.mcpLanEnabled, isFalse);
+
+    expect(api.lastStorageBody?['action'], 'add');
+    expect(api.lastStorageBody?['kind'], 'external');
+    expect(api.lastStorageBody?['path'], '/Volumes/ExtSSD/LightIsleApps');
+    expect(find.text('已配置 2/2（1 内置盘 + 1 其他盘）'), findsOneWidget);
+    expect(find.text('其他盘 1/1'), findsOneWidget);
+    expect(find.byKey(const ValueKey('addExternalAppStorageButton')), findsNothing);
+
+    await tester.ensureVisible(
+      find.byKey(const ValueKey('removeExternalAppStorageButton')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(
+      find.byKey(const ValueKey('removeExternalAppStorageButton')),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('确认移除'));
+    await tester.pumpAndSettle();
+
+    expect(api.lastStorageBody?['action'], 'remove_external');
+    expect(find.text('其他盘 0/1'), findsOneWidget);
   });
 }

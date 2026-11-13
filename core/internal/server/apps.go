@@ -179,6 +179,7 @@ func replyAppsList(w http.ResponseWriter, appsMgr *apps.Manager, store *auth.Sto
 		resp["mcpCommand"] = snap.Command
 		resp["mcpLogs"] = appsMgr.GetMCPCallLogs()
 		resp["configuredChannels"] = appsMgr.ConfiguredChannels()
+		resp["appStorage"] = appsMgr.GetStorageSnapshot()
 		members := make([]map[string]any, 0)
 		if store != nil && user.SessionToken != "" {
 			if users, err := store.ListUsers(user.SessionToken); err == nil {
@@ -202,6 +203,10 @@ func appsErrorReply(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, apps.ErrInvalid):
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "app_invalid", "message": err.Error()})
+	case errors.Is(err, apps.ErrStorageSlotLimit):
+		jsonReply(w, http.StatusConflict, map[string]string{"error": "app_storage_slot_limit", "message": err.Error()})
+	case errors.Is(err, apps.ErrStorageOffline):
+		jsonReply(w, http.StatusConflict, map[string]string{"error": "app_storage_offline", "message": err.Error()})
 	case errors.Is(err, apps.ErrTemplateNotFound):
 		jsonReply(w, http.StatusNotFound, map[string]string{"error": "app_template_not_found"})
 	case errors.Is(err, apps.ErrAlreadyInstalled):

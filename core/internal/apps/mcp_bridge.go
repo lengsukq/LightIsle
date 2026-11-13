@@ -15,6 +15,7 @@ import (
 type mcpBridgePayload struct {
 	LocalURL  string `json:"localUrl"`
 	Token     string `json:"token"`
+	DataDir   string `json:"dataDir,omitempty"`
 	PID       int    `json:"pid,omitempty"`
 	UpdatedAt string `json:"updatedAt,omitempty"`
 }
@@ -174,6 +175,7 @@ func (m *Manager) SyncSandboxBridge() {
 	payload := mcpBridgePayload{
 		LocalURL:  strings.TrimRight(localBase, "/"),
 		Token:     token,
+		DataDir:   filepath.Clean(m.dataDir),
 		PID:       os.Getpid(),
 		UpdatedAt: time.Now().UTC().Format(time.RFC3339),
 	}

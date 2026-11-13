@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/automation"
+	"github.com/lengsukq/lightisle/core/internal/storageidentity"
 	"github.com/robfig/cron/v3"
 )
 
@@ -29,6 +30,8 @@ var (
 	ErrUnavailable       = errors.New("app_unavailable")
 	ErrPendingActivation = errors.New("app_pending_activation")
 	ErrMCPDisabled       = errors.New("mcp_disabled")
+	ErrStorageSlotLimit  = errors.New("app_storage_slot_limit")
+	ErrStorageOffline    = errors.New("app_storage_offline")
 
 	PluginIDPattern = regexp.MustCompile(`^[a-z][a-z0-9-]{0,40}$`)
 	envKeyPattern   = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]{0,63}$`)
@@ -60,12 +63,85 @@ const (
 	maxEmailBytes    = 64 << 10
 )
 
+const (
+	AppStorageIDInternal   = "internal"
+	AppStorageIDExternal   = "external"
+	AppStorageKindInternal = "internal"
+	AppStorageKindExternal = "external"
+)
+
+type StoredAppLocation struct {
+	ID        string                   `json:"id"`
+	Kind      string                   `json:"kind"`
+	Name      string                   `json:"name"`
+	Path      string                   `json:"path"`
+	Binding   *storageidentity.Binding `json:"binding,omitempty"`
+	UpdatedAt string                   `json:"updatedAt,omitempty"`
+}
+
+type AppsStorageSettings struct {
+	DefaultLocationID string             `json:"defaultLocationId,omitempty"`
+	Internal          *StoredAppLocation `json:"internal,omitempty"`
+	External          *StoredAppLocation `json:"external,omitempty"`
+}
+
+type AppStorageLocation struct {
+	ID            string `json:"id"`
+	Kind          string `json:"kind"`
+	Name          string `json:"name"`
+	Path          string `json:"path"`
+	PluginsDir    string `json:"pluginsDir"`
+	PluginDataDir string `json:"pluginDataDir"`
+	IsDefault     bool   `json:"isDefault"`
+	IsCustomPath  bool   `json:"isCustomPath"`
+	Online        bool   `json:"online"`
+	Writable      bool   `json:"writable"`
+	Error         string `json:"error,omitempty"`
+	VolumeName    string `json:"volumeName,omitempty"`
+	VolumeMount   string `json:"volumeMount,omitempty"`
+	VolumeUUID    string `json:"volumeUuid,omitempty"`
+	FreeBytes     uint64 `json:"freeBytes,omitempty"`
+	TotalBytes    uint64 `json:"totalBytes,omitempty"`
+	AppCount      int    `json:"appCount"`
+}
+
+type AppStorageVolumeOption struct {
+	Name       string `json:"name"`
+	Mount      string `json:"mount"`
+	Suggested  string `json:"suggestedPath"`
+	Filesystem string `json:"filesystem,omitempty"`
+	TotalBytes uint64 `json:"totalBytes"`
+	FreeBytes  uint64 `json:"freeBytes"`
+	ReadOnly   bool   `json:"readOnly"`
+	VolumeUUID string `json:"volumeUuid,omitempty"`
+}
+
+type AppStorageSnapshot struct {
+	DefaultLocationID string                   `json:"defaultLocationId"`
+	MaxInternal       int                      `json:"maxInternal"`
+	MaxExternal       int                      `json:"maxExternal"`
+	MaxLocations      int                      `json:"maxLocations"`
+	HasExternal       bool                     `json:"hasExternal"`
+	Locations         []AppStorageLocation     `json:"locations"`
+	AvailableVolumes  []AppStorageVolumeOption `json:"availableVolumes"`
+}
+
+type AppStorageMutationRequest struct {
+	Action            string `json:"action"` // add, set, set_default, reset_internal, remove_external
+	Kind              string `json:"kind,omitempty"`
+	Path              string `json:"path,omitempty"`
+	Name              string `json:"name,omitempty"`
+	DefaultLocationID string `json:"defaultLocationId,omitempty"`
+	SetDefault        bool   `json:"setDefault,omitempty"`
+}
+
 type AppsSystemConfig struct {
-	MCPEnabled    bool     `json:"mcpEnabled"`
-	MCPLanEnabled bool     `json:"mcpLanEnabled"`
-	UpdatedAt     string   `json:"updatedAt"`
-	PendingApps   []string `json:"pendingApps,omitempty"`
-	ActivatedApps []string `json:"activatedApps,omitempty"`
+	MCPEnabled    bool                 `json:"mcpEnabled"`
+	MCPLanEnabled bool                 `json:"mcpLanEnabled"`
+	UpdatedAt     string               `json:"updatedAt"`
+	PendingApps   []string             `json:"pendingApps,omitempty"`
+	ActivatedApps []string             `json:"activatedApps,omitempty"`
+	Storage       *AppsStorageSettings `json:"storage,omitempty"`
 }
 
 type PluginManifest struct {
@@ -159,6 +235,11 @@ type PublicApp struct {
 	LastError         string         `json:"lastError,omitempty"`
 	Diagnostic        *AppDiagnostic `json:"diagnostic,omitempty"`
 	PendingActivation bool           `json:"pendingActivation,omitempty"`
+	LocationID        string         `json:"locationId"`
+	LocationKind      string         `json:"locationKind"`
+	LocationName      string         `json:"locationName"`
+	PluginsDir        string         `json:"pluginsDir"`
+	PluginDataDir     string         `json:"pluginDataDir"`
 	Access            AccessConfig   `json:"access"`
 	Web               PublicWebView  `json:"web"`
 	Cron              PublicCronView `json:"cron"`

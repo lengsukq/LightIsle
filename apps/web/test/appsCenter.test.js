@@ -4,8 +4,6 @@ import { test } from "node:test";
 import { parse } from "@vue/compiler-sfc";
 import { describeUserFacingError } from "../src/userFacingError.ts";
 import {
-  DEFAULT_MCP_COMMAND,
-  DEFAULT_MCP_PROMPT,
   buildAccessPutPayload,
   buildConfigPutPayload,
   createAppsCenterClient,
@@ -17,24 +15,11 @@ const appsViewSource = readFileSync(new URL("../src/AppsCenterView.vue", import.
 const appVueSource = readFileSync(new URL("../src/App.vue", import.meta.url), "utf8");
 const appShellSource = readFileSync(new URL("../src/AppShell.html", import.meta.url), "utf8");
 
-test("userFacingError translates App Center and MCP error codes into actionable Chinese", () => {
-  assert.match(describeUserFacingError(new Error("mcp_disabled")), /MCP.*关闭/);
+test("userFacingError translates App Center error codes into actionable Chinese", () => {
   assert.match(describeUserFacingError(new Error("app_origin_isolated")), /轻应用.*核心管理接口/);
   assert.match(describeUserFacingError(new Error("app_wake_timeout")), /唤醒超时/);
   assert.match(describeUserFacingError(new Error("app_not_found")), /轻应用不存在|刷新应用中心/);
   assert.match(describeUserFacingError(new Error("app_forbidden")), /没有访问该轻应用的权限/);
-});
-
-test("DEFAULT_MCP_PROMPT uses the macOS bundle Resources/core/lightisled path (P1-4)", () => {
-  assert.equal(
-    DEFAULT_MCP_COMMAND,
-    "/Applications/LightIsle.app/Contents/Resources/core/lightisled"
-  );
-  assert.match(
-    DEFAULT_MCP_PROMPT,
-    /\/Applications\/LightIsle\.app\/Contents\/Resources\/core\/lightisled/
-  );
-  assert.doesNotMatch(DEFAULT_MCP_PROMPT, /Contents\/MacOS\/lightisled/);
 });
 
 test("normalizeLogsResponse accepts both webOutput/cronRuns and logs/runs (P1-2)", () => {
@@ -67,8 +52,6 @@ test("createAppsCenterClient enforces exact Go Core HTTP routes, headers, and se
         return {
           apps: [{ id: "network-pulse", name: "轻屿网络脉搏" }],
           isAdmin: true,
-          mcpEnabled: true,
-          mcpPrompt: DEFAULT_MCP_PROMPT,
           members: [{ id: 2, username: "alice", role: "member" }],
           configuredChannels: ["bark", "email"],
         };
@@ -86,13 +69,7 @@ test("createAppsCenterClient enforces exact Go Core HTTP routes, headers, and se
   assert.equal(calls.at(-1).url, "/api/v2/apps/refresh");
   assert.equal(calls.at(-1).options.method, "POST");
 
-  // 2. PUT /api/v2/apps/mcp
-  await client.setMcpEnabled(true);
-  assert.equal(calls.at(-1).url, "/api/v2/apps/mcp");
-  assert.equal(calls.at(-1).options.method, "PUT");
-  assert.deepEqual(JSON.parse(calls.at(-1).options.body), { enabled: true });
-
-  // 3. POST /api/v2/apps/{id}/launch
+  // 2. POST /api/v2/apps/{id}/launch
   await client.launchApp("cpe-monitor");
   assert.equal(calls.at(-1).url, "/api/v2/apps/cpe-monitor/launch");
   assert.equal(calls.at(-1).options.method, "POST");
@@ -141,7 +118,28 @@ test("createAppsCenterClient enforces exact Go Core HTTP routes, headers, and se
   assert.equal(calls.at(-1).url, "/api/v2/apps/cpe-monitor/data-restore");
   assert.equal(calls.at(-1).options.method, "POST");
 
-  // 9. DELETE /api/v2/apps/{id}
+  // 9. App data storage locations (1 internal + 1 external) & template install target
+  await client.getAppStorage();
+  assert.equal(calls.at(-1).url, "/api/v2/apps/storage");
+
+  await client.mutateAppStorage({
+    action: "add",
+    kind: "external",
+    path: "/Volumes/MediaUSB/LightIsleApps",
+  });
+  assert.equal(calls.at(-1).url, "/api/v2/apps/storage");
+  assert.equal(calls.at(-1).options.method, "PUT");
+  assert.deepEqual(JSON.parse(calls.at(-1).options.body), {
+    action: "add",
+    kind: "external",
+    path: "/Volumes/MediaUSB/LightIsleApps",
+  });
+
+  await client.installTemplate("family-subscriptions", "external");
+  assert.equal(calls.at(-1).url, "/api/v2/apps/templates/family-subscriptions/install");
+  assert.deepEqual(JSON.parse(calls.at(-1).options.body), { locationId: "external" });
+
+  // 10. DELETE /api/v2/apps/{id}
   await client.deleteApp("cpe-monitor");
   assert.equal(calls.at(-1).url, "/api/v2/apps/cpe-monitor");
   assert.equal(calls.at(-1).options.method, "DELETE");
@@ -151,6 +149,16 @@ test("AppsCenterView SFC parses cleanly and includes sandboxed iframe workbench,
   const parsed = parse(appsViewSource, { filename: "AppsCenterView.vue" });
   assert.equal(parsed.errors.length, 0);
   const template = parsed.descriptor.template?.content ?? "";
+  const storageCardSource = readFileSync(
+    new URL("../src/AppStorageLocationsCard.vue", import.meta.url),
+    "utf8",
+  );
+  const parsedStorage = parse(storageCardSource, { filename: "AppStorageLocationsCard.vue" });
+  assert.equal(parsedStorage.errors.length, 0);
+  assert.match(storageCardSource, /应用数据存储位置/);
+  assert.match(storageCardSource, /1 内置盘 \+ 1 其他盘/);
+  assert.match(storageCardSource, /添加其他盘位置/);
+  assert.match(template, /<AppStorageLocationsCard/);
 
   assert.match(
     template,
@@ -162,12 +170,11 @@ test("AppsCenterView SFC parses cleanly and includes sandboxed iframe workbench,
   assert.match(template, /退出全屏/);
   assert.match(template, /新标签页打开/);
   assert.match(template, /正在唤醒轻应用\.\.\./);
-  assert.match(template, /AI Agent \(MCP\) 服务/);
-  assert.match(template, /允许局域网 \/ Cloud MCP 访问/);
-  assert.match(template, /客户端接入向导/);
-  assert.match(template, /<AgentConnections compact \/>/);
-  assert.match(template, /<McpClientWizardModal/);
-  assert.match(template, /复制提示词/);
+  assert.doesNotMatch(template, /AI Agent \(MCP\) 服务/);
+  assert.doesNotMatch(template, /允许局域网 \/ Cloud MCP 访问/);
+  assert.doesNotMatch(template, /<AgentConnections/);
+  assert.doesNotMatch(template, /<McpClientWizardModal/);
+  assert.doesNotMatch(template, /<AppsMcpDebugModal/);
   assert.match(template, /刷新应用列表/);
   assert.match(template, /成员权限/);
   assert.match(template, /生命周期与定时/);
@@ -177,23 +184,6 @@ test("AppsCenterView SFC parses cleanly and includes sandboxed iframe workbench,
   assert.match(template, /value="admin_only"/);
   assert.match(template, /value="selected_members"/);
   assert.match(template, /value="all_members"/);
-});
-
-test("McpClientWizardModal provides 1:1 Gemini Desktop form fields and sandbox warning", () => {
-  const wizardSource = readFileSync(
-    new URL("../src/McpClientWizardModal.vue", import.meta.url),
-    "utf8",
-  );
-  const parsed = parse(wizardSource, { filename: "McpClientWizardModal.vue" });
-  assert.equal(parsed.errors.length, 0);
-  const template = parsed.descriptor.template?.content ?? "";
-  assert.match(template, /Gemini 桌面端/);
-  assert.match(template, /Claude Desktop/);
-  assert.match(template, /Cursor/);
-  assert.match(template, /局域网 \/ Cloud MCP/);
-  assert.match(template, /沙盒设置避坑说明/);
-  assert.match(wizardSource, /轻屿 LightIsle/);
-  assert.match(wizardSource, /\/Applications\/LightIsle\.app\/Contents\/Resources\/core\/lightisled mcp/);
 });
 
 test("App.vue and AppShell.html integrate the Apps Center tab under 生活空间 for both admins and members", () => {

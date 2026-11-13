@@ -53,6 +53,14 @@ extension _AppsCenterCards on _AppsCenterPageState {
                   ),
                   const SizedBox(width: 8),
                   IsleStatusBadge(label: runtimeLabel, color: runtimeColor),
+                IsleStatusBadge(
+                  label: app['locationKind'] == 'external'
+                      ? '其他盘 · ${app['locationName'] ?? '外置盘'}'
+                      : '内置盘 · ${app['locationName'] ?? 'Mac 内置盘'}',
+                  color: app['locationKind'] == 'external'
+                      ? const Color(0xFF0D9488)
+                      : colors.primary,
+                ),
                 ],
               ),
               Wrap(
@@ -148,6 +156,36 @@ extension _AppsCenterCards on _AppsCenterPageState {
               ),
             ],
           ),
+          if (_appStorage != null &&
+              objectList(_appStorage?['locations']).length > 1) ...[
+            const SizedBox(height: 10),
+            DropdownButtonFormField<String>(
+              key: const ValueKey('templateInstallLocationDropdown'),
+              initialValue: _selectedInstallLocationId,
+              decoration: const InputDecoration(
+                labelText: '模板安装目标位置',
+                border: OutlineInputBorder(),
+                isDense: true,
+              ),
+              items: [
+                const DropdownMenuItem(value: '', child: Text('跟随默认位置')),
+                for (final loc in objectList(_appStorage?['locations']))
+                  DropdownMenuItem(
+                    value: loc['id']?.toString() ?? '',
+                    enabled: loc['online'] == true && loc['writable'] == true,
+                    child: Text(
+                      '${loc['kind'] == 'external' ? '其他盘' : '内置盘'} · ${loc['name'] ?? ''}'
+                      '${loc['online'] == true ? '' : '（离线）'}',
+                    ),
+                  ),
+              ],
+              onChanged: _busy
+                  ? null
+                  : (v) => _updateState(
+                      () => _selectedInstallLocationId = v ?? '',
+                    ),
+            ),
+          ],
           const SizedBox(height: 10),
           Wrap(
             spacing: 10,
@@ -283,6 +321,14 @@ extension _AppsCenterCards on _AppsCenterPageState {
               runSpacing: 6,
               children: [
                 IsleStatusBadge(label: runtimeLabel, color: runtimeColor),
+                IsleStatusBadge(
+                  label: app['locationKind'] == 'external'
+                      ? '其他盘 · ${app['locationName'] ?? '外置盘'}'
+                      : '内置盘 · ${app['locationName'] ?? 'Mac 内置盘'}',
+                  color: app['locationKind'] == 'external'
+                      ? const Color(0xFF0D9488)
+                      : colors.primary,
+                ),
                 if (app['pendingActivation'] == true)
                   const IsleStatusBadge(
                     label: '待首次激活',

@@ -89,6 +89,11 @@ export interface PublicAppItem {
   validationError?: string;
   diagnostic?: AppDiagnostic;
   pendingActivation?: boolean;
+  locationId?: string;
+  locationKind?: string;
+  locationName?: string;
+  pluginsDir?: string;
+  pluginDataDir?: string;
   access?: PublicAppAccessView;
   web?: PublicAppWebView;
   cron?: PublicAppCronView;
@@ -98,19 +103,6 @@ export interface AppMemberSummary {
   id: number;
   username: string;
   role: string;
-}
-
-export interface McpCallLogEntry {
-  id?: string | number;
-  transport?: string;
-  method?: string;
-  target?: string;
-  remoteAddr?: string;
-  durationMs?: number;
-  timestamp?: string;
-  status?: string;
-  error?: string;
-  [key: string]: unknown;
 }
 
 export interface OfficialAppTemplateItem {
@@ -123,78 +115,64 @@ export interface OfficialAppTemplateItem {
   installed: boolean;
 }
 
+export interface AppStorageLocationItem {
+  id: string;
+  kind: "internal" | "external" | string;
+  name: string;
+  path: string;
+  pluginsDir: string;
+  pluginDataDir: string;
+  isDefault: boolean;
+  isCustomPath: boolean;
+  online: boolean;
+  writable: boolean;
+  error?: string;
+  volumeName?: string;
+  volumeMount?: string;
+  volumeUuid?: string;
+  freeBytes?: number;
+  totalBytes?: number;
+  appCount: number;
+}
+
+export interface AppStorageVolumeOption {
+  name: string;
+  mount: string;
+  suggestedPath: string;
+  filesystem?: string;
+  totalBytes: number;
+  freeBytes: number;
+  readOnly: boolean;
+  volumeUuid?: string;
+}
+
+export interface AppStorageSnapshot {
+  defaultLocationId: string;
+  maxInternal: number;
+  maxExternal: number;
+  maxLocations: number;
+  hasExternal: boolean;
+  locations: AppStorageLocationItem[];
+  availableVolumes: AppStorageVolumeOption[];
+}
+
+export interface AppStorageMutationPayload {
+  action: "add" | "set" | "set_default" | "reset_internal" | "remove_external";
+  kind?: "internal" | "external";
+  path?: string;
+  name?: string;
+  defaultLocationId?: string;
+  setDefault?: boolean;
+}
+
 export interface AppsOverviewResponse {
   apps: PublicAppItem[];
   templates?: OfficialAppTemplateItem[];
+  appStorage?: AppStorageSnapshot;
   isAdmin?: boolean;
-  mcpEnabled?: boolean;
-  mcpLanEnabled?: boolean;
-  mcpToken?: string;
-  mcpPrompt?: string;
-  lanMcpPrompt?: string;
-  mcpConfigJson?: string;
-  lanHttpUrl?: string;
-  lanSseUrl?: string;
-  mcpLogs?: McpCallLogEntry[];
   members: AppMemberSummary[];
   configuredChannels: string[];
   [key: string]: unknown;
-}
-
-export interface McpConfigResponse {
-  enabled?: boolean;
-  mcpEnabled?: boolean;
-  mcpLanEnabled?: boolean;
-  mcpPrompt?: string;
-  lanMcpPrompt?: string;
-  mcpConfigJson?: string;
-  [key: string]: unknown;
-}
-
-export interface McpTokenRotateResponse {
-  mcpToken?: string;
-  token?: string;
-  mcpPrompt?: string;
-  lanMcpPrompt?: string;
-  mcpConfigJson?: string;
-  [key: string]: unknown;
-}
-
-export interface McpDebugExecPayload {
-  method?: string;
-  tool?: string;
-  uri?: string;
-  args?: unknown;
-  rawRpc?: string;
-}
-
-export interface McpDebugExecResponse {
-  requestJson: string;
-  responseJson: string;
-  durationMs: number;
-  isError: boolean;
-  logs?: McpCallLogEntry[];
-  [key: string]: unknown;
-}
-
-export interface AppProbePayload {
-  method?: string;
-  path?: string;
-  body?: string;
-  role?: string;
-}
-
-export interface AppProbeExecution {
-  statusCode: number;
-  durationMs: number;
-  status: string;
-  bodyPreview?: string;
-  headers?: Record<string, string>;
-  [key: string]: unknown;
-}
-
-export interface AppProbeResponse extends AppProbeExecution {
-  probe?: AppProbeExecution;
 }
 
 export interface AppLaunchResponse {

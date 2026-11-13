@@ -25,3 +25,16 @@ func TestLocalCollectorProducesBoundedProcessList(t *testing.T) {
 		}
 	}
 }
+
+func TestCollectPrefersMacOSComputerName(t *testing.T) {
+	snapshot, err := (&Collector{}).Collect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Hostname == "" {
+		t.Fatal("expected non-empty hostname in macOS snapshot")
+	}
+	if want := localComputerName(); snapshot.Hostname != want {
+		t.Fatalf("snapshot.Hostname = %q, want %q", snapshot.Hostname, want)
+	}
+}

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/automation"
+	"github.com/lengsukq/lightisle/core/internal/storageidentity"
 )
 
 const (
@@ -21,6 +22,7 @@ const (
 
 type appRecord struct {
 	id, pluginDir, dataDir, revision, validationError string
+	locationID, locationKind, locationName            string
 	manifest                                          PluginManifest
 	valid, pendingActivation, hasIcon                 bool
 	instance                                          *Instance
@@ -44,6 +46,9 @@ type Manager struct {
 	endpointFn                                                                 func() (string, string)
 	verifyUser                                                                 func(UserIdentity) (UserIdentity, bool)
 	mcpHandler                                                                 func(context.Context, string, string, []byte) ([]byte, bool)
+	storageProviderFn                                                          storageidentity.Provider
+	externalVolumesFn                                                          func() []ExternalVolumeInfo
+	externalPrefixes                                                           []string
 	mu                                                                         sync.RWMutex
 	mutation                                                                   sync.Mutex
 	apps                                                                       map[string]*appRecord
@@ -267,124 +272,164 @@ func (m *Manager) reloadInternal(fromMCP bool) error {
 		return err
 	}
 
-	entries, err := os.ReadDir(m.pluginsDir)
-	if err != nil {
-		return err
-	}
-
 	sysCfg, err := readSystemConfigFile(m.configPath)
 	if err != nil {
 		return err
 	}
 	cfgDirty := false
 
-	nextApps := make(map[string]*appRecord, len(entries))
+	scanRoots := m.listConfiguredScanRoots()
+	nextApps := make(map[string]*appRecord, 16)
 	cronRegs := make([]automation.PluginCronRegistration, 0)
 	toStop := make([]*Instance, 0)
 	toAutoStart := make([]*Instance, 0)
 
-	for _, entry := range entries {
-		name := entry.Name()
-		if strings.HasPrefix(name, ".") || !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+	for _, scanRoot := range scanRoots {
+		if err := os.MkdirAll(scanRoot.pluginsDir, 0700); err != nil {
+			if scanRoot.id == AppStorageIDInternal && scanRoot.path == filepath.Clean(m.dataDir) {
+				return err
+			}
 			continue
 		}
-		if !ValidPluginID(name) {
+		if err := os.MkdirAll(scanRoot.dataRoot, 0700); err != nil {
+			if scanRoot.id == AppStorageIDInternal && scanRoot.path == filepath.Clean(m.dataDir) {
+				return err
+			}
 			continue
 		}
-		pluginDir := filepath.Join(m.pluginsDir, name)
-		dataDir := filepath.Join(m.pluginDataRoot, name)
-
-		root, err := os.OpenRoot(pluginDir)
+		entries, err := os.ReadDir(scanRoot.pluginsDir)
 		if err != nil {
-			nextApps[name] = invalidAppRecord(name, pluginDir, dataDir, "无法打开插件目录，请检查本地权限")
+			if scanRoot.id == AppStorageIDInternal && scanRoot.path == filepath.Clean(m.dataDir) {
+				return err
+			}
 			continue
 		}
-		raw, _, readErr := readCheckedFile(root, "plugin.json", maxManifestBytes)
-		if readErr != nil {
+
+		for _, entry := range entries {
+			name := entry.Name()
+			if strings.HasPrefix(name, ".") || !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+				continue
+			}
+			if !ValidPluginID(name) {
+				continue
+			}
+			if _, exists := nextApps[name]; exists {
+				continue
+			}
+			pluginDir := filepath.Join(scanRoot.pluginsDir, name)
+			dataDir := filepath.Join(scanRoot.dataRoot, name)
+
+			root, err := os.OpenRoot(pluginDir)
+			if err != nil {
+				rec := invalidAppRecord(name, pluginDir, dataDir, "无法打开插件目录，请检查本地权限")
+				rec.locationID = scanRoot.id
+				rec.locationKind = scanRoot.kind
+				rec.locationName = scanRoot.name
+				nextApps[name] = rec
+				continue
+			}
+			raw, _, readErr := readCheckedFile(root, "plugin.json", maxManifestBytes)
+			if readErr != nil {
+				root.Close()
+				rec := invalidAppRecord(name, pluginDir, dataDir, "无法读取 plugin.json，请检查文件是否存在且为普通文件")
+				rec.locationID = scanRoot.id
+				rec.locationKind = scanRoot.kind
+				rec.locationName = scanRoot.name
+				nextApps[name] = rec
+				continue
+			}
+			manifest, valErr := ValidateManifest(root, name, raw)
+			hasIcon := false
+			if valErr == nil {
+				if manifest.Icon == "" {
+					for _, candidate := range []string{"icon.svg", "icon.png"} {
+						if st, err := root.Lstat(candidate); err == nil && st.Mode().IsRegular() {
+							manifest.Icon = candidate
+							hasIcon = true
+							break
+						}
+					}
+				} else {
+					hasIcon = true
+				}
+			}
 			root.Close()
-			nextApps[name] = invalidAppRecord(name, pluginDir, dataDir, "无法读取 plugin.json，请检查文件是否存在且为普通文件")
-			continue
-		}
-		manifest, valErr := ValidateManifest(root, name, raw)
-		hasIcon := false
-		if valErr == nil {
-			if manifest.Icon == "" {
-				for _, candidate := range []string{"icon.svg", "icon.png"} {
-					if st, err := root.Lstat(candidate); err == nil && st.Mode().IsRegular() {
-						manifest.Icon = candidate
-						hasIcon = true
-						break
+
+			rev := manifestRevision(raw)
+			if valErr != nil {
+				if prev, ok := prevApps[name]; ok && prev.instance != nil {
+					toStop = append(toStop, prev.instance)
+				}
+				rec := invalidAppRecord(name, pluginDir, dataDir, valErr.Error())
+				rec.revision = rev
+				rec.locationID = scanRoot.id
+				rec.locationKind = scanRoot.kind
+				rec.locationName = scanRoot.name
+				if manifest.Name != "" {
+					rec.manifest.Name = manifest.Name
+				}
+				nextApps[name] = rec
+				continue
+			}
+
+			var inst *Instance
+			if prev, ok := prevApps[name]; ok && prev.instance != nil {
+				if prev.pluginDir != pluginDir || prev.dataDir != dataDir {
+					toStop = append(toStop, prev.instance)
+					inst = newInstance(name, pluginDir, dataDir, manifest)
+				} else {
+					inst = prev.instance
+					inst.mu.Lock()
+					oldWeb := inst.manifest.Web
+					inst.manifest = manifest
+					inst.mu.Unlock()
+					if manifest.Web == nil || !manifest.Web.Enabled || manifest.Web.Mode == WebModeStatic ||
+						(oldWeb != nil && (oldWeb.Entry != manifest.Web.Entry || oldWeb.Port != manifest.Web.Port || oldWeb.Mode != manifest.Web.Mode)) {
+						toStop = append(toStop, inst)
+						inst = newInstance(name, pluginDir, dataDir, manifest)
 					}
 				}
 			} else {
-				hasIcon = true
-			}
-		}
-		root.Close()
-
-		rev := manifestRevision(raw)
-		if valErr != nil {
-			if prev, ok := prevApps[name]; ok && prev.instance != nil {
-				toStop = append(toStop, prev.instance)
-			}
-			rec := invalidAppRecord(name, pluginDir, dataDir, valErr.Error())
-			rec.revision = rev
-			if manifest.Name != "" {
-				rec.manifest.Name = manifest.Name
-			}
-			nextApps[name] = rec
-			continue
-		}
-
-		var inst *Instance
-		if prev, ok := prevApps[name]; ok && prev.instance != nil {
-			inst = prev.instance
-			inst.mu.Lock()
-			oldWeb := inst.manifest.Web
-			inst.manifest = manifest
-			inst.mu.Unlock()
-			if manifest.Web == nil || !manifest.Web.Enabled || manifest.Web.Mode == WebModeStatic ||
-				(oldWeb != nil && (oldWeb.Entry != manifest.Web.Entry || oldWeb.Port != manifest.Web.Port || oldWeb.Mode != manifest.Web.Mode)) {
-				toStop = append(toStop, inst)
 				inst = newInstance(name, pluginDir, dataDir, manifest)
 			}
-		} else {
-			inst = newInstance(name, pluginDir, dataDir, manifest)
-		}
 
-		prevRec, existedBefore := prevApps[name]
-		isActivated := isOfficialTemplateID(name) || slices.Contains(sysCfg.ActivatedApps, name)
-		isPending := slices.Contains(sysCfg.PendingApps, name) || (existedBefore && prevRec.pendingActivation)
-		if fromMCP && !isActivated && (!existedBefore || isPending) {
-			isPending = true
-		}
-		if isPending && !slices.Contains(sysCfg.PendingApps, name) {
-			sysCfg.PendingApps = uniqueSortedStrings(append(sysCfg.PendingApps, name))
-			cfgDirty = true
-		} else if !isPending && !isActivated && existedBefore {
-			sysCfg.ActivatedApps = uniqueSortedStrings(append(sysCfg.ActivatedApps, name))
-			cfgDirty = true
-		}
-		pendingActivation := isPending && !isActivated
+			prevRec, existedBefore := prevApps[name]
+			isActivated := isOfficialTemplateID(name) || slices.Contains(sysCfg.ActivatedApps, name)
+			isPending := slices.Contains(sysCfg.PendingApps, name) || (existedBefore && prevRec.pendingActivation)
+			if fromMCP && !isActivated && (!existedBefore || isPending) {
+				isPending = true
+			}
+			if isPending && !slices.Contains(sysCfg.PendingApps, name) {
+				sysCfg.PendingApps = uniqueSortedStrings(append(sysCfg.PendingApps, name))
+				cfgDirty = true
+			} else if !isPending && !isActivated && existedBefore {
+				sysCfg.ActivatedApps = uniqueSortedStrings(append(sysCfg.ActivatedApps, name))
+				cfgDirty = true
+			}
+			pendingActivation := isPending && !isActivated
 
-		if !pendingActivation && manifest.Web != nil && manifest.Web.Enabled && manifest.Web.Mode == WebModePersistent {
-			toAutoStart = append(toAutoStart, inst)
-		}
+			if !pendingActivation && manifest.Web != nil && manifest.Web.Enabled && manifest.Web.Mode == WebModePersistent {
+				toAutoStart = append(toAutoStart, inst)
+			}
 
-		if manifest.Cron != nil {
-			cronRegs = append(cronRegs, toCronReg(name, pluginDir, dataDir, manifest, pendingActivation))
-		}
+			if manifest.Cron != nil {
+				cronRegs = append(cronRegs, toCronReg(name, pluginDir, dataDir, manifest, pendingActivation))
+			}
 
-		nextApps[name] = &appRecord{
-			id:                name,
-			pluginDir:         pluginDir,
-			dataDir:           dataDir,
-			manifest:          manifest,
-			revision:          rev,
-			valid:             true,
-			pendingActivation: pendingActivation,
-			hasIcon:           hasIcon,
-			instance:          inst,
+			nextApps[name] = &appRecord{
+				id:                name,
+				pluginDir:         pluginDir,
+				dataDir:           dataDir,
+				locationID:        scanRoot.id,
+				locationKind:      scanRoot.kind,
+				locationName:      scanRoot.name,
+				manifest:          manifest,
+				revision:          rev,
+				valid:             true,
+				pendingActivation: pendingActivation,
+				hasIcon:           hasIcon,
+				instance:          inst,
+			}
 		}
 	}
 
@@ -488,6 +533,11 @@ func (m *Manager) toPublicApp(rec *appRecord) PublicApp {
 		Valid:             rec.valid,
 		ValidationError:   rec.validationError,
 		PendingActivation: rec.pendingActivation,
+		LocationID:        fallbackString(rec.locationID, AppStorageIDInternal),
+		LocationKind:      fallbackString(rec.locationKind, AppStorageKindInternal),
+		LocationName:      fallbackString(rec.locationName, defaultInternalStorageName),
+		PluginsDir:        rec.pluginDir,
+		PluginDataDir:     rec.dataDir,
 		Access:            rec.manifest.Access,
 		Cron:              PublicCronView{Events: []string{}, Channels: []string{}},
 	}

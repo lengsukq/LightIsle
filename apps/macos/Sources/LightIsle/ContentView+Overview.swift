@@ -56,6 +56,11 @@ struct ConnectionQRCodePopoverButton: View {
 }
 
 extension ContentView {
+    private static let fallbackLocalMacName: String = {
+        let name = Host.current().localizedName?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return name.isEmpty ? "本地 Mac" : name
+    }()
+
     var overviewView: some View {
         VStack(alignment: .leading, spacing: 24) {
             LiquidCard {
@@ -67,7 +72,12 @@ extension ContentView {
                     )
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(spacing: 8) {
-                            Text(model.metrics?.hostname ?? "本地 Mac").font(.system(size: 20, weight: .semibold))
+                            Text({
+                                let raw = model.metrics?.hostname.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                                // If Go Core reports a generic/stale DHCP hostname while SystemConfiguration knows the Mac's friendly name, still prefer non-empty hostname or localizedName.
+                                if raw.isEmpty { return Self.fallbackLocalMacName }
+                                return raw
+                            }()).font(.system(size: 20, weight: .semibold))
                             IsleStatusPill(
                                 text: model.state.label,
                                 tone: model.state == .online ? .success : .warning,

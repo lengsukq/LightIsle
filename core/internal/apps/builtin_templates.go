@@ -118,9 +118,15 @@ func (m *Manager) ListTemplates() []OfficialAppTemplate {
 	return out
 }
 
-// InstallTemplate materializes an audited built-in static template into pluginsDir
-// and activates it immediately without spawning any background process (0 MB RSS).
+// InstallTemplate materializes an audited built-in static template into the default
+// configured storage location and activates it immediately without spawning any background process (0 MB RSS).
 func (m *Manager) InstallTemplate(templateID string) (PublicApp, error) {
+	return m.InstallTemplateAt(templateID, "")
+}
+
+// InstallTemplateAt installs an audited built-in static template into the specified
+// storage location ("internal", "external", or "" for default).
+func (m *Manager) InstallTemplateAt(templateID, locationID string) (PublicApp, error) {
 	var chosen *builtinTemplateSpec
 	catalog := builtinTemplateCatalog()
 	for i := range catalog {
@@ -132,11 +138,16 @@ func (m *Manager) InstallTemplate(templateID string) (PublicApp, error) {
 	if chosen == nil {
 		return PublicApp{}, ErrTemplateNotFound
 	}
-	if _, exists := m.snapshotApp(chosen.ID); exists {
+	if m.appIDExistsAnywhere(chosen.ID) {
 		return PublicApp{}, ErrAlreadyInstalled
 	}
 
-	appDir := filepath.Join(m.pluginsDir, chosen.ID)
+	target, err := m.ResolveInstallTarget(locationID)
+	if err != nil {
+		return PublicApp{}, err
+	}
+
+	appDir := filepath.Join(target.pluginsDir, chosen.ID)
 	if _, err := os.Lstat(appDir); err == nil {
 		return PublicApp{}, ErrAlreadyInstalled
 	}
@@ -144,6 +155,7 @@ func (m *Manager) InstallTemplate(templateID string) (PublicApp, error) {
 	if err := os.MkdirAll(uiDir, 0700); err != nil {
 		return PublicApp{}, err
 	}
+	_ = os.MkdirAll(filepath.Join(target.dataRoot, chosen.ID), 0700)
 	manifest := PluginManifest{
 		SchemaVersion: 2,
 		ID:            chosen.ID,

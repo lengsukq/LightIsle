@@ -38,30 +38,35 @@ type nativeAppLaunchResult struct {
 }
 
 type nativeAppsOverview struct {
-	Apps               []apps.PublicApp         `json:"apps"`
-	MCP                apps.MCPConfigSnapshot   `json:"mcp"`
-	MCPLogs            []apps.MCPCallLogEntry   `json:"mcpLogs"`
-	Members            []nativeAppMember        `json:"members"`
-	ConfiguredChannels []string                 `json:"configuredChannels"`
-	AppLogs            *nativeAppLogsResult     `json:"appLogs,omitempty"`
-	ProbeResult        *apps.AppProbeResult     `json:"probeResult,omitempty"`
-	MCPDebugResult     *apps.MCPDebugExecResult `json:"mcpDebug,omitempty"`
-	LaunchTicket       *nativeAppLaunchResult   `json:"launchTicket,omitempty"`
-	BackupPath         string                   `json:"backupPath,omitempty"`
+	Apps               []apps.PublicApp          `json:"apps"`
+	Templates          []apps.OfficialAppTemplate `json:"templates"`
+	AppStorage         apps.AppStorageSnapshot   `json:"appStorage"`
+	MCP                apps.MCPConfigSnapshot    `json:"mcp"`
+	MCPLogs            []apps.MCPCallLogEntry    `json:"mcpLogs"`
+	Members            []nativeAppMember         `json:"members"`
+	ConfiguredChannels []string                  `json:"configuredChannels"`
+	AppLogs            *nativeAppLogsResult      `json:"appLogs,omitempty"`
+	ProbeResult        *apps.AppProbeResult      `json:"probeResult,omitempty"`
+	MCPDebugResult     *apps.MCPDebugExecResult  `json:"mcpDebug,omitempty"`
+	LaunchTicket       *nativeAppLaunchResult    `json:"launchTicket,omitempty"`
+	BackupPath         string                    `json:"backupPath,omitempty"`
 }
 
 type appsIPCRequest struct {
-	RequestID     string                    `json:"requestID,omitempty"`
-	AppID         string                    `json:"appID,omitempty"`
-	Action        string                    `json:"action,omitempty"`
-	DeleteData    bool                      `json:"deleteData,omitempty"`
-	MCPEnabled    *bool                     `json:"mcpEnabled,omitempty"`
-	MCPLanEnabled *bool                     `json:"mcpLanEnabled,omitempty"`
-	Update        *apps.AppUpdateRequest    `json:"update,omitempty"`
-	Scaffold      json.RawMessage           `json:"scaffold,omitempty"`
-	Probe         *apps.AppProbeRequest     `json:"probe,omitempty"`
-	MCPDebug      *apps.MCPDebugExecRequest `json:"mcpDebug,omitempty"`
-	FilePath      string                    `json:"filePath,omitempty"`
+	RequestID     string                          `json:"requestID,omitempty"`
+	AppID         string                          `json:"appID,omitempty"`
+	TemplateID    string                          `json:"templateId,omitempty"`
+	LocationID    string                          `json:"locationId,omitempty"`
+	Action        string                          `json:"action,omitempty"`
+	DeleteData    bool                            `json:"deleteData,omitempty"`
+	MCPEnabled    *bool                           `json:"mcpEnabled,omitempty"`
+	MCPLanEnabled *bool                           `json:"mcpLanEnabled,omitempty"`
+	Update        *apps.AppUpdateRequest          `json:"update,omitempty"`
+	Storage       *apps.AppStorageMutationRequest `json:"storage,omitempty"`
+	Scaffold      json.RawMessage                 `json:"scaffold,omitempty"`
+	Probe         *apps.AppProbeRequest           `json:"probe,omitempty"`
+	MCPDebug      *apps.MCPDebugExecRequest       `json:"mcpDebug,omitempty"`
+	FilePath      string                          `json:"filePath,omitempty"`
 }
 
 func emitAppsReply(requestID, operation string, result any, err error) {
@@ -104,6 +109,16 @@ func appsIPCErrorMessage(err error) string {
 			return "轻应用配置或参数无效：" + detail
 		}
 		return "轻应用配置或参数无效"
+	case errors.Is(err, apps.ErrStorageSlotLimit), errors.Is(err, apps.ErrStorageOffline):
+		detail := strings.TrimSpace(strings.TrimPrefix(err.Error(), apps.ErrStorageSlotLimit.Error()))
+		detail = strings.TrimSpace(strings.TrimPrefix(detail, apps.ErrStorageOffline.Error()))
+		detail = strings.TrimSpace(strings.TrimPrefix(detail, ":"))
+		if detail != "" {
+			return detail
+		}
+		return err.Error()
+	case errors.Is(err, apps.ErrAlreadyInstalled):
+		return "该精选模板已安装，无需重复添加"
 	default:
 		msg := strings.TrimSpace(err.Error())
 		if msg != "" {
@@ -117,6 +132,7 @@ func buildNativeAppsOverview(appsMgr *apps.Manager, accountStore *auth.Store) na
 	if appsMgr == nil {
 		return nativeAppsOverview{
 			Apps:               []apps.PublicApp{},
+			Templates:          []apps.OfficialAppTemplate{},
 			MCPLogs:            []apps.MCPCallLogEntry{},
 			Members:            []nativeAppMember{},
 			ConfiguredChannels: []string{},
@@ -138,6 +154,8 @@ func buildNativeAppsOverview(appsMgr *apps.Manager, accountStore *auth.Store) na
 	}
 	return nativeAppsOverview{
 		Apps:               appsMgr.ListForUser(0, auth.RoleAdmin),
+		Templates:          appsMgr.ListTemplates(),
+		AppStorage:         appsMgr.GetStorageSnapshot(),
 		MCP:                appsMgr.BuildMCPConfigSnapshot(""),
 		MCPLogs:            appsMgr.GetMCPCallLogs(),
 		Members:            members,
@@ -338,6 +356,26 @@ func handleAppsIPC(
 			return true
 		}
 		_, err := appsMgr.ScaffoldApp(req.Scaffold, true)
+		overview := buildNativeAppsOverview(appsMgr, accountStore)
+		emitAppsReply(req.RequestID, operation, overview, err)
+		return true
+
+	case "set-storage":
+		if req.Storage == nil {
+			emitAppsReply(req.RequestID, operation, nil, errors.New("缺少应用存储位置参数"))
+			return true
+		}
+		_, err := appsMgr.MutateStorageLocation(*req.Storage)
+		overview := buildNativeAppsOverview(appsMgr, accountStore)
+		emitAppsReply(req.RequestID, operation, overview, err)
+		return true
+
+	case "install-template":
+		tplID := strings.TrimSpace(req.TemplateID)
+		if tplID == "" {
+			tplID = strings.TrimSpace(req.AppID)
+		}
+		_, err := appsMgr.InstallTemplateAt(tplID, req.LocationID)
 		overview := buildNativeAppsOverview(appsMgr, accountStore)
 		emitAppsReply(req.RequestID, operation, overview, err)
 		return true

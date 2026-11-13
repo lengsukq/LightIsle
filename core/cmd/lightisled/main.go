@@ -159,6 +159,21 @@ func main() {
 	execPath, _ := os.Executable()
 	appsManager := apps.NewManager(dataDir, execPath, automationManager)
 	appsManager.SetConfiguredChannels(notifyHub.ConfiguredChannels)
+	appsManager.SetExternalVolumesProvider(func() []apps.ExternalVolumeInfo {
+		vols := system.Volumes()
+		out := make([]apps.ExternalVolumeInfo, 0, len(vols))
+		for _, v := range vols {
+			out = append(out, apps.ExternalVolumeInfo{
+				Name:       v.Name,
+				Mount:      v.Mount,
+				Filesystem: v.Filesystem,
+				TotalBytes: v.Total,
+				FreeBytes:  v.Free,
+				ReadOnly:   v.ReadOnly,
+			})
+		}
+		return out
+	})
 	if err := appsManager.Reload(); err != nil {
 		slog.Warn("apps manager unavailable; continuing with NAS services", "error", err)
 	}

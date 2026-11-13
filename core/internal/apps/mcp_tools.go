@@ -59,10 +59,26 @@ func toolGetEnvironment(dataDir, execPath string, mgr *Manager) mcpToolResult {
 	if !cfg.MCPEnabled {
 		cfg.MCPLanEnabled = false
 	}
+	var storageSnapshot AppStorageSnapshot
+	if mgr != nil {
+		storageSnapshot = mgr.GetStorageSnapshot()
+	} else {
+		storageSnapshot = readAppsStorageSnapshotFromConfig(dataDir)
+	}
+	defaultPluginsDir := filepath.Join(dataDir, "plugins")
+	defaultPluginDataDir := filepath.Join(dataDir, "plugin-data")
+	for _, loc := range storageSnapshot.Locations {
+		if loc.IsDefault {
+			defaultPluginsDir = loc.PluginsDir
+			defaultPluginDataDir = loc.PluginDataDir
+			break
+		}
+	}
 	payload := map[string]any{
 		"dataDir":              dataDir,
-		"pluginsDir":           filepath.Join(dataDir, "plugins"),
-		"pluginDataDir":        filepath.Join(dataDir, "plugin-data"),
+		"pluginsDir":           defaultPluginsDir,
+		"pluginDataDir":        defaultPluginDataDir,
+		"storage":              storageSnapshot,
 		"automationScriptsDir": filepath.Join(dataDir, "automation", "scripts"),
 		"execPath":             execPath,
 		"mcpEnabled":           cfg.MCPEnabled,
@@ -84,58 +100,65 @@ func toolGetEnvironment(dataDir, execPath string, mgr *Manager) mcpToolResult {
 }
 
 func toolListApps(dataDir string, mgr *Manager) mcpToolResult {
-	pluginsDir := filepath.Join(dataDir, "plugins")
-	_ = os.MkdirAll(pluginsDir, 0700)
-	entries, err := os.ReadDir(pluginsDir)
-	if err != nil {
-		return mcpToolResult{
-			IsError: true,
-			Content: []mcpToolContent{{Type: "text", Text: fmt.Sprintf("读取插件目录失败: %v", err)}},
-		}
-	}
-	items := make([]map[string]any, 0, len(entries))
-	for _, entry := range entries {
-		name := entry.Name()
-		if strings.HasPrefix(name, ".") || !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
-			continue
-		}
-		pluginDir := filepath.Join(pluginsDir, name)
-		root, err := os.OpenRoot(pluginDir)
+	scanRoots := resolveScanRootsForMCP(dataDir, mgr)
+	items := make([]map[string]any, 0, 16)
+	seenIDs := make(map[string]struct{})
+	for _, scanRoot := range scanRoots {
+		_ = os.MkdirAll(scanRoot.pluginsDir, 0700)
+		entries, err := os.ReadDir(scanRoot.pluginsDir)
 		if err != nil {
-			items = append(items, map[string]any{"id": name, "valid": false, "error": err.Error()})
 			continue
 		}
-		raw, _, readErr := readCheckedFile(root, "plugin.json", maxManifestBytes)
-		if readErr != nil {
-			root.Close()
-			items = append(items, map[string]any{"id": name, "valid": false, "error": "无法读取 plugin.json"})
-			continue
-		}
-		manifest, valErr := ValidateManifest(root, name, raw)
-		root.Close()
-		if valErr != nil {
-			items = append(items, map[string]any{"id": name, "valid": false, "error": valErr.Error()})
-			continue
-		}
-		item := map[string]any{
-			"id":        manifest.ID,
-			"name":      manifest.Name,
-			"version":   manifest.Version,
-			"category":  manifest.Category,
-			"valid":     true,
-			"pluginDir": pluginDir,
-			"dataDir":   filepath.Join(dataDir, "plugin-data", name),
-			"manifest":  manifest,
-		}
-		if mgr != nil {
-			if pub, err := mgr.GetForUser(manifest.ID, 0, "admin"); err == nil {
-				item["status"] = pub.Web.Status
-				item["pendingActivation"] = pub.PendingActivation
-				item["web"] = pub.Web
-				item["cron"] = pub.Cron
+		for _, entry := range entries {
+			name := entry.Name()
+			if strings.HasPrefix(name, ".") || !entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+				continue
 			}
+			if _, dup := seenIDs[name]; dup {
+				continue
+			}
+			seenIDs[name] = struct{}{}
+			pluginDir := filepath.Join(scanRoot.pluginsDir, name)
+			root, err := os.OpenRoot(pluginDir)
+			if err != nil {
+				items = append(items, map[string]any{"id": name, "valid": false, "locationId": scanRoot.id, "locationName": scanRoot.name, "error": err.Error()})
+				continue
+			}
+			raw, _, readErr := readCheckedFile(root, "plugin.json", maxManifestBytes)
+			if readErr != nil {
+				root.Close()
+				items = append(items, map[string]any{"id": name, "valid": false, "locationId": scanRoot.id, "locationName": scanRoot.name, "error": "无法读取 plugin.json"})
+				continue
+			}
+			manifest, valErr := ValidateManifest(root, name, raw)
+			root.Close()
+			if valErr != nil {
+				items = append(items, map[string]any{"id": name, "valid": false, "locationId": scanRoot.id, "locationName": scanRoot.name, "error": valErr.Error()})
+				continue
+			}
+			item := map[string]any{
+				"id":           manifest.ID,
+				"name":         manifest.Name,
+				"version":      manifest.Version,
+				"category":     manifest.Category,
+				"valid":        true,
+				"locationId":   scanRoot.id,
+				"locationKind": scanRoot.kind,
+				"locationName": scanRoot.name,
+				"pluginDir":    pluginDir,
+				"dataDir":      filepath.Join(scanRoot.dataRoot, name),
+				"manifest":     manifest,
+			}
+			if mgr != nil {
+				if pub, err := mgr.GetForUser(manifest.ID, 0, "admin"); err == nil {
+					item["status"] = pub.Web.Status
+					item["pendingActivation"] = pub.PendingActivation
+					item["web"] = pub.Web
+					item["cron"] = pub.Cron
+				}
+			}
+			items = append(items, item)
 		}
-		items = append(items, item)
 	}
 	raw, _ := json.MarshalIndent(map[string]any{"apps": items}, "", "  ")
 	return mcpToolResult{
@@ -151,6 +174,7 @@ func toolScaffoldApp(dataDir string, mgr *Manager, rawArgs json.RawMessage) mcpT
 		Category    string `json:"category"`
 		Mode        string `json:"mode"`
 		Runtime     string `json:"runtime"`
+		LocationID  string `json:"locationId"`
 		HasCron     bool   `json:"hasCron"`
 		Cron        string `json:"cron"`
 	}
@@ -212,11 +236,24 @@ func toolScaffoldApp(dataDir string, mgr *Manager, rawArgs json.RawMessage) mcpT
 		args.Cron = "0 * * * *"
 	}
 
-	pluginsRoot := filepath.Join(dataDir, "plugins")
-	if err := os.MkdirAll(pluginsRoot, 0700); err != nil {
+	if existingPluginDir, _, _, exists := findPluginAcrossScanRoots(dataDir, mgr, args.ID); exists {
+		return mcpToolResult{
+			IsError: true,
+			Content: []mcpToolContent{{
+				Type: "text",
+				Text: fmt.Sprintf("app_already_exists: 插件 ID %q 已存在（%s），拒绝覆盖已有插件的 plugin.json、env.json 或启动脚本。如需升级或修改已有插件，请先对比文件差异并在保留用户配置与数据目录的前提下增量更新。", args.ID, existingPluginDir),
+			}},
+		}
+	}
+
+	targetRoot, targetErr := resolveInstallTargetForMCP(dataDir, mgr, args.LocationID)
+	if targetErr != nil {
+		return mcpToolResult{IsError: true, Content: []mcpToolContent{{Type: "text", Text: targetErr.Error()}}}
+	}
+	if err := os.MkdirAll(targetRoot.pluginsDir, 0700); err != nil {
 		return mcpToolResult{IsError: true, Content: []mcpToolContent{{Type: "text", Text: err.Error()}}}
 	}
-	pluginDir := filepath.Join(pluginsRoot, args.ID)
+	pluginDir := filepath.Join(targetRoot.pluginsDir, args.ID)
 	if _, err := os.Lstat(pluginDir); err == nil || !os.IsNotExist(err) {
 		return mcpToolResult{
 			IsError: true,
@@ -226,7 +263,7 @@ func toolScaffoldApp(dataDir string, mgr *Manager, rawArgs json.RawMessage) mcpT
 			}},
 		}
 	}
-	pluginDataDir := filepath.Join(dataDir, "plugin-data", args.ID)
+	pluginDataDir := filepath.Join(targetRoot.dataRoot, args.ID)
 	if err := os.Mkdir(pluginDir, 0700); err != nil {
 		return mcpToolResult{IsError: true, Content: []mcpToolContent{{Type: "text", Text: err.Error()}}}
 	}
@@ -330,6 +367,8 @@ func toolScaffoldApp(dataDir string, mgr *Manager, rawArgs json.RawMessage) mcpT
 	out, _ := json.MarshalIndent(map[string]any{
 		"scaffolded":    true,
 		"id":            args.ID,
+		"locationId":    targetRoot.id,
+		"locationName":  targetRoot.name,
 		"pluginDir":     pluginDir,
 		"pluginDataDir": pluginDataDir,
 		"createdFiles":  createdFiles,
@@ -347,10 +386,13 @@ func toolValidateAndReload(ctx context.Context, dataDir string, mgr *Manager, ra
 	if len(rawArgs) > 0 {
 		_ = json.Unmarshal(rawArgs, &args)
 	}
-	pluginsDir := filepath.Join(dataDir, "plugins")
 	targetID := strings.TrimSpace(args.ID)
 
-	var ids []string
+	type targetEntry struct {
+		id        string
+		pluginDir string
+	}
+	var targets []targetEntry
 	if targetID != "" {
 		if !ValidPluginID(targetID) {
 			return mcpToolResult{
@@ -358,25 +400,40 @@ func toolValidateAndReload(ctx context.Context, dataDir string, mgr *Manager, ra
 				Content: []mcpToolContent{{Type: "text", Text: "非法插件 ID: " + targetID}},
 			}
 		}
-		ids = []string{targetID}
-	} else {
-		entries, err := os.ReadDir(pluginsDir)
-		if err != nil {
+		pluginDir, _, _, found := findPluginAcrossScanRoots(dataDir, mgr, targetID)
+		if !found {
 			return mcpToolResult{
 				IsError: true,
-				Content: []mcpToolContent{{Type: "text", Text: "无法读取 plugins 目录: " + err.Error()}},
+				Content: []mcpToolContent{{Type: "text", Text: fmt.Sprintf("未找到插件 %s（请确认所属存储位置在线并已创建目录）", targetID)}},
 			}
 		}
-		for _, e := range entries {
-			if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
-				ids = append(ids, e.Name())
+		targets = []targetEntry{{id: targetID, pluginDir: pluginDir}}
+	} else {
+		seen := map[string]struct{}{}
+		for _, scanRoot := range resolveScanRootsForMCP(dataDir, mgr) {
+			entries, err := os.ReadDir(scanRoot.pluginsDir)
+			if err != nil {
+				continue
+			}
+			for _, e := range entries {
+				if e.IsDir() && !strings.HasPrefix(e.Name(), ".") {
+					if _, dup := seen[e.Name()]; dup {
+						continue
+					}
+					seen[e.Name()] = struct{}{}
+					targets = append(targets, targetEntry{
+						id:        e.Name(),
+						pluginDir: filepath.Join(scanRoot.pluginsDir, e.Name()),
+					})
+				}
 			}
 		}
 	}
 
-	validated := make([]string, 0, len(ids))
-	for _, id := range ids {
-		pluginDir := filepath.Join(pluginsDir, id)
+	validated := make([]string, 0, len(targets))
+	for _, target := range targets {
+		id := target.id
+		pluginDir := target.pluginDir
 		if envPath := filepath.Join(pluginDir, "env.json"); fileExistsRegular(envPath) {
 			_ = os.Chmod(envPath, 0600)
 		}

@@ -216,6 +216,8 @@ const Map<String, String> _kErrorLabels = <String, String>{
   'app_not_found': '未找到该轻应用，可能已被移除，请刷新应用中心。',
   'app_forbidden': '当前账号无权访问该轻应用，请联系家庭管理员分配权限。',
   'app_invalid_config': '应用配置不符合规范，请检查 plugin.json、Cron 或运行参数。',
+  'app_storage_slot_limit': '应用数据存储位置已达上限（仅支持 1 个内置盘和 1 个其他盘）。如需更换请先修改或移除现有位置。',
+  'app_storage_offline': '所选应用存储磁盘当前处于离线或不可写状态，请检查硬盘连接及磁盘读写权限。',
   'app_changed': '本地应用配置已更新，请刷新应用列表后重新保存。',
   'app_revision_conflict': '本地应用配置已更新，请刷新应用列表后重新保存。',
   'app_pending_activation': '该轻应用尚未完成首次激活，请由管理员检查并启用后再试。',

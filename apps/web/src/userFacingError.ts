@@ -64,6 +64,8 @@ const labels: Record<string, string> = {
   app_changed: "应用配置已在磁盘或另一窗口更新，请刷新应用列表后重试。",
   app_running: "轻应用仍在运行中，请先停止进程后再删除。",
   app_invalid_config: "轻应用配置无效，请检查 Cron 表达式、休眠时长或权限设置。",
+  app_storage_slot_limit: "应用数据存储位置已达上限（仅支持 1 个内置盘和 1 个其他盘）。如需更换请先修改或移除现有位置。",
+  app_storage_offline: "所选应用存储磁盘当前处于离线或不可写状态，请检查硬盘连接及磁盘读写权限。",
   apps_unavailable: "应用中心服务暂不可用，请在 Mac 上检查插件目录与服务状态后重试。",
   invalid_smb_request: "共享名称或目录参数无效（不能包含 /、\\、: 等特殊字符）。",
   smb_share_not_found: "未找到该共享目录，请刷新列表后重试。",

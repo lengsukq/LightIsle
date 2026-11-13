@@ -153,7 +153,7 @@ func ensureSafeSubdirsInRoot(root *os.Root, dirRel string) error {
 	return nil
 }
 
-func toolReadPluginFile(dataDir string, rawArgs json.RawMessage) mcpToolResult {
+func toolReadPluginFile(dataDir string, mgr *Manager, rawArgs json.RawMessage) mcpToolResult {
 	var args struct {
 		ID   string `json:"id"`
 		Path string `json:"path"`
@@ -169,7 +169,10 @@ func toolReadPluginFile(dataDir string, rawArgs json.RawMessage) mcpToolResult {
 	if err != nil {
 		return mcpToolResult{IsError: true, Content: []mcpToolContent{{Type: "text", Text: err.Error()}}}
 	}
-	pluginDir := filepath.Join(dataDir, "plugins", id)
+	pluginDir, _, _, found := findPluginAcrossScanRoots(dataDir, mgr, id)
+	if !found {
+		return mcpToolResult{IsError: true, Content: []mcpToolContent{{Type: "text", Text: fmt.Sprintf("未找到插件 %s 目录（或所属外置盘当前离线）", id)}}}
+	}
 	root, err := os.OpenRoot(pluginDir)
 	if err != nil {
 		return mcpToolResult{IsError: true, Content: []mcpToolContent{{Type: "text", Text: fmt.Sprintf("无法打开插件 %s 目录: %v", id, err)}}}
@@ -249,11 +252,17 @@ func toolWritePluginFile(dataDir string, mgr *Manager, rawArgs json.RawMessage) 
 	if err := persistPendingForMCP(dataDir, mgr, id); err != nil {
 		return mcpToolResult{IsError: true, Content: []mcpToolContent{{Type: "text", Text: err.Error()}}}
 	}
-	pluginDir := filepath.Join(dataDir, "plugins", id)
+	pluginDir, _, _, found := findPluginAcrossScanRoots(dataDir, mgr, id)
+	if !found {
+		return mcpToolResult{
+			IsError: true,
+			Content: []mcpToolContent{{Type: "text", Text: fmt.Sprintf("插件目录 plugins/%s 不存在（或所属外置盘离线），请先调用 lightisle_scaffold_app 创建脚手架", id)}},
+		}
+	}
 	if st, statErr := os.Lstat(pluginDir); statErr != nil || !st.IsDir() {
 		return mcpToolResult{
 			IsError: true,
-			Content: []mcpToolContent{{Type: "text", Text: fmt.Sprintf("插件目录 plugins/%s 不存在，请先调用 lightisle_scaffold_app 创建脚手架", id)}},
+			Content: []mcpToolContent{{Type: "text", Text: fmt.Sprintf("插件目录 plugins/%s 不可访问", id)}},
 		}
 	}
 	root, err := os.OpenRoot(pluginDir)

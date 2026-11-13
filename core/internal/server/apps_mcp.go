@@ -255,8 +255,9 @@ func registerAppsMCPRoutes(
 			return
 		}
 		jsonReply(w, http.StatusOK, map[string]any{
-			"app":  app,
-			"apps": appsMgr.ListForUser(user.ID, user.Role),
+			"app":        app,
+			"apps":       appsMgr.ListForUser(user.ID, user.Role),
+			"appStorage": appsMgr.GetStorageSnapshot(),
 		})
 	}))
 

@@ -85,7 +85,7 @@ class DashboardQuickLinks extends StatelessWidget {
             onOpenAppsCenter!,
             Icons.apps_rounded,
             '应用中心',
-            admin ? '按需轻应用、成员权限与 MCP' : '打开管理员授权的家庭轻应用',
+            admin ? '按需轻应用、存储位置与成员权限' : '打开管理员授权的家庭轻应用',
             false,
           ),
         if (onOpenShares != null)

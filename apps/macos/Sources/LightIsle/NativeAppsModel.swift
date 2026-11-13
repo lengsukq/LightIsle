@@ -64,6 +64,58 @@ struct NativeAppDiagnostic: Decodable, Equatable {
     let dataSafe: String
 }
 
+struct NativeOfficialAppTemplate: Decodable, Identifiable, Equatable {
+    let id: String
+    let name: String
+    let version: String
+    let category: String
+    let description: String
+    let defaultScope: String?
+    let installed: Bool
+}
+
+struct NativeAppStorageLocation: Decodable, Identifiable, Equatable {
+    let id: String
+    let kind: String
+    let name: String
+    let path: String
+    let pluginsDir: String
+    let pluginDataDir: String
+    let isDefault: Bool
+    let isCustomPath: Bool
+    let online: Bool
+    let writable: Bool
+    let error: String?
+    let volumeName: String?
+    let volumeMount: String?
+    let volumeUuid: String?
+    let freeBytes: UInt64?
+    let totalBytes: UInt64?
+    let appCount: Int
+}
+
+struct NativeAppStorageVolumeOption: Decodable, Identifiable, Equatable {
+    var id: String { mount }
+    let name: String
+    let mount: String
+    let suggestedPath: String
+    let filesystem: String?
+    let totalBytes: UInt64
+    let freeBytes: UInt64
+    let readOnly: Bool
+    let volumeUuid: String?
+}
+
+struct NativeAppStorageSnapshot: Decodable, Equatable {
+    let defaultLocationId: String
+    let maxInternal: Int
+    let maxExternal: Int
+    let maxLocations: Int
+    let hasExternal: Bool
+    let locations: [NativeAppStorageLocation]
+    let availableVolumes: [NativeAppStorageVolumeOption]
+}
+
 struct NativePublicApp: Decodable, Identifiable, Equatable {
     let id: String
     let name: String
@@ -78,6 +130,11 @@ struct NativePublicApp: Decodable, Identifiable, Equatable {
     let lastError: String?
     let diagnostic: NativeAppDiagnostic?
     let pendingActivation: Bool
+    let locationId: String
+    let locationKind: String
+    let locationName: String
+    let pluginsDir: String?
+    let pluginDataDir: String?
     let access: NativeAppAccessConfig
     let web: NativeAppWebState
     let cron: NativeAppCronState?
@@ -85,7 +142,9 @@ struct NativePublicApp: Decodable, Identifiable, Equatable {
 
     private enum CodingKeys: String, CodingKey {
         case id, name, version, author, description, category, iconUrl, revision
-        case valid, error, validationError, lastError, diagnostic, pendingActivation, access, web, cron, envKeys
+        case valid, error, validationError, lastError, diagnostic, pendingActivation
+        case locationId, locationKind, locationName, pluginsDir, pluginDataDir
+        case access, web, cron, envKeys
     }
 
     private struct RawCronView: Decodable {
@@ -116,6 +175,11 @@ struct NativePublicApp: Decodable, Identifiable, Equatable {
         lastError = try container.decodeIfPresent(String.self, forKey: .lastError)
         diagnostic = try container.decodeIfPresent(NativeAppDiagnostic.self, forKey: .diagnostic)
         pendingActivation = try container.decodeIfPresent(Bool.self, forKey: .pendingActivation) ?? false
+        locationId = try container.decodeIfPresent(String.self, forKey: .locationId) ?? "internal"
+        locationKind = try container.decodeIfPresent(String.self, forKey: .locationKind) ?? "internal"
+        locationName = try container.decodeIfPresent(String.self, forKey: .locationName) ?? "Mac 内置盘"
+        pluginsDir = try container.decodeIfPresent(String.self, forKey: .pluginsDir)
+        pluginDataDir = try container.decodeIfPresent(String.self, forKey: .pluginDataDir)
         access = try container.decode(NativeAppAccessConfig.self, forKey: .access)
         web = try container.decode(NativeAppWebState.self, forKey: .web)
         envKeys = try container.decodeIfPresent([String].self, forKey: .envKeys)
@@ -277,6 +341,8 @@ struct NativeAppLaunchResult: Decodable, Equatable {
 
 private struct NativeAppsOverviewPayload: Decodable {
     let apps: [NativePublicApp]
+    let templates: [NativeOfficialAppTemplate]?
+    let appStorage: NativeAppStorageSnapshot?
     let mcp: NativeMCPConfigSnapshot
     let mcpLogs: [NativeMCPCallLogEntry]?
     let members: [NativeAppMember]?
@@ -324,6 +390,7 @@ struct NativeAppScaffoldPayload: Encodable {
     var category: String
     var mode: String
     var runtime: String
+    var locationId: String?
     var hasCron: Bool
     var cron: String
 }
@@ -334,6 +401,8 @@ final class NativeAppsModel: ObservableObject {
     @Published private(set) var connected = false
     @Published private(set) var busy = false
     @Published private(set) var apps: [NativePublicApp] = []
+    @Published private(set) var templates: [NativeOfficialAppTemplate] = []
+    @Published private(set) var appStorage: NativeAppStorageSnapshot?
     @Published private(set) var mcp: NativeMCPConfigSnapshot = .empty
     @Published private(set) var mcpLogs: [NativeMCPCallLogEntry] = []
     @Published private(set) var members: [NativeAppMember] = []
@@ -399,6 +468,58 @@ final class NativeAppsModel: ObservableObject {
         sendEncodable(operation: "scaffold", field: "scaffold", value: scaffold)
     }
 
+    func installTemplate(id: String, locationID: String? = nil) {
+        var payload: [String: Any] = ["templateId": id]
+        if let locationID, !locationID.isEmpty {
+            payload["locationId"] = locationID
+        }
+        sendRawDict(operation: "install-template", payload: payload)
+    }
+
+    func mutateAppStorage(
+        action: String,
+        kind: String? = nil,
+        path: String? = nil,
+        name: String? = nil,
+        defaultLocationID: String? = nil,
+        setDefault: Bool? = nil
+    ) {
+        var storageObj: [String: Any] = ["action": action]
+        if let kind, !kind.isEmpty { storageObj["kind"] = kind }
+        if let path, !path.isEmpty { storageObj["path"] = path }
+        if let name, !name.isEmpty { storageObj["name"] = name }
+        if let defaultLocationID, !defaultLocationID.isEmpty { storageObj["defaultLocationId"] = defaultLocationID }
+        if let setDefault { storageObj["setDefault"] = setDefault }
+        sendRawDict(operation: "set-storage", payload: ["storage": storageObj])
+    }
+
+    func setAppStorageWithPermission(
+        action: String,
+        kind: String,
+        path: String,
+        name: String? = nil,
+        setDefault: Bool = false
+    ) {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let access = await StoragePermissionHelper.requestReadWriteAccess(
+                forPath: path,
+                reason: "轻屿应用中心需要获取所选目录及其磁盘卷的读写权限，以便存放轻应用插件（plugins）和业务数据（plugin-data）。"
+            )
+            if !access.ok {
+                self.errorMessage = access.errorMessage ?? "未取得目录读写权限，操作已取消。"
+                return
+            }
+            self.mutateAppStorage(
+                action: action,
+                kind: kind,
+                path: path,
+                name: name,
+                setDefault: setDefault
+            )
+        }
+    }
+
     func deleteApp(appID: String, deleteData: Bool) {
         sendRawDict(operation: "delete", payload: ["appID": appID, "deleteData": deleteData])
     }
@@ -445,6 +566,14 @@ final class NativeAppsModel: ObservableObject {
     }
 
     func openPluginDirectory(appID: String? = nil) {
+        if let appID, !appID.isEmpty,
+           let matched = apps.first(where: { $0.id == appID }),
+           let explicitDir = matched.pluginsDir, !explicitDir.isEmpty {
+            let url = URL(fileURLWithPath: explicitDir, isDirectory: true)
+            try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            NSWorkspace.shared.open(url)
+            return
+        }
         let baseDir = !mcp.pluginsDir.isEmpty
             ? mcp.pluginsDir
             : ((NativeMetadataRecovery.privateMetadataDirectory ?? (NSHomeDirectory() + "/Library/Application Support/LightIsle")) + "/plugins")
@@ -457,6 +586,14 @@ final class NativeAppsModel: ObservableObject {
     }
 
     func openPluginDataDirectory(appID: String? = nil) {
+        if let appID, !appID.isEmpty,
+           let matched = apps.first(where: { $0.id == appID }),
+           let explicitDir = matched.pluginDataDir, !explicitDir.isEmpty {
+            let url = URL(fileURLWithPath: explicitDir, isDirectory: true)
+            try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+            NSWorkspace.shared.open(url)
+            return
+        }
         let baseDir = !mcp.pluginDataDir.isEmpty
             ? mcp.pluginDataDir
             : ((NativeMetadataRecovery.privateMetadataDirectory ?? (NSHomeDirectory() + "/Library/Application Support/LightIsle")) + "/plugin-data")
@@ -485,7 +622,12 @@ final class NativeAppsModel: ObservableObject {
         activeRequestID = nil
 
         if let payload = envelope.result {
+            connected = true
             apps = payload.apps
+            templates = payload.templates ?? templates
+            if let storage = payload.appStorage {
+                appStorage = storage
+            }
             mcp = payload.mcp
             mcpLogs = payload.mcpLogs ?? []
             members = payload.members ?? []
@@ -521,6 +663,10 @@ final class NativeAppsModel: ObservableObject {
             message = "已轮换 MCP 鉴权 Token，请更新局域网 Agent 配置。"
         case "scaffold":
             message = "已创建轻应用脚手架并完成激活。"
+        case "install-template":
+            message = "已一键安装官方精选轻应用。"
+        case "set-storage":
+            message = "已更新应用数据存储位置配置。"
         case "update":
             message = "已保存轻应用权限与运行配置。"
         case "delete":

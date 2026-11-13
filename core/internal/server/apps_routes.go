@@ -41,6 +41,10 @@ func (h *appsManagementHandler) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v2/apps/templates", h.api.requireLogin(h.handleListTemplates))
 	mux.HandleFunc("POST /api/v2/apps/templates/{id}/install", h.api.requireAdmin(h.handleInstallTemplate))
 
+	mux.HandleFunc("GET /api/v2/apps/storage", h.api.requireAdmin(h.handleGetStorage))
+	mux.HandleFunc("PUT /api/v2/apps/storage", h.api.requireAdmin(h.handleMutateStorage))
+	mux.HandleFunc("POST /api/v2/apps/storage", h.api.requireAdmin(h.handleMutateStorage))
+
 	reload := h.api.requireAdmin(h.handleReloadApps)
 	mux.HandleFunc("POST /api/v2/apps/refresh", reload)
 	mux.HandleFunc("POST /api/v2/apps/reload", reload)
@@ -92,15 +96,57 @@ func (h *appsManagementHandler) handleListTemplates(w http.ResponseWriter, _ *ht
 
 func (h *appsManagementHandler) handleInstallTemplate(w http.ResponseWriter, r *http.Request) {
 	user, _ := h.resolveSession(r)
-	app, err := h.appsMgr.InstallTemplate(r.PathValue("id"))
+	var body struct {
+		LocationID string `json:"locationId"`
+	}
+	if r.Body != nil {
+		r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+		defer r.Body.Close()
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil && !errors.Is(err, io.EOF) {
+			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
+			return
+		}
+	}
+	app, err := h.appsMgr.InstallTemplateAt(r.PathValue("id"), body.LocationID)
 	if err != nil {
 		appsErrorReply(w, err)
 		return
 	}
 	jsonReply(w, http.StatusCreated, map[string]any{
-		"app":       app,
-		"apps":      h.appsMgr.ListForUser(user.ID, user.Role),
-		"templates": h.appsMgr.ListTemplates(),
+		"app":        app,
+		"apps":       h.appsMgr.ListForUser(user.ID, user.Role),
+		"templates":  h.appsMgr.ListTemplates(),
+		"appStorage": h.appsMgr.GetStorageSnapshot(),
+	})
+}
+
+func (h *appsManagementHandler) handleGetStorage(w http.ResponseWriter, _ *http.Request) {
+	jsonReply(w, http.StatusOK, map[string]any{
+		"appStorage": h.appsMgr.GetStorageSnapshot(),
+	})
+}
+
+func (h *appsManagementHandler) handleMutateStorage(w http.ResponseWriter, r *http.Request) {
+	user, _ := h.resolveSession(r)
+	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
+	defer r.Body.Close()
+	var req apps.AppStorageMutationRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_request", "message": "无效的存储位置请求参数"})
+		return
+	}
+	storageSnap, err := h.appsMgr.MutateStorageLocation(req)
+	if err != nil {
+		appsErrorReply(w, err)
+		return
+	}
+	mcpSnap := h.appsMgr.BuildMCPConfigSnapshot("")
+	jsonReply(w, http.StatusOK, map[string]any{
+		"appStorage":    storageSnap,
+		"apps":          h.appsMgr.ListForUser(user.ID, user.Role),
+		"templates":     h.appsMgr.ListTemplates(),
+		"pluginsDir":    mcpSnap.PluginsDir,
+		"pluginDataDir": mcpSnap.PluginDataDir,
 	})
 }
 

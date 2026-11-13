@@ -402,6 +402,15 @@ func (m *Manager) BuildMCPConfigSnapshot(overrideLanBaseURL string) MCPConfigSna
 		lanHTTP = lanBase + "/api/v2/mcp"
 		lanSSE = lanBase + "/api/v2/mcp/sse"
 	}
+	defaultPluginsDir := m.pluginsDir
+	defaultPluginDataDir := m.pluginDataRoot
+	for _, loc := range m.GetStorageSnapshot().Locations {
+		if loc.IsDefault {
+			defaultPluginsDir = loc.PluginsDir
+			defaultPluginDataDir = loc.PluginDataDir
+			break
+		}
+	}
 	return MCPConfigSnapshot{
 		MCPEnabled:       cfg.MCPEnabled,
 		MCPLanEnabled:    cfg.MCPLanEnabled,
@@ -413,8 +422,8 @@ func (m *Manager) BuildMCPConfigSnapshot(overrideLanBaseURL string) MCPConfigSna
 		Prompt:           m.MCPBootstrapPrompt(),
 		LanPrompt:        m.MCPLanBootstrapPrompt(lanBase),
 		ClientConfigJSON: m.MCPClientConfigJSON(lanBase),
-		PluginsDir:       m.pluginsDir,
-		PluginDataDir:    m.pluginDataRoot,
+		PluginsDir:       defaultPluginsDir,
+		PluginDataDir:    defaultPluginDataDir,
 		UpdatedAt:        cfg.UpdatedAt,
 		Config:           cfg,
 	}
@@ -681,6 +690,9 @@ func (m *Manager) ScaffoldApp(rawArgs json.RawMessage, activate bool) (PublicApp
 		msg := "创建插件脚手架失败"
 		if len(res.Content) > 0 && res.Content[0].Text != "" {
 			msg = res.Content[0].Text
+		}
+		if strings.Contains(msg, ErrStorageOffline.Error()) {
+			return PublicApp{}, fmt.Errorf("%w: %s", ErrStorageOffline, msg)
 		}
 		return PublicApp{}, fmt.Errorf("%w: %s", ErrInvalid, msg)
 	}

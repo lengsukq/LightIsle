@@ -44,13 +44,6 @@ test('AppsCenterView uses IsleModal for all sub-modals', () => {
   );
 });
 
-test('AppsMcpDebugModal uses IsleModal', () => {
-  const source = readFileSync(new URL('../src/AppsMcpDebugModal.vue', import.meta.url), 'utf8');
-
-  assert.match(source, /import IsleModal from ["']\.\/IsleModal\.vue["']/, 'IsleModal must be imported');
-  assert.match(source, /<IsleModal\s+title=/, 'AppsMcpDebugModal must use IsleModal');
-});
-
 test('generated-fluid.css contains explicit z-index tokens', () => {
   const source = readFileSync(new URL('../src/generated-fluid.css', import.meta.url), 'utf8');
 

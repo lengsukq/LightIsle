@@ -86,19 +86,41 @@ func RunMCP(ctx context.Context, dataDir, execPath string, in io.Reader, out io.
 	return scanner.Err()
 }
 
+func isDataDirSandboxBlocked(dataDir string) bool {
+	if strings.TrimSpace(dataDir) == "" {
+		return false
+	}
+	if _, err := os.ReadDir(dataDir); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return true
+	}
+	if _, err := os.Stat(filepath.Join(dataDir, "apps-config.json")); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return true
+	}
+	return false
+}
+
 func shouldTryDaemonBridge(dataDir string) bool {
+	if isDataDirSandboxBlocked(dataDir) {
+		return len(readSandboxBridgeTargets()) > 0
+	}
+	cleanDataDir := filepath.Clean(dataDir)
 	if dataDir != "" {
 		cfg, err := readSystemConfigFile(filepath.Join(dataDir, "apps-config.json"))
 		if err == nil {
 			if cfg.MCPEnabled {
 				return true
 			}
-			// Explicit on-disk apps-config.json with MCPEnabled=false without sandbox error: honor offline toggle check.
-			return len(readSandboxBridgeTargets()) > 0
+			// On-disk apps-config.json is readable and explicitly disabled.
+			return false
 		}
-		// Non-NotExist error (e.g. Gemini Desktop sandbox EPERM/EACCES blocking Application Support): allow bridge discovery.
-		if !errors.Is(err, os.ErrNotExist) {
-			return true
+		if errors.Is(err, os.ErrNotExist) {
+			// Fresh readable dataDir without apps-config.json: only bridge if a target explicitly matches this dataDir.
+			for _, b := range readSandboxBridgeTargets() {
+				if b.DataDir != "" && filepath.Clean(b.DataDir) == cleanDataDir {
+					return true
+				}
+			}
+			return false
 		}
 	}
 	return len(readSandboxBridgeTargets()) > 0
@@ -120,7 +142,8 @@ func forwardStdioToLocalDaemon(ctx context.Context, dataDir string, rawRPC []byt
 		seen[key] = struct{}{}
 		targets = append(targets, mcpBridgePayload{LocalURL: localURL, Token: token})
 	}
-	if dataDir != "" {
+	sandboxBlocked := isDataDirSandboxBlocked(dataDir)
+	if !sandboxBlocked && dataDir != "" {
 		if tokenBytes, err := os.ReadFile(filepath.Join(dataDir, ".mcp-reload-token")); err == nil {
 			baseURL := strings.TrimRight(strings.TrimSpace(os.Getenv("LIGHTISLE_CORE_URL")), "/")
 			if baseURL == "" {
@@ -129,7 +152,11 @@ func forwardStdioToLocalDaemon(ctx context.Context, dataDir string, rawRPC []byt
 			addTarget(baseURL, string(tokenBytes))
 		}
 	}
+	cleanDataDir := filepath.Clean(dataDir)
 	for _, b := range readSandboxBridgeTargets() {
+		if !sandboxBlocked && dataDir != "" && (b.DataDir == "" || filepath.Clean(b.DataDir) != cleanDataDir) {
+			continue
+		}
 		if envBase := strings.TrimRight(strings.TrimSpace(os.Getenv("LIGHTISLE_CORE_URL")), "/"); envBase != "" && isLoopbackBridgeURL(envBase) {
 			addTarget(envBase, b.Token)
 		}
@@ -442,6 +469,7 @@ func mcpToolDefinitions() []map[string]any {
 					"category":    map[string]any{"type": "string", "description": "分类（network / media / system / utility / family）"},
 					"mode":        map[string]any{"type": "string", "description": "Web 模式：static | on-demand | persistent | cron-only"},
 					"runtime":     map[string]any{"type": "string", "description": "运行时：python | node | go | rust | java | shell | static"},
+					"locationId":  map[string]any{"type": "string", "description": "应用存储位置：internal（Mac 内置盘）| external（其他盘，须先配置）；留空使用当前默认位置"},
 					"hasCron":     map[string]any{"type": "boolean", "description": "是否同时包含定时任务脚本"},
 					"cron":        map[string]any{"type": "string", "description": "5 段标准 Cron 表达式（默认 0 * * * *）"},
 				},
@@ -500,7 +528,7 @@ func executeMCPTool(ctx context.Context, dataDir, execPath string, mgr *Manager,
 	case "lightisle_validate_and_reload":
 		return toolValidateAndReload(ctx, dataDir, mgr, rawArgs)
 	case "lightisle_read_plugin_file":
-		return toolReadPluginFile(dataDir, rawArgs)
+		return toolReadPluginFile(dataDir, mgr, rawArgs)
 	case "lightisle_write_plugin_file":
 		return toolWritePluginFile(dataDir, mgr, rawArgs)
 	case "lightisle_app_action":

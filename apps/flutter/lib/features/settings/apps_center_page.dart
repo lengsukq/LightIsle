@@ -3,7 +3,6 @@ import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../core/isle_theme.dart';
@@ -11,23 +10,11 @@ import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 import 'apps_center_sheets.dart';
-import 'apps_mcp_debug_sheet.dart';
-import 'apps_mcp_wizard_sheet.dart';
 
 export 'apps_center_sheets.dart';
-export 'apps_mcp_debug_sheet.dart';
-export 'apps_mcp_wizard_sheet.dart';
 
 part 'apps_center_cards.dart';
-part 'apps_center_mcp_card.dart';
-
-const String _defaultMcpPrompt =
-    '请帮我将当前 Mac 上的「LightIsle（轻屿）全功能管理与控制 MCP Server」安装并注册到你的 MCP 配置文件中：\n'
-    '- MCP 服务名称：lightisle\n'
-    '- 传输方式：stdio\n'
-    '- 可执行命令：/Applications/LightIsle.app/Contents/Resources/core/lightisled\n'
-    '- 命令参数：["mcp", "--data-dir", "~/Library/Application Support/LightIsle"]\n'
-    '配置完成后，请读取 lightisle://specs/mcp-security 资源，并调用 lightisle_get_system 与 lightisle_list_roots 验证连接。';
+part 'apps_center_storage_card.dart';
 
 class AppsCenterPage extends StatefulWidget {
   const AppsCenterPage({
@@ -53,20 +40,11 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
   List<Map<String, dynamic>> _apps = const [];
   List<Map<String, dynamic>> _templates = const [];
   List<Map<String, dynamic>> _members = const [];
+  Map<String, dynamic>? _appStorage;
+  String _selectedInstallLocationId = '';
   Set<String> _configuredChannels = const {};
-  bool _isAdmin = false, _mcpEnabled = false, _mcpLanEnabled = false, _busy = false;
-  bool _mcpBusy = false,
-      _loaded = false,
-      _workbenchFullscreen = false,
-      _revealMcpToken = false;
-  String _mcpPrompt = _defaultMcpPrompt;
-  String _mcpToken = '';
-  String _mcpCommand = '';
-  String _lanHttpUrl = '';
-  String _lanSseUrl = '';
-  String _lanMcpPrompt = '';
-  List<Map<String, dynamic>> _mcpLogs = const [];
-  Map<String, dynamic> _rawMcpSnapshot = const {};
+  bool _isAdmin = false, _busy = false;
+  bool _loaded = false, _workbenchFullscreen = false;
   String? _wakingAppId,
       _activeWorkbenchAppId,
       _activeWorkbenchUrl,
@@ -95,40 +73,16 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
             if (item.toString().isNotEmpty) item.toString(),
         };
       }
+      if (res['appStorage'] is Map) {
+        _appStorage = Map<String, dynamic>.from(res['appStorage'] as Map);
+        if (_selectedInstallLocationId == 'external' &&
+            _appStorage?['hasExternal'] != true) {
+          _selectedInstallLocationId = '';
+        }
+      }
       if (res['isAdmin'] is bool) _isAdmin = res['isAdmin'] as bool;
-      _applyMcpFields(res);
-      _rawMcpSnapshot = Map<String, dynamic>.from(res);
       _loaded = true;
     });
-  }
-
-  void _applyMcpFields(Map<String, dynamic> res) {
-    if (res['mcpEnabled'] is bool) _mcpEnabled = res['mcpEnabled'] as bool;
-    if (res['mcpLanEnabled'] is bool) {
-      _mcpLanEnabled = res['mcpLanEnabled'] as bool;
-    } else if (!_mcpEnabled) {
-      _mcpLanEnabled = false;
-    }
-    final prompt = res['mcpPrompt']?.toString().trim() ?? '';
-    if (prompt.isNotEmpty) _mcpPrompt = prompt;
-    if (res.containsKey('mcpToken')) {
-      _mcpToken = res['mcpToken']?.toString().trim() ?? '';
-    }
-    if (res.containsKey('mcpCommand')) {
-      _mcpCommand = res['mcpCommand']?.toString().trim() ?? '';
-    }
-    if (res.containsKey('lanHttpUrl')) {
-      _lanHttpUrl = res['lanHttpUrl']?.toString().trim() ?? '';
-    }
-    if (res.containsKey('lanSseUrl')) {
-      _lanSseUrl = res['lanSseUrl']?.toString().trim() ?? '';
-    }
-    if (res.containsKey('lanMcpPrompt')) {
-      _lanMcpPrompt = res['lanMcpPrompt']?.toString().trim() ?? '';
-    }
-    if (res['mcpLogs'] is List) {
-      _mcpLogs = objectList(res['mcpLogs']);
-    }
   }
 
   Future<void> _runBusy(
@@ -169,129 +123,6 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
             : await widget.api.get('/api/v2/apps');
         if (mounted) _applySnapshot(res);
       });
-
-  Future<void> _toggleMcp(bool enabled) async {
-    if (_mcpBusy) return;
-    setState(() {
-      _mcpBusy = true;
-      _error = null;
-      _notice = null;
-    });
-    try {
-      final res = await widget.api.send(
-        'PUT',
-        '/api/v2/apps/mcp',
-        body: {'enabled': enabled, if (!enabled) 'lanEnabled': false},
-      );
-      if (!mounted) return;
-      setState(() {
-        _applyMcpFields(res);
-        if (!_mcpEnabled) _mcpLanEnabled = false;
-        _rawMcpSnapshot = {..._rawMcpSnapshot, ...res};
-        _notice = _mcpEnabled
-            ? '已开启 AI Agent (MCP) 服务，本机默认免令牌直连。'
-            : '已关闭 AI Agent (MCP) 服务并同步关闭局域网与 Cloud MCP 访问。';
-      });
-    } catch (e) {
-      if (mounted) {
-        setState(() => _error = '切换 MCP 开关失败：${userFacingError(e)}');
-      }
-    } finally {
-      if (mounted) setState(() => _mcpBusy = false);
-    }
-  }
-
-  Future<void> _toggleMcpLan(bool enabled) async {
-    if (_mcpBusy) return;
-    setState(() {
-      _mcpBusy = true;
-      _error = null;
-      _notice = null;
-    });
-    try {
-      final res = await widget.api.send(
-        'PUT',
-        '/api/v2/apps/mcp',
-        body: {'enabled': true, 'lanEnabled': enabled},
-      );
-      if (!mounted) return;
-      setState(() {
-        _applyMcpFields(res);
-        _rawMcpSnapshot = {..._rawMcpSnapshot, ...res};
-        _notice = _mcpLanEnabled
-            ? '已开启局域网 / Cloud MCP 访问，远程端点与 Token 已展开。'
-            : '已关闭局域网 / Cloud MCP 访问，仅保留本机免令牌直连。';
-      });
-    } catch (e) {
-      if (mounted) {
-        setState(() => _error = '切换局域网 MCP 开关失败：${userFacingError(e)}');
-      }
-    } finally {
-      if (mounted) setState(() => _mcpBusy = false);
-    }
-  }
-
-  Future<void> _rotateMcpToken() async {
-    if (_mcpBusy) return;
-    setState(() {
-      _mcpBusy = true;
-      _error = null;
-      _notice = null;
-    });
-    try {
-      final res = await widget.api.send('POST', '/api/v2/apps/mcp/token/rotate');
-      if (!mounted) return;
-      setState(() {
-        _applyMcpFields(res);
-        _rawMcpSnapshot = {..._rawMcpSnapshot, ...res};
-        _notice = '已轮换 MCP Bearer 鉴权 Token，请同步更新外部客户端配置。';
-      });
-    } catch (e) {
-      if (mounted) {
-        setState(() => _error = '轮换 Token 失败：${userFacingError(e)}');
-      }
-    } finally {
-      if (mounted) setState(() => _mcpBusy = false);
-    }
-  }
-
-  Future<void> _clearMcpLogs() async {
-    if (_mcpBusy) return;
-    setState(() => _mcpBusy = true);
-    try {
-      await widget.api.send('DELETE', '/api/v2/apps/mcp/logs');
-      if (!mounted) return;
-      setState(() {
-        _mcpLogs = const [];
-        _notice = '已清空 MCP 调用记录。';
-      });
-    } catch (e) {
-      if (mounted) {
-        setState(() => _error = '清空 MCP 调用记录失败：${userFacingError(e)}');
-      }
-    } finally {
-      if (mounted) setState(() => _mcpBusy = false);
-    }
-  }
-
-  Future<void> _copyMcpText(String text, String notice) async {
-    await Clipboard.setData(ClipboardData(text: text));
-    if (mounted) setState(() => _notice = notice);
-  }
-
-  Future<void> _copyMcpPrompt() async {
-    if (_mcpBusy) return;
-    if (!_mcpEnabled) {
-      await _toggleMcp(true);
-      if (!mounted || !_mcpEnabled) return;
-    }
-    await Clipboard.setData(ClipboardData(text: _mcpPrompt));
-    if (mounted) {
-      setState(() {
-        _notice = '已复制 MCP 接入提示词，请直接粘贴给本机 Claude Code / Antigravity / Codex。';
-      });
-    }
-  }
 
   Future<void> _launchApp(
     Map<String, dynamic> app, {
@@ -438,10 +269,45 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
       final res = await widget.api.send(
         'POST',
         '/api/v2/apps/templates/${Uri.encodeComponent(id)}/install',
+        body: _selectedInstallLocationId.isEmpty
+            ? const <String, dynamic>{}
+            : <String, dynamic>{'locationId': _selectedInstallLocationId},
       );
       if (!mounted) return;
       _applySnapshot(res);
       setState(() => _notice = '已一键安装官方精选轻应用「$name」（纯静态 · 0 MB）。');
+    });
+  }
+
+  Future<void> _mutateAppStorage(Map<String, dynamic> payload) async {
+    final action = payload['action']?.toString() ?? '';
+    if (_busy || action.isEmpty) return;
+    if (action == 'remove_external') {
+      final confirmed = await confirmAction(
+        context,
+        '移除其他盘应用存储登记',
+        '系统会先停止来自该位置的应用进程，但绝不会删除硬盘上的插件源码或业务数据。',
+        action: '确认移除',
+        isDestructive: true,
+      );
+      if (!confirmed || !mounted) return;
+    }
+    await _runBusy('更新应用存储位置失败', () async {
+      final res = await widget.api.send(
+        'PUT',
+        '/api/v2/apps/storage',
+        body: payload,
+      );
+      if (!mounted) return;
+      _applySnapshot(res);
+      final notice = switch (action) {
+        'set_default' => '已更新新建与安装应用的默认存储位置。',
+        'reset_internal' => '已恢复 Mac 内置盘为系统默认目录。',
+        'remove_external' => '已安全移除其他盘登记（硬盘原有文件已保留）。',
+        'add' => '已添加其他盘应用存储位置。',
+        _ => '已更新应用数据存储位置。',
+      };
+      setState(() => _notice = notice);
     });
   }
 
@@ -524,7 +390,7 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
           if (activeWorkbench != null)
             _buildEmbeddedWorkbench(context, activeWorkbench)
           else ...[
-            if (_isAdmin) _buildAdminMcpCard(context),
+            if (_isAdmin && _appStorage != null) _buildStorageLocationsCard(context),
             if (_isAdmin && _templates.isNotEmpty)
               _buildOfficialTemplatesCard(context),
             if (!_isAdmin)
@@ -544,7 +410,7 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
             if (_loaded && _apps.isEmpty && !_busy)
               IsleEmptyStateCard(
                 _isAdmin
-                    ? '还没有已安装的轻应用插件。可打开上方 MCP 开关并复制提示词，让本地 AI Agent 自动创建或迁移轻应用。'
+                    ? '还没有已安装的轻应用插件。可一键安装上方官方精选轻应用，或在 Mac 端 LightIsle 客户端中添加。'
                     : '管理员暂未向当前账号开放轻应用。',
                 title: '暂无可用轻应用',
                 icon: Icons.widgets_outlined,

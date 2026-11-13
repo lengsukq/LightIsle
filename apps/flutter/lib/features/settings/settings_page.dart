@@ -525,7 +525,7 @@ class SettingsPage extends StatelessWidget {
           icon: Icons.apps_rounded,
           title: '应用中心',
           subtitle: isAdmin
-              ? '按需轻应用、成员权限分配与 AI Agent (MCP) 开关'
+              ? '按需轻应用、存储位置与成员权限分配'
               : '打开管理员授权给你的家庭轻应用与工具',
           onTap: () => _go(context, AppsCenterPage(api: api, isAdmin: isAdmin)),
         ),

@@ -6,28 +6,13 @@ import type {
   AppLaunchResponse,
   AppLogsNormalizedResponse,
   AppMutationResult,
-  AppProbePayload,
-  AppProbeResponse,
+  AppStorageMutationPayload,
+  AppStorageSnapshot,
   AppWebDraft,
   AppsOverviewResponse,
-  McpCallLogEntry,
-  McpConfigResponse,
-  McpDebugExecPayload,
-  McpDebugExecResponse,
-  McpTokenRotateResponse,
 } from "./types/appsCenter.ts";
 
 export type { AccessPolicyType, AppCronDraft, AppWebDraft };
-
-export const DEFAULT_MCP_COMMAND =
-  "/Applications/LightIsle.app/Contents/Resources/core/lightisled";
-
-export const DEFAULT_MCP_PROMPT = `请帮我将当前 Mac 上的「LightIsle（轻屿）全功能管理与控制 MCP Server」安装并注册到你的 MCP 配置文件中：
-- MCP 服务名称：lightisle
-- 传输方式：stdio
-- 可执行命令：${DEFAULT_MCP_COMMAND}
-- 命令参数：["mcp", "--data-dir", "~/Library/Application Support/LightIsle"]
-配置完成后，请先读取 lightisle://specs/mcp-security 资源，并调用 lightisle_get_health、lightisle_get_system 与 lightisle_list_roots 验证连接（所有操作均记入 SQLite 审计，文件删除仅移入回收站，禁止格式化磁盘与注销存储根）。`;
 
 export function normalizeAccessPolicy(policy?: string): AccessPolicyType {
   if (policy === "selected_members" || policy === "allowlist") {
@@ -166,58 +151,6 @@ export function createAppsCenterClient(fetchImpl: typeof fetch = globalThis.fetc
         refresh ? { method: "POST" } : {},
       );
     },
-    setMcpEnabled(enabled: boolean): Promise<McpConfigResponse> {
-      return request<McpConfigResponse>("/api/v2/apps/mcp", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled: Boolean(enabled) }),
-      });
-    },
-    setMcpConfig(
-      options: { mcpEnabled?: boolean; mcpLanEnabled?: boolean } = {},
-    ): Promise<McpConfigResponse> {
-      const payload: Record<string, unknown> = {};
-      if (typeof options.mcpEnabled === "boolean") {
-        payload.mcpEnabled = options.mcpEnabled;
-      }
-      if (typeof options.mcpLanEnabled === "boolean") {
-        payload.mcpLanEnabled = options.mcpLanEnabled;
-      }
-      return request<McpConfigResponse>("/api/v2/apps/mcp", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-    },
-    rotateMcpToken(): Promise<McpTokenRotateResponse> {
-      return request<McpTokenRotateResponse>("/api/v2/apps/mcp/token/rotate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
-      });
-    },
-    debugMcp(payload: McpDebugExecPayload = {}): Promise<McpDebugExecResponse> {
-      return request<McpDebugExecResponse>("/api/v2/apps/mcp/debug", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-    },
-    fetchMcpLogs(): Promise<{ logs: McpCallLogEntry[] }> {
-      return request<{ logs: McpCallLogEntry[] }>("/api/v2/apps/mcp/logs");
-    },
-    clearMcpLogs(): Promise<{ ok?: boolean }> {
-      return request<{ ok?: boolean }>("/api/v2/apps/mcp/logs", {
-        method: "DELETE",
-      });
-    },
-    probeApp(id: string, payload: AppProbePayload = {}): Promise<AppProbeResponse> {
-      return request<AppProbeResponse>(`/api/v2/apps/${encodeURIComponent(id)}/probe`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(payload),
-      });
-    },
     scaffoldApp(payload: Record<string, unknown> = {}): Promise<AppMutationResult> {
       return request<AppMutationResult>("/api/v2/apps/scaffold", {
         method: "POST",
@@ -225,11 +158,22 @@ export function createAppsCenterClient(fetchImpl: typeof fetch = globalThis.fetc
         body: JSON.stringify(payload),
       });
     },
-    installTemplate(id: string): Promise<AppMutationResult> {
+    installTemplate(id: string, locationId?: string): Promise<AppMutationResult> {
+      const payload = locationId ? { locationId } : {};
       return request<AppMutationResult>(`/api/v2/apps/templates/${encodeURIComponent(id)}/install`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({}),
+        body: JSON.stringify(payload),
+      });
+    },
+    getAppStorage(): Promise<{ appStorage: AppStorageSnapshot }> {
+      return request<{ appStorage: AppStorageSnapshot }>("/api/v2/apps/storage");
+    },
+    mutateAppStorage(payload: AppStorageMutationPayload): Promise<AppMutationResult> {
+      return request<AppMutationResult>("/api/v2/apps/storage", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
       });
     },
     launchApp(id: string): Promise<AppLaunchResponse> {

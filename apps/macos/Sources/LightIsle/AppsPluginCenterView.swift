@@ -8,6 +8,7 @@ struct AppsPluginCenterView: View {
     @State private var showingScaffoldSheet = false
     @State private var deletingApp: NativePublicApp?
     @State private var localNotice: String?
+    @State private var selectedInstallLocationID = ""
 
     private var selectedApp: NativePublicApp? {
         guard let selectedAppID else { return nil }
@@ -27,6 +28,8 @@ struct AppsPluginCenterView: View {
             } else {
                 VStack(alignment: .leading, spacing: 20) {
                     overviewSection
+                    AppStorageLocationsSection(appsCenter: appsCenter)
+                    templatesSection
                     if let err = appsCenter.errorMessage {
                         AppleSettingsGroup(title: "操作提示") {
                             AppleSettingsRow(title: "错误详情", icon: "exclamationmark.triangle.fill", iconTint: .orange) {
@@ -142,6 +145,48 @@ struct AppsPluginCenterView: View {
     }
 
     @ViewBuilder
+    private var templatesSection: some View {
+        let templates = appsCenter.templates
+        if !templates.isEmpty {
+            AppleSettingsGroup(
+                title: "官方精选家庭轻应用模板（0 MB 纯静态）",
+                footer: "可选择将模板安装到当前默认的内置盘或其他盘位置。"
+            ) {
+                if let locations = appsCenter.appStorage?.locations, locations.count > 1 {
+                    AppleSettingsRow(title: "模板安装位置", icon: "externaldrive.badge.checkmark", iconTint: .teal) {
+                        Picker("模板安装位置", selection: $selectedInstallLocationID) {
+                            Text("跟随默认（\(locations.first(where: { $0.isDefault })?.name ?? "Mac 内置盘")）").tag("")
+                            ForEach(locations) { loc in
+                                Text("\(loc.kind == "external" ? "其他盘" : "内置盘") · \(loc.name)\(loc.online ? "" : "（离线）")").tag(loc.id)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(width: 240)
+                    }
+                }
+                ForEach(templates) { tpl in
+                    IsleGroupSpacing(height: 4).padding(.leading, 14)
+                    AppleSettingsRow(
+                        title: tpl.name,
+                        subtitle: tpl.description,
+                        icon: "sparkles",
+                        iconTint: .purple
+                    ) {
+                        Button(tpl.installed ? "已安装" : "一键安装") {
+                            appsCenter.installTemplate(
+                                id: tpl.id,
+                                locationID: selectedInstallLocationID.isEmpty ? nil : selectedInstallLocationID
+                            )
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: tpl.installed ? .secondary : .prominent, size: .small))
+                        .disabled(appsCenter.busy || tpl.installed)
+                    }
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
     private var appsListSection: some View {
         if appsCenter.apps.isEmpty {
             AppleSettingsGroup(title: "应用列表") {
@@ -180,6 +225,7 @@ struct AppsPluginCenterView: View {
         let subtitleParts = [
             "ID: \(app.id)",
             "v\(app.version)",
+            app.locationKind == "external" ? "其他盘 · \(app.locationName)" : "内置盘 · \(app.locationName)",
             app.web.enabled ? "Web: \(app.web.mode)" : "无 Web 界面",
             app.web.runtime.map { "Runtime: \($0)" } ?? nil,
             app.cron != nil ? "Cron: \(app.cron?.cron ?? "")" : nil
