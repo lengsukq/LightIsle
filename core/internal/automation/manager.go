@@ -203,6 +203,11 @@ func (m *Manager) List() []Task {
 	return out
 }
 
+// ScriptsDir returns the host path holding standalone local script folders.
+func (m *Manager) ScriptsDir() string {
+	return m.scripts
+}
+
 // PublicTasks omits Agent-owned values and possible credentials in script arguments.
 func (m *Manager) PublicTasks() []Task {
 	tasks := m.List()
@@ -217,6 +222,20 @@ func (m *Manager) PublicTasks() []Task {
 		tasks[i].Notification.Email = nil
 	}
 	return tasks
+}
+
+// PublicScriptTasks returns public views for standalone automation/scripts tasks only,
+// excluding plugin-backed cron tasks managed inside App Center.
+func (m *Manager) PublicScriptTasks() []Task {
+	all := m.PublicTasks()
+	out := make([]Task, 0, len(all))
+	for _, task := range all {
+		if _, isPlugin := m.pluginMeta(task.ID); isPlugin {
+			continue
+		}
+		out = append(out, task)
+	}
+	return out
 }
 
 func validChild(value string) bool {

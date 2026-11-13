@@ -37,36 +37,53 @@ type nativeAppLaunchResult struct {
 	LaunchURL string `json:"launchUrl"`
 }
 
+type nativeAutomationRunsResult struct {
+	TaskID string               `json:"taskId"`
+	Runs   []automation.TaskRun `json:"runs"`
+}
+
+type nativeAutomationUpdateRequest struct {
+	Enabled      bool                    `json:"enabled"`
+	Schedule     automation.Schedule     `json:"schedule"`
+	Notification automation.Notification `json:"notification"`
+	Revision     string                  `json:"revision"`
+}
+
 type nativeAppsOverview struct {
-	Apps               []apps.PublicApp          `json:"apps"`
-	Templates          []apps.OfficialAppTemplate `json:"templates"`
-	AppStorage         apps.AppStorageSnapshot   `json:"appStorage"`
-	MCP                apps.MCPConfigSnapshot    `json:"mcp"`
-	MCPLogs            []apps.MCPCallLogEntry    `json:"mcpLogs"`
-	Members            []nativeAppMember         `json:"members"`
-	ConfiguredChannels []string                  `json:"configuredChannels"`
-	AppLogs            *nativeAppLogsResult      `json:"appLogs,omitempty"`
-	ProbeResult        *apps.AppProbeResult      `json:"probeResult,omitempty"`
-	MCPDebugResult     *apps.MCPDebugExecResult  `json:"mcpDebug,omitempty"`
-	LaunchTicket       *nativeAppLaunchResult    `json:"launchTicket,omitempty"`
-	BackupPath         string                    `json:"backupPath,omitempty"`
+	Apps                 []apps.PublicApp            `json:"apps"`
+	Templates            []apps.OfficialAppTemplate  `json:"templates"`
+	AppStorage           apps.AppStorageSnapshot     `json:"appStorage"`
+	MCP                  apps.MCPConfigSnapshot      `json:"mcp"`
+	MCPLogs              []apps.MCPCallLogEntry      `json:"mcpLogs"`
+	Members              []nativeAppMember           `json:"members"`
+	ConfiguredChannels   []string                    `json:"configuredChannels"`
+	AutomationTasks      []automation.Task           `json:"automationTasks"`
+	AutomationScriptsDir string                      `json:"automationScriptsDir,omitempty"`
+	AppLogs              *nativeAppLogsResult        `json:"appLogs,omitempty"`
+	AutomationRuns       *nativeAutomationRunsResult `json:"automationRuns,omitempty"`
+	ProbeResult          *apps.AppProbeResult        `json:"probeResult,omitempty"`
+	MCPDebugResult       *apps.MCPDebugExecResult    `json:"mcpDebug,omitempty"`
+	LaunchTicket         *nativeAppLaunchResult      `json:"launchTicket,omitempty"`
+	BackupPath           string                      `json:"backupPath,omitempty"`
 }
 
 type appsIPCRequest struct {
-	RequestID     string                          `json:"requestID,omitempty"`
-	AppID         string                          `json:"appID,omitempty"`
-	TemplateID    string                          `json:"templateId,omitempty"`
-	LocationID    string                          `json:"locationId,omitempty"`
-	Action        string                          `json:"action,omitempty"`
-	DeleteData    bool                            `json:"deleteData,omitempty"`
-	MCPEnabled    *bool                           `json:"mcpEnabled,omitempty"`
-	MCPLanEnabled *bool                           `json:"mcpLanEnabled,omitempty"`
-	Update        *apps.AppUpdateRequest          `json:"update,omitempty"`
-	Storage       *apps.AppStorageMutationRequest `json:"storage,omitempty"`
-	Scaffold      json.RawMessage                 `json:"scaffold,omitempty"`
-	Probe         *apps.AppProbeRequest           `json:"probe,omitempty"`
-	MCPDebug      *apps.MCPDebugExecRequest       `json:"mcpDebug,omitempty"`
-	FilePath      string                          `json:"filePath,omitempty"`
+	RequestID        string                          `json:"requestID,omitempty"`
+	AppID            string                          `json:"appID,omitempty"`
+	TemplateID       string                          `json:"templateId,omitempty"`
+	LocationID       string                          `json:"locationId,omitempty"`
+	Action           string                          `json:"action,omitempty"`
+	DeleteData       bool                            `json:"deleteData,omitempty"`
+	MCPEnabled       *bool                           `json:"mcpEnabled,omitempty"`
+	MCPLanEnabled    *bool                           `json:"mcpLanEnabled,omitempty"`
+	Update           *apps.AppUpdateRequest          `json:"update,omitempty"`
+	Storage          *apps.AppStorageMutationRequest `json:"storage,omitempty"`
+	Scaffold         json.RawMessage                 `json:"scaffold,omitempty"`
+	Probe            *apps.AppProbeRequest           `json:"probe,omitempty"`
+	MCPDebug         *apps.MCPDebugExecRequest       `json:"mcpDebug,omitempty"`
+	FilePath         string                          `json:"filePath,omitempty"`
+	AutomationTaskID string                          `json:"automationTaskId,omitempty"`
+	AutomationUpdate *nativeAutomationUpdateRequest  `json:"automationUpdate,omitempty"`
 }
 
 func emitAppsReply(requestID, operation string, result any, err error) {
@@ -119,6 +136,16 @@ func appsIPCErrorMessage(err error) string {
 		return err.Error()
 	case errors.Is(err, apps.ErrAlreadyInstalled):
 		return "该精选模板已安装，无需重复添加"
+	case errors.Is(err, automation.ErrInvalid):
+		return "定时脚本配置、Cron 表达式或时区无效，请检查后重试"
+	case errors.Is(err, automation.ErrNotFound):
+		return "未找到对应的本机定时脚本任务"
+	case errors.Is(err, automation.ErrBusy):
+		return "该定时脚本正在运行中，请等待本次执行完成"
+	case errors.Is(err, automation.ErrChanged):
+		return "脚本 task.json 已在外部修改，请先刷新脚本列表后再保存"
+	case errors.Is(err, automation.ErrUnavailable):
+		return "定时脚本调度服务尚未就绪"
 	default:
 		msg := strings.TrimSpace(err.Error())
 		if msg != "" {
@@ -128,14 +155,24 @@ func appsIPCErrorMessage(err error) string {
 	}
 }
 
-func buildNativeAppsOverview(appsMgr *apps.Manager, accountStore *auth.Store) nativeAppsOverview {
+func buildNativeAppsOverview(appsMgr *apps.Manager, autoMgr *automation.Manager, accountStore *auth.Store) nativeAppsOverview {
+	autoTasks := []automation.Task{}
+	autoScriptsDir := ""
+	if autoMgr != nil {
+		autoScriptsDir = autoMgr.ScriptsDir()
+		if tasks := autoMgr.PublicScriptTasks(); tasks != nil {
+			autoTasks = tasks
+		}
+	}
 	if appsMgr == nil {
 		return nativeAppsOverview{
-			Apps:               []apps.PublicApp{},
-			Templates:          []apps.OfficialAppTemplate{},
-			MCPLogs:            []apps.MCPCallLogEntry{},
-			Members:            []nativeAppMember{},
-			ConfiguredChannels: []string{},
+			Apps:                 []apps.PublicApp{},
+			Templates:            []apps.OfficialAppTemplate{},
+			MCPLogs:              []apps.MCPCallLogEntry{},
+			Members:              []nativeAppMember{},
+			ConfiguredChannels:   []string{},
+			AutomationTasks:      autoTasks,
+			AutomationScriptsDir: autoScriptsDir,
 		}
 	}
 	members := make([]nativeAppMember, 0)
@@ -153,13 +190,15 @@ func buildNativeAppsOverview(appsMgr *apps.Manager, accountStore *auth.Store) na
 		}
 	}
 	return nativeAppsOverview{
-		Apps:               appsMgr.ListForUser(0, auth.RoleAdmin),
-		Templates:          appsMgr.ListTemplates(),
-		AppStorage:         appsMgr.GetStorageSnapshot(),
-		MCP:                appsMgr.BuildMCPConfigSnapshot(""),
-		MCPLogs:            appsMgr.GetMCPCallLogs(),
-		Members:            members,
-		ConfiguredChannels: appsMgr.ConfiguredChannels(),
+		Apps:                 appsMgr.ListForUser(0, auth.RoleAdmin),
+		Templates:            appsMgr.ListTemplates(),
+		AppStorage:           appsMgr.GetStorageSnapshot(),
+		MCP:                  appsMgr.BuildMCPConfigSnapshot(""),
+		MCPLogs:              appsMgr.GetMCPCallLogs(),
+		Members:              members,
+		ConfiguredChannels:   appsMgr.ConfiguredChannels(),
+		AutomationTasks:      autoTasks,
+		AutomationScriptsDir: autoScriptsDir,
 	}
 }
 
@@ -268,6 +307,7 @@ func handleAppsIPC(
 	parentCtx context.Context,
 	command string,
 	appsMgr *apps.Manager,
+	autoMgr *automation.Manager,
 	accountStore *auth.Store,
 ) bool {
 	if command != "apps" && !strings.HasPrefix(command, "apps ") {
@@ -287,33 +327,36 @@ func handleAppsIPC(
 		emitAppsReply(req.RequestID, operation, nil, err)
 		return true
 	}
-	if appsMgr == nil {
+	isAutomationOp := strings.HasPrefix(operation, "automation-")
+	if appsMgr == nil && !isAutomationOp {
 		emitAppsReply(req.RequestID, operation, nil, errors.New("轻应用服务尚未就绪"))
 		return true
+	}
+	overview := func() nativeAppsOverview {
+		return buildNativeAppsOverview(appsMgr, autoMgr, accountStore)
 	}
 
 	switch operation {
 	case "list":
-		overview := buildNativeAppsOverview(appsMgr, accountStore)
-		emitAppsReply(req.RequestID, operation, overview, nil)
+		emitAppsReply(req.RequestID, operation, overview(), nil)
 		return true
 
 	case "refresh":
 		err := appsMgr.Reload()
-		overview := buildNativeAppsOverview(appsMgr, accountStore)
-		emitAppsReply(req.RequestID, operation, overview, err)
+		if err == nil && autoMgr != nil {
+			_ = autoMgr.Reload()
+		}
+		emitAppsReply(req.RequestID, operation, overview(), err)
 		return true
 
 	case "set-mcp":
 		_, err := appsMgr.SetMCPConfig(req.MCPEnabled, req.MCPLanEnabled)
-		overview := buildNativeAppsOverview(appsMgr, accountStore)
-		emitAppsReply(req.RequestID, operation, overview, err)
+		emitAppsReply(req.RequestID, operation, overview(), err)
 		return true
 
 	case "rotate-mcp-token":
 		_, err := appsMgr.RotateMCPToken()
-		overview := buildNativeAppsOverview(appsMgr, accountStore)
-		emitAppsReply(req.RequestID, operation, overview, err)
+		emitAppsReply(req.RequestID, operation, overview(), err)
 		return true
 
 	case "action":
@@ -322,22 +365,21 @@ func handleAppsIPC(
 		if act == "start" || act == "wake" || act == "restart" || act == "approve" || act == "activate" {
 			runAppsIPCAsync(parentCtx, req.RequestID, operation, func(ctx context.Context) {
 				_, opErr := appsMgr.ExecuteAction(ctx, id, req.Action)
-				overview := buildNativeAppsOverview(appsMgr, accountStore)
+				ov := overview()
 				if opErr != nil && id != "" {
 					if logs, logErr := appsMgr.GetWebLogs(id); logErr == nil {
 						runs, _ := appsMgr.GetCronRuns(id, 30)
-						overview.AppLogs = &nativeAppLogsResult{AppID: id, WebOutput: logs, CronRuns: runs}
+						ov.AppLogs = &nativeAppLogsResult{AppID: id, WebOutput: logs, CronRuns: runs}
 					}
 				}
-				emitAppsReply(req.RequestID, operation, overview, opErr)
+				emitAppsReply(req.RequestID, operation, ov, opErr)
 			})
 			return true
 		}
 		ctx, cancel := context.WithTimeout(parentCtx, 10*time.Second)
 		defer cancel()
 		_, opErr := appsMgr.ExecuteAction(ctx, id, req.Action)
-		overview := buildNativeAppsOverview(appsMgr, accountStore)
-		emitAppsReply(req.RequestID, operation, overview, opErr)
+		emitAppsReply(req.RequestID, operation, overview(), opErr)
 		return true
 
 	case "update":
@@ -346,8 +388,7 @@ func handleAppsIPC(
 			return true
 		}
 		_, err := appsMgr.UpdateApp(req.AppID, *req.Update)
-		overview := buildNativeAppsOverview(appsMgr, accountStore)
-		emitAppsReply(req.RequestID, operation, overview, err)
+		emitAppsReply(req.RequestID, operation, overview(), err)
 		return true
 
 	case "scaffold":
@@ -356,8 +397,7 @@ func handleAppsIPC(
 			return true
 		}
 		_, err := appsMgr.ScaffoldApp(req.Scaffold, true)
-		overview := buildNativeAppsOverview(appsMgr, accountStore)
-		emitAppsReply(req.RequestID, operation, overview, err)
+		emitAppsReply(req.RequestID, operation, overview(), err)
 		return true
 
 	case "set-storage":
@@ -366,8 +406,7 @@ func handleAppsIPC(
 			return true
 		}
 		_, err := appsMgr.MutateStorageLocation(*req.Storage)
-		overview := buildNativeAppsOverview(appsMgr, accountStore)
-		emitAppsReply(req.RequestID, operation, overview, err)
+		emitAppsReply(req.RequestID, operation, overview(), err)
 		return true
 
 	case "install-template":
@@ -376,28 +415,26 @@ func handleAppsIPC(
 			tplID = strings.TrimSpace(req.AppID)
 		}
 		_, err := appsMgr.InstallTemplateAt(tplID, req.LocationID)
-		overview := buildNativeAppsOverview(appsMgr, accountStore)
-		emitAppsReply(req.RequestID, operation, overview, err)
+		emitAppsReply(req.RequestID, operation, overview(), err)
 		return true
 
 	case "delete":
 		err := appsMgr.DeleteApp(req.AppID, req.DeleteData)
-		overview := buildNativeAppsOverview(appsMgr, accountStore)
-		emitAppsReply(req.RequestID, operation, overview, err)
+		emitAppsReply(req.RequestID, operation, overview(), err)
 		return true
 
 	case "logs":
 		logs, err := appsMgr.GetWebLogs(req.AppID)
 		runs, _ := appsMgr.GetCronRuns(req.AppID, 30)
-		overview := buildNativeAppsOverview(appsMgr, accountStore)
+		ov := overview()
 		if err == nil {
-			overview.AppLogs = &nativeAppLogsResult{
+			ov.AppLogs = &nativeAppLogsResult{
 				AppID:     req.AppID,
 				WebOutput: logs,
 				CronRuns:  runs,
 			}
 		}
-		emitAppsReply(req.RequestID, operation, overview, err)
+		emitAppsReply(req.RequestID, operation, ov, err)
 		return true
 
 	case "probe":
@@ -407,9 +444,9 @@ func handleAppsIPC(
 		}
 		runAppsIPCAsync(parentCtx, req.RequestID, operation, func(ctx context.Context) {
 			res, err := appsMgr.ProbeApp(ctx, req.AppID, probeReq)
-			overview := buildNativeAppsOverview(appsMgr, accountStore)
-			overview.ProbeResult = &res
-			emitAppsReply(req.RequestID, operation, overview, err)
+			ov := overview()
+			ov.ProbeResult = &res
+			emitAppsReply(req.RequestID, operation, ov, err)
 		})
 		return true
 
@@ -420,16 +457,15 @@ func handleAppsIPC(
 		}
 		runAppsIPCAsync(parentCtx, req.RequestID, operation, func(ctx context.Context) {
 			res := appsMgr.ExecuteDebugMCP(ctx, debugReq, "127.0.0.1")
-			overview := buildNativeAppsOverview(appsMgr, accountStore)
-			overview.MCPDebugResult = &res
-			emitAppsReply(req.RequestID, operation, overview, nil)
+			ov := overview()
+			ov.MCPDebugResult = &res
+			emitAppsReply(req.RequestID, operation, ov, nil)
 		})
 		return true
 
 	case "mcp-clear-logs":
 		err := appsMgr.ClearMCPCallLogs()
-		overview := buildNativeAppsOverview(appsMgr, accountStore)
-		emitAppsReply(req.RequestID, operation, overview, err)
+		emitAppsReply(req.RequestID, operation, overview(), err)
 		return true
 
 	case "issue-ticket":
@@ -437,19 +473,17 @@ func handleAppsIPC(
 		runAppsIPCAsync(parentCtx, req.RequestID, operation, func(ctx context.Context) {
 			app, err := appsMgr.GetForUser(id, 0, auth.RoleAdmin)
 			if err != nil {
-				overview := buildNativeAppsOverview(appsMgr, accountStore)
-				emitAppsReply(req.RequestID, operation, overview, err)
+				emitAppsReply(req.RequestID, operation, overview(), err)
 				return
 			}
 			if app.PendingActivation {
-				overview := buildNativeAppsOverview(appsMgr, accountStore)
-				emitAppsReply(req.RequestID, operation, overview, apps.ErrPendingActivation)
+				emitAppsReply(req.RequestID, operation, overview(), apps.ErrPendingActivation)
 				return
 			}
 			if app.Web.Enabled && app.Web.Mode != apps.WebModeStatic && app.Web.Mode != "none" {
 				app, err = appsMgr.WakeApp(ctx, id)
 			}
-			overview := buildNativeAppsOverview(appsMgr, accountStore)
+			ov := overview()
 			if err == nil {
 				adminUser := resolveNativeAdminIdentity(accountStore)
 				ticket := appsMgr.IssueTicket(id, adminUser)
@@ -457,7 +491,7 @@ func handleAppsIPC(
 				if localBase == "" {
 					localBase = "http://127.0.0.1:16666"
 				}
-				overview.LaunchTicket = &nativeAppLaunchResult{
+				ov.LaunchTicket = &nativeAppLaunchResult{
 					AppID:     id,
 					Ticket:    ticket,
 					LaunchURL: strings.TrimRight(localBase, "/") + "/apps/" + id + "/?__li_ticket=" + ticket,
@@ -465,21 +499,21 @@ func handleAppsIPC(
 			} else if id != "" {
 				if logs, logErr := appsMgr.GetWebLogs(id); logErr == nil {
 					runs, _ := appsMgr.GetCronRuns(id, 30)
-					overview.AppLogs = &nativeAppLogsResult{AppID: id, WebOutput: logs, CronRuns: runs}
+					ov.AppLogs = &nativeAppLogsResult{AppID: id, WebOutput: logs, CronRuns: runs}
 				}
 			}
-			emitAppsReply(req.RequestID, operation, overview, err)
+			emitAppsReply(req.RequestID, operation, ov, err)
 		})
 		return true
 
 	case "export-data":
 		runAppsIPCAsync(parentCtx, req.RequestID, operation, func(ctx context.Context) {
 			target, exportErr := exportAppDataAtomically(ctx, appsMgr, req.AppID, req.FilePath)
-			overview := buildNativeAppsOverview(appsMgr, accountStore)
+			ov := overview()
 			if exportErr == nil {
-				overview.BackupPath = target
+				ov.BackupPath = target
 			}
-			emitAppsReply(req.RequestID, operation, overview, exportErr)
+			emitAppsReply(req.RequestID, operation, ov, exportErr)
 		})
 		return true
 
@@ -497,12 +531,81 @@ func handleAppsIPC(
 			}
 			restoreErr := appsMgr.RestoreAppData(ctx, req.AppID, f)
 			_ = f.Close()
-			overview := buildNativeAppsOverview(appsMgr, accountStore)
+			ov := overview()
 			if restoreErr == nil {
-				overview.BackupPath = source
+				ov.BackupPath = source
 			}
-			emitAppsReply(req.RequestID, operation, overview, restoreErr)
+			emitAppsReply(req.RequestID, operation, ov, restoreErr)
 		})
+		return true
+
+	case "automation-refresh":
+		if autoMgr == nil {
+			emitAppsReply(req.RequestID, operation, nil, automation.ErrUnavailable)
+			return true
+		}
+		err := autoMgr.Reload()
+		emitAppsReply(req.RequestID, operation, overview(), err)
+		return true
+
+	case "automation-update":
+		if autoMgr == nil || !autoMgr.Ready() {
+			emitAppsReply(req.RequestID, operation, nil, automation.ErrUnavailable)
+			return true
+		}
+		if req.AutomationUpdate == nil {
+			emitAppsReply(req.RequestID, operation, nil, errors.New("缺少定时脚本更新参数"))
+			return true
+		}
+		id := strings.TrimSpace(req.AutomationTaskID)
+		err := autoMgr.UpdateRevision(
+			id,
+			req.AutomationUpdate.Enabled,
+			req.AutomationUpdate.Schedule,
+			req.AutomationUpdate.Notification,
+			req.AutomationUpdate.Revision,
+		)
+		emitAppsReply(req.RequestID, operation, overview(), err)
+		return true
+
+	case "automation-run":
+		if autoMgr == nil || !autoMgr.Ready() {
+			emitAppsReply(req.RequestID, operation, nil, automation.ErrUnavailable)
+			return true
+		}
+		id := strings.TrimSpace(req.AutomationTaskID)
+		err := autoMgr.RunScriptTaskNow(id)
+		emitAppsReply(req.RequestID, operation, overview(), err)
+		return true
+
+	case "automation-delete":
+		if autoMgr == nil || !autoMgr.Ready() {
+			emitAppsReply(req.RequestID, operation, nil, automation.ErrUnavailable)
+			return true
+		}
+		id := strings.TrimSpace(req.AutomationTaskID)
+		err := autoMgr.Delete(id)
+		emitAppsReply(req.RequestID, operation, overview(), err)
+		return true
+
+	case "automation-runs":
+		if autoMgr == nil {
+			emitAppsReply(req.RequestID, operation, nil, automation.ErrUnavailable)
+			return true
+		}
+		id := strings.TrimSpace(req.AutomationTaskID)
+		runs, err := autoMgr.ListRuns(id, 30)
+		if err == nil && runs == nil {
+			runs = []automation.TaskRun{}
+		}
+		ov := overview()
+		if err == nil {
+			ov.AutomationRuns = &nativeAutomationRunsResult{
+				TaskID: id,
+				Runs:   runs,
+			}
+		}
+		emitAppsReply(req.RequestID, operation, ov, err)
 		return true
 
 	default:

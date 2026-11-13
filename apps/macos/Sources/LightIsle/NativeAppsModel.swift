@@ -4,6 +4,7 @@ import SwiftUI
 
 enum AppsAndContainersSection: String, CaseIterable, Identifiable {
     case plugins = "轻应用与插件"
+    case automation = "本机定时脚本"
     case mcp = "MCP 开发者与调试"
     case docker = "Docker 容器"
 
@@ -11,6 +12,7 @@ enum AppsAndContainersSection: String, CaseIterable, Identifiable {
     var icon: String {
         switch self {
         case .plugins: return "square.grid.2x2.fill"
+        case .automation: return "clock.badge.checkmark.fill"
         case .mcp: return "terminal.fill"
         case .docker: return "shippingbox.fill"
         }
@@ -277,12 +279,14 @@ struct NativeAppCronRun: Decodable, Identifiable, Equatable {
     let id: String
     let state: String?
     let startedAt: String?
+    let finishedAt: String?
     let exitCode: Int?
     let output: String?
     let error: String?
+    let deliveries: [String: String]?
 
     private enum CodingKeys: String, CodingKey {
-        case id, state, startedAt, exitCode, output, error
+        case id, state, startedAt, finishedAt, exitCode, output, error, deliveries
     }
 
     init(from decoder: Decoder) throws {
@@ -291,10 +295,16 @@ struct NativeAppCronRun: Decodable, Identifiable, Equatable {
         exitCode = try container.decodeIfPresent(Int.self, forKey: .exitCode)
         output = try container.decodeIfPresent(String.self, forKey: .output)
         error = try container.decodeIfPresent(String.self, forKey: .error)
+        deliveries = try container.decodeIfPresent([String: String].self, forKey: .deliveries)
         if let epoch = try? container.decodeIfPresent(Int64.self, forKey: .startedAt), epoch > 0 {
             startedAt = Date(timeIntervalSince1970: TimeInterval(epoch)).formatted()
         } else {
             startedAt = try? container.decodeIfPresent(String.self, forKey: .startedAt)
+        }
+        if let epoch = try? container.decodeIfPresent(Int64.self, forKey: .finishedAt), epoch > 0 {
+            finishedAt = Date(timeIntervalSince1970: TimeInterval(epoch)).formatted()
+        } else {
+            finishedAt = try? container.decodeIfPresent(String.self, forKey: .finishedAt)
         }
         if let numID = try? container.decodeIfPresent(Int64.self, forKey: .id) {
             id = String(numID)
@@ -302,6 +312,47 @@ struct NativeAppCronRun: Decodable, Identifiable, Equatable {
             id = "\(startedAt ?? "")-\(exitCode ?? 0)"
         }
     }
+}
+
+struct NativeAutomationSchedule: Codable, Equatable {
+    var cron: String
+    var timezone: String
+}
+
+struct NativeAutomationNotification: Codable, Equatable {
+    var events: [String]?
+    var channels: [String]?
+}
+
+struct NativeAutomationRunSummary: Decodable, Equatable {
+    let startedAt: Int64
+    let finishedAt: Int64
+    let state: String
+    let exitCode: Int
+}
+
+struct NativeAutomationTask: Decodable, Identifiable, Equatable {
+    let schemaVersion: Int
+    let id: String
+    let name: String
+    let description: String?
+    let enabled: Bool
+    let entry: String
+    let schedule: NativeAutomationSchedule
+    let timeoutSeconds: Int?
+    let notification: NativeAutomationNotification?
+    let running: Bool?
+    let nextRun: Int64?
+    let lastError: String?
+    let revision: String?
+    let lastRun: NativeAutomationRunSummary?
+
+    var isRunning: Bool { running ?? false }
+}
+
+struct NativeAutomationRunsResult: Decodable, Equatable {
+    let taskId: String
+    let runs: [NativeAppCronRun]
 }
 
 struct NativeAppLogsResult: Decodable, Equatable {
@@ -347,7 +398,10 @@ private struct NativeAppsOverviewPayload: Decodable {
     let mcpLogs: [NativeMCPCallLogEntry]?
     let members: [NativeAppMember]?
     let configuredChannels: [String]?
+    let automationTasks: [NativeAutomationTask]?
+    let automationScriptsDir: String?
     let appLogs: NativeAppLogsResult?
+    let automationRuns: NativeAutomationRunsResult?
     let probeResult: NativeAppProbeResult?
     let mcpDebugResult: NativeMCPDebugExecResult?
     let launchTicket: NativeAppLaunchResult?
@@ -407,7 +461,10 @@ final class NativeAppsModel: ObservableObject {
     @Published private(set) var mcpLogs: [NativeMCPCallLogEntry] = []
     @Published private(set) var members: [NativeAppMember] = []
     @Published private(set) var configuredChannels: [String] = []
+    @Published private(set) var automationTasks: [NativeAutomationTask] = []
+    @Published private(set) var automationScriptsDir: String = ""
     @Published var currentLogs: NativeAppLogsResult?
+    @Published var currentAutomationRuns: NativeAutomationRunsResult?
     @Published var lastProbeResult: NativeAppProbeResult?
     @Published var lastMCPDebugResult: NativeMCPDebugExecResult?
     @Published var message: String?
@@ -565,6 +622,61 @@ final class NativeAppsModel: ObservableObject {
         sendRawDict(operation: "restore-data", payload: ["appID": appID, "filePath": filePath])
     }
 
+    func reloadAutomationScripts() {
+        sendRawDict(operation: "automation-refresh", payload: [:])
+    }
+
+    func updateAutomationTask(
+        taskID: String,
+        enabled: Bool,
+        cron: String,
+        timezone: String,
+        events: [String],
+        channels: [String],
+        revision: String?
+    ) {
+        let updateObj: [String: Any] = [
+            "enabled": enabled,
+            "revision": revision ?? "",
+            "schedule": [
+                "cron": cron.trimmingCharacters(in: .whitespacesAndNewlines),
+                "timezone": timezone.trimmingCharacters(in: .whitespacesAndNewlines)
+            ],
+            "notification": [
+                "events": events,
+                "channels": channels
+            ]
+        ]
+        sendRawDict(operation: "automation-update", payload: [
+            "automationTaskId": taskID,
+            "automationUpdate": updateObj
+        ])
+    }
+
+    func runAutomationTaskNow(taskID: String) {
+        sendRawDict(operation: "automation-run", payload: ["automationTaskId": taskID])
+    }
+
+    func deleteAutomationTask(taskID: String) {
+        sendRawDict(operation: "automation-delete", payload: ["automationTaskId": taskID])
+    }
+
+    func loadAutomationRuns(taskID: String) {
+        sendRawDict(operation: "automation-runs", payload: ["automationTaskId": taskID])
+    }
+
+    func openAutomationScriptsDirectory(taskID: String? = nil) {
+        let baseDir = !automationScriptsDir.isEmpty
+            ? automationScriptsDir
+            : ((NativeMetadataRecovery.privateMetadataDirectory ?? (NSHomeDirectory() + "/Library/Application Support/LightIsle")) + "/automation/scripts")
+        var url = URL(fileURLWithPath: baseDir, isDirectory: true)
+        if let taskID, !taskID.isEmpty {
+            url.appendPathComponent(taskID, isDirectory: true)
+        }
+        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+        NSWorkspace.shared.open(url)
+    }
+
     func openPluginDirectory(appID: String? = nil) {
         if let appID, !appID.isEmpty,
            let matched = apps.first(where: { $0.id == appID }),
@@ -632,8 +744,17 @@ final class NativeAppsModel: ObservableObject {
             mcpLogs = payload.mcpLogs ?? []
             members = payload.members ?? []
             configuredChannels = payload.configuredChannels ?? []
+            if let tasks = payload.automationTasks {
+                automationTasks = tasks
+            }
+            if let scriptsDir = payload.automationScriptsDir, !scriptsDir.isEmpty {
+                automationScriptsDir = scriptsDir
+            }
             if let logs = payload.appLogs {
                 currentLogs = logs
+            }
+            if let autoRuns = payload.automationRuns {
+                currentAutomationRuns = autoRuns
             }
             if let probe = payload.probeResult {
                 lastProbeResult = probe
@@ -681,6 +802,14 @@ final class NativeAppsModel: ObservableObject {
             if let path = envelope.result?.backupPath {
                 message = "已从归档恢复插件数据：\(path)"
             }
+        case "automation-refresh":
+            message = "已重新扫描 automation/scripts 并同步本机定时脚本。"
+        case "automation-update":
+            message = "已保存定时脚本设置；脚本源码与邮件模板未受改动。"
+        case "automation-run":
+            message = "已触发定时脚本立即执行，可在运行日志中查看结果。"
+        case "automation-delete":
+            message = "已删除该定时脚本任务目录。"
         default:
             break
         }

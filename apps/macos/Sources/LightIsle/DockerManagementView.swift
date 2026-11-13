@@ -78,6 +78,8 @@ struct DockerManagementView: View {
                 switch appsCenter.workspaceSection {
                 case .plugins:
                     AppsPluginCenterView(appsCenter: appsCenter, selectedAppID: $selectedPluginAppID)
+                case .automation:
+                    AutomationScriptsCenterView(appsCenter: appsCenter)
                 case .mcp:
                     MCPDeveloperCenterView(appsCenter: appsCenter)
                 case .docker:
@@ -110,10 +112,13 @@ struct DockerManagementView: View {
             }
             mirrorBaseline = mirrorFields; trackEdits(); if !AppModel.shared.isPresentationPreview { refresh(); appsCenter.refresh() }
         }
-        .onChange(of: appsCenter.workspaceSection) { _, _ in
+        .onChange(of: appsCenter.workspaceSection) { _, next in
             selectedPluginAppID = nil
             selectedContainer = nil
             trackEdits()
+            if next == .automation && !AppModel.shared.isPresentationPreview {
+                appsCenter.reloadAutomationScripts()
+            }
         }
         .onChange(of: mirrorFields) { _, _ in trackEdits() }
         .onChange(of: imageReference) { _, _ in trackEdits() }

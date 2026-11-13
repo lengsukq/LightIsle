@@ -275,6 +275,7 @@ func main() {
 		rootRegistry:            rootRegistry,
 		rootServer:              rootServer,
 		appsManager:             appsManager,
+		automationManager:       automationManager,
 		taskJournal:             taskJournal,
 		alertThresholds:         alertThresholds,
 		trashRetention:          trashRetention,
@@ -582,6 +583,7 @@ type ipcCommandDispatcher struct {
 	rootRegistry            *roots.Registry
 	rootServer              *server.RootServer
 	appsManager             *apps.Manager
+	automationManager       *automation.Manager
 	taskJournal             *tasks.Journal
 	alertThresholds         *tasks.ThresholdStore
 	trashRetention          *tasks.RetentionStore
@@ -642,7 +644,7 @@ func (d *ipcCommandDispatcher) dispatch(ctx context.Context, command string) {
 	case handleMapSettings(command):
 	case d.rootCommands.handle(ctx, command):
 	case handleSpacesIPC(ctx, command, d.accountStore, d.rootRegistry, d.rootServer):
-	case handleAppsIPC(ctx, command, d.appsManager, d.accountStore):
+	case handleAppsIPC(ctx, command, d.appsManager, d.automationManager, d.accountStore):
 	case d.tunnelCtl.handle(ctx, command):
 	case d.frpCtl.handle(command):
 	case handleDiskIPC(ctx, command):

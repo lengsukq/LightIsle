@@ -332,8 +332,14 @@ extension ContentView {
                 .disabled(model.isPresentationPreview)
             }
             IsleGroupSpacing(height: 4).padding(.leading, 14)
-            AppleSettingsRow(title: "本地目录快捷入口", icon: "folder.badge.gearshape", iconTint: .blue) {
+            AppleSettingsRow(title: "本机定时脚本与本地目录", icon: "folder.badge.gearshape", iconTint: .blue) {
                 HStack(spacing: 8) {
+                    Button("管理定时脚本") {
+                        model.appsCenter.workspaceSection = .automation
+                        requestNavigation(.containers)
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                    .disabled(model.isPresentationPreview)
                     Button("打开自动化脚本目录") { model.openAutomationScripts() }
                         .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         .disabled(model.isPresentationPreview)
