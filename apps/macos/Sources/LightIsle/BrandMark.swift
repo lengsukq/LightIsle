@@ -5,15 +5,18 @@ import AppKit
 struct BrandMark: View {
     let size: CGFloat
 
+    private static let cachedLogo: NSImage? = {
+        if let url = Bundle.main.url(forResource: "LightIsleLogo", withExtension: "png"),
+           let icon = NSImage(contentsOf: url) {
+            return icon
+        }
+        return NSImage(contentsOfFile: "apps/macos/Resources/LightIsleLogo.png")
+    }()
+
     var body: some View {
         Group {
-            if let url = Bundle.main.url(forResource: "LightIsleLogo", withExtension: "png"),
-               let icon = NSImage(contentsOf: url) {
+            if let icon = Self.cachedLogo {
                 Image(nsImage: icon)
-                    .resizable()
-                    .interpolation(.high)
-            } else if let localIcon = NSImage(contentsOfFile: "apps/macos/Resources/LightIsleLogo.png") {
-                Image(nsImage: localIcon)
                     .resizable()
                     .interpolation(.high)
             } else {

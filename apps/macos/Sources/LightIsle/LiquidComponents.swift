@@ -83,7 +83,11 @@ struct IsleFluidBackdrop: View {
                 RadialGradient(colors: [IsleFluidPalette.brandCyan.opacity(0.08), .clear], center: .topTrailing, startRadius: 0, endRadius: 680)
                 RadialGradient(colors: [IsleFluidPalette.brandViolet.opacity(0.065), .clear], center: .bottomLeading, startRadius: 0, endRadius: 560)
             }
-        }.ignoresSafeArea().allowsHitTesting(false).accessibilityHidden(true)
+        }
+        .drawingGroup(opaque: true)
+        .ignoresSafeArea()
+        .allowsHitTesting(false)
+        .accessibilityHidden(true)
     }
 }
 struct IsleBackdrop: View { var body: some View { IsleFluidBackdrop() } }
@@ -99,14 +103,17 @@ struct IsleGlassBarSurface: ViewModifier {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         content
             .background {
-                if opaque || contrast == .increased {
-                    shape.fill(IsleFluidPalette.cardTop)
-                } else {
-                    ZStack {
-                        shape.fill(.ultraThinMaterial)
-                        shape.fill(LinearGradient(colors: [IsleFluidPalette.cardTop.opacity(0.58), IsleFluidPalette.cardBottom.opacity(0.36)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                Group {
+                    if opaque || contrast == .increased {
+                        shape.fill(IsleFluidPalette.cardTop)
+                    } else {
+                        ZStack {
+                            shape.fill(.ultraThinMaterial)
+                            shape.fill(LinearGradient(colors: [IsleFluidPalette.cardTop.opacity(0.58), IsleFluidPalette.cardBottom.opacity(0.36)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                        }
                     }
                 }
+                .shadow(color: .black.opacity(IsleFluidPalette.cardShadowOpacity * 1.15), radius: IsleFluidPalette.cardShadowRadius + 4, y: IsleFluidPalette.cardShadowY + 2)
             }
             .overlay {
                 if contrast == .increased {
@@ -118,7 +125,6 @@ struct IsleGlassBarSurface: ViewModifier {
                     ).allowsHitTesting(false)
                 }
             }
-            .shadow(color: .black.opacity(IsleFluidPalette.cardShadowOpacity * 1.15), radius: IsleFluidPalette.cardShadowRadius + 4, y: IsleFluidPalette.cardShadowY + 2)
     }
 }
 
@@ -128,7 +134,11 @@ struct IsleEmbossedSurface: ViewModifier {
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         content
-            .background(LinearGradient(colors: [IsleFluidPalette.cardTop, IsleFluidPalette.cardBottom], startPoint: .top, endPoint: .bottom), in: shape)
+            .background {
+                shape
+                    .fill(LinearGradient(colors: [IsleFluidPalette.cardTop, IsleFluidPalette.cardBottom], startPoint: .top, endPoint: .bottom))
+                    .shadow(color: .black.opacity(IsleFluidPalette.cardShadowOpacity), radius: IsleFluidPalette.cardShadowRadius, y: IsleFluidPalette.cardShadowY)
+            }
             .overlay {
                 if contrast == .increased {
                     shape.strokeBorder(Color.primary.opacity(0.48), lineWidth: 1).allowsHitTesting(false)
@@ -139,7 +149,6 @@ struct IsleEmbossedSurface: ViewModifier {
                     ).allowsHitTesting(false)
                 }
             }
-            .shadow(color: .black.opacity(IsleFluidPalette.cardShadowOpacity), radius: IsleFluidPalette.cardShadowRadius, y: IsleFluidPalette.cardShadowY)
     }
 }
 
@@ -152,13 +161,16 @@ struct IsleItemCardSurface: ViewModifier {
     func body(content: Content) -> some View {
         let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
         content
-            .background(
-                LinearGradient(
-                    colors: hovered && interactive ? [IsleFluidPalette.cardHover, IsleFluidPalette.cardItemTop] : [IsleFluidPalette.cardItemTop, IsleFluidPalette.cardItemBottom],
-                    startPoint: .topLeading, endPoint: .bottomTrailing
-                ),
-                in: shape
-            )
+            .background {
+                shape
+                    .fill(
+                        LinearGradient(
+                            colors: hovered && interactive ? [IsleFluidPalette.cardHover, IsleFluidPalette.cardItemTop] : [IsleFluidPalette.cardItemTop, IsleFluidPalette.cardItemBottom],
+                            startPoint: .topLeading, endPoint: .bottomTrailing
+                        )
+                    )
+                    .shadow(color: .black.opacity(hovered && interactive ? 0.095 : 0.048), radius: hovered && interactive ? 22 : 13, y: hovered && interactive ? 9 : 5)
+            }
             .overlay {
                 if contrast == .increased {
                     shape.strokeBorder(Color.primary.opacity(0.45), lineWidth: 1).allowsHitTesting(false)
@@ -169,7 +181,6 @@ struct IsleItemCardSurface: ViewModifier {
                     ).allowsHitTesting(false)
                 }
             }
-            .shadow(color: .black.opacity(hovered && interactive ? 0.095 : 0.048), radius: hovered && interactive ? 22 : 13, y: hovered && interactive ? 9 : 5)
             .offset(y: hovered && interactive && !reduceMotion ? -2 : 0)
             .animation(reduceMotion ? nil : IsleMotion.quick, value: hovered)
             .onHover { hovered = interactive && $0 }
@@ -183,11 +194,14 @@ struct IsleFloatingChrome: ViewModifier {
         let shape = RoundedRectangle(cornerRadius: IsleTheme.radius, style: .continuous)
         content
             .background {
-                if opaque || contrast == .increased {
-                    shape.fill(IsleFluidPalette.cardTop)
-                } else {
-                    ZStack { shape.fill(.regularMaterial); shape.fill(IsleFluidPalette.cardTop.opacity(0.32)) }
+                Group {
+                    if opaque || contrast == .increased {
+                        shape.fill(IsleFluidPalette.cardTop)
+                    } else {
+                        ZStack { shape.fill(.regularMaterial); shape.fill(IsleFluidPalette.cardTop.opacity(0.32)) }
+                    }
                 }
+                .shadow(color: .black.opacity(0.12), radius: 24, y: 10)
             }
             .overlay {
                 if contrast == .increased {
@@ -196,7 +210,6 @@ struct IsleFloatingChrome: ViewModifier {
                     shape.strokeBorder(LinearGradient(colors: [Color.white.opacity(0.45), IsleFluidPalette.rim.opacity(0.45)], startPoint: .topLeading, endPoint: .bottomTrailing), lineWidth: 1)
                 }
             }
-            .shadow(color: .black.opacity(0.12), radius: 24, y: 10)
     }
 }
 
@@ -252,16 +265,19 @@ private struct NativeButtonSurface<Label: View>: View {
             .frame(minHeight: size == .large ? 36 : 28)
             .foregroundStyle(foreground)
             .background {
-                switch variant {
-                case .prominent:
-                    shape.fill(LinearGradient(colors: [accent.opacity(0.92), accent], startPoint: .top, endPoint: .bottom))
-                case .borderless:
-                    shape.fill(hovered ? accent.opacity(0.10) : .clear)
-                case .destructive:
-                    shape.fill(hovered ? IsleTheme.errorText.opacity(0.12) : IsleFluidPalette.cardTop)
-                case .secondary:
-                    shape.fill(LinearGradient(colors: hovered ? [IsleFluidPalette.cardHover, IsleFluidPalette.cardTop] : [IsleFluidPalette.cardTop, IsleFluidPalette.cardBottom], startPoint: .top, endPoint: .bottom))
+                Group {
+                    switch variant {
+                    case .prominent:
+                        shape.fill(LinearGradient(colors: [accent.opacity(0.92), accent], startPoint: .top, endPoint: .bottom))
+                    case .borderless:
+                        shape.fill(hovered ? accent.opacity(0.10) : .clear)
+                    case .destructive:
+                        shape.fill(hovered ? IsleTheme.errorText.opacity(0.12) : IsleFluidPalette.cardTop)
+                    case .secondary:
+                        shape.fill(LinearGradient(colors: hovered ? [IsleFluidPalette.cardHover, IsleFluidPalette.cardTop] : [IsleFluidPalette.cardTop, IsleFluidPalette.cardBottom], startPoint: .top, endPoint: .bottom))
+                    }
                 }
+                .shadow(color: variant == .prominent ? accent.opacity(enabled ? (hovered ? 0.28 : 0.18) : 0) : .black.opacity(variant == .borderless ? 0 : 0.035), radius: variant == .prominent ? 10 : 4, y: variant == .prominent ? 4 : 1)
             }
             .overlay {
                 if variant == .prominent {
@@ -270,7 +286,6 @@ private struct NativeButtonSurface<Label: View>: View {
                     shape.strokeBorder(contrast == .increased ? Color.primary.opacity(0.5) : (variant == .destructive ? IsleTheme.errorText.opacity(0.28) : IsleFluidPalette.rim.opacity(0.75)), lineWidth: 1).allowsHitTesting(false)
                 }
             }
-            .shadow(color: variant == .prominent ? accent.opacity(enabled ? (hovered ? 0.28 : 0.18) : 0) : .black.opacity(variant == .borderless ? 0 : 0.035), radius: variant == .prominent ? 10 : 4, y: variant == .prominent ? 4 : 1)
             .contentShape(shape)
             .scaleEffect(enabled && !reduceMotion && pressed ? 0.975 : 1)
             .brightness(enabled && pressed ? -0.04 : 0)
@@ -647,12 +662,12 @@ struct IsleHeaderIconBadge: View {
             .symbolRenderingMode(.hierarchical)
             .foregroundStyle(tint)
             .frame(width: size, height: size)
-            .background(
-                LinearGradient(colors: [tint.opacity(0.22), tint.opacity(0.09)], startPoint: .topLeading, endPoint: .bottomTrailing),
-                in: shape
-            )
+            .background {
+                shape
+                    .fill(LinearGradient(colors: [tint.opacity(0.22), tint.opacity(0.09)], startPoint: .topLeading, endPoint: .bottomTrailing))
+                    .shadow(color: tint.opacity(0.14), radius: 8, y: 3)
+            }
             .overlay { shape.strokeBorder(tint.opacity(0.26), lineWidth: 1).allowsHitTesting(false) }
-            .shadow(color: tint.opacity(0.14), radius: 8, y: 3)
             .accessibilityHidden(true)
     }
 }

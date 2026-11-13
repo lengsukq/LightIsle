@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import SwiftUI
 
 @main
@@ -60,6 +61,13 @@ struct NativePresentationCheck {
         timed.dismiss(); timed.enter(b); timed.dismiss()
         try? await Task.sleep(for: .milliseconds(500))
         precondition(timed.state.owner == nil, "cancelled delay reopened preview")
+
+        var idleChanges = 0
+        let cancellable = timed.objectWillChange.sink { _ in idleChanges += 1 }
+        timed.dismiss()
+        timed.dismiss()
+        cancellable.cancel()
+        precondition(idleChanges == 0, "idle dismiss() emitted objectWillChange during scroll")
         print("PASS actual hover delay, pin retention, and cancellation")
 
         let app = NSApplication.shared

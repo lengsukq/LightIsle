@@ -30,6 +30,7 @@ extension AppModel {
         }
         sendCoreCommandLine(diagnosticsVisible ? "stats\n" : "stats summary\n", context: "metrics.stats")
         sendCoreCommandLine("backup status\nbackup schedule status\n", context: "metrics.backup")
+        refreshPowerSnapshotIfNeeded()
         if Date().timeIntervalSince(lastAlertPollAt) >= 60 {
             lastAlertPollAt = Date()
             sendCoreCommandLine("alerts status\n", context: "metrics.alerts")
@@ -38,6 +39,27 @@ extension AppModel {
             lastShareStatusPollAt = Date()
             sendCoreCommandLine("share status\nsmb status\n", context: "metrics.shareAndSMB")
             rootManagement.refresh()
+        }
+    }
+
+    /// Reads `pmset -g batt` off the main thread so SwiftUI `body` evaluation
+    /// never blocks UI scrolling on a synchronous child process.
+    func refreshPowerSnapshotIfNeeded(force: Bool = false) {
+        guard !isPresentationPreview, powerPollTask == nil else { return }
+        let now = Date()
+        if !force && powerSnapshot != nil && now.timeIntervalSince(lastPowerPollAt) < 15 {
+            return
+        }
+        lastPowerPollAt = now
+        powerPollTask = Task { @MainActor [weak self] in
+            let next = await Task.detached(priority: .utility) {
+                TailscaleAndUPSDetector.currentPowerSnapshot()
+            }.value
+            guard let self else { return }
+            self.powerPollTask = nil
+            if self.powerSnapshot != next {
+                self.powerSnapshot = next
+            }
         }
     }
 

@@ -17,7 +17,7 @@ struct NativeTailscaleSnapshot: Equatable {
     }
 }
 
-struct NativePowerSnapshot: Equatable {
+struct NativePowerSnapshot: Equatable, Sendable {
     let available: Bool
     let source: String
     let onBattery: Bool

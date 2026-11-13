@@ -26,7 +26,16 @@ final class DetailPreviewCoordinator: ObservableObject {
     }
     func remain() { pending?.cancel(); _ = state.invalidateDelay() }
     func pin(_ id: UUID) { pending?.cancel(); state.pin(id) }
-    func dismiss() { pending?.cancel(); pending = nil; state.dismiss() }
+    func dismiss() {
+        let hadPending = pending != nil
+        pending?.cancel()
+        pending = nil
+        if state.owner != nil || state.pinned {
+            state.dismiss()
+        } else if hadPending {
+            _ = state.invalidateDelay()
+        }
+    }
     deinit { pending?.cancel() }
 }
 
@@ -190,9 +199,10 @@ struct ManagementScrollMemory: NSViewRepresentable {
             token = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: next, queue: .main) { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let self, let clip = self.clip else { return }
-                    guard self.lastOrigin != clip.bounds.origin else { return }
-                    self.lastOrigin = clip.bounds.origin
-                    self.store?.offsets[self.route] = clip.bounds.origin
+                    let origin = clip.bounds.origin
+                    guard abs(self.lastOrigin.x - origin.x) > 0.5 || abs(self.lastOrigin.y - origin.y) > 0.5 else { return }
+                    self.lastOrigin = origin
+                    self.store?.offsets[self.route] = origin
                     self.onScroll?()
                 }
             }

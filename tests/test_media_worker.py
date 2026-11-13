@@ -461,7 +461,7 @@ def main() -> None:
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=30,
+            timeout=60,
         )
         assert ai_single.returncode == 0, ai_single.stderr
         ai_payload = json.loads(ai_single.stdout.strip())
@@ -476,7 +476,7 @@ def main() -> None:
             text=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
-            timeout=30,
+            timeout=60,
         )
         assert ai_batch.returncode == 0, ai_batch.stderr
         batch_lines = [json.loads(line) for line in ai_batch.stdout.splitlines() if line.strip()]

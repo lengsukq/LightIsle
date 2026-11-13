@@ -197,6 +197,9 @@ final class AppModel: ObservableObject {
     @Published var initializing = false
     @Published var metrics: HostMetrics?
     @Published var metricHistory: [MetricHistoryPoint] = []
+    @Published var powerSnapshot: NativePowerSnapshot?
+    var lastPowerPollAt = Date.distantPast
+    var powerPollTask: Task<Void, Never>?
     @Published var backupStatus: NASBackupStatus?
     @Published var backupError: String?
     @Published var backupInventory: NASBackupInventory?
