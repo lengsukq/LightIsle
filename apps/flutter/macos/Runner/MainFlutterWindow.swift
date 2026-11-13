@@ -2,29 +2,6 @@ import Cocoa
 import FlutterMacOS
 import AVKit
 
-/// An AppKit hit-test region over the empty middle of the unified toolbar.
-/// Flutter's rendering view normally receives mouse-down events everywhere;
-/// forwarding this strip to AppKit keeps window dragging reliable without
-/// intercepting the sidebar, storage picker, account or native traffic lights.
-private final class TitlebarDragRegion: NSView {
-  override var mouseDownCanMoveWindow: Bool { true }
-
-  override func mouseDown(with event: NSEvent) {
-    guard let window else { return }
-    if event.clickCount >= 2 {
-      // Follow the user's macOS double-click-on-titlebar preference.
-      let action = UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick")
-      if action == "Minimize" {
-        window.miniaturize(nil)
-      } else if action != "None" {
-        window.performZoom(nil)
-      }
-    } else {
-      window.performDrag(with: event)
-    }
-  }
-}
-
 class MainFlutterWindow: NSWindow, NSWindowDelegate {
   private var sessionVault: SessionVault?
   private var desktopFolderBookmarks: DesktopFolderBookmarkPlugin?
@@ -43,20 +20,11 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
     self.styleMask.insert(.fullSizeContentView)
     self.titlebarAppearsTransparent = true
     self.titleVisibility = .hidden
-    // Only the native titlebar/drag strip should drag the window. Dragging
-    // on an empty file canvas must not unexpectedly move the whole app.
+    // Only the Flutter toolbar drag surface invokes performDrag via channel so
+    // modals, photo viewers, and fullscreen controls in the top strip are
+    // never swallowed by an overlapping AppKit subview.
     self.isMovableByWindowBackground = false
     self.title = "轻屿 LightIsle"
-
-    let dragRegion = TitlebarDragRegion()
-    dragRegion.translatesAutoresizingMaskIntoConstraints = false
-    flutterViewController.view.addSubview(dragRegion)
-    NSLayoutConstraint.activate([
-      dragRegion.topAnchor.constraint(equalTo: flutterViewController.view.topAnchor),
-      dragRegion.centerXAnchor.constraint(equalTo: flutterViewController.view.centerXAnchor),
-      dragRegion.widthAnchor.constraint(equalTo: flutterViewController.view.widthAnchor, multiplier: 0.30),
-      dragRegion.heightAnchor.constraint(equalToConstant: 52),
-    ])
 
     RegisterGeneratedPlugins(registry: flutterViewController)
     sessionVault = SessionVault(messenger: flutterViewController.engine.binaryMessenger)
@@ -73,6 +41,25 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
     videoChannel.setMethodCallHandler { [weak self] call, result in
       guard let self else {
         result(nil)
+        return
+      }
+      if call.method == "startWindowDrag" {
+        if !self.styleMask.contains(.fullScreen), let event = NSApp.currentEvent {
+          self.performDrag(with: event)
+        }
+        result(true)
+        return
+      }
+      if call.method == "doubleClickTitlebar" {
+        if !self.styleMask.contains(.fullScreen) {
+          let action = UserDefaults.standard.string(forKey: "AppleActionOnDoubleClick")
+          if action == "Minimize" {
+            self.miniaturize(nil)
+          } else if action != "None" {
+            self.performZoom(nil)
+          }
+        }
+        result(true)
         return
       }
       if call.method == "toggleFullScreen" {

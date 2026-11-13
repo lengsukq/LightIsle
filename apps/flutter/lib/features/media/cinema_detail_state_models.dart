@@ -3,9 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:video_player/video_player.dart';
 
-import 'cinema_dlna_cast_service.dart';
-import 'cinema_hls_session_service.dart';
-import 'cinema_subtitle_repository.dart';
+import 'cinema_metadata_repository.dart';
+import 'dlna_cast.dart';
 import 'media_models.dart';
 
 /// Encapsulates active video controller, HLS transcoding session, and playback

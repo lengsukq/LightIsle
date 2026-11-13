@@ -14,6 +14,7 @@ class PhotoZoomSurface extends StatefulWidget {
     this.aspectRatio,
     this.onTap,
     this.onZoomChanged,
+    this.onDragProgressChanged,
     this.active = true,
     this.allowHorizontalPageSwipe = false,
     this.onSwipeDown,
@@ -24,6 +25,7 @@ class PhotoZoomSurface extends StatefulWidget {
   final double? aspectRatio;
   final VoidCallback? onTap;
   final ValueChanged<bool>? onZoomChanged;
+  final ValueChanged<double>? onDragProgressChanged;
   final bool active;
 
   /// Shares horizontal drags with the gallery while preserving pan at zoom.
@@ -42,6 +44,7 @@ class PhotoZoomSurface extends StatefulWidget {
 class _PhotoZoomSurfaceState extends State<PhotoZoomSurface> {
   final PhotoViewController _controller = PhotoViewController();
   StreamSubscription<PhotoViewControllerValue>? _subscription;
+  Timer? _singleTapTimer;
   bool _zoomed = false;
   int _pointerCount = 0;
   int? _dragPointer;
@@ -67,6 +70,7 @@ class _PhotoZoomSurfaceState extends State<PhotoZoomSurface> {
         _settling = animate;
         _dragDistance = 0;
       });
+      widget.onDragProgressChanged?.call(0.0);
     }
   }
 
@@ -89,6 +93,8 @@ class _PhotoZoomSurfaceState extends State<PhotoZoomSurface> {
         previousPosition != null &&
         (event.timeStamp - previous).inMilliseconds < 330 &&
         (event.localPosition - previousPosition).distance < 48) {
+      _singleTapTimer?.cancel();
+      _singleTapTimer = null;
       _previousTapTime = null;
       final viewport = context.size;
       if (viewport == null) return;
@@ -107,6 +113,13 @@ class _PhotoZoomSurfaceState extends State<PhotoZoomSurface> {
     }
     _previousTapTime = event.timeStamp;
     _previousTapPosition = event.localPosition;
+    if (widget.onTap != null) {
+      _singleTapTimer?.cancel();
+      _singleTapTimer = Timer(const Duration(milliseconds: 220), () {
+        _singleTapTimer = null;
+        if (mounted) widget.onTap?.call();
+      });
+    }
   }
 
   void _onPointerDown(PointerDownEvent event) {
@@ -117,6 +130,8 @@ class _PhotoZoomSurfaceState extends State<PhotoZoomSurface> {
       _tapStart = event.timeStamp;
       _tapMoved = false;
     } else {
+      _singleTapTimer?.cancel();
+      _singleTapTimer = null;
       _tapPointer = null;
       _previousTapTime = null;
     }
@@ -138,6 +153,8 @@ class _PhotoZoomSurfaceState extends State<PhotoZoomSurface> {
         _tapOrigin != null &&
         (event.localPosition - _tapOrigin!).distance > 12) {
       _tapMoved = true;
+      _singleTapTimer?.cancel();
+      _singleTapTimer = null;
     }
     if (_pointerCount != 1 ||
         event.pointer != _dragPointer ||
@@ -162,6 +179,10 @@ class _PhotoZoomSurfaceState extends State<PhotoZoomSurface> {
       _settling = false;
       _dragDistance = distance.dy;
     });
+    final viewportHeight = context.size?.height ?? 600;
+    widget.onDragProgressChanged?.call(
+      (distance.dy.abs() / (viewportHeight * 0.35)).clamp(0.0, 1.0),
+    );
   }
 
   void _onPointerEnd(PointerEvent event) {
@@ -208,6 +229,8 @@ class _PhotoZoomSurfaceState extends State<PhotoZoomSurface> {
   void didUpdateWidget(covariant PhotoZoomSurface oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.active && !widget.active) {
+      _singleTapTimer?.cancel();
+      _singleTapTimer = null;
       _zoomed = false;
       _resetDrag();
       _controller.reset();
@@ -216,6 +239,7 @@ class _PhotoZoomSurfaceState extends State<PhotoZoomSurface> {
 
   @override
   void dispose() {
+    _singleTapTimer?.cancel();
     _subscription?.cancel();
     _controller.dispose();
     super.dispose();
@@ -248,7 +272,6 @@ class _PhotoZoomSurfaceState extends State<PhotoZoomSurface> {
           // The built-in 'covering' double-tap often stays at 1x for our
           // pre-fitted custom child; the pointer listener handles it above.
           scaleStateCycle: (current) => current,
-          onTapUp: (context, details, controllerValue) => widget.onTap?.call(),
           child: SizedBox.fromSize(size: size, child: widget.child),
         );
         return Listener(
@@ -258,6 +281,8 @@ class _PhotoZoomSurfaceState extends State<PhotoZoomSurface> {
           onPointerUp: _onPointerEnd,
           onPointerCancel: (event) {
             _pointerCount = math.max(0, _pointerCount - 1);
+            _singleTapTimer?.cancel();
+            _singleTapTimer = null;
             _tapPointer = null;
             _previousTapTime = null;
             _resetDrag();

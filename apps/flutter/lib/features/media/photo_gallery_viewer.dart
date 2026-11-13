@@ -67,6 +67,22 @@ class PhotoGalleryViewer extends StatefulWidget {
   /// not expose gallery-specific favorites, album editing or offline library.
   final bool fileBrowserMode;
 
+  static Route<void> route(WidgetBuilder builder) => PageRouteBuilder<void>(
+    opaque: false,
+    barrierColor: Colors.transparent,
+    transitionDuration: const Duration(milliseconds: 220),
+    reverseTransitionDuration: const Duration(milliseconds: 180),
+    pageBuilder: (context, _, _) => builder(context),
+    transitionsBuilder: (context, animation, _, child) => FadeTransition(
+      opacity: CurvedAnimation(
+        parent: animation,
+        curve: Curves.easeOutCubic,
+        reverseCurve: Curves.easeInCubic,
+      ),
+      child: child,
+    ),
+  );
+
   @override
   State<PhotoGalleryViewer> createState() => _PhotoGalleryViewerState();
 }
@@ -80,6 +96,7 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
   late List<PhotoAsset> _items;
   late int _index;
   bool _chromeVisible = true;
+  double _dismissDragProgress = 0.0;
   bool _busy = false;
   bool _loadingMore = false;
   late final AnimationController _slideProgress;
@@ -478,6 +495,7 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
     HapticFeedback.selectionClick();
     setState(() {
       _index = index;
+      _dismissDragProgress = 0.0;
       _error = null;
       _livePlaying = false;
     });
@@ -510,11 +528,16 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
   Widget build(BuildContext context) {
     final asset = _current;
     final safe = MediaQuery.paddingOf(context);
+    final disableAnimations = MediaQuery.disableAnimationsOf(context);
+    final chromeDuration = disableAnimations
+        ? Duration.zero
+        : const Duration(milliseconds: 180);
+    final backdropAlpha = (1.0 - _dismissDragProgress * 0.62).clamp(0.22, 1.0);
     return Focus(
       autofocus: true,
       onKeyEvent: _onKeyEvent,
       child: Scaffold(
-        backgroundColor: Colors.black,
+        backgroundColor: Colors.black.withValues(alpha: backdropAlpha),
         body: Stack(
           children: [
             Positioned.fill(
@@ -576,6 +599,16 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
                                         unawaited(widget.onDetails(_current));
                                       },
                                 onTap: _toggleChrome,
+                                onDragProgressChanged: (progress) {
+                                  if (mounted &&
+                                      index == _index &&
+                                      (progress - _dismissDragProgress).abs() >
+                                          0.01) {
+                                    setState(
+                                      () => _dismissDragProgress = progress,
+                                    );
+                                  }
+                                },
                                 onZoomChanged: (zoomed) {
                                   if (mounted && index == _index && zoomed) {
                                     _stopSlideshow();
@@ -695,29 +728,43 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
                   ),
                 ),
             ],
-            if (_chromeVisible) ...[
-              Positioned(
-                top: 0,
-                left: 0,
-                right: 0,
-                child: DecoratedBox(
-                  decoration: const BoxDecoration(
-                    gradient: LinearGradient(
-                      begin: Alignment.topCenter,
-                      end: Alignment.bottomCenter,
-                      colors: [Color(0xB5000000), Colors.transparent],
+            Positioned(
+              top: 0,
+              left: 0,
+              right: 0,
+              child: IgnorePointer(
+                ignoring: !_chromeVisible,
+                child: AnimatedOpacity(
+                  opacity: _chromeVisible ? 1.0 : 0.0,
+                  duration: chromeDuration,
+                  curve: Curves.easeOutCubic,
+                  child: DecoratedBox(
+                    decoration: const BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Color(0xB5000000), Colors.transparent],
+                      ),
                     ),
+                    child: _buildModernHeader(asset, safe.top),
                   ),
-                  child: _buildModernHeader(asset, safe.top),
                 ),
               ),
-              Positioned(
-                left: 0,
-                right: 0,
-                bottom: 0,
-                child: _buildBottomToolbar(asset, safe.bottom),
+            ),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: IgnorePointer(
+                ignoring: !_chromeVisible,
+                child: AnimatedOpacity(
+                  opacity: _chromeVisible ? 1.0 : 0.0,
+                  duration: chromeDuration,
+                  curve: Curves.easeOutCubic,
+                  child: _buildBottomToolbar(asset, safe.bottom),
+                ),
               ),
-            ],
+            ),
           ],
         ),
       ),

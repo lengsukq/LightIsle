@@ -292,9 +292,9 @@ class _IsleAnimatedEntranceState extends State<IsleAnimatedEntrance>
   }
 }
 
-/// Spring-damped reveal wrapper for search bars, selection toolbars, and
-/// disclosure blocks. Immediately unmounts when collapsed while smoothly
-/// fading and settling in when expanded without clipping hit-test bounds.
+/// Spring-damped reveal & collapse wrapper for search bars, selection toolbars,
+/// and disclosure blocks. Smoothly interpolates both height and opacity on
+/// open and close, unmounting the child once collapse completes.
 class IsleAnimatedExpand extends StatelessWidget {
   const IsleAnimatedExpand({
     super.key,
@@ -311,30 +311,32 @@ class IsleAnimatedExpand extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    if (!expanded) {
-      return const SizedBox.shrink();
-    }
     if (MediaQuery.disableAnimationsOf(context)) {
-      return child;
+      return expanded ? child : const SizedBox.shrink();
     }
-    return TweenAnimationBuilder<double>(
-      key: const ValueKey('expanded'),
-      tween: Tween<double>(begin: 0.0, end: 1.0),
+    return AnimatedSwitcher(
       duration: duration,
-      curve: IsleMotion.spring,
-      builder: (context, t, inner) {
-        final opacity = t.clamp(0.0, 1.0);
-        final scale = 0.985 + (0.015 * opacity);
-        return Opacity(
-          opacity: opacity,
-          child: Transform.scale(
-            scale: scale,
-            alignment: alignment,
+      reverseDuration: const Duration(milliseconds: 180),
+      switchInCurve: IsleMotion.spring,
+      switchOutCurve: Curves.easeOutCubic,
+      layoutBuilder: (currentChild, previousChildren) => Column(
+        mainAxisSize: MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: <Widget>[...previousChildren, ?currentChild],
+      ),
+      transitionBuilder: (inner, animation) => ClipRect(
+        child: SizeTransition(
+          sizeFactor: animation,
+          alignment: Alignment.topCenter,
+          child: FadeTransition(
+            opacity: animation,
             child: inner,
           ),
-        );
-      },
-      child: child,
+        ),
+      ),
+      child: expanded
+          ? KeyedSubtree(key: const ValueKey<bool>(true), child: child)
+          : const SizedBox.shrink(key: ValueKey<bool>(false)),
     );
   }
 }

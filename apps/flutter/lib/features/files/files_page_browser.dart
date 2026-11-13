@@ -90,6 +90,7 @@ extension _FilesPageBrowserOperations on _FilesPageState {
         term: term,
         limit: _pageSize,
         kind: _filter.searchKind,
+        engine: _filter.searchViaSpotlight ? 'spotlight' : '',
       );
       if (!_browserRequestCurrent(generation, rootIdentity)) return;
       _refreshState(() {

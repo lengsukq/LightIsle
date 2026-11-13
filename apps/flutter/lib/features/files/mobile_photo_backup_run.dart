@@ -551,15 +551,16 @@ extension _MobilePhotoBackupRun on _MobilePhotoBackupState {
         }
 
         var pageHadFailures = false;
+        final recordedOmittedItems = await _recordOmittedPageItems(
+          preferences,
+          keys.failureStorageKey,
+          page.storeVersionID,
+          page.omittedItems,
+        );
         var pageHasOmissions =
             page.oversizedCount > 0 ||
             page.invalidCount > 0 ||
-            await _recordOmittedPageItems(
-              preferences,
-              keys.failureStorageKey,
-              page.storeVersionID,
-              page.omittedItems,
-            );
+            recordedOmittedItems;
 
         for (final entry in page.rows) {
           final outcome = await _processPhotoEntry(

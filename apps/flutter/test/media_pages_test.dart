@@ -47,6 +47,11 @@ void main() {
     debugDefaultTargetPlatformOverride = TargetPlatform.macOS;
     addTearDown(() => debugDefaultTargetPlatformOverride = null);
     final api = _MediaApi()
+      ..privateAlbumRows.add(<String, Object>{
+        'id': 91,
+        'name': 'Private Legacy',
+        'count': 0,
+      })
       ..sharedAlbumRows.add(<String, Object>{
         'id': 44,
         'name': 'Family',
@@ -96,6 +101,31 @@ void main() {
       greaterThan(tester.getRect(personal).bottom),
     );
     expect(tester.getSize(card).width, lessThanOrEqualTo(168.1));
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('album overview hides legacy shared and private cards when empty', (
+    tester,
+  ) async {
+    final api = _MediaApi();
+    addTearDown(api.close);
+    api.firstPhotos.complete(<String, dynamic>{
+      'assets': <Object>[],
+      'nextCursor': 0,
+    });
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: buildIsleTheme(Brightness.light),
+        home: Scaffold(body: PhotosPage(api: api, isAdmin: true)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('相册'));
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('privateAlbumSection')), findsNothing);
+    expect(find.byKey(const ValueKey('sharedAlbumSection')), findsNothing);
+    expect(find.text('文件夹相册'), findsWidgets);
     expect(tester.takeException(), isNull);
   });
 
@@ -203,12 +233,12 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 30));
     await tester.tap(find.byTooltip('选择照片'));
-    await tester.pump();
+    await tester.pumpAndSettle();
     await tester.tap(find.widgetWithText(OutlinedButton, '全选当前页'));
     await tester.pump();
     expect(find.text('已选 2 项'), findsOneWidget);
     await tester.tap(find.widgetWithText(TextButton, '完成'));
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(find.text('已选 2 项'), findsNothing);
     expect(tester.takeException(), isNull);
   });
@@ -250,7 +280,7 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 30));
     await tester.tap(find.byKey(const Key('cinema-select-toggle')));
-    await tester.pump();
+    await tester.pumpAndSettle();
     await tester.tap(find.text('Selection film A').first);
     await tester.pump();
     expect(find.text('已选 1 项 · 最多 50 项'), findsOneWidget);
@@ -259,7 +289,7 @@ void main() {
     await tester.pump();
     expect(find.text('已选 2 项 · 最多 50 项'), findsOneWidget);
     await tester.tap(find.widgetWithText(TextButton, '完成'));
-    await tester.pump();
+    await tester.pumpAndSettle();
     expect(find.text('已选 2 项 · 最多 50 项'), findsNothing);
     expect(tester.takeException(), isNull);
   });

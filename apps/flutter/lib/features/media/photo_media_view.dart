@@ -34,6 +34,7 @@ class PhotoMediaImage extends StatefulWidget {
     required this.asset,
     required this.onTap,
     required this.onZoomChanged,
+    this.onDragProgressChanged,
     this.active = true,
     this.allowHorizontalPageSwipe = false,
     this.onSwipeDown,
@@ -45,6 +46,7 @@ class PhotoMediaImage extends StatefulWidget {
   final PhotoAsset asset;
   final VoidCallback onTap;
   final ValueChanged<bool> onZoomChanged;
+  final ValueChanged<double>? onDragProgressChanged;
   final bool active;
   final bool allowHorizontalPageSwipe;
   final VoidCallback? onSwipeDown;
@@ -94,7 +96,7 @@ class PhotoMediaImageState extends State<PhotoMediaImage> {
         widget.asset.width > 0 && widget.asset.height > widget.asset.width;
 
     return ColoredBox(
-      color: Colors.black,
+      color: Colors.transparent,
       child: PhotoZoomSurface(
         aspectRatio: widget.asset.displayAspectRatio,
         active: widget.active,
@@ -102,6 +104,7 @@ class PhotoMediaImageState extends State<PhotoMediaImage> {
         onSwipeDown: widget.onSwipeDown,
         onSwipeUp: widget.onSwipeUp,
         onTap: widget.onTap,
+        onDragProgressChanged: widget.onDragProgressChanged,
         onZoomChanged: (zoomed) {
           widget.onZoomChanged(zoomed);
         },

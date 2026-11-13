@@ -211,42 +211,55 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
                   ),
                 ],
                 const SizedBox(height: 22),
-                if (sideBySide)
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Expanded(
-                        child: _albumOverviewSection(
-                          pageContext,
-                          refreshPage,
-                          private: true,
-                        ),
-                      ),
-                      const SizedBox(width: 16),
-                      Expanded(
-                        child: _albumOverviewSection(
-                          pageContext,
-                          refreshPage,
-                          private: false,
-                        ),
-                      ),
-                    ],
-                  )
-                else ...[
-                  _albumOverviewSection(
-                    pageContext,
-                    refreshPage,
-                    private: true,
-                  ),
-                  const SizedBox(height: 16),
-                  _albumOverviewSection(
-                    pageContext,
-                    refreshPage,
-                    private: false,
-                  ),
-                ],
-                const SizedBox(height: 16),
                 _folderAlbumOverviewSection(pageContext, refreshPage),
+                if (_catalog.privateAlbums.isNotEmpty ||
+                    _catalog.privateFailure != null ||
+                    _catalog.sharedAlbums.isNotEmpty) ...[
+                  const SizedBox(height: 16),
+                  if (sideBySide &&
+                      (_catalog.privateAlbums.isNotEmpty ||
+                          _catalog.privateFailure != null) &&
+                      _catalog.sharedAlbums.isNotEmpty)
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: _albumOverviewSection(
+                            pageContext,
+                            refreshPage,
+                            private: true,
+                          ),
+                        ),
+                        const SizedBox(width: 16),
+                        Expanded(
+                          child: _albumOverviewSection(
+                            pageContext,
+                            refreshPage,
+                            private: false,
+                          ),
+                        ),
+                      ],
+                    )
+                  else ...[
+                    if (_catalog.privateAlbums.isNotEmpty ||
+                        _catalog.privateFailure != null)
+                      _albumOverviewSection(
+                        pageContext,
+                        refreshPage,
+                        private: true,
+                      ),
+                    if ((_catalog.privateAlbums.isNotEmpty ||
+                            _catalog.privateFailure != null) &&
+                        _catalog.sharedAlbums.isNotEmpty)
+                      const SizedBox(height: 16),
+                    if (_catalog.sharedAlbums.isNotEmpty)
+                      _albumOverviewSection(
+                        pageContext,
+                        refreshPage,
+                        private: false,
+                      ),
+                  ],
+                ],
                 const SizedBox(height: 16),
                 _collectionsQuickGrid(pageContext),
               ],

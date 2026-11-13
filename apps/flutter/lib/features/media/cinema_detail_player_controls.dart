@@ -61,14 +61,21 @@ extension _CinemaDetailPlayerControls on _CinemaDetailDialogState {
     return '音轨';
   }
 
-  ButtonStyle get _compactTransportIconStyle => IconButton.styleFrom(
-    foregroundColor: Colors.white,
-    disabledForegroundColor: Colors.white38,
-    hoverColor: const Color(0x24FFFFFF),
-    padding: const EdgeInsets.all(6),
-    minimumSize: const Size(32, 32),
-    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-  );
+  ButtonStyle get _compactTransportIconStyle {
+    final touch =
+        defaultTargetPlatform == TargetPlatform.iOS ||
+        defaultTargetPlatform == TargetPlatform.android;
+    return IconButton.styleFrom(
+      foregroundColor: Colors.white,
+      disabledForegroundColor: Colors.white38,
+      hoverColor: const Color(0x24FFFFFF),
+      padding: EdgeInsets.all(touch ? 8 : 6),
+      minimumSize: Size(touch ? 44 : 34, touch ? 44 : 34),
+      tapTargetSize: touch
+          ? MaterialTapTargetSize.padded
+          : MaterialTapTargetSize.shrinkWrap,
+    );
+  }
 
   PopupMenuItem<T> _buildPopupChoice<T>({
     required T value,
@@ -261,10 +268,6 @@ extension _CinemaDetailPlayerControls on _CinemaDetailDialogState {
                   );
                 });
               },
-              onDoubleTap: () {
-                _revealChrome();
-                _updateState(() => _chrome.dockDragOffset = Offset.zero);
-              },
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxWidth: 920),
                 child: DecoratedBox(
@@ -314,15 +317,24 @@ extension _CinemaDetailPlayerControls on _CinemaDetailDialogState {
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Tooltip(
-          message: '按住拖动控制栏位置，双击复位',
-          child: Container(
-            width: 36,
-            height: 4,
-            margin: const EdgeInsets.symmetric(vertical: 2),
-            decoration: BoxDecoration(
-              color: const Color(0x4DFFFFFF),
-              borderRadius: BorderRadius.circular(999),
+        GestureDetector(
+          behavior: HitTestBehavior.opaque,
+          onDoubleTap: () {
+            _revealChrome();
+            _updateState(() => _chrome.dockDragOffset = Offset.zero);
+          },
+          child: Tooltip(
+            message: '按住拖动控制栏位置，双击复位',
+            child: Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
+              child: Container(
+                width: 36,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: const Color(0x4DFFFFFF),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+              ),
             ),
           ),
         ),

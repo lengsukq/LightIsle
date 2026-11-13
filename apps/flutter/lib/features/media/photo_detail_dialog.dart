@@ -603,7 +603,7 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog> {
             ),
           ),
         ],
-        if (widget.isAdmin) ...[
+        if (widget.isAdmin && widget.albums.isNotEmpty) ...[
           const SizedBox(height: 18),
           const Divider(height: 1),
           const SizedBox(height: 14),
@@ -715,14 +715,6 @@ class _PhotoDetailDialogState extends State<PhotoDetailDialog> {
           const SizedBox(height: 6),
           Text(
             '私人相册仅当前账号可见，不会影响共享收藏或原始文件。',
-            style: Theme.of(context).textTheme.bodySmall?.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
-          ),
-        ] else if (widget.onAddToPrivateAlbum != null) ...[
-          const SizedBox(height: 12),
-          Text(
-            '还没有私人相册。返回图库后可创建，仅当前账号可见。',
             style: Theme.of(context).textTheme.bodySmall?.copyWith(
               color: Theme.of(context).colorScheme.onSurfaceVariant,
             ),

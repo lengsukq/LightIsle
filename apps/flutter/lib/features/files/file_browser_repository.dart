@@ -74,6 +74,7 @@ class FileBrowserRepository {
     required String term,
     required int limit,
     String kind = '',
+    String engine = '',
   }) async {
     final query = <String, String>{
       'path': initialPath,
@@ -82,6 +83,9 @@ class FileBrowserRepository {
     };
     if (kind.isNotEmpty && kind != 'all') {
       query['kind'] = kind;
+    }
+    if (engine.isNotEmpty) {
+      query['engine'] = engine;
     }
     final response = await api.get('/api/v2/files/search', query: query);
     return FileSearchPage(

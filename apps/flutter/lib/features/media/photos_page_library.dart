@@ -176,8 +176,8 @@ extension _PhotosPageLibrary on _PhotosPageState {
     }
     HapticFeedback.selectionClick();
     await Navigator.of(context).push<void>(
-      MaterialPageRoute(
-        builder: (_) => PhotoGalleryViewer(
+      PhotoGalleryViewer.route(
+        (_) => PhotoGalleryViewer(
           api: widget.api,
           memoryCache: _photoCache,
           offlineAccountId: widget.offlineAccountId,

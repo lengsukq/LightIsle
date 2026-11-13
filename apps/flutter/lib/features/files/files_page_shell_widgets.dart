@@ -128,23 +128,49 @@ extension _FilesPageShellWidgets on _FilesPageState {
     final iconActions = IsleLayout.compactToolbar(availableWidth, textScale);
     final singleRowToolbar =
         !_filter.showingTrash && availableWidth >= 600 && textScale <= 1.35;
-    final searchField = IsleSearchBar(
-      controller: _filter.searchController,
-      enabled: !_dir.loading,
-      hintText: iconActions || compact ? '搜索文件名' : '搜索文件名（至少 2 个字符）',
-      showClear: _filter.searching,
-      onSubmitted: (_) => _searchFiles(),
-      onClear: _dir.loading
-          ? null
-          : () {
-              if (_filter.searching) {
-                final target = _filter.preSearchPath ?? widget.initialPath;
-                _filter.searchController.clear();
-                _loadFiles(target: target);
-              } else {
-                _searchFiles();
-              }
-            },
+    final searchField = Row(
+      children: [
+        Expanded(
+          child: IsleSearchBar(
+            controller: _filter.searchController,
+            enabled: !_dir.loading,
+            hintText: _filter.searchViaSpotlight
+                ? '全文搜索文件名或正文'
+                : (iconActions || compact ? '搜索文件名' : '搜索文件名（至少 2 个字符）'),
+            showClear: _filter.searching,
+            onSubmitted: (_) => _searchFiles(),
+            onClear: _dir.loading
+                ? null
+                : () {
+                    if (_filter.searching) {
+                      final target =
+                          _filter.preSearchPath ?? widget.initialPath;
+                      _filter.searchController.clear();
+                      _loadFiles(target: target);
+                    } else {
+                      _searchFiles();
+                    }
+                  },
+          ),
+        ),
+        const SizedBox(width: 6),
+        FilterChip(
+          key: const ValueKey('filesSpotlightToggle'),
+          label: const Text('全文搜索'),
+          tooltip: '使用 Spotlight 全文检索文件内容',
+          visualDensity: VisualDensity.compact,
+          selected: _filter.searchViaSpotlight,
+          onSelected: _dir.loading
+              ? null
+              : (selected) {
+                  _refreshState(() => _filter.searchViaSpotlight = selected);
+                  if (_filter.searching &&
+                      _filter.searchController.text.trim().runes.length >= 2) {
+                    _searchFiles();
+                  }
+                },
+        ),
+      ],
     );
     final actionsRow = Row(
       mainAxisSize: singleRowToolbar ? MainAxisSize.min : MainAxisSize.max,

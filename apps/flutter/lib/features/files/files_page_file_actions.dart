@@ -36,8 +36,8 @@ extension _FilesPageFileActions on _FilesPageState {
     if (kind == FilePreviewKind.image || kind == FilePreviewKind.video) {
       final playlist = FileMediaPlaylist.fromDirectory(_dir.entries, item);
       await Navigator.of(context).push<void>(
-        MaterialPageRoute(
-          builder: (_) => PhotoGalleryViewer(
+        PhotoGalleryViewer.route(
+          (_) => PhotoGalleryViewer(
             api: widget.api,
             assets: playlist.assets,
             initialIndex: playlist.initialIndex,

@@ -42,6 +42,7 @@ class _LoginPageState extends State<LoginPage> {
   final _username = TextEditingController();
   final _password = TextEditingController();
   final _fingerprint = TextEditingController();
+  final _usernameFocus = FocusNode();
   late final LoginHistoryStore _historyStore =
       widget.historyStore ?? LoginHistoryStore();
   late final ServerLatencyProber _latencyProber =
@@ -111,8 +112,18 @@ class _LoginPageState extends State<LoginPage> {
     );
   }
 
+  String _normalizeServerAddress(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return '';
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      return trimmed;
+    }
+    final hasPortOrPath = RegExp(r'^(\[[^\]]+\]|[^/:]+)(:\d+|/)').hasMatch(trimmed);
+    return hasPortOrPath ? 'http://$trimmed' : 'http://$trimmed:16666';
+  }
+
   Future<void> _probeCurrentServer() async {
-    final url = _server.text.trim();
+    final url = _normalizeServerAddress(_server.text);
     if (url.isEmpty) return;
     final gen = ++_currentProbeGen;
     final pin = _fingerprint.text.trim().isEmpty
@@ -219,7 +230,10 @@ class _LoginPageState extends State<LoginPage> {
       _busy = true;
       _error = null;
     });
-    final rawServer = _server.text.trim();
+    final rawServer = _normalizeServerAddress(_server.text);
+    if (rawServer != _server.text.trim() && rawServer.isNotEmpty) {
+      _server.text = rawServer;
+    }
     final rawUsername = _username.text.trim();
     final rawPassword = _password.text;
     final rawPin = _fingerprint.text.trim().isEmpty
@@ -313,6 +327,7 @@ class _LoginPageState extends State<LoginPage> {
     _username.dispose();
     _password.dispose();
     _fingerprint.dispose();
+    _usernameFocus.dispose();
     super.dispose();
   }
 
@@ -397,8 +412,21 @@ class _LoginPageState extends State<LoginPage> {
         validator: (v) =>
             v == null || v.trim().isEmpty ? '请输入 Mac 管理端显示的连接地址' : null,
       ),
+      if (_server.text.trim().isNotEmpty &&
+          !_server.text.trim().startsWith('http://') &&
+          !_server.text.trim().startsWith('https://'))
+        Padding(
+          padding: const EdgeInsets.only(top: 6, left: 4),
+          child: Text(
+            '将自动补全连接地址：${_normalizeServerAddress(_server.text)}',
+            style: theme.textTheme.labelSmall?.copyWith(
+              color: colors.primary,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ),
       CurrentServerLatencyBar(
-        serverUrl: _server.text,
+        serverUrl: _normalizeServerAddress(_server.text),
         result: _currentServerLatency,
         enabled: !_busy,
         onProbe: _probeCurrentServer,
@@ -410,9 +438,12 @@ class _LoginPageState extends State<LoginPage> {
           _server.text = server.address;
           _addressChanged(server.address);
           setState(() {
-            _securityExpanded = true;
+            _securityExpanded = _httpsOrigin(server.address) != null;
             _error = null;
           });
+          if (_username.text.trim().isEmpty) {
+            _usernameFocus.requestFocus();
+          }
         },
       ),
       Padding(
@@ -431,6 +462,7 @@ class _LoginPageState extends State<LoginPage> {
     return [
       TextFormField(
         controller: _username,
+        focusNode: _usernameFocus,
         enabled: !_busy,
         textInputAction: TextInputAction.next,
         autocorrect: false,
@@ -490,43 +522,42 @@ class _LoginPageState extends State<LoginPage> {
       ),
       IsleAnimatedExpand(
         expanded: _securityExpanded,
-        child: _securityExpanded
-            ? Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  TextFormField(
-                    key: const Key('certificateFingerprint'),
-                    controller: _fingerprint,
-                    enabled: !_busy,
-                    autocorrect: false,
-                    enableSuggestions: false,
-                    minLines: 2,
-                    maxLines: 3,
-                    decoration: const InputDecoration(
-                      labelText: '连接验证信息（加密连接时使用）',
-                      helperText:
-                          '第一次连接 Mac 时，从 Mac「连接其他设备」中复制验证信息并仔细核对。使用已受信任的证书时可留空。',
-                      helperMaxLines: 5,
-                      prefixIcon: Icon(Icons.verified_user_outlined, size: 20),
-                    ),
-                    validator: (value) {
-                      final pin = (value ?? '').replaceAll(
-                        RegExp(r'[:\s]'),
-                        '',
-                      );
-                      if (pin.isEmpty) return null;
-                      if (_httpsOrigin(_server.text) == null) {
-                        return '证书指纹仅用于 HTTPS 地址';
-                      }
-                      return RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(pin)
-                          ? null
-                          : '请输入完整的 64 位 SHA-256 指纹';
-                    },
-                  ),
-                  const SizedBox(height: 8),
-                ],
-              )
-            : const SizedBox.shrink(),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            TextFormField(
+              key: const Key('certificateFingerprint'),
+              controller: _fingerprint,
+              enabled: !_busy,
+              autocorrect: false,
+              enableSuggestions: false,
+              minLines: 2,
+              maxLines: 3,
+              decoration: const InputDecoration(
+                labelText: '连接验证信息（加密连接时使用）',
+                helperText:
+                    '第一次连接 Mac 时，从 Mac「连接其他设备」中复制验证信息并仔细核对。使用已受信任的证书时可留空。',
+                helperMaxLines: 5,
+                prefixIcon: Icon(Icons.verified_user_outlined, size: 20),
+              ),
+              validator: (value) {
+                final pin = (value ?? '').replaceAll(
+                  RegExp(r'[:\s]'),
+                  '',
+                );
+                if (pin.isEmpty) return null;
+                if (_httpsOrigin(_normalizeServerAddress(_server.text)) ==
+                    null) {
+                  return '证书指纹仅用于 HTTPS 地址';
+                }
+                return RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(pin)
+                    ? null
+                    : '请输入完整的 64 位 SHA-256 指纹';
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
       ),
     ];
   }

@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 
 import 'file_batch_operations.dart';
 import 'file_models.dart';
-import 'file_upload_service.dart';
+import 'file_upload_stream.dart';
 
 /// Encapsulates active directory listing, pagination cursor, write permission,
 /// and error diagnostics for [FilesPage].
@@ -45,6 +45,7 @@ class FilesSearchAndTrashState {
   List<TrashEntry> trashEntries = <TrashEntry>[];
 
   bool searching = false;
+  bool searchViaSpotlight = false;
   String? preSearchPath;
   bool searchTruncated = false;
   String searchTerm = '';

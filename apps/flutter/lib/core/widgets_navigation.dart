@@ -351,14 +351,31 @@ class IsleAppBar extends StatelessWidget implements PreferredSizeWidget {
       centerTitle: centerTitle,
       foregroundColor: foregroundColor,
       backgroundColor: Colors.transparent,
-      flexibleSpace: IsleGlassBackdrop(
-        blur: IsleGlass.sigmaRegular,
-        child: ColoredBox(
-          color:
-              backgroundColor ??
-              (isOpaque
-                  ? colors.surface
-                  : IsleGlass.regularTint(isDark, colors.surface)),
+      flexibleSpace: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onPanStart: isMac
+            ? (_) => unawaited(
+                const MethodChannel(
+                  'lightisle/native-video',
+                ).invokeMethod<void>('startWindowDrag').catchError((_) {}),
+              )
+            : null,
+        onDoubleTap: isMac
+            ? () => unawaited(
+                const MethodChannel(
+                  'lightisle/native-video',
+                ).invokeMethod<void>('doubleClickTitlebar').catchError((_) {}),
+              )
+            : null,
+        child: IsleGlassBackdrop(
+          blur: IsleGlass.sigmaRegular,
+          child: ColoredBox(
+            color:
+                backgroundColor ??
+                (isOpaque
+                    ? colors.surface
+                    : IsleGlass.regularTint(isDark, colors.surface)),
+          ),
         ),
       ),
     );

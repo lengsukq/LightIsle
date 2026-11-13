@@ -333,81 +333,94 @@ extension _FilesPageFileWidgets on _FilesPageState {
       margin: EdgeInsets.zero,
       elevation: 0,
       color: selected ? colors.primaryContainer : colors.surfaceContainerLow,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(14),
+      shape: IsleShapes.squircle(
+        14,
         side: BorderSide(
           color: selected ? colors.primary : colors.outlineVariant,
           width: selected ? 1.5 : .7,
         ),
       ),
       clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: _dir.loading ? null : () => _openOrSelectFile(item),
-        onLongPress: () => _startSelectingFile(item),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Expanded(
-              child: Stack(
-                fit: StackFit.expand,
-                children: [
-                  _fileCardCover(context, item),
-                  if (_transfers.selecting)
-                    Positioned(
-                      top: 2,
-                      left: 2,
-                      child: Checkbox(
-                        value: selected,
-                        onChanged: (value) => _toggleSelected(item, value),
-                      ),
-                    ),
-                  if (_transfers.downloading.contains(item.path))
-                    Positioned(
-                      bottom: 0,
-                      left: 0,
-                      right: 0,
-                      child: LinearProgressIndicator(
-                        value: _transfers.downloadProgress[item.path],
-                      ),
-                    ),
-                ],
+      child: GestureDetector(
+        behavior: HitTestBehavior.translucent,
+        onSecondaryTapDown: _dir.loading
+            ? null
+            : (details) => unawaited(
+                _showFileContextMenu(
+                  context,
+                  details.globalPosition,
+                  item,
+                  writable,
+                ),
               ),
-            ),
-            SizedBox(
-              height: detailHeight,
-              child: Padding(
-                padding: const EdgeInsets.fromLTRB(10, 3, 2, 5),
-                child: Row(
+        child: InkWell(
+          onTap: _dir.loading ? null : () => _openOrSelectFile(item),
+          onLongPress: () => _startSelectingFile(item),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Expanded(
+                child: Stack(
+                  fit: StackFit.expand,
                   children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                          Text(
-                            item.name,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.bodyMedium
-                                ?.copyWith(fontWeight: FontWeight.w600),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            item.isFolder ? '文件夹' : formatBytes(item.size),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: Theme.of(context).textTheme.bodySmall
-                                ?.copyWith(color: colors.onSurfaceVariant),
-                          ),
-                        ],
+                    _fileCardCover(context, item),
+                    if (_transfers.selecting)
+                      Positioned(
+                        top: 2,
+                        left: 2,
+                        child: Checkbox(
+                          value: selected,
+                          onChanged: (value) => _toggleSelected(item, value),
+                        ),
                       ),
-                    ),
-                    _fileActionsMenu(item, writable),
+                    if (_transfers.downloading.contains(item.path))
+                      Positioned(
+                        bottom: 0,
+                        left: 0,
+                        right: 0,
+                        child: LinearProgressIndicator(
+                          value: _transfers.downloadProgress[item.path],
+                        ),
+                      ),
                   ],
                 ),
               ),
-            ),
-          ],
+              SizedBox(
+                height: detailHeight,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 3, 2, 5),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              item.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodyMedium
+                                  ?.copyWith(fontWeight: FontWeight.w600),
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              item.isFolder ? '文件夹' : formatBytes(item.size),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodySmall
+                                  ?.copyWith(color: colors.onSurfaceVariant),
+                            ),
+                          ],
+                        ),
+                      ),
+                      _fileActionsMenu(item, writable),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
@@ -422,50 +435,63 @@ extension _FilesPageFileWidgets on _FilesPageState {
         : _formatDate(item.modified!);
     return Column(
       children: [
-        ListTile(
-          minTileHeight: compact ? 46 : 50,
-          visualDensity: compact
-              ? VisualDensity.compact
-              : VisualDensity.standard,
-          contentPadding: EdgeInsets.symmetric(
-            horizontal: compact ? 10 : 18,
-            vertical: 0,
-          ),
-          selected: selected,
-          selectedTileColor: colors.primaryContainer.withValues(alpha: .42),
-          leading: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              if (_transfers.selecting)
-                Semantics(
-                  label: '选择 ${item.name}',
-                  child: Checkbox(
-                    value: selected,
-                    onChanged: (value) {
-                      HapticFeedback.selectionClick();
-                      _toggleSelected(item, value);
-                    },
+        GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          onSecondaryTapDown: _dir.loading
+              ? null
+              : (details) => unawaited(
+                  _showFileContextMenu(
+                    context,
+                    details.globalPosition,
+                    item,
+                    writable,
                   ),
                 ),
-              const SizedBox(width: 4),
-              _buildFileBadge(item),
-            ],
+          child: ListTile(
+            minTileHeight: compact ? 46 : 50,
+            visualDensity: compact
+                ? VisualDensity.compact
+                : VisualDensity.standard,
+            contentPadding: EdgeInsets.symmetric(
+              horizontal: compact ? 10 : 18,
+              vertical: 0,
+            ),
+            selected: selected,
+            selectedTileColor: colors.primaryContainer.withValues(alpha: .42),
+            leading: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (_transfers.selecting)
+                  Semantics(
+                    label: '选择 ${item.name}',
+                    child: Checkbox(
+                      value: selected,
+                      onChanged: (value) {
+                        HapticFeedback.selectionClick();
+                        _toggleSelected(item, value);
+                      },
+                    ),
+                  ),
+                const SizedBox(width: 4),
+                _buildFileBadge(item),
+              ],
+            ),
+            title: Text(
+              item.name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
+            ),
+            subtitle: Text(
+              '${item.isFolder ? '文件夹' : formatBytes(item.size)} · $modified${_filter.searching ? ' · ${item.path}' : ''}',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(fontSize: 11.5, color: colors.onSurfaceVariant),
+            ),
+            onLongPress: () => _startSelectingFile(item),
+            onTap: _dir.loading ? null : () => _openOrSelectFile(item),
+            trailing: _fileActionsMenu(item, writable),
           ),
-          title: Text(
-            item.name,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 14),
-          ),
-          subtitle: Text(
-            '${item.isFolder ? '文件夹' : formatBytes(item.size)} · $modified${_filter.searching ? ' · ${item.path}' : ''}',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: TextStyle(fontSize: 11.5, color: colors.onSurfaceVariant),
-          ),
-          onLongPress: () => _startSelectingFile(item),
-          onTap: _dir.loading ? null : () => _openOrSelectFile(item),
-          trailing: _fileActionsMenu(item, writable),
         ),
         if (_transfers.downloading.contains(item.path))
           Padding(
@@ -479,6 +505,125 @@ extension _FilesPageFileWidgets on _FilesPageState {
     );
   }
 
+  void _dispatchFileAction(FileEntry item, String value) {
+    switch (value) {
+      case 'preview':
+        _preview(item);
+      case 'openContainingFolder':
+        final slash = item.path.lastIndexOf('/');
+        final parent = slash < 0 ? '.' : item.path.substring(0, slash);
+        _loadFiles(target: parent);
+      case 'download':
+        _download(item);
+      case 'openExternal':
+        _openExternal(item);
+      case 'share':
+        _shareFile(item);
+      case 'copy':
+        _operate(item, 'copy');
+      case 'move':
+        _operate(item, 'move');
+      case 'rename':
+        _rename(item);
+      case 'extract':
+        _extractZip(item);
+      case 'trash':
+        _trash(item);
+    }
+  }
+
+  List<PopupMenuEntry<String>> _buildFileActionMenuItems(
+    FileEntry item,
+    bool writable,
+  ) => [
+    if (_filter.searching)
+      isleActionMenuItem(
+        value: 'openContainingFolder',
+        icon: Icons.folder_open_outlined,
+        label: '打开所在目录',
+      ),
+    if (!item.isFolder)
+      isleActionMenuItem(
+        value: 'preview',
+        icon: Icons.visibility_outlined,
+        label: '预览',
+      ),
+    if (!item.isFolder)
+      isleActionMenuItem(
+        value: 'openExternal',
+        icon: Icons.open_in_new_rounded,
+        label: '其他应用打开',
+      ),
+    isleActionMenuItem(
+      value: 'download',
+      icon: item.isFolder ? Icons.archive_outlined : Icons.download_outlined,
+      label: item.isFolder ? '下载文件夹 ZIP' : '下载',
+    ),
+    if (writable &&
+        !item.isFolder &&
+        item.name.toLowerCase().endsWith('.zip'))
+      isleActionMenuItem(
+        value: 'extract',
+        icon: Icons.unarchive_outlined,
+        label: '解压到同名文件夹',
+      ),
+    if (!item.isFolder)
+      isleActionMenuItem(
+        value: 'share',
+        icon: Icons.ios_share_outlined,
+        label: '分享文件',
+      ),
+    if (item.isFolder)
+      isleActionMenuItem(
+        value: 'share',
+        icon: Icons.ios_share_outlined,
+        label: '分享文件夹 ZIP',
+      ),
+    const PopupMenuDivider(),
+    if (writable)
+      isleActionMenuItem(
+        value: 'rename',
+        icon: Icons.drive_file_rename_outline,
+        label: '重命名',
+      ),
+    isleActionMenuItem(value: 'copy', icon: Icons.copy_outlined, label: '复制'),
+    if (writable)
+      isleActionMenuItem(
+        value: 'move',
+        icon: Icons.drive_file_move_outline,
+        label: '移动到…',
+      ),
+    if (writable)
+      isleActionMenuItem(
+        value: 'trash',
+        icon: Icons.delete_outline,
+        label: '移到回收站',
+      ),
+  ];
+
+  Future<void> _showFileContextMenu(
+    BuildContext context,
+    Offset globalPosition,
+    FileEntry item,
+    bool writable,
+  ) async {
+    final overlay = Overlay.maybeOf(context)?.context.findRenderObject();
+    if (overlay is! RenderBox) return;
+    final selected = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromRect(
+        globalPosition & const Size(1, 1),
+        Offset.zero & overlay.size,
+      ),
+      constraints: const BoxConstraints(minWidth: 205, maxWidth: 260),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      items: _buildFileActionMenuItems(item, writable),
+    );
+    if (selected != null && mounted) {
+      _dispatchFileAction(item, selected);
+    }
+  }
+
   Widget _fileActionsMenu(
     FileEntry item,
     bool writable,
@@ -487,97 +632,8 @@ extension _FilesPageFileWidgets on _FilesPageState {
     position: PopupMenuPosition.under,
     constraints: const BoxConstraints(minWidth: 205, maxWidth: 260),
     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-    onSelected: (value) {
-      switch (value) {
-        case 'preview':
-          _preview(item);
-        case 'openContainingFolder':
-          final slash = item.path.lastIndexOf('/');
-          final parent = slash < 0 ? '.' : item.path.substring(0, slash);
-          _loadFiles(target: parent);
-        case 'download':
-          _download(item);
-        case 'openExternal':
-          _openExternal(item);
-        case 'share':
-          _shareFile(item);
-        case 'copy':
-          _operate(item, 'copy');
-        case 'move':
-          _operate(item, 'move');
-        case 'rename':
-          _rename(item);
-        case 'extract':
-          _extractZip(item);
-        case 'trash':
-          _trash(item);
-      }
-    },
-    itemBuilder: (context) => [
-      if (_filter.searching)
-        isleActionMenuItem(
-          value: 'openContainingFolder',
-          icon: Icons.folder_open_outlined,
-          label: '打开所在目录',
-        ),
-      if (!item.isFolder)
-        isleActionMenuItem(
-          value: 'preview',
-          icon: Icons.visibility_outlined,
-          label: '预览',
-        ),
-      if (!item.isFolder)
-        isleActionMenuItem(
-          value: 'openExternal',
-          icon: Icons.open_in_new_rounded,
-          label: '其他应用打开',
-        ),
-      isleActionMenuItem(
-        value: 'download',
-        icon: item.isFolder ? Icons.archive_outlined : Icons.download_outlined,
-        label: item.isFolder ? '下载文件夹 ZIP' : '下载',
-      ),
-      if (writable &&
-          !item.isFolder &&
-          item.name.toLowerCase().endsWith('.zip'))
-        isleActionMenuItem(
-          value: 'extract',
-          icon: Icons.unarchive_outlined,
-          label: '解压到同名文件夹',
-        ),
-      if (!item.isFolder)
-        isleActionMenuItem(
-          value: 'share',
-          icon: Icons.ios_share_outlined,
-          label: '分享文件',
-        ),
-      if (item.isFolder)
-        isleActionMenuItem(
-          value: 'share',
-          icon: Icons.ios_share_outlined,
-          label: '分享文件夹 ZIP',
-        ),
-      const PopupMenuDivider(),
-      if (writable)
-        isleActionMenuItem(
-          value: 'rename',
-          icon: Icons.drive_file_rename_outline,
-          label: '重命名',
-        ),
-      isleActionMenuItem(value: 'copy', icon: Icons.copy_outlined, label: '复制'),
-      if (writable)
-        isleActionMenuItem(
-          value: 'move',
-          icon: Icons.drive_file_move_outline,
-          label: '移动到…',
-        ),
-      if (writable)
-        isleActionMenuItem(
-          value: 'trash',
-          icon: Icons.delete_outline,
-          label: '移到回收站',
-        ),
-    ],
+    onSelected: (value) => _dispatchFileAction(item, value),
+    itemBuilder: (context) => _buildFileActionMenuItems(item, writable),
   );
 
   Widget _trashTile(

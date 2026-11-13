@@ -16,6 +16,7 @@ class DashboardQuickLinks extends StatelessWidget {
     this.onOpenFiles,
     this.onOpenShares,
     this.onOpenAppsCenter,
+    this.onOpenComputerFiles,
     this.onQuickUpload,
   });
 
@@ -24,6 +25,7 @@ class DashboardQuickLinks extends StatelessWidget {
   final VoidCallback? onOpenFiles;
   final VoidCallback? onOpenShares;
   final VoidCallback? onOpenAppsCenter;
+  final VoidCallback? onOpenComputerFiles;
   final VoidCallback? onQuickUpload;
 
   @override
@@ -68,6 +70,15 @@ class DashboardQuickLinks extends StatelessWidget {
           '海报墙、热播走廊与续播',
           false,
         ),
+        if (onOpenComputerFiles != null)
+          (
+            'dashboardComputerFilesEntry',
+            onOpenComputerFiles!,
+            Icons.computer_outlined,
+            '电脑文件',
+            admin ? '浏览 Mac 已开放的只读目录与授权' : '访问管理员已授权的电脑文件夹',
+            false,
+          ),
         if (onOpenAppsCenter != null)
           (
             'dashboardAppsEntry',

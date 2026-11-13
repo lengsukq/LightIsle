@@ -112,6 +112,8 @@ class _FakeVideoPlatform extends VideoPlayerPlatform {
       dataSources.add(options.dataSource.uri!);
     }
     final id = _nextId++;
+    // Closed in dispose().
+    // ignore: close_sinks
     final events = StreamController<VideoEvent>.broadcast();
     _events[id] = events;
     Timer.run(() {

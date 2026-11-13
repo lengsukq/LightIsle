@@ -1,39 +1,49 @@
 part of 'client_shell.dart';
 
 extension _ClientShellChrome on _ClientShellState {
+  bool get _isMobileTouchPlatform =>
+      defaultTargetPlatform == TargetPlatform.iOS ||
+      defaultTargetPlatform == TargetPlatform.android;
+
   Widget _taskButton({bool unified = false}) => ListenableBuilder(
     listenable: _uploadCenter,
     builder: (context, _) {
       final scheme = Theme.of(context).colorScheme;
       final unfinished = _uploadCenter.unfinished;
+      final touchMin = (!unified && _isMobileTouchPlatform) ? 44.0 : 34.0;
       return Tooltip(
         message: '传输任务（未结束 $unfinished）',
-        child: InkWell(
-          key: const ValueKey('globalUploadTaskCenter'),
-          borderRadius: IsleRadius.brPill,
-          onTap: () => Navigator.of(context).push(
-            MaterialPageRoute<void>(
-              builder: (_) => UploadTaskCenterPage(center: _uploadCenter),
-            ),
-          ),
-          child: Container(
-            constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-            decoration: IsleDecorations.capsuleControl(
-              context,
-              selected: unfinished > 0,
-            ),
-            child: Badge(
-              isLabelVisible: unfinished > 0,
-              label: Text('$unfinished'),
-              backgroundColor: scheme.primary,
-              textColor: scheme.onPrimary,
-              child: Icon(
-                Icons.swap_vert_rounded,
-                size: 19,
-                color: unfinished > 0
-                    ? scheme.primary
-                    : scheme.onSurfaceVariant,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(minWidth: touchMin, minHeight: touchMin),
+          child: Center(
+            child: InkWell(
+              key: const ValueKey('globalUploadTaskCenter'),
+              borderRadius: IsleRadius.brPill,
+              onTap: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => UploadTaskCenterPage(center: _uploadCenter),
+                ),
+              ),
+              child: Container(
+                constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                decoration: IsleDecorations.capsuleControl(
+                  context,
+                  selected: unfinished > 0,
+                ),
+                child: Badge(
+                  isLabelVisible: unfinished > 0,
+                  label: Text('$unfinished'),
+                  backgroundColor: scheme.primary,
+                  textColor: scheme.onPrimary,
+                  child: Icon(
+                    Icons.swap_vert_rounded,
+                    size: 19,
+                    color: unfinished > 0
+                        ? scheme.primary
+                        : scheme.onSurfaceVariant,
+                  ),
+                ),
               ),
             ),
           ),
@@ -48,41 +58,47 @@ extension _ClientShellChrome on _ClientShellState {
     final initial = rawName.isNotEmpty
         ? rawName.characters.first.toUpperCase()
         : '';
+    final touchMin = (!unified && _isMobileTouchPlatform) ? 44.0 : 34.0;
 
     return Tooltip(
       message: '设置与账号${rawName.isNotEmpty ? '（$rawName）' : ''}',
-      child: InkWell(
-        key: const ValueKey('macAccountButton'),
-        borderRadius: IsleRadius.brPill,
-        onTap: () => _select(3),
-        child: Container(
-          constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
-          padding: const EdgeInsets.all(5),
-          decoration: IsleDecorations.capsuleControl(context),
-          child: initial.isNotEmpty
-              ? Container(
-                  width: 22,
-                  height: 22,
-                  alignment: Alignment.center,
-                  decoration: BoxDecoration(
-                    color: scheme.primary.withValues(alpha: 0.16),
-                    shape: BoxShape.circle,
-                  ),
-                  child: Text(
-                    initial,
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: scheme.primary,
-                      height: 1.1,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(minWidth: touchMin, minHeight: touchMin),
+        child: Center(
+          child: InkWell(
+            key: const ValueKey('macAccountButton'),
+            borderRadius: IsleRadius.brPill,
+            onTap: () => _select(3),
+            child: Container(
+              constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+              padding: const EdgeInsets.all(5),
+              decoration: IsleDecorations.capsuleControl(context),
+              child: initial.isNotEmpty
+                  ? Container(
+                      width: 22,
+                      height: 22,
+                      alignment: Alignment.center,
+                      decoration: BoxDecoration(
+                        color: scheme.primary.withValues(alpha: 0.16),
+                        shape: BoxShape.circle,
+                      ),
+                      child: Text(
+                        initial,
+                        style: TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          color: scheme.primary,
+                          height: 1.1,
+                        ),
+                      ),
+                    )
+                  : Icon(
+                      Icons.person_rounded,
+                      size: 19,
+                      color: scheme.onSurfaceVariant,
                     ),
-                  ),
-                )
-              : Icon(
-                  Icons.person_rounded,
-                  size: 19,
-                  color: scheme.onSurfaceVariant,
-                ),
+            ),
+          ),
         ),
       ),
     );
@@ -340,15 +356,34 @@ extension _ClientShellChrome on _ClientShellState {
               const IsleBrandMark(size: 20),
               const SizedBox(width: 8),
               Expanded(
-                child: Text(
-                  compact
-                      ? _ClientShellState._labels[_index]
-                      : '轻屿  /  ${_ClientShellState._labels[_index]}',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    fontWeight: FontWeight.w600,
-                    color: scheme.onSurface.withValues(alpha: 0.88),
+                child: GestureDetector(
+                  behavior: HitTestBehavior.opaque,
+                  onPanStart: (_) => unawaited(
+                    const MethodChannel('lightisle/native-video')
+                        .invokeMethod<void>('startWindowDrag')
+                        .catchError((_) {}),
+                  ),
+                  onDoubleTap: () => unawaited(
+                    const MethodChannel('lightisle/native-video')
+                        .invokeMethod<void>('doubleClickTitlebar')
+                        .catchError((_) {}),
+                  ),
+                  child: SizedBox(
+                    height: 52,
+                    child: Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        compact
+                            ? _ClientShellState._labels[_index]
+                            : '轻屿  /  ${_ClientShellState._labels[_index]}',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                          fontWeight: FontWeight.w600,
+                          color: scheme.onSurface.withValues(alpha: 0.88),
+                        ),
+                      ),
+                    ),
                   ),
                 ),
               ),
@@ -462,18 +497,25 @@ extension _ClientShellChrome on _ClientShellState {
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
           ),
-          child: NavigationRail(
-            selectedIndex: _index,
-            extended: extendedRail,
-            minWidth: 72,
-            minExtendedWidth: 190,
-            labelType: NavigationRailLabelType.none,
-            onDestinationSelected: _select,
-            destinations: List.generate(
-              _ClientShellState._labels.length,
-              (i) => NavigationRailDestination(
-                icon: Icon(_ClientShellState._sectionThemes[i].icon),
-                label: Text(_ClientShellState._labels[i]),
+          child: AnimatedSize(
+            duration: MediaQuery.disableAnimationsOf(context)
+                ? Duration.zero
+                : IsleMotion.normal,
+            curve: IsleMotion.curve,
+            alignment: Alignment.centerLeft,
+            child: NavigationRail(
+              selectedIndex: _index,
+              extended: extendedRail,
+              minWidth: 72,
+              minExtendedWidth: 190,
+              labelType: NavigationRailLabelType.none,
+              onDestinationSelected: _select,
+              destinations: List.generate(
+                _ClientShellState._labels.length,
+                (i) => NavigationRailDestination(
+                  icon: Icon(_ClientShellState._sectionThemes[i].icon),
+                  label: Text(_ClientShellState._labels[i]),
+                ),
               ),
             ),
           ),

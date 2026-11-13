@@ -222,6 +222,8 @@ class _VideoPlayerTestPlatform extends VideoPlayerPlatform {
   @override
   Future<int?> createWithOptions(VideoCreationOptions options) async {
     final id = _nextId++;
+    // Closed in dispose().
+    // ignore: close_sinks
     final events = StreamController<VideoEvent>.broadcast();
     _events[id] = events;
     Timer.run(() {

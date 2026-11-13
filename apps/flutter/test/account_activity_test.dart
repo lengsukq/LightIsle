@@ -196,11 +196,11 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    await _tap(tester, find.text('撤销此会话'));
+    await _tap(tester, find.text('远程下线'));
     await _tap(tester, find.widgetWithText(FilledButton, '撤销会话'));
     expect(api.writes.single.path, '/api/v2/auth/sessions/other');
     expect(api.writes.single.method, 'DELETE');
-    expect(find.text('当前会话'), findsOneWidget);
+    expect(find.text('本机当前'), findsOneWidget);
   });
 
   testWidgets(

@@ -12,11 +12,14 @@ import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 import 'apps_center_sheets.dart';
 import 'apps_mcp_debug_sheet.dart';
+import 'apps_mcp_wizard_sheet.dart';
 
 export 'apps_center_sheets.dart';
 export 'apps_mcp_debug_sheet.dart';
+export 'apps_mcp_wizard_sheet.dart';
 
 part 'apps_center_cards.dart';
+part 'apps_center_mcp_card.dart';
 
 const String _defaultMcpPrompt =
     '请帮我将当前 Mac 上的「LightIsle（轻屿）全功能管理与控制 MCP Server」安装并注册到你的 MCP 配置文件中：\n'
@@ -51,9 +54,18 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
   List<Map<String, dynamic>> _templates = const [];
   List<Map<String, dynamic>> _members = const [];
   Set<String> _configuredChannels = const {};
-  bool _isAdmin = false, _mcpEnabled = false, _busy = false;
-  bool _mcpBusy = false, _loaded = false, _workbenchFullscreen = false;
+  bool _isAdmin = false, _mcpEnabled = false, _mcpLanEnabled = false, _busy = false;
+  bool _mcpBusy = false,
+      _loaded = false,
+      _workbenchFullscreen = false,
+      _revealMcpToken = false;
   String _mcpPrompt = _defaultMcpPrompt;
+  String _mcpToken = '';
+  String _mcpCommand = '';
+  String _lanHttpUrl = '';
+  String _lanSseUrl = '';
+  String _lanMcpPrompt = '';
+  List<Map<String, dynamic>> _mcpLogs = const [];
   Map<String, dynamic> _rawMcpSnapshot = const {};
   String? _wakingAppId,
       _activeWorkbenchAppId,
@@ -84,12 +96,39 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
         };
       }
       if (res['isAdmin'] is bool) _isAdmin = res['isAdmin'] as bool;
-      if (res['mcpEnabled'] is bool) _mcpEnabled = res['mcpEnabled'] as bool;
-      final prompt = res['mcpPrompt']?.toString().trim() ?? '';
-      if (prompt.isNotEmpty) _mcpPrompt = prompt;
+      _applyMcpFields(res);
       _rawMcpSnapshot = Map<String, dynamic>.from(res);
       _loaded = true;
     });
+  }
+
+  void _applyMcpFields(Map<String, dynamic> res) {
+    if (res['mcpEnabled'] is bool) _mcpEnabled = res['mcpEnabled'] as bool;
+    if (res['mcpLanEnabled'] is bool) {
+      _mcpLanEnabled = res['mcpLanEnabled'] as bool;
+    } else if (!_mcpEnabled) {
+      _mcpLanEnabled = false;
+    }
+    final prompt = res['mcpPrompt']?.toString().trim() ?? '';
+    if (prompt.isNotEmpty) _mcpPrompt = prompt;
+    if (res.containsKey('mcpToken')) {
+      _mcpToken = res['mcpToken']?.toString().trim() ?? '';
+    }
+    if (res.containsKey('mcpCommand')) {
+      _mcpCommand = res['mcpCommand']?.toString().trim() ?? '';
+    }
+    if (res.containsKey('lanHttpUrl')) {
+      _lanHttpUrl = res['lanHttpUrl']?.toString().trim() ?? '';
+    }
+    if (res.containsKey('lanSseUrl')) {
+      _lanSseUrl = res['lanSseUrl']?.toString().trim() ?? '';
+    }
+    if (res.containsKey('lanMcpPrompt')) {
+      _lanMcpPrompt = res['lanMcpPrompt']?.toString().trim() ?? '';
+    }
+    if (res['mcpLogs'] is List) {
+      _mcpLogs = objectList(res['mcpLogs']);
+    }
   }
 
   Future<void> _runBusy(
@@ -142,16 +181,16 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
       final res = await widget.api.send(
         'PUT',
         '/api/v2/apps/mcp',
-        body: {'enabled': enabled},
+        body: {'enabled': enabled, if (!enabled) 'lanEnabled': false},
       );
       if (!mounted) return;
       setState(() {
-        _mcpEnabled = res['mcpEnabled'] == true;
-        final prompt = res['mcpPrompt']?.toString().trim() ?? '';
-        if (prompt.isNotEmpty) _mcpPrompt = prompt;
+        _applyMcpFields(res);
+        if (!_mcpEnabled) _mcpLanEnabled = false;
+        _rawMcpSnapshot = {..._rawMcpSnapshot, ...res};
         _notice = _mcpEnabled
-            ? '已开启本地 AI Agent (MCP) 开发者服务。'
-            : '已关闭本地 AI Agent (MCP) 开发者服务。';
+            ? '已开启 AI Agent (MCP) 服务，本机默认免令牌直连。'
+            : '已关闭 AI Agent (MCP) 服务并同步关闭局域网与 Cloud MCP 访问。';
       });
     } catch (e) {
       if (mounted) {
@@ -160,6 +199,84 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
     } finally {
       if (mounted) setState(() => _mcpBusy = false);
     }
+  }
+
+  Future<void> _toggleMcpLan(bool enabled) async {
+    if (_mcpBusy) return;
+    setState(() {
+      _mcpBusy = true;
+      _error = null;
+      _notice = null;
+    });
+    try {
+      final res = await widget.api.send(
+        'PUT',
+        '/api/v2/apps/mcp',
+        body: {'enabled': true, 'lanEnabled': enabled},
+      );
+      if (!mounted) return;
+      setState(() {
+        _applyMcpFields(res);
+        _rawMcpSnapshot = {..._rawMcpSnapshot, ...res};
+        _notice = _mcpLanEnabled
+            ? '已开启局域网 / Cloud MCP 访问，远程端点与 Token 已展开。'
+            : '已关闭局域网 / Cloud MCP 访问，仅保留本机免令牌直连。';
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() => _error = '切换局域网 MCP 开关失败：${userFacingError(e)}');
+      }
+    } finally {
+      if (mounted) setState(() => _mcpBusy = false);
+    }
+  }
+
+  Future<void> _rotateMcpToken() async {
+    if (_mcpBusy) return;
+    setState(() {
+      _mcpBusy = true;
+      _error = null;
+      _notice = null;
+    });
+    try {
+      final res = await widget.api.send('POST', '/api/v2/apps/mcp/token/rotate');
+      if (!mounted) return;
+      setState(() {
+        _applyMcpFields(res);
+        _rawMcpSnapshot = {..._rawMcpSnapshot, ...res};
+        _notice = '已轮换 MCP Bearer 鉴权 Token，请同步更新外部客户端配置。';
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() => _error = '轮换 Token 失败：${userFacingError(e)}');
+      }
+    } finally {
+      if (mounted) setState(() => _mcpBusy = false);
+    }
+  }
+
+  Future<void> _clearMcpLogs() async {
+    if (_mcpBusy) return;
+    setState(() => _mcpBusy = true);
+    try {
+      await widget.api.send('DELETE', '/api/v2/apps/mcp/logs');
+      if (!mounted) return;
+      setState(() {
+        _mcpLogs = const [];
+        _notice = '已清空 MCP 调用记录。';
+      });
+    } catch (e) {
+      if (mounted) {
+        setState(() => _error = '清空 MCP 调用记录失败：${userFacingError(e)}');
+      }
+    } finally {
+      if (mounted) setState(() => _mcpBusy = false);
+    }
+  }
+
+  Future<void> _copyMcpText(String text, String notice) async {
+    await Clipboard.setData(ClipboardData(text: text));
+    if (mounted) setState(() => _notice = notice);
   }
 
   Future<void> _copyMcpPrompt() async {

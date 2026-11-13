@@ -43,6 +43,7 @@ class _NewAccountDialogState extends State<NewAccountDialog> {
   String _role = 'member';
   int? _createdUserId;
   String? _error;
+  bool _obscurePassword = true;
   bool _rootsLoaded = false;
   List<Map<String, dynamic>> _onlineRoots = [];
   Map<String, dynamic>? _selectedRoot;
@@ -214,6 +215,8 @@ class _NewAccountDialogState extends State<NewAccountDialog> {
               TextFormField(
                 controller: _name,
                 enabled: !_accountLocked,
+                autofocus: true,
+                textInputAction: TextInputAction.next,
                 decoration: const InputDecoration(labelText: '用户名（3–32 位）'),
                 autocorrect: false,
                 validator: (v) =>
@@ -225,8 +228,25 @@ class _NewAccountDialogState extends State<NewAccountDialog> {
               TextFormField(
                 controller: _password,
                 enabled: !_accountLocked,
-                obscureText: true,
-                decoration: const InputDecoration(labelText: '密码（至少 12 位）'),
+                obscureText: _obscurePassword,
+                textInputAction: TextInputAction.done,
+                onFieldSubmitted: (_) => _submitCreateOrRetry(),
+                decoration: InputDecoration(
+                  labelText: '密码（至少 12 位）',
+                  suffixIcon: IconButton(
+                    tooltip: _obscurePassword ? '显示密码' : '隐藏密码',
+                    onPressed: _accountLocked
+                        ? null
+                        : () => setState(
+                            () => _obscurePassword = !_obscurePassword,
+                          ),
+                    icon: Icon(
+                      _obscurePassword
+                          ? Icons.visibility_outlined
+                          : Icons.visibility_off_outlined,
+                    ),
+                  ),
+                ),
                 validator: validateNewPassword,
               ),
               const SizedBox(height: 12),

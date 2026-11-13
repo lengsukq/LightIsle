@@ -323,10 +323,48 @@ class _FilesPageState extends State<FilesPage> {
     );
   }
 
+  bool _isEditingText() {
+    final focusContext = FocusManager.instance.primaryFocus?.context;
+    if (focusContext == null) return false;
+    if (focusContext.widget is EditableText) return true;
+    return focusContext.findAncestorWidgetOfExactType<EditableText>() != null;
+  }
+
+  void _handleEscapeShortcut() {
+    if (_isEditingText() || _dir.loading || _transfers.batchBusy) return;
+    if (_transfers.selecting) {
+      _refreshState(_transfers.clearSelection);
+    } else if (_filter.searching) {
+      _loadFiles(target: _filter.preSearchPath ?? widget.initialPath);
+    } else if (_filter.showingTrash) {
+      _toggleTrash();
+    }
+  }
+
+  void _handleSelectAllShortcut() {
+    if (_isEditingText() ||
+        _dir.loading ||
+        _transfers.batchBusy ||
+        _filter.showingTrash) {
+      return;
+    }
+    final selection = _selectionSnapshot;
+    if (selection.visiblePaths.isEmpty) return;
+    _refreshState(() {
+      _transfers.selecting = true;
+      _transfers.selectedPaths
+        ..clear()
+        ..addAll(selection.toggledVisible());
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     if (widget.uploadOnly) return _uploadView(context);
     final colors = Theme.of(context).colorScheme;
+    final useMeta =
+        defaultTargetPlatform == TargetPlatform.macOS ||
+        defaultTargetPlatform == TargetPlatform.iOS;
     return PopScope(
       canPop:
           _dir.path == widget.initialPath &&
@@ -334,14 +372,27 @@ class _FilesPageState extends State<FilesPage> {
           !_filter.searching &&
           !_transfers.selecting,
       onPopInvokedWithResult: _handlePopInvoked,
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final compact = constraints.maxWidth < IsleLayout.compactPageWidth;
-          final inset = IsleLayout.pageInset(constraints.maxWidth);
-          final topInset = IsleLayout.pageTopInset(constraints.maxWidth);
-          return RefreshIndicator(
-            onRefresh: _refreshCurrentView,
-            child: ListView(
+      child: CallbackShortcuts(
+        bindings: {
+          const SingleActivator(LogicalKeyboardKey.escape):
+              _handleEscapeShortcut,
+          SingleActivator(
+            LogicalKeyboardKey.keyA,
+            meta: useMeta,
+            control: !useMeta,
+          ): _handleSelectAllShortcut,
+        },
+        child: Focus(
+          autofocus: false,
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              final compact =
+                  constraints.maxWidth < IsleLayout.compactPageWidth;
+              final inset = IsleLayout.pageInset(constraints.maxWidth);
+              final topInset = IsleLayout.pageTopInset(constraints.maxWidth);
+              return RefreshIndicator(
+                onRefresh: _refreshCurrentView,
+                child: ListView(
               physics: const AlwaysScrollableScrollPhysics(),
               padding: EdgeInsets.fromLTRB(inset, topInset, inset, inset + 56),
               children: [
@@ -397,6 +448,8 @@ class _FilesPageState extends State<FilesPage> {
             ),
           );
         },
+          ),
+        ),
       ),
     );
   }

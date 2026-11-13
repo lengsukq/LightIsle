@@ -1,4 +1,3 @@
-import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lightisle/features/files/files_page_state_models.dart';
 import 'package:lightisle/features/files/mobile_photo_backup_state_models.dart';
@@ -120,8 +119,8 @@ void main() {
       expect(params['directory'], 'Trips/2026');
       expect(params['favorites'], '1');
       expect(params['q'], '海边');
-      expect(params['scene'], '海边');
-      expect(params['person'], '9');
+      expect(params['searchMode'], 'scene');
+      expect(params['personId'], '9');
       expect(params['type'], 'photo');
       expect(params['camera'], 'Sony A7C');
       expect(params['hasLocation'], '1');

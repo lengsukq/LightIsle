@@ -433,8 +433,14 @@ class _OverviewPageState extends State<OverviewPage>
                 padding: EdgeInsets.only(bottom: compact ? 8 : 12),
                 child: hero,
               ),
-              OutlinedButton.icon(
-                onPressed: () => Navigator.of(context).push<void>(
+              if (widget.isAdmin) _buildAttentionBanner(context),
+              DashboardQuickLinks(
+                onNavigate: widget.onNavigate ?? (_) {},
+                admin: widget.isAdmin,
+                onOpenFiles: widget.onOpenFiles,
+                onOpenShares: _openSharesPage,
+                onOpenAppsCenter: _openAppsCenterPage,
+                onOpenComputerFiles: () => Navigator.of(context).push<void>(
                   MaterialPageRoute(
                     builder: (_) => ComputerFilesPage(
                       api: widget.api,
@@ -442,20 +448,8 @@ class _OverviewPageState extends State<OverviewPage>
                     ),
                   ),
                 ),
-                icon: const Icon(Icons.computer_outlined),
-                label: const Text('电脑文件'),
               ),
-              if (widget.isAdmin) _buildAttentionBanner(context),
-              if (widget.onNavigate != null || widget.onOpenFiles != null) ...[
-                DashboardQuickLinks(
-                  onNavigate: widget.onNavigate ?? (_) {},
-                  admin: widget.isAdmin,
-                  onOpenFiles: widget.onOpenFiles,
-                  onOpenShares: _openSharesPage,
-                  onOpenAppsCenter: _openAppsCenterPage,
-                ),
-                SizedBox(height: compact ? 6 : 12),
-              ],
+              SizedBox(height: compact ? 6 : 12),
               if (_busy &&
                   (widget.isAdmin ? stats == null : _personalStorage == null))
                 const IsleLoadingState(label: '正在同步设备与空间状态…'),

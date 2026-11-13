@@ -9,6 +9,8 @@ class _FakeAppsApi extends LightIsleApi {
 
   final bool isAdmin;
   bool mcpEnabled = false;
+  bool mcpLanEnabled = false;
+  String mcpToken = 'mcp-tok-initial';
   final List<String> calls = <String>[];
   Map<String, dynamic>? lastPutBody;
   Map<String, dynamic>? lastMcpDebugBody;
@@ -68,6 +70,10 @@ class _FakeAppsApi extends LightIsleApi {
     'apps': apps.map((e) => Map<String, dynamic>.from(e)).toList(),
     'isAdmin': isAdmin,
     'mcpEnabled': mcpEnabled,
+    'mcpLanEnabled': mcpLanEnabled,
+    'mcpToken': mcpToken,
+    'lanHttpUrl': 'http://192.168.1.10:16666/api/v2/mcp',
+    'lanSseUrl': 'http://192.168.1.10:16666/api/v2/mcp/sse',
     'mcpPrompt': 'lightisled mcp --data-dir /tmp/lightisle',
     'members': <Map<String, dynamic>>[
       {'id': 1, 'username': 'admin', 'role': 'admin'},
@@ -115,8 +121,17 @@ class _FakeAppsApi extends LightIsleApi {
     if (method == 'PUT' && path == '/api/v2/apps/mcp') {
       final map = Map<String, dynamic>.from(body as Map);
       mcpEnabled = map['enabled'] == true;
+      if (map.containsKey('lanEnabled')) {
+        mcpLanEnabled = map['lanEnabled'] == true;
+      } else if (!mcpEnabled) {
+        mcpLanEnabled = false;
+      }
       return {
         'mcpEnabled': mcpEnabled,
+        'mcpLanEnabled': mcpLanEnabled,
+        'mcpToken': mcpToken,
+        'lanHttpUrl': 'http://192.168.1.10:16666/api/v2/mcp',
+        'lanSseUrl': 'http://192.168.1.10:16666/api/v2/mcp/sse',
         'mcpPrompt': 'lightisled mcp --data-dir /tmp/lightisle',
       };
     }
@@ -420,4 +435,39 @@ void main() {
       });
     },
   );
+
+  testWidgets('unified MCP hierarchy cascades switches and opens wizard', (
+    tester,
+  ) async {
+    final api = _FakeAppsApi(isAdmin: true);
+    addTearDown(api.close);
+
+    await tester.pumpWidget(
+      MaterialApp(home: AppsCenterPage(api: api, isAdmin: true)),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.byKey(const ValueKey('mcpLanEnableSwitch')), findsNothing);
+
+    await tester.tap(find.byKey(const ValueKey('mcpEnableSwitch')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('mcpLanEnableSwitch')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('mcpLanEnableSwitch')));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const ValueKey('mcpCallLogsAccordion')), findsOneWidget);
+
+    await tester.tap(find.byKey(const ValueKey('openMcpWizardSheetButton')));
+    await tester.pumpAndSettle();
+    expect(find.text('Gemini 桌面端'), findsOneWidget);
+    expect(find.text('轻屿 LightIsle'), findsOneWidget);
+    expect(find.byKey(const ValueKey('geminiSandboxWarning')), findsOneWidget);
+    await tester.tap(find.text('完成'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byKey(const ValueKey('mcpEnableSwitch')));
+    await tester.pumpAndSettle();
+    expect(api.mcpEnabled, isFalse);
+    expect(api.mcpLanEnabled, isFalse);
+  });
 }

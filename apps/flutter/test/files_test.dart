@@ -559,6 +559,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('filesSpotlightToggle')));
+    await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), 'plan');
     await tester.tap(find.byTooltip('搜索'));
     await tester.pumpAndSettle();
@@ -570,7 +572,8 @@ void main() {
       api.requests.any(
         (request) =>
             request.path == '/api/v2/files/search' &&
-            request.queryParameters['query'] == 'plan',
+            request.queryParameters['query'] == 'plan' &&
+            request.queryParameters['engine'] == 'spotlight',
       ),
       isTrue,
     );
