@@ -78,6 +78,11 @@ const selectionExposesPersonal = computed(() => {
   return sub === "" || sub === "Users" || sub.startsWith("Users/");
 });
 
+function canManageShare(share: SharePoint): boolean {
+  const roots = status.value?.candidateRoots ?? [];
+  return roots.length === 0 || Boolean(share.rootId);
+}
+
 function syncRootSelection() {
   if (!onlineRoots.value.length) {
     selectedRootID.value = "";
@@ -331,6 +336,7 @@ onMounted(() => {
               <strong class="smb-share-title">
                 <span>{{ share.smbName }}</span>
                 <IsleBadge v-if="share.rootName" variant="neutral" size="sm">NAS · {{ share.rootName }}</IsleBadge>
+                <IsleBadge v-else-if="!canManageShare(share)" variant="neutral" size="sm">本机其他共享（仅 Mac 端管理）</IsleBadge>
                 <IsleBadge v-if="!share.pathExists" variant="warning" size="sm">路径离线</IsleBadge>
               </strong>
               <small>{{ share.path }}</small>
@@ -341,7 +347,7 @@ onMounted(() => {
             <IsleButton
               variant="danger"
               size="sm"
-              :disabled="busy || !status.remoteManageReady"
+              :disabled="busy || !status.remoteManageReady || !canManageShare(share)"
               @click="removeShare(share)"
             >
               <template #icon><Trash2 :size="13" /></template>
@@ -353,7 +359,7 @@ onMounted(() => {
               <input
                 type="checkbox"
                 :checked="share.shared"
-                :disabled="busy || !status.remoteManageReady"
+                :disabled="busy || !status.remoteManageReady || !canManageShare(share)"
                 @change="updateShare(share, { shared: ($event.target as HTMLInputElement).checked })"
               />
               启用共享
@@ -362,7 +368,7 @@ onMounted(() => {
               <input
                 type="checkbox"
                 :checked="share.readOnly"
-                :disabled="busy || !status.remoteManageReady"
+                :disabled="busy || !status.remoteManageReady || !canManageShare(share)"
                 @change="updateShare(share, { readOnly: ($event.target as HTMLInputElement).checked })"
               />
               仅只读
@@ -371,7 +377,7 @@ onMounted(() => {
               <input
                 type="checkbox"
                 :checked="share.guestAccess"
-                :disabled="busy || !status.remoteManageReady"
+                :disabled="busy || !status.remoteManageReady || !canManageShare(share)"
                 @change="updateShare(share, { guestAccess: ($event.target as HTMLInputElement).checked })"
               />
               允许访客
@@ -380,7 +386,7 @@ onMounted(() => {
               <input
                 type="checkbox"
                 :checked="share.sealed"
-                :disabled="busy || !status.remoteManageReady"
+                :disabled="busy || !status.remoteManageReady || !canManageShare(share)"
                 @change="updateShare(share, { sealed: ($event.target as HTMLInputElement).checked })"
               />
               SMB3 加密

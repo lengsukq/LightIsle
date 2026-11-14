@@ -22,6 +22,19 @@ class _FakeSmbApi extends LightIsleApi {
       'exposesPersonalDirs': false,
       'pathExists': true,
     },
+    {
+      'recordName': 'bustv',
+      'smbName': 'bustv',
+      'path': '/Volumes/External/Download/bustv',
+      'shared': true,
+      'guestAccess': false,
+      'readOnly': false,
+      'sealed': false,
+      'rootId': null,
+      'rootName': null,
+      'exposesPersonalDirs': false,
+      'pathExists': true,
+    },
   ];
 
   Map<String, dynamic> _snapshot() => {
@@ -139,5 +152,12 @@ void main() {
     await tester.pumpAndSettle();
     expect(api.calls, contains('DELETE /api/v2/admin/smb/shares/Movies'));
     expect(find.text('家庭影院'), findsNothing);
+
+    // Unmanaged local share (rootId == null) is read-only remotely
+    expect(find.text('本机其他共享（仅 Mac 端管理）'), findsOneWidget);
+    final unmanagedRemove = tester.widget<TextButton>(
+      find.byKey(const ValueKey('smb-remove-bustv')),
+    );
+    expect(unmanagedRemove.onPressed, isNull);
   });
 }

@@ -32,7 +32,7 @@ HTTP 下密码、会话 Cookie、WebDAV 凭据及文件均为明文，存在同�
   - **管理入口**：Mac 原生管理端「网络与连接 → Mac 文件共享」、Web 端「管理设置 → 文件与连接 → Mac 原生文件共享 (SMB)」、Flutter 客户端「设置 → 管理员控制台 → Mac 文件共享 (SMB)」。HTTP 接口 `/api/v2/admin/smb`、`/api/v2/admin/smb/service`、`/api/v2/admin/smb/shares` 仅限已认证的 `owner`/`admin` 管理员访问，所有变更记录 `smb_config_change` 审计日志。
   - **免密管理授权**：修改系统 SMB 需要 root 权限。Mac 原生端提供一键「开启/撤销免密管理授权」按钮，通过系统授权框将仅限当前宿主用户的最小命令白名单（`/usr/sbin/sharing *` 与 `/bin/launchctl load|unload -w /System/Library/LaunchDaemons/com.apple.smbd.plist`）经 `/usr/sbin/visudo -cf` 校验后原子写入 `/etc/sudoers.d/lightisle-smb`（权限 `0440`）。开启后，Go Core 通过 `sudo -n` 即可响应 Web、Flutter 与 Mac 端的操作而无需重复弹窗；Mac 本机端在未开启免密白名单时也可回退至单次管理员弹窗执行。
 - **共享目录边界与安全说明**：
-  - 仅允许添加已登记且在线的 `RootRegistry` 存储盘根目录或其下一级真实子目录；严格拦截 `.lightisle-*` 内部元数据目录、`.Trash`/`.Trashes`、符号链接、路径穿越以及裸系统路径（`/`、`/Volumes`、`/System`、`/Users` 等）。
+  - 远程 Web 与 Flutter 端仅允许添加、修改或移除已登记且在线的 `RootRegistry` 存储盘根目录或其下一级真实子目录；Mac 本机管理端额外支持通过「选择其他本机文件夹…」共享普通本机目录，以及更新或移除系统列表中的已有共享点。所有入口均严格拦截 `.lightisle-*` 内部元数据目录、`.Trash`/`.Trashes`、符号链接、路径穿越及系统目录（`/`、`/Volumes`、`/System`、`/Users` 等），裸外置盘挂载点（`/Volumes/<Disk>`）仅在已登记为 LightIsle 存储盘时允许作为根目录共享。
   - 覆盖整块存储根或成员私人目录的共享必须在 Mac 管理端确认系统权限，Core 拒绝访客访问。公共子目录仍可配置访客访问。SMB 使用 macOS 账号及文件夹权限，写入独立于 LightIsle 额度账本。若连接需要启用 Windows 文件共享，在「系统设置 → 通用 → 共享 → 文件共享 (i) → Windows 文件共享」勾选对应 Mac 账户。系统已有共享点的拔插和同路径换盘行为仍需用 Finder 实盘核验。
   - 从 SMB 列表移除共享点仅调用 `sharing -r` 取消系统共享登记，**绝不删除或修改硬盘上的任何原始文件**。
 

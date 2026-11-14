@@ -56,6 +56,10 @@ struct SmbSharingSectionView: View {
         if selectedRootID.isEmpty || !onlineRoots.contains(where: { $0.rootId == selectedRootID }) {
             selectedRootID = onlineRoots.first?.rootId ?? ""
             selectedSubpath = ""
+        } else if !selectedSubpath.isEmpty,
+                  let root = onlineRoots.first(where: { $0.rootId == selectedRootID }),
+                  !root.subdirectories.contains(selectedSubpath) {
+            selectedSubpath = ""
         }
     }
 
@@ -110,12 +114,21 @@ struct SmbSharingSectionView: View {
                             .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
                             .disabled(model.smbBusy)
                     }
-                    IsleIconButton(icon: "gearshape", help: "打开 macOS 系统「文件共享」与 Windows 文件共享账号设置") {
-                        if let url = URL(string: "x-apple.systempreferences:com.apple.Sharing-Settings.extension") {
-                            NSWorkspace.shared.open(url)
-                        }
-                    }
                 }
+            }
+            IsleGroupSpacing(height: 4).padding(.leading, 14)
+            AppleSettingsRow(
+                title: "macOS 系统共享与账号",
+                subtitle: "前往系统「通用 → 共享 → 文件共享」，可勾选允许 Windows 文件共享登录的 Mac 账号或核对系统共享列表。",
+                icon: "gearshape.fill",
+                iconTint: .gray
+            ) {
+                Button {
+                    model.openSystemFileSharingSettings()
+                } label: {
+                    Label("打开系统文件共享设置…", systemImage: "arrow.up.forward.app")
+                }
+                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
             }
             if let bonjour = model.smbState?.bonjourUrl, !bonjour.isEmpty {
                 IsleGroupSpacing(height: 4).padding(.leading, 14)
@@ -315,27 +328,29 @@ struct SmbSharingSectionView: View {
                 HStack(spacing: 10) {
                     if let root = selectedRoot {
                         Button("添加所选 NAS 目录") {
-                            model.addSMBShare(
+                            if model.addSMBShare(
                                 rootID: root.rootId,
                                 subpath: selectedSubpath,
                                 smbName: customSMBName,
                                 guestAccess: newShareGuest,
                                 readOnly: newShareReadOnly,
                                 sealed: newShareSealed
-                            )
-                            customSMBName = ""
+                            ) {
+                                customSMBName = ""
+                            }
                         }
                         .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
                         .disabled(!canAdd)
                     }
                     Button("选择其他本机文件夹…") {
-                        model.selectCustomFolderForSMBShare(
+                        if model.selectCustomFolderForSMBShare(
                             smbName: customSMBName,
                             guestAccess: newShareGuest,
                             readOnly: newShareReadOnly,
                             sealed: newShareSealed
-                        )
-                        customSMBName = ""
+                        ) {
+                            customSMBName = ""
+                        }
                     }
                     .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                     .disabled(!canAdd)

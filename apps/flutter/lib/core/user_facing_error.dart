@@ -196,7 +196,10 @@ const Map<String, String> _kErrorLabels = <String, String>{
   'smb_elevation_required':
       '尚未开启三端免密管理授权。请先在 Mac 管理端「网络与连接 → Mac 文件共享」点击一次「开启免密管理授权」。',
   'smb_protected_path_rejected':
-      '安全保护已拦截：不允许共享 .lightisle-* 内部元数据目录、符号链接或系统根目录。',
+      '安全保护已拦截：不允许共享 .lightisle-* 内部元数据目录、回收站、符号链接或系统根目录。',
+  'smb_volume_root_rejected':
+      '安全保护已拦截：不能直接将整个外置磁盘挂载点设为共享，请选择磁盘内的具体文件夹（或先在存储位置中登记为 NAS 存储盘）。',
+  'smb_unmanaged_share_rejected': '该共享点不属于已登记的轻屿 NAS 存储目录，请在 Mac 管理端操作。',
   'smb_personal_guest_forbidden': '此共享覆盖成员私人目录。请选择公共子目录，或在 Mac 上关闭访客访问并确认共享。',
   'smb_personal_confirmation_required': '请在 Mac 管理端确认私人目录的系统权限后再共享。',
   'smb_root_offline': '所选 NAS 存储盘当前处于离线状态，请先检查硬盘连接。',

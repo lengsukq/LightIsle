@@ -100,18 +100,22 @@ func handleSMBCommand(ctx context.Context, command string) bool {
 		case "service":
 			status, actErr = smbmgmt.Shared().SetService(ctx, req.Enabled)
 		case "add":
-			if strings.TrimSpace(req.Path) != "" || strings.TrimSpace(req.RootID) == "" {
+			hasRoot := strings.TrimSpace(req.RootID) != ""
+			hasPath := strings.TrimSpace(req.Path) != ""
+			if hasRoot == hasPath {
 				actErr = smbmgmt.ErrInvalid
 				break
 			}
 			status, actErr = smbmgmt.Shared().AddShare(ctx, smbmgmt.AddRequest{
 				RootID:            req.RootID,
 				Subpath:           req.Subpath,
+				Path:              req.Path,
 				SMBName:           req.SMBName,
 				GuestAccess:       req.GuestAccess,
 				ReadOnly:          req.ReadOnly,
 				Sealed:            req.Sealed,
 				LocalConfirmation: req.ConfirmPersonal,
+				AllowCustomPath:   true,
 			})
 		case "update":
 			status, actErr = smbmgmt.Shared().UpdateShare(ctx, req.RecordName, smbmgmt.UpdateRequest{
@@ -121,9 +125,10 @@ func handleSMBCommand(ctx context.Context, command string) bool {
 				ReadOnly:          req.ReadOnly,
 				Sealed:            req.Sealed,
 				LocalConfirmation: req.ConfirmPersonal,
+				AllowUnmanaged:    true,
 			})
 		case "remove":
-			status, actErr = smbmgmt.Shared().RemoveShare(ctx, req.RecordName)
+			status, actErr = smbmgmt.Shared().RemoveShareLocal(ctx, req.RecordName)
 		default:
 			actErr = smbmgmt.ErrInvalid
 		}
@@ -160,6 +165,14 @@ func smbErrorCode(err error) string {
 		return "smb_elevation_required"
 	case errors.Is(err, smbmgmt.ErrProtectedPath):
 		return "smb_protected_path_rejected"
+	case errors.Is(err, smbmgmt.ErrVolumeRoot):
+		return "smb_volume_root_rejected"
+	case errors.Is(err, smbmgmt.ErrUnmanagedShare):
+		return "smb_unmanaged_share_rejected"
+	case errors.Is(err, smbmgmt.ErrPersonalGuest):
+		return "smb_personal_guest_forbidden"
+	case errors.Is(err, smbmgmt.ErrLocalConfirmation):
+		return "smb_personal_confirmation_required"
 	case errors.Is(err, smbmgmt.ErrRootOffline):
 		return "smb_root_offline"
 	default:

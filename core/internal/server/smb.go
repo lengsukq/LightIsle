@@ -105,6 +105,10 @@ func writeSMBError(w http.ResponseWriter, err error) {
 		jsonReply(w, http.StatusForbidden, map[string]string{"error": "smb_elevation_required"})
 	case errors.Is(err, smbmgmt.ErrProtectedPath):
 		jsonReply(w, http.StatusForbidden, map[string]string{"error": "smb_protected_path_rejected"})
+	case errors.Is(err, smbmgmt.ErrVolumeRoot):
+		jsonReply(w, http.StatusForbidden, map[string]string{"error": "smb_volume_root_rejected"})
+	case errors.Is(err, smbmgmt.ErrUnmanagedShare):
+		jsonReply(w, http.StatusForbidden, map[string]string{"error": "smb_unmanaged_share_rejected"})
 	case errors.Is(err, smbmgmt.ErrPersonalGuest), errors.Is(err, smbmgmt.ErrLocalConfirmation):
 		jsonReply(w, http.StatusForbidden, map[string]string{"error": err.Error()})
 	case errors.Is(err, smbmgmt.ErrRootOffline):

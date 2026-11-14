@@ -20,7 +20,6 @@ import (
 const (
 	smbdLaunchdTarget = "system/com.apple.smbd"
 	smbdPlistPath     = "/System/Library/LaunchDaemons/com.apple.smbd.plist"
-	sudoersFilePath   = "/etc/sudoers.d/lightisle-smb"
 )
 
 var (
@@ -29,6 +28,8 @@ var (
 	ErrAlreadyExists     = errors.New("smb_share_already_exists")
 	ErrElevationRequired = errors.New("smb_elevation_required")
 	ErrProtectedPath     = errors.New("smb_protected_path_rejected")
+	ErrVolumeRoot        = errors.New("smb_volume_root_rejected")
+	ErrUnmanagedShare    = errors.New("smb_unmanaged_share_rejected")
 	ErrRootOffline       = errors.New("smb_root_offline")
 	ErrPersonalGuest     = errors.New("smb_personal_guest_forbidden")
 	ErrLocalConfirmation = errors.New("smb_personal_confirmation_required")
@@ -112,6 +113,7 @@ type AddRequest struct {
 	ReadOnly          bool   `json:"readOnly"`
 	Sealed            bool   `json:"sealed"`
 	LocalConfirmation bool   `json:"-"`
+	AllowCustomPath   bool   `json:"-"`
 }
 
 type UpdateRequest struct {
@@ -121,6 +123,7 @@ type UpdateRequest struct {
 	ReadOnly          bool   `json:"readOnly"`
 	Sealed            bool   `json:"sealed"`
 	LocalConfirmation bool   `json:"-"`
+	AllowUnmanaged    bool   `json:"-"`
 }
 
 type execFunc func(ctx context.Context, binary string, args ...string) ([]byte, []byte, int, error)
@@ -232,9 +235,6 @@ func collectStatus(ctx context.Context, execFn execFunc, roots []RootInfo, lanIP
 }
 
 func isRemoteManageReady(ctx context.Context, execFn execFunc) bool {
-	if _, err := os.Stat(sudoersFilePath); err == nil {
-		return true
-	}
 	_, _, code, err := execFn(ctx, "/usr/bin/sudo", "-n", "/usr/sbin/sharing", "-l")
 	return err == nil && code == 0
 }
@@ -400,7 +400,7 @@ func (m *Manager) SetService(ctx context.Context, enabled bool) (Status, error) 
 			if !share.Shared {
 				continue
 			}
-			if err := checkShareAccess(share.Path, roots, share.GuestAccess, true); err != nil {
+			if err := checkShareAccess(share.Path, roots, share.GuestAccess, true); err != nil && !errors.Is(err, ErrRootOffline) {
 				return Status{}, err
 			}
 		}
@@ -449,7 +449,7 @@ func (m *Manager) AddShare(ctx context.Context, req AddRequest) (Status, error) 
 		existing, parseErr := parseSharingJSON(rawShares, roots)
 		if parseErr == nil {
 			for _, s := range existing {
-				if s.Path == targetPath || strings.EqualFold(s.SMBName, smbName) || strings.EqualFold(s.RecordName, smbName) {
+				if strings.EqualFold(s.Path, targetPath) || strings.EqualFold(s.SMBName, smbName) || strings.EqualFold(s.RecordName, smbName) {
 					return Status{}, ErrAlreadyExists
 				}
 			}
@@ -520,14 +520,14 @@ func (m *Manager) UpdateShare(ctx context.Context, recordName string, req Update
 	if found == nil {
 		return Status{}, ErrNotFound
 	}
-	if len(roots) > 0 && found.RootID == "" {
-		return Status{}, ErrProtectedPath
+	if !req.AllowUnmanaged && len(roots) > 0 && found.RootID == "" {
+		return Status{}, ErrUnmanagedShare
 	}
 	if containsInternalSegment(found.Path) {
 		return Status{}, ErrProtectedPath
 	}
 	if req.Shared {
-		if _, err := validateSharePath(found.Path); err != nil {
+		if _, err := validateSharePath(found.Path, isRegisteredRootPath(found.Path, roots)); err != nil {
 			return Status{}, err
 		}
 		if err := checkShareAccess(found.Path, roots, req.GuestAccess, req.LocalConfirmation); err != nil {
@@ -582,6 +582,16 @@ func (m *Manager) UpdateShare(ctx context.Context, recordName string, req Update
 }
 
 func (m *Manager) RemoveShare(ctx context.Context, recordName string) (Status, error) {
+	return m.removeShare(ctx, recordName, false)
+}
+
+// RemoveShareLocal removes an SMB share on behalf of the local Mac desktop app,
+// including pre-existing or custom-folder shares outside LightIsle's RootRegistry.
+func (m *Manager) RemoveShareLocal(ctx context.Context, recordName string) (Status, error) {
+	return m.removeShare(ctx, recordName, true)
+}
+
+func (m *Manager) removeShare(ctx context.Context, recordName string, allowUnmanaged bool) (Status, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -613,8 +623,8 @@ func (m *Manager) RemoveShare(ctx context.Context, recordName string) (Status, e
 	if found == nil {
 		return Status{}, ErrNotFound
 	}
-	if len(roots) > 0 && found.RootID == "" {
-		return Status{}, ErrProtectedPath
+	if !allowUnmanaged && len(roots) > 0 && found.RootID == "" {
+		return Status{}, ErrUnmanagedShare
 	}
 
 	_, stderr, code, err := m.exec(ctx, "/usr/bin/sudo", "-n", "/usr/sbin/sharing", "-r", recordName)

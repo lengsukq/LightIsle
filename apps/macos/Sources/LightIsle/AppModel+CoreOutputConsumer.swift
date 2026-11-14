@@ -309,8 +309,8 @@ extension AppModel {
         case .listening(let enabled):
             if smbListening != enabled { smbListening = enabled }
         case .state(let encoded):
+            smbBusy = false
             if let decoded = SmbElevation.decodeStatus(base64URL: encoded) {
-                smbBusy = false
                 smbError = nil
                 if smbState != decoded { smbState = decoded }
                 if smbListening != decoded.serviceEnabled { smbListening = decoded.serviceEnabled }

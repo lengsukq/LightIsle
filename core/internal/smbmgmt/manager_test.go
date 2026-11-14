@@ -323,9 +323,56 @@ func TestStatusAndShareLifecycle(t *testing.T) {
 		t.Fatalf("RemoveShare must not delete underlying folder: %v", statErr)
 	}
 
-	// 7. When sudo requires a password, operations return ErrElevationRequired.
+	// 7. Custom local folder sharing & unmanaged share update/remove boundaries.
+	customDir := filepath.Join(realTmp, "LocalDownloads", "bustv")
+	if err := os.MkdirAll(customDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll customDir: %v", err)
+	}
+	if _, err := mgr.AddShare(ctx, AddRequest{Path: customDir, SMBName: "bustv"}); !errors.Is(err, ErrProtectedPath) {
+		t.Fatalf("expected ErrProtectedPath for raw Path without AllowCustomPath, got %v", err)
+	}
+	st, err = mgr.AddShare(ctx, AddRequest{Path: customDir, SMBName: "bustv", AllowCustomPath: true})
+	if err != nil {
+		t.Fatalf("AddShare custom local folder: %v", err)
+	}
+	if _, err := mgr.UpdateShare(ctx, "bustv", UpdateRequest{SMBName: "bustv", Shared: false}); !errors.Is(err, ErrUnmanagedShare) {
+		t.Fatalf("expected ErrUnmanagedShare for remote UpdateShare on unmanaged share, got %v", err)
+	}
+	if _, err := mgr.RemoveShare(ctx, "bustv"); !errors.Is(err, ErrUnmanagedShare) {
+		t.Fatalf("expected ErrUnmanagedShare for remote RemoveShare on unmanaged share, got %v", err)
+	}
+	st, err = mgr.UpdateShare(ctx, "bustv", UpdateRequest{SMBName: "bustv", Shared: true, ReadOnly: true, AllowUnmanaged: true})
+	if err != nil {
+		t.Fatalf("UpdateShare local on unmanaged share: %v", err)
+	}
+	st, err = mgr.RemoveShareLocal(ctx, "bustv")
+	if err != nil {
+		t.Fatalf("RemoveShareLocal on unmanaged share: %v", err)
+	}
+	if _, statErr := os.Stat(customDir); statErr != nil {
+		t.Fatalf("RemoveShareLocal must not delete underlying folder: %v", statErr)
+	}
+
+	// 8. Offline root share must not block enabling SMB service.
+	fake.shares["OfflineShare"] = rawShareEntry{
+		Path:    filepath.Join(realTmp, "offline", "Media"),
+		SMBName: "OfflineShare",
+		Shared:  1,
+	}
+	if _, err := mgr.SetService(ctx, true); err != nil {
+		t.Fatalf("SetService(true) with offline share: %v", err)
+	}
+
+	// 9. When sudo requires a password, operations return ErrElevationRequired and remoteManageReady becomes false.
 	fake.sudoReady = false
 	if _, err := mgr.SetService(ctx, false); !errors.Is(err, ErrElevationRequired) {
 		t.Fatalf("expected ErrElevationRequired when sudo not ready, got %v", err)
+	}
+	st, err = mgr.Status(ctx)
+	if err != nil {
+		t.Fatalf("Status after sudoReady=false: %v", err)
+	}
+	if st.RemoteManageReady {
+		t.Fatalf("expected RemoteManageReady=false when sudo -n fails")
 	}
 }

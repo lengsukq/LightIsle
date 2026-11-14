@@ -15,6 +15,7 @@ import (
 
 func resolveAndValidateTargetPath(req AddRequest, roots []RootInfo) (string, error) {
 	var candidate string
+	allowVolumeRoot := false
 	if strings.TrimSpace(req.RootID) != "" {
 		if strings.TrimSpace(req.Path) != "" {
 			return "", ErrInvalid
@@ -36,6 +37,7 @@ func resolveAndValidateTargetPath(req AddRequest, roots []RootInfo) (string, err
 		sub := strings.TrimSpace(req.Subpath)
 		if sub == "" || sub == "." || sub == "/" {
 			candidate = baseClean
+			allowVolumeRoot = true
 		} else {
 			if filepath.IsAbs(sub) {
 				return "", ErrInvalid
@@ -55,12 +57,15 @@ func resolveAndValidateTargetPath(req AddRequest, roots []RootInfo) (string, err
 			candidate = filepath.Join(baseClean, cleanSub)
 		}
 	} else if strings.TrimSpace(req.Path) != "" {
+		if !req.AllowCustomPath {
+			return "", ErrProtectedPath
+		}
 		candidate = filepath.Clean(strings.TrimSpace(req.Path))
 	} else {
 		return "", ErrInvalid
 	}
 
-	validated, err := validateSharePath(candidate)
+	validated, err := validateSharePath(candidate, allowVolumeRoot)
 	if err != nil {
 		return "", err
 	}
@@ -77,17 +82,28 @@ func resolveAndValidateTargetPath(req AddRequest, roots []RootInfo) (string, err
 				}
 			}
 		}
-		if !matchedAny {
-			return "", ErrProtectedPath
-		}
-		if !matchedOnline {
+		if matchedAny && !matchedOnline {
 			return "", ErrRootOffline
+		}
+		if !matchedAny && !req.AllowCustomPath {
+			return "", ErrProtectedPath
 		}
 	}
 	return validated, nil
 }
 
-func validateSharePath(candidate string) (string, error) {
+func isRegisteredRootPath(candidate string, roots []RootInfo) bool {
+	clean := strings.ToLower(filepath.Clean(candidate))
+	for _, r := range roots {
+		rootClean := filepath.Clean(r.Path)
+		if rootClean != "" && rootClean != "." && strings.ToLower(rootClean) == clean {
+			return true
+		}
+	}
+	return false
+}
+
+func validateSharePath(candidate string, allowVolumeRoot bool) (string, error) {
 	if !filepath.IsAbs(candidate) || filepath.Clean(candidate) != candidate {
 		return "", ErrInvalid
 	}
@@ -108,12 +124,13 @@ func validateSharePath(candidate string) (string, error) {
 			return "", ErrProtectedPath
 		}
 	}
-	if strings.HasPrefix(candidate, "/Volumes/") {
+	if !allowVolumeRoot && strings.HasPrefix(candidate, "/Volumes/") {
 		rest := strings.TrimPrefix(candidate, "/Volumes/")
 		if !strings.Contains(rest, "/") {
-			// Bare external volume mount point (/Volumes/<Disk>) is rejected;
-			// require a dedicated folder on the volume.
-			return "", ErrProtectedPath
+			// Bare external volume mount point (/Volumes/<Disk>) is rejected
+			// for ad-hoc folder selection; require a folder on the volume
+			// unless the volume root itself is a registered LightIsle root.
+			return "", ErrVolumeRoot
 		}
 	}
 

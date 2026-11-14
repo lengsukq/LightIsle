@@ -559,6 +559,8 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
     SmbSharePoint share,
     bool canControl,
   ) {
+    final canManage =
+        canControl && (_roots.isEmpty || (share.rootId?.isNotEmpty ?? false));
     return IsleSurface(
       radius: 16,
       margin: const EdgeInsets.only(bottom: 10),
@@ -598,6 +600,12 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
                           IsleBadgePill(
                             label: 'NAS · ${share.rootName}',
                             color: const Color(0xFF0EA5E9),
+                          )
+                        else if (_roots.isNotEmpty &&
+                            (share.rootId?.isEmpty ?? true))
+                          const IsleBadgePill(
+                            label: '本机其他共享（仅 Mac 端管理）',
+                            color: Color(0xFF64748B),
                           ),
                       ],
                     ),
@@ -619,7 +627,7 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
               ),
               TextButton.icon(
                 key: ValueKey('smb-remove-${share.recordName}'),
-                onPressed: canControl
+                onPressed: canManage
                     ? () => unawaited(_removeShare(share))
                     : null,
                 icon: const Icon(Icons.delete_outline_rounded, size: 16),
@@ -635,28 +643,28 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
               FilterChip(
                 label: const Text('启用共享'),
                 selected: share.shared,
-                onSelected: canControl
+                onSelected: canManage
                     ? (v) => unawaited(_updateShare(share, shared: v))
                     : null,
               ),
               FilterChip(
                 label: const Text('仅只读'),
                 selected: share.readOnly,
-                onSelected: canControl
+                onSelected: canManage
                     ? (v) => unawaited(_updateShare(share, readOnly: v))
                     : null,
               ),
               FilterChip(
                 label: const Text('允许访客'),
                 selected: share.guestAccess,
-                onSelected: canControl
+                onSelected: canManage
                     ? (v) => unawaited(_updateShare(share, guestAccess: v))
                     : null,
               ),
               FilterChip(
                 label: const Text('SMB3 加密'),
                 selected: share.sealed,
-                onSelected: canControl
+                onSelected: canManage
                     ? (v) => unawaited(_updateShare(share, sealed: v))
                     : null,
               ),

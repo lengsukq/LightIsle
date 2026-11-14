@@ -16,11 +16,12 @@ extension AppModel {
         ])
     }
 
-    func addSMBShare(rootID: String, subpath: String, smbName: String, guestAccess: Bool, readOnly: Bool, sealed: Bool) {
+    @discardableResult
+    func addSMBShare(rootID: String, subpath: String, smbName: String, guestAccess: Bool, readOnly: Bool, sealed: Bool) -> Bool {
         let components = subpath.split(separator: "/")
         let personal = components.isEmpty || components.first?.lowercased() == "users"
-        guard !personal || confirmPersonalSMBShare(subpath.isEmpty ? "整块存储根" : subpath, guest: guestAccess) else { return }
-        sendSMBAction([
+        guard !personal || confirmPersonalSMBShare(subpath.isEmpty ? "整块存储根" : subpath, guest: guestAccess) else { return false }
+        return sendSMBAction([
             "action": "add",
             "rootId": rootID,
             "subpath": subpath,
@@ -32,8 +33,9 @@ extension AppModel {
         ])
     }
 
-    func selectCustomFolderForSMBShare(smbName: String, guestAccess: Bool, readOnly: Bool, sealed: Bool) {
-        guard state == .online, !smbBusy else { return }
+    @discardableResult
+    func selectCustomFolderForSMBShare(smbName: String, guestAccess: Bool, readOnly: Bool, sealed: Bool) -> Bool {
+        guard state == .online, !smbBusy else { return false }
         let panel = NSOpenPanel()
         panel.title = "选择要通过 Mac 文件共享 (SMB) 分享的文件夹"
         panel.prompt = "添加到 SMB 共享"
@@ -41,7 +43,7 @@ extension AppModel {
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.canCreateDirectories = true
-        guard panel.runModal() == .OK, let url = panel.url else { return }
+        guard panel.runModal() == .OK, let url = panel.url else { return false }
         let resolved = url.resolvingSymlinksInPath().path
         let lowerPath = resolved.lowercased()
         let containsUsers = FileManager.default.fileExists(atPath: (resolved as NSString).appendingPathComponent("Users"))
@@ -50,11 +52,11 @@ extension AppModel {
                 let users = URL(fileURLWithPath: root.path).resolvingSymlinksInPath().appendingPathComponent("Users").path.lowercased()
                 return lowerPath == users || lowerPath.hasPrefix(users + "/") || users.hasPrefix(lowerPath + "/")
             }
-        guard !personal || confirmPersonalSMBShare(resolved, guest: guestAccess) else { return }
+        guard !personal || confirmPersonalSMBShare(resolved, guest: guestAccess) else { return false }
         let finalName = smbName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             ? url.lastPathComponent
             : smbName.trimmingCharacters(in: .whitespacesAndNewlines)
-        sendSMBAction([
+        return sendSMBAction([
             "action": "add",
             "path": resolved,
             "smbName": finalName,
@@ -109,6 +111,20 @@ extension AppModel {
         ])
     }
 
+    func openSystemFileSharingSettings() {
+        let candidates = [
+            "x-apple.systempreferences:com.apple.Sharing-Settings.extension?Services_PersonalFileSharing",
+            "x-apple.systempreferences:com.apple.Sharing-Settings.extension",
+            "x-apple.systempreferences:com.apple.preferences.sharing?Services_PersonalFileSharing",
+            "x-apple.systempreferences:com.apple.preferences.sharing",
+        ]
+        for raw in candidates {
+            if let url = URL(string: raw), NSWorkspace.shared.open(url) {
+                return
+            }
+        }
+    }
+
     func installSMBSudoersAuthorization() {
         guard !smbBusy else { return }
         smbBusy = true
@@ -160,18 +176,21 @@ extension AppModel {
         refreshSMBState()
     }
 
-    private func sendSMBAction(_ payload: [String: Any]) {
+    @discardableResult
+    private func sendSMBAction(_ payload: [String: Any]) -> Bool {
         guard state == .online, !smbBusy,
               let data = try? JSONSerialization.data(withJSONObject: payload),
-              let pipe = coreCommands else { return }
+              let pipe = coreCommands else { return false }
         smbBusy = true
         smbError = nil
         smbNotice = nil
         do {
             try pipe.write(contentsOf: Data(("smb action " + data.base64URLEncodedString + "\n").utf8))
+            return true
         } catch {
             smbBusy = false
             smbError = "无法发送文件共享指令：\(error.localizedDescription)"
+            return false
         }
     }
 }

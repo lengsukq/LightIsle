@@ -70,6 +70,10 @@ struct SmbElevationCheck {
         assert(decoded.shares.count == 1 && decoded.shares[0].smbName == "Movies")
         assert(decoded.candidateRoots.count == 1 && decoded.candidateRoots[0].subdirectories == ["Movies", "Users"])
 
+        // 3. Error mapping
+        assert(SmbElevation.userFacingError(for: "smb_unmanaged_share_rejected").contains("Mac 管理端"))
+        assert(SmbElevation.userFacingError(for: "smb_volume_root_rejected").contains("外置磁盘"))
+
         print("PASS: SmbElevationCheck")
     }
 }
