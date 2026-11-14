@@ -68,15 +68,15 @@ cp apps/macos/Info.plist "$APP/Contents/Info.plist"
 # A manually dispatched Community Release stamps the packaged app only;
 # never mutate the tracked source plist or accept arbitrary version content.
 if [[ -n "${LIGHTISLE_BUILD_NUMBER:-}" ]]; then
-  if [[ ! "$LIGHTISLE_BUILD_NUMBER" =~ ^[1-9][0-9]{0,9}$ ]]; then
-    echo "Invalid LIGHTISLE_BUILD_NUMBER: expected a positive numeric build counter." >&2
+  if [[ ! "$LIGHTISLE_BUILD_NUMBER" =~ ^[1-9][0-9]{0,13}$ ]]; then
+    echo "Invalid LIGHTISLE_BUILD_NUMBER: expected a positive numeric build counter (up to 14 digits)." >&2
     exit 1
   fi
   /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $LIGHTISLE_BUILD_NUMBER" "$APP/Contents/Info.plist"
 fi
 if [[ -n "${LIGHTISLE_RELEASE_VERSION:-}" ]]; then
-  if [[ ! "$LIGHTISLE_RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-    echo "Invalid LIGHTISLE_RELEASE_VERSION: expected major.minor.patch." >&2
+  if [[ ! "$LIGHTISLE_RELEASE_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+    echo "Invalid LIGHTISLE_RELEASE_VERSION: expected major.minor.patch or major.minor.patch-suffix." >&2
     exit 1
   fi
   /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $LIGHTISLE_RELEASE_VERSION" "$APP/Contents/Info.plist"

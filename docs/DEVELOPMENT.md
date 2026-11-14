@@ -79,7 +79,7 @@ cd ../..
 
 ## 编码、测试与交付
 
-**GitHub Actions 仅手动触发**：推送和 PR 不会自动启动构建，以节省 CI 额度。按需在仓库 Actions 页面执行 `macos-arm64.yml`（测试）、`community-macos.yml`（DMG Artifact）或 `community-release.yml`（发布预览版）。也可使用 `gh workflow run macos-arm64.yml --ref main` 等命令手动运行；正式发布门禁不因此降低。
+**GitHub Actions 仅手动触发**：推送和 PR 不会自动启动构建，以节省 CI 额度。按需在仓库 Actions 页面执行 `macos-arm64.yml`（测试）、`community-macos.yml`（DMG Artifact）、`release-macos.yml`（自签名证书 macOS Release，自动附加时间戳防版本冲突）或 `community-release.yml`（全平台预览版）。也可使用 `gh workflow run release-macos.yml --ref main` 等命令手动运行；正式 Apple Developer ID 公证发布门禁不因此降低。
 
 - **Go**：`gofmt`、`go vet ./...`、`go test -race ./...`，涉及文件路径、权限、TOCTOU、离线卷必须有针对性的模拟盘单测。
 - **Swift**：原生 UI 响应式布局，阻塞磁盘/媒体工作不放在主线程；Mac UI 使用系统权限确认、可取消的本机任务。

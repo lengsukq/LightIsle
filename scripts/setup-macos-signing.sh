@@ -128,7 +128,7 @@ if has_cert_in_keychain "$LOGIN_KEYCHAIN"; then
   "$SECURITY_BIN" find-certificate -c "$CERT_NAME" -p "$LOGIN_KEYCHAIN" > "$PUBLIC_CER"
   chmod 600 "$PUBLIC_CER"
 else
-  echo "Generating 10-year local code-signing certificate \"${CERT_NAME}\"..."
+  echo "Generating 100-year local code-signing certificate \"${CERT_NAME}\"..."
   OPENSSL_CNF="${TMP_DIR}/codesign.cnf"
   KEY_PEM="${TMP_DIR}/dev-key.pem"
   CERT_PEM="${TMP_DIR}/dev-cert.pem"
@@ -155,7 +155,7 @@ subjectKeyIdentifier = hash
 authorityKeyIdentifier = keyid:always
 EOF
 
-  "$OPENSSL_BIN" req -x509 -newkey rsa:3072 -sha256 -days 3650 -nodes \
+  "$OPENSSL_BIN" req -x509 -newkey rsa:3072 -sha256 -days 36500 -nodes \
     -config "$OPENSSL_CNF" \
     -keyout "$KEY_PEM" \
     -out "$CERT_PEM" >/dev/null 2>&1
