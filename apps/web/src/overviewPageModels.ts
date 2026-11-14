@@ -1,4 +1,7 @@
+import { hasWebModule } from "./appsCenterApi.ts";
+import { appStatus, categoryLabel, runtimeBadge } from "./composables/useAppsCenterController.ts";
 import { ISLE_CHART_COLORS, type ChartSegmentInput } from "./isleChartsMath.ts";
+import type { PublicAppItem } from "./types/appsCenter.ts";
 import type { ServerStats } from "./useHostTelemetry.ts";
 
 export type PersonalSpaceSummary = {
@@ -49,6 +52,59 @@ export type OverviewPersonalSpace = {
   bytes: (value: number) => string;
   rootNames?: Record<string, string>;
 };
+export type OverviewApps = {
+  items: PublicAppItem[];
+  loading: boolean;
+  error: string;
+};
+
+/** Whether a home tile app is ready to launch directly into the workbench without admin activation or repair. */
+export function isHomeAppReady(app: PublicAppItem): boolean {
+  return (
+    !app.pendingActivation &&
+    app.valid !== false &&
+    !app.lastError &&
+    !app.validationError &&
+    !app.web?.lastError &&
+    !app.diagnostic
+  );
+}
+
+/** Filters `/api/v2/apps` items down to web-enabled home tiles and sorts ready apps first. */
+export function filterHomeLaunchableApps(apps: PublicAppItem[]): PublicAppItem[] {
+  const launchable = apps.filter(
+    (app) => app.web?.enabled !== false && hasWebModule(app),
+  );
+  return launchable.sort((a, b) => {
+    const aReady = isHomeAppReady(a);
+    const bReady = isHomeAppReady(b);
+    if (aReady !== bReady) return aReady ? -1 : 1;
+    return a.id.localeCompare(b.id);
+  });
+}
+
+const HOME_APP_CATEGORY_KEYS = new Set(["network", "media", "finance", "utility", "system", "automation"]);
+
+/** Normalizes an app category into one of the known icon/color keys. */
+export function homeAppCategoryKey(category?: string): string {
+  return category && HOME_APP_CATEGORY_KEYS.has(category) ? category : "default";
+}
+
+/** Resolves role-safe badge text and tone for a home-page app tile. */
+export function homeAppBadge(
+  app: PublicAppItem,
+  isAdmin: boolean,
+): { text: string; tone: "ready" | "running" | "warn" | "neutral" } {
+  if (!isAdmin) return { text: "免密即开", tone: "ready" };
+  if (app.pendingActivation) return { text: "待首次激活", tone: "warn" };
+  if (!isHomeAppReady(app)) return { text: "启动异常", tone: "warn" };
+  return {
+    text: runtimeBadge(app),
+    tone: appStatus(app) === "running" ? "running" : "neutral",
+  };
+}
+
+export { categoryLabel as homeAppCategoryLabel };
 
 export function buildQuotaSegments(
   accountedBytes: number,

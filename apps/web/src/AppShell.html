@@ -113,7 +113,7 @@
 
       <Transition name="ios-fade" mode="out-in">
         <div v-if="!rootSwitching">
-          <OverviewPage v-show="active === 'overview'" class="isle-tab-pane" :identity="overviewIdentity" :search="overviewSearch" :telemetry="overviewTelemetry" :personal-space="overviewPersonalSpace" :pending="overviewPending" @update:query="fileSearch = $event" @update:spotlight="searchViaSpotlight = $event" @update:expanded="showHardwareSpecs = $event" @search="runFileSearch" @return-to-files="clearFileSearch" @select-history="applyRecentSearch" @delete-history="deleteRecentSearch" @clear-history="clearRecentSearches" @open-duplicates="jumpToDuplicates" @open-trash="jumpToTrash" @open-similar-photos="jumpToPhotosView('similar')" @refresh="update" @navigate="active = $event" @open-account-settings="active = 'settings'; settingsGroup = 'account'" @open-pending="active = 'settings'; settingsGroup = 'ops'" />
+          <OverviewPage v-show="active === 'overview'" class="isle-tab-pane" :identity="overviewIdentity" :search="overviewSearch" :telemetry="overviewTelemetry" :personal-space="overviewPersonalSpace" :pending="overviewPending" :apps="overviewApps" @update:query="fileSearch = $event" @update:spotlight="searchViaSpotlight = $event" @update:expanded="showHardwareSpecs = $event" @search="runFileSearch" @return-to-files="clearFileSearch" @select-history="applyRecentSearch" @delete-history="deleteRecentSearch" @clear-history="clearRecentSearches" @open-duplicates="jumpToDuplicates" @open-trash="jumpToTrash" @open-similar-photos="jumpToPhotosView('similar')" @refresh="update" @navigate="active = $event" @open-account-settings="active = 'settings'; settingsGroup = 'account'" @open-pending="active = 'settings'; settingsGroup = 'ops'" @open-apps-center="active = 'apps'" @open-app="openHomeApp" @refresh-apps="refreshOverviewApps" />
           <ComputerFilesView v-if="active === 'computer'" class="isle-tab-pane" :admin="user.role === 'admin'" />
           <div v-if="personalRouteError&&['files','photos','cinema'].includes(active)&&!manualRootSection" class="content isle-tab-pane">
             <section class="content-empty root-state-card root-state-offline" role="alert">
@@ -344,7 +344,7 @@
             <DownloadsView :active="active === 'downloads'" :api="downloadsApi" />
           </div>
           <div v-if="active === 'apps'" class="content isle-tab-pane">
-            <AppsCenterView :active="active === 'apps'" :admin="user.role === 'admin'" />
+            <AppsCenterView :active="active === 'apps'" :admin="user.role === 'admin'" :launch-request="pendingAppLaunch" @launch-handled="clearPendingAppLaunch" />
           </div>
           <div v-if="active === 'automation' && user.role === 'admin'" class="content isle-tab-pane">
             <AutomationView :active="active === 'automation'"/>

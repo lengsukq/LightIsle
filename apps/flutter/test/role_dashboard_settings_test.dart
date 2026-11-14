@@ -3,7 +3,9 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:lightisle/core/isle_theme.dart';
 import 'package:lightisle/core/widgets.dart';
 import 'package:lightisle/features/overview/overview_page.dart';
+import 'package:lightisle/features/settings/apps_center_helpers.dart';
 import 'package:lightisle/features/settings/settings_page.dart';
+import 'package:url_launcher/url_launcher.dart' show LaunchMode;
 
 import 'client_shell_test.dart' show FixtureApi;
 
@@ -218,6 +220,7 @@ void main() {
       await tester.pumpWidget(const SizedBox.shrink());
     },
   );
+  addHomeAppTileTests();
 }
 
 class _ComputerStatusApi extends FixtureApi {
@@ -234,4 +237,229 @@ class _ComputerStatusApi extends FixtureApi {
     }
     return super.get(path, query: query);
   }
+}
+
+class _AppsDashboardApi extends FixtureApi {
+  _AppsDashboardApi({required this.appsPayload});
+
+  final List<Map<String, dynamic>> appsPayload;
+  final List<String> launchedIds = <String>[];
+
+  @override
+  Future<Map<String, dynamic>> get(String path, {Map<String, String>? query}) {
+    if (path == '/api/v2/apps') {
+      calls.add(path);
+      return Future.value({'apps': appsPayload});
+    }
+    return super.get(path, query: query);
+  }
+
+  @override
+  Future<Map<String, dynamic>> send(
+    String method,
+    String path, {
+    Object? body,
+    Map<String, String>? query,
+  }) async {
+    calls.add('$method $path');
+    final match = RegExp(r'^/api/v2/apps/([^/]+)/launch$').firstMatch(path);
+    if (method == 'POST' && match != null) {
+      final id = Uri.decodeComponent(match.group(1)!);
+      launchedIds.add(id);
+      return {'launchUrl': '/apps/$id/?ticket=t1', 'launchPath': '/apps/$id/'};
+    }
+    return const {};
+  }
+}
+
+void addHomeAppTileTests() {
+  test('filterHomeLaunchableApps excludes cron-only apps and sorts ready apps first', () {
+    final filtered = filterHomeLaunchableApps([
+      {
+        'id': 'pending-app',
+        'pendingActivation': true,
+        'web': {'enabled': true, 'mode': 'on-demand'},
+      },
+      {
+        'id': 'cron-only',
+        'web': {'enabled': false, 'mode': 'none'},
+      },
+      {
+        'id': 'network-pulse',
+        'web': {'enabled': true, 'mode': 'static'},
+      },
+    ]);
+    expect(filtered.map((e) => e['id']).toList(), [
+      'network-pulse',
+      'pending-app',
+    ]);
+  });
+
+  for (final (size, scale) in <(Size, double)>[
+    (const Size(320, 568), 2),
+    (const Size(1024, 800), 1),
+  ]) {
+    testWidgets(
+      'overview home light-apps adapt role empty states without overflow at $size',
+      (tester) async {
+        tester.view.physicalSize = size;
+        tester.view.devicePixelRatio = 1;
+        addTearDown(tester.view.resetPhysicalSize);
+        addTearDown(tester.view.resetDevicePixelRatio);
+
+        final memberEmptyApi = _AppsDashboardApi(appsPayload: const []);
+        addTearDown(memberEmptyApi.close);
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: buildIsleTheme(Brightness.light),
+            builder: (context, child) => MediaQuery(
+              data: MediaQuery.of(context)
+                  .copyWith(textScaler: TextScaler.linear(scale)),
+              child: IsleCanvas(child: child!),
+            ),
+            home: Scaffold(
+              body: OverviewPage(
+                api: memberEmptyApi,
+                isAdmin: false,
+                onNavigate: (_) {},
+              ),
+            ),
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 300));
+        expect(find.text('家庭轻应用'), findsNothing);
+        expect(
+          find.byKey(const ValueKey('homeAppsAdminGuideTile')),
+          findsNothing,
+        );
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+
+        final adminEmptyApi = _AppsDashboardApi(appsPayload: const []);
+        addTearDown(adminEmptyApi.close);
+        await tester.pumpWidget(
+          MaterialApp(
+            theme: buildIsleTheme(Brightness.light),
+            builder: (context, child) => MediaQuery(
+              data: MediaQuery.of(context)
+                  .copyWith(textScaler: TextScaler.linear(scale)),
+              child: IsleCanvas(child: child!),
+            ),
+            home: Scaffold(
+              body: OverviewPage(
+                api: adminEmptyApi,
+                isAdmin: true,
+                onNavigate: (_) {},
+              ),
+            ),
+          ),
+        );
+        await tester.pump(const Duration(milliseconds: 300));
+        await tester.scrollUntilVisible(
+          find.byKey(const ValueKey('homeAppsAdminGuideTile')),
+          150,
+          scrollable: find.byType(Scrollable).first,
+        );
+        await tester.pumpAndSettle();
+        expect(find.text('家庭轻应用'), findsOneWidget);
+        expect(
+          find.byKey(const ValueKey('homeAppsAdminGuideTile')),
+          findsOneWidget,
+        );
+        expect(tester.takeException(), isNull);
+        await tester.pumpWidget(const SizedBox.shrink());
+      },
+    );
+  }
+
+  testWidgets(
+    'tapping a home light-app tile launches ready apps and guards pending apps',
+    (tester) async {
+      final memberApi = _AppsDashboardApi(
+        appsPayload: [
+          {
+            'id': 'cron-only',
+            'name': '纯定时脚本',
+            'web': {'enabled': false, 'mode': 'none'},
+          },
+          {
+            'id': 'network-pulse',
+            'name': '轻屿网络脉搏',
+            'description': '内置静态轻应用',
+            'category': 'network',
+            'status': 'static',
+            'web': {'enabled': true, 'mode': 'static'},
+          },
+        ],
+      );
+      addTearDown(memberApi.close);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildIsleTheme(Brightness.light),
+          home: Scaffold(
+            body: OverviewPage(
+              api: memberApi,
+              isAdmin: false,
+              onNavigate: (_) {},
+              appUrlLauncher: (_, {mode = LaunchMode.platformDefault}) async =>
+                  true,
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      expect(find.byKey(const ValueKey('homeAppTile_cron-only')), findsNothing);
+      final tile = find.byKey(const ValueKey('homeAppTile_network-pulse'));
+      expect(tile, findsOneWidget);
+      expect(find.text('纯静态 0 MB'), findsNothing);
+      expect(find.text('网络监控'), findsOneWidget);
+
+      await tester.ensureVisible(tile);
+      await tester.tap(tile);
+      await tester.pumpAndSettle();
+      expect(memberApi.launchedIds, ['network-pulse']);
+      expect(find.byKey(const ValueKey('workbenchBackButton')), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+
+      final adminApi = _AppsDashboardApi(
+        appsPayload: [
+          {
+            'id': 'pending-app',
+            'name': '待激活应用',
+            'pendingActivation': true,
+            'web': {'enabled': true, 'mode': 'on-demand'},
+          },
+        ],
+      );
+      addTearDown(adminApi.close);
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildIsleTheme(Brightness.light),
+          home: Scaffold(
+            body: OverviewPage(
+              api: adminApi,
+              isAdmin: true,
+              onNavigate: (_) {},
+              appUrlLauncher: (_, {mode = LaunchMode.platformDefault}) async =>
+                  true,
+            ),
+          ),
+        ),
+      );
+      await tester.pump(const Duration(milliseconds: 300));
+      final pendingTile = find.byKey(const ValueKey('homeAppTile_pending-app'));
+      expect(pendingTile, findsOneWidget);
+      expect(find.text('待首次激活'), findsOneWidget);
+      await tester.ensureVisible(pendingTile);
+      await tester.tap(pendingTile);
+      await tester.pumpAndSettle();
+      expect(adminApi.launchedIds, isEmpty);
+      expect(find.byKey(const ValueKey('workbenchBackButton')), findsNothing);
+      expect(find.byKey(const ValueKey('appCard_pending-app')), findsOneWidget);
+      expect(find.text('待首次激活'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+      await tester.pumpWidget(const SizedBox.shrink());
+    },
+  );
 }

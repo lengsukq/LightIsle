@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import {
-  Activity, ArrowDownToLine, ArrowUpRight, Clapperboard, CopyCheck, Folder, HardDrive, Images,
-  Monitor, RefreshCcw, Search, Server, ShieldCheck, Sparkles, Trash2, WifiOff,
+  Activity, ArrowDownToLine, ArrowUpRight, Clapperboard, CopyCheck, Cpu, Folder, HardDrive, Images,
+  LayoutDashboard, Monitor, RefreshCcw, Router, Search, Server, ShieldCheck, Sparkles, Trash2, Wallet, WifiOff, Wrench,
 } from "lucide-vue-next";
 import RecentSearchPopover from "./RecentSearchPopover.vue";
 import IsleCharts from "./IsleCharts.vue";
@@ -11,12 +11,19 @@ import {
   buildHostDiskSegments,
   buildHostMemorySegments,
   buildQuotaSegments,
+  filterHomeLaunchableApps,
+  homeAppBadge,
+  homeAppCategoryKey,
+  homeAppCategoryLabel,
+  isHomeAppReady,
+  type OverviewApps,
   type OverviewIdentity,
   type OverviewPending,
   type OverviewPersonalSpace,
   type OverviewSearch,
   type OverviewTelemetry,
 } from "./overviewPageModels.ts";
+import type { PublicAppItem } from "./types/appsCenter.ts";
 
 const props = defineProps<{
   identity: OverviewIdentity;
@@ -24,6 +31,7 @@ const props = defineProps<{
   telemetry: OverviewTelemetry;
   personalSpace: OverviewPersonalSpace;
   pending: OverviewPending;
+  apps?: OverviewApps;
 }>();
 const emit = defineEmits<{
   "update:query": [value: string];
@@ -41,6 +49,9 @@ const emit = defineEmits<{
   navigate: [page: "files" | "photos" | "cinema" | "downloads"];
   "open-account-settings": [];
   "open-pending": [];
+  "open-apps-center": [];
+  "open-app": [app: PublicAppItem];
+  "refresh-apps": [];
 }>();
 const query = computed({
   get: () => props.search.query,
@@ -57,6 +68,17 @@ const searchComposing = ref(false);
 const recentOpen = computed(
   () => searchFocused.value && !props.search.query.trim() && (props.search.recentQueries?.length ?? 0) > 0,
 );
+const appsState = computed<OverviewApps>(() => props.apps ?? { items: [], loading: false, error: "" });
+const launchableApps = computed(() => filterHomeLaunchableApps(appsState.value.items));
+const showHomeAppsSection = computed(
+  () => props.identity.isAdmin || launchableApps.value.length > 0 || Boolean(appsState.value.error),
+);
+const failedAppIcons = ref<Set<string>>(new Set());
+function markAppIconFailed(appId: string) {
+  const next = new Set(failedAppIcons.value);
+  next.add(appId);
+  failedAppIcons.value = next;
+}
 
 const cpuSparkPoints = computed(() => {
   if (props.telemetry.error || !props.telemetry.stats) return [];
@@ -268,6 +290,83 @@ onUnmounted(() => window.removeEventListener("pointerdown", handleOutsideSearchP
       </div>
     </button>
   </div>
+
+  <!-- 2.5 Home Light-Apps Tile Launcher -->
+  <section v-if="showHomeAppsSection" class="home-apps-section" aria-label="家庭轻应用">
+    <div class="section-heading apps-heading">
+      <div>
+        <h2>家庭轻应用</h2>
+        <p>{{ identity.isAdmin ? "一键唤醒已安装的轻应用或管理家族成员访问。" : "已为你授权的家庭工具与实用看板，点击即开。" }}</p>
+      </div>
+      <button type="button" class="home-apps-manage-btn" @click="emit('open-apps-center')">
+        <LayoutDashboard :size="14" /> {{ identity.isAdmin ? "管理应用中心" : "全部应用" }}
+      </button>
+    </div>
+
+    <div v-if="appsState.error" class="home-apps-status" role="status">
+      <span>{{ appsState.error }}</span>
+      <button type="button" class="toggle-specs-btn" @click="emit('refresh-apps')">重新加载</button>
+    </div>
+
+    <div v-if="launchableApps.length > 0" class="home-apps-grid">
+      <button
+        v-for="app in launchableApps"
+        :key="app.id"
+        type="button"
+        class="home-app-tile"
+        :class="{ 'is-warning': !isHomeAppReady(app) }"
+        @click="emit('open-app', app)"
+      >
+        <div class="home-app-tile-top">
+          <div class="home-app-icon" :class="'cat-' + homeAppCategoryKey(app.category)">
+            <img
+              v-if="app.iconUrl && !failedAppIcons.has(app.id)"
+              :src="app.iconUrl"
+              :alt="app.name + ' 图标'"
+              class="home-app-icon-img"
+              loading="lazy"
+              decoding="async"
+              @error="markAppIconFailed(app.id)"
+            />
+            <Router v-else-if="homeAppCategoryKey(app.category) === 'network'" :size="20" />
+            <Clapperboard v-else-if="homeAppCategoryKey(app.category) === 'media'" :size="20" />
+            <Wallet v-else-if="homeAppCategoryKey(app.category) === 'finance'" :size="20" />
+            <Wrench v-else-if="homeAppCategoryKey(app.category) === 'utility'" :size="20" />
+            <Activity v-else-if="homeAppCategoryKey(app.category) === 'system' || homeAppCategoryKey(app.category) === 'automation'" :size="20" />
+            <Cpu v-else :size="20" />
+          </div>
+          <div class="home-app-meta">
+            <div class="home-app-title-row">
+              <h3>{{ app.name }}</h3>
+              <ArrowUpRight :size="15" class="home-app-arrow" />
+            </div>
+            <span class="home-app-cat-pill">{{ homeAppCategoryLabel(app.category) }}</span>
+          </div>
+        </div>
+        <p class="home-app-desc">{{ app.description || "轻屿本地家庭轻应用" }}</p>
+        <div class="home-app-footer">
+          <span class="home-app-status-pill" :class="'tone-' + homeAppBadge(app, identity.isAdmin).tone">
+            {{ homeAppBadge(app, identity.isAdmin).text }}
+          </span>
+          <span class="home-app-open-text">{{ isHomeAppReady(app) ? "立即打开" : "前往处理" }} &rarr;</span>
+        </div>
+      </button>
+    </div>
+
+    <button
+      v-else-if="identity.isAdmin && !appsState.loading && !appsState.error"
+      type="button"
+      class="home-apps-guide-tile"
+      @click="emit('open-apps-center')"
+    >
+      <div class="home-app-icon cat-default"><Sparkles :size="20" /></div>
+      <div class="home-apps-guide-copy">
+        <h3>安装或添加家庭轻应用</h3>
+        <p>内置 0 MB 纯静态精选模板（家庭网络脉搏、宽带仪表、订阅账本等），进入应用中心即可一键部署。</p>
+      </div>
+      <span class="sanctuary-action">进入应用中心 &rarr;</span>
+    </button>
+  </section>
 
   <!-- 3. Mac Sanctuary Vitality (Warm Consolidated Card) -->
   <section v-if="!identity.isAdmin" class="account-panel" aria-label="我的家庭空间" style="margin-top:22px">

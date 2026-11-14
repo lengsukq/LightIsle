@@ -1,6 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart' show LaunchMode;
 
 import '../../core/isle_quick_jump.dart';
 import '../../core/lightisle_api.dart';
@@ -12,11 +13,13 @@ import '../files/downloads_page.dart';
 import '../files/duplicate_files_page.dart';
 import '../files/file_shares_page.dart';
 import '../settings/admin_smb_page.dart';
+import '../settings/apps_center_helpers.dart';
 import '../settings/apps_center_page.dart';
 import '../settings/automation_page.dart';
 import '../settings/dav_page.dart';
 import '../settings/storage_page.dart';
 import 'dashboard_role_widgets.dart';
+import 'overview_apps_tiles.dart';
 import 'overview_telemetry_grid.dart';
 import 'storage_volume_browser.dart';
 import 'task_history_page.dart';
@@ -32,12 +35,14 @@ class OverviewPage extends StatefulWidget {
     this.onNavigate,
     this.onBrowseDirectory,
     this.onOpenFiles,
+    this.appUrlLauncher,
   });
   final LightIsleApi api;
   final bool isAdmin;
   final ValueChanged<int>? onNavigate;
   final OpenStorageDirectory? onBrowseDirectory;
   final VoidCallback? onOpenFiles;
+  final Future<bool> Function(Uri uri, {LaunchMode mode})? appUrlLauncher;
   @override
   State<OverviewPage> createState() => _OverviewPageState();
 }
@@ -50,9 +55,12 @@ class _OverviewPageState extends State<OverviewPage>
   String? _rootsError;
   DateTime? _lastRootCheck;
   DateTime? _lastComputerFilesCheck;
+  DateTime? _lastAppsCheck;
   bool _computerFilesAvailable = false;
   List<Map<String, dynamic>> _tasks = [];
-  String? _error, _taskError;
+  List<Map<String, dynamic>> _apps = const [];
+  bool _appsLoaded = false;
+  String? _error, _taskError, _appsError;
   Timer? _timer;
   final ValueNotifier<bool> _busyNotifier = ValueNotifier<bool>(false);
   bool get _busy => _busyNotifier.value;
@@ -74,6 +82,10 @@ class _OverviewPageState extends State<OverviewPage>
       _netHistory = const [];
       _lastRootCheck = null;
       _lastComputerFilesCheck = null;
+      _lastAppsCheck = null;
+      _apps = const [];
+      _appsLoaded = false;
+      _appsError = null;
       _schedule();
     }
   }
@@ -111,8 +123,11 @@ class _OverviewPageState extends State<OverviewPage>
     var nextRoots = _roots;
     var nextRootsError = _rootsError;
     var nextTasks = _tasks;
+    var nextApps = _apps;
+    var nextAppsLoaded = _appsLoaded;
     var nextError = _error;
     var nextTaskError = _taskError;
+    var nextAppsError = _appsError;
 
     try {
       if (widget.isAdmin) {
@@ -162,6 +177,19 @@ class _OverviewPageState extends State<OverviewPage>
         nextRootsError = userFacingError(e);
       }
     }
+    if (_lastAppsCheck == null ||
+        now.difference(_lastAppsCheck!) >= const Duration(seconds: 30)) {
+      _lastAppsCheck = now;
+      try {
+        final response = await widget.api.get('/api/v2/apps');
+        nextApps = objectList(response['apps']);
+        nextAppsLoaded = true;
+        nextAppsError = null;
+      } catch (e) {
+        nextAppsLoaded = true;
+        nextAppsError = userFacingError(e);
+      }
+    }
     if (widget.isAdmin && mounted) {
       try {
         final result = await widget.api.get('/api/v2/tasks');
@@ -182,8 +210,11 @@ class _OverviewPageState extends State<OverviewPage>
         !_overviewRootsEqual(_roots, nextRoots) ||
         _rootsError != nextRootsError ||
         !_overviewJsonEqual(_tasks, nextTasks) ||
+        !_overviewJsonEqual(_apps, nextApps) ||
+        _appsLoaded != nextAppsLoaded ||
         _error != nextError ||
-        _taskError != nextTaskError;
+        _taskError != nextTaskError ||
+        _appsError != nextAppsError;
     _busyNotifier.value = false;
     if (changed) {
       final statsChanged = !_overviewJsonEqual(_stats, nextStats);
@@ -194,8 +225,11 @@ class _OverviewPageState extends State<OverviewPage>
         _roots = nextRoots;
         _rootsError = nextRootsError;
         _tasks = nextTasks;
+        _apps = nextApps;
+        _appsLoaded = nextAppsLoaded;
         _error = nextError;
         _taskError = nextTaskError;
+        _appsError = nextAppsError;
         if (statsChanged && nextStats != null) {
           _recordTelemetrySample(nextStats);
         }
@@ -296,13 +330,26 @@ class _OverviewPageState extends State<OverviewPage>
     );
   }
 
-  void _openAppsCenterPage() {
-    Navigator.of(context).push<void>(
+  Future<void> _openAppsCenterPage({String? launchAppId}) async {
+    await Navigator.of(context).push<void>(
       buildIslePageRoute(
-        builder: (_) =>
-            AppsCenterPage(api: widget.api, isAdmin: widget.isAdmin),
+        builder: (_) => AppsCenterPage(
+          api: widget.api,
+          isAdmin: widget.isAdmin,
+          initialApps: _apps.isNotEmpty ? _apps : null,
+          initialLaunchAppId: launchAppId,
+          urlLauncher: widget.appUrlLauncher,
+        ),
       ),
     );
+    _lastAppsCheck = null;
+    if (mounted) unawaited(_refresh());
+  }
+
+  void _openAppFromHome(Map<String, dynamic> app) {
+    final id = app['id']?.toString() ?? '';
+    final ready = id.isNotEmpty && isHomeAppReady(app);
+    unawaited(_openAppsCenterPage(launchAppId: ready ? id : null));
   }
 
   void _openDownloadsPage() {
@@ -546,6 +593,18 @@ class _OverviewPageState extends State<OverviewPage>
                     : null,
               ),
               const SizedBox(height: 10),
+              HomeAppsTileSection(
+                apps: _apps,
+                isAdmin: widget.isAdmin,
+                loaded: _appsLoaded,
+                error: _appsError,
+                onOpenApp: _openAppFromHome,
+                onOpenAppsCenter: () => _openAppsCenterPage(),
+                onRetry: () {
+                  _lastAppsCheck = null;
+                  unawaited(_refresh());
+                },
+              ),
               _buildOverviewQuickJumpStrip(context),
               SizedBox(height: compact ? 6 : 12),
               ValueListenableBuilder<bool>(

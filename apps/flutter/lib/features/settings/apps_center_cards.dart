@@ -1,11 +1,5 @@
 part of 'apps_center_page.dart';
 
-double? _asDoubleOrNull(Object? value) {
-  if (value is num) return value.toDouble();
-  if (value == null) return null;
-  return double.tryParse(value.toString());
-}
-
 extension _AppsCenterCards on _AppsCenterPageState {
   Widget _buildEmbeddedWorkbench(
     BuildContext context,
@@ -13,7 +7,7 @@ extension _AppsCenterCards on _AppsCenterPageState {
   ) {
     final theme = Theme.of(context), colors = theme.colorScheme;
     final draft = AppConfigDraft.fromApp(app);
-    final (runtimeLabel, runtimeColor) = _runtimeBadge(app, draft.webMode);
+    final (runtimeLabel, runtimeColor) = appRuntimeBadge(app, draft.webMode);
     final urlText = _activeWorkbenchUrl ?? '';
     return IsleSurface(
       key: ValueKey('embeddedAppWorkbench_$_workbenchReloadKey'),
@@ -267,7 +261,7 @@ extension _AppsCenterCards on _AppsCenterPageState {
     final diag = app['diagnostic'] is Map
         ? Map<String, dynamic>.from(app['diagnostic'] as Map)
         : null;
-    final (runtimeLabel, runtimeColor) = _runtimeBadge(app, draft.webMode);
+    final (runtimeLabel, runtimeColor) = appRuntimeBadge(app, draft.webMode);
     final accessLabel = switch (draft.accessPolicy) {
       'all_members' => '全员可用',
       'selected_members' => '指定成员',
@@ -291,8 +285,8 @@ extension _AppsCenterCards on _AppsCenterPageState {
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               IsleSquircleBadge(
-                icon: _categoryIcon(category),
-                color: colors.primary,
+                icon: appCategoryIcon(category),
+                color: appCategoryColor(category, colors),
                 size: 40,
                 iconSize: 20,
               ),
@@ -313,7 +307,7 @@ extension _AppsCenterCards on _AppsCenterPageState {
                         ),
                         const SizedBox(width: 8),
                         IsleStatusBadge(
-                          label: _categoryLabel(category),
+                          label: appCategoryLabel(category),
                           color: colors.primary,
                         ),
                       ],
@@ -482,64 +476,6 @@ extension _AppsCenterCards on _AppsCenterPageState {
       ),
     );
   }
-
-  (String, Color) _runtimeBadge(Map<String, dynamic> app, String mode) {
-    final web = app['web'] is Map
-        ? Map<String, dynamic>.from(app['web'] as Map)
-        : const <String, dynamic>{};
-    final runtime = app['runtime'] is Map
-        ? Map<String, dynamic>.from(app['runtime'] as Map)
-        : const <String, dynamic>{};
-    final status =
-        app['status']?.toString() ??
-        web['status']?.toString() ??
-        runtime['status']?.toString() ??
-        (mode == 'static' ? 'static' : 'sleeping');
-    final memBytes = _asDoubleOrNull(
-      app['memoryBytes'] ??
-          app['rssBytes'] ??
-          web['rssBytes'] ??
-          runtime['memoryBytes'] ??
-          runtime['rssBytes'],
-    );
-    final memMbRaw = _asDoubleOrNull(
-      app['memoryMB'] ?? web['memoryMB'] ?? runtime['memoryMB'],
-    );
-    final mb = memMbRaw != null
-        ? memMbRaw.round()
-        : (memBytes != null && memBytes > 0
-              ? (memBytes / (1024 * 1024)).ceil()
-              : 0);
-    if (mode == 'static' || status == 'static') {
-      return ('纯静态 0 MB', const Color(0xFF10B981));
-    }
-    if (status == 'running') {
-      return mode == 'persistent' && mb <= 0
-          ? ('常驻守护', const Color(0xFF0A84FF))
-          : ('运行中 $mb MB', const Color(0xFF10B981));
-    }
-    return mode == 'persistent'
-        ? ('常驻守护', const Color(0xFF0A84FF))
-        : ('按需休眠 0 MB', const Color(0xFF64748B));
-  }
-
-  String _categoryLabel(String? c) => switch (c) {
-    'network' => '网络监控',
-    'media' => '影音工具',
-    'home' => '家庭看板',
-    'finance' => '账单记账',
-    'system' => '系统扩展',
-    _ => '实用工具',
-  };
-
-  IconData _categoryIcon(String? c) => switch (c) {
-    'network' => Icons.router_rounded,
-    'media' => Icons.movie_filter_rounded,
-    'home' => Icons.home_work_outlined,
-    'finance' => Icons.account_balance_wallet_outlined,
-    'system' => Icons.memory_rounded,
-    _ => Icons.widgets_rounded,
-  };
 
   Widget _buildDiagnosticBox(
     ThemeData theme,

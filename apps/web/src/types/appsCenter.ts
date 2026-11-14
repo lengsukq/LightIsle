@@ -81,6 +81,7 @@ export interface PublicAppItem {
   rssBytes?: number;
   memoryMB?: number;
   launchUrl?: string;
+  valid?: boolean;
   lastError?: string;
   validationError?: string;
   diagnostic?: AppDiagnostic;

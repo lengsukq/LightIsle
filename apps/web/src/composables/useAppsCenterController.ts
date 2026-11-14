@@ -126,9 +126,25 @@ export function flipItem<T>(list: T[], value: T): T[] {
   return list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
 }
 
-export function useAppsCenterController(props: { active?: boolean; admin?: boolean }) {
+export type AppLaunchRequest = { appId: string; seq: number };
+
+/** Returns the target app if a home-tile launch request should automatically open its workbench. */
+export function findAutoLaunchTarget(apps: PublicAppItem[], request?: AppLaunchRequest | null): PublicAppItem | null {
+  if (!request?.appId) return null;
+  const target = apps.find((a) => a.id === request.appId);
+  if (!target) return null;
+  if (target.pendingActivation || target.valid === false || target.validationError) return null;
+  if (target.web?.enabled === false || !hasWebModule(target)) return null;
+  return target;
+}
+
+export function useAppsCenterController(
+  props: { active?: boolean; admin?: boolean; launchRequest?: AppLaunchRequest | null },
+  onLaunchHandled?: (seq: number) => void,
+) {
   const apiClient = createAppsCenterClient();
   const apps = ref<PublicAppItem[]>([]);
+  const appsLoadedOnce = ref(false);
   const templates = ref<OfficialAppTemplateItem[]>([]);
   const isAdmin = ref(!!props.admin);
   const members = ref<AppMemberSummary[]>([]);
@@ -188,6 +204,7 @@ export function useAppsCenterController(props: { active?: boolean; admin?: boole
   });
 
   function applyAppsPayload(payload: Record<string, unknown>) {
+    appsLoadedOnce.value = true;
     if (Array.isArray(payload.apps)) apps.value = payload.apps as PublicAppItem[];
     if (Array.isArray(payload.templates)) templates.value = payload.templates as OfficialAppTemplateItem[];
     if (typeof payload.isAdmin === "boolean") isAdmin.value = payload.isAdmin;
@@ -543,9 +560,27 @@ export function useAppsCenterController(props: { active?: boolean; admin?: boole
     }
   }
 
-  watch(() => props.active, (active) => {
-    if (active !== false) void reload(false);
-  }, { immediate: true });
+  function consumeLaunchRequest() {
+    const req = props.launchRequest;
+    if (!req?.appId || props.active === false || !appsLoadedOnce.value || busy.value) return;
+    const target = findAutoLaunchTarget(apps.value, req);
+    onLaunchHandled?.(req.seq);
+    if (target) void openApp(target);
+  }
+
+  watch(
+    () => props.active,
+    (active) => {
+      if (active !== false) void reload(false);
+    },
+    { immediate: true },
+  );
+
+  watch(
+    [() => props.launchRequest?.seq, () => props.active, appsLoadedOnce, busy],
+    () => consumeLaunchRequest(),
+    { immediate: true },
+  );
 
   return {
     apps,

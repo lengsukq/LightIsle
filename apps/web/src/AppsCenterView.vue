@@ -26,10 +26,12 @@ import {
   flipItem,
   localTime,
   runtimeBadge,
+  type AppLaunchRequest,
   useAppsCenterController,
   workbenchBadge,
 } from "./composables/useAppsCenterController.ts";
-const props = defineProps<{ active?: boolean; admin?: boolean }>();
+const props = defineProps<{ active?: boolean; admin?: boolean; launchRequest?: AppLaunchRequest | null }>();
+const emit = defineEmits<{ "launch-handled": [seq: number] }>();
 const {
   apps,
   templates,
@@ -88,7 +90,7 @@ const {
   removeApp,
   installOfficialTemplate,
   mutateAppStorage,
-} = useAppsCenterController(props);
+} = useAppsCenterController(props, (seq) => emit("launch-handled", seq));
 </script>
 
 <template>

@@ -11,6 +11,7 @@ import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 import 'accounts_page.dart';
+import 'apps_center_helpers.dart';
 import 'apps_center_sheets.dart';
 import 'network_diagnostics_page.dart';
 import 'storage_page.dart';
@@ -25,13 +26,16 @@ class AppsCenterPage extends StatefulWidget {
     super.key,
     required this.api,
     this.isAdmin,
-    @visibleForTesting this.urlLauncher,
+    this.initialLaunchAppId,
+    this.initialApps,
+    this.urlLauncher,
     @visibleForTesting this.pickBackupSavePath,
   });
 
   final LightIsleApi api;
   final bool? isAdmin;
-  @visibleForTesting
+  final String? initialLaunchAppId;
+  final List<Map<String, dynamic>>? initialApps;
   final Future<bool> Function(Uri uri, {LaunchMode mode})? urlLauncher;
   @visibleForTesting
   final Future<String?> Function(String defaultFileName)? pickBackupSavePath;
@@ -50,6 +54,7 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
   bool _isAdmin = false, _busy = false;
   bool _loaded = false, _workbenchFullscreen = false;
   String? _wakingAppId,
+      _pendingInitialLaunchAppId,
       _activeWorkbenchAppId,
       _activeWorkbenchUrl,
       _error,
@@ -60,6 +65,10 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
   void initState() {
     super.initState();
     _isAdmin = widget.isAdmin ?? false;
+    _pendingInitialLaunchAppId = widget.initialLaunchAppId;
+    if (widget.initialApps != null && widget.initialApps!.isNotEmpty) {
+      _apps = widget.initialApps!;
+    }
     _reload(refresh: false);
   }
 
@@ -68,11 +77,15 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.api != widget.api || oldWidget.isAdmin != widget.isAdmin) {
       _isAdmin = widget.isAdmin ?? false;
+      _pendingInitialLaunchAppId = widget.initialLaunchAppId;
       _activeWorkbenchAppId = null;
       _activeWorkbenchUrl = null;
       _loaded = false;
       _selectedInstallLocationId = '';
       unawaited(_reload(refresh: false));
+    } else if (oldWidget.initialLaunchAppId != widget.initialLaunchAppId) {
+      _pendingInitialLaunchAppId = widget.initialLaunchAppId;
+      _consumeInitialLaunchIfReady();
     }
   }
 
@@ -108,6 +121,23 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
       if (res['isAdmin'] is bool) _isAdmin = res['isAdmin'] as bool;
       _loaded = true;
     });
+    _consumeInitialLaunchIfReady();
+  }
+
+  void _consumeInitialLaunchIfReady() {
+    final targetId = _pendingInitialLaunchAppId?.trim() ?? '';
+    if (targetId.isEmpty || !_loaded || _wakingAppId != null) return;
+    _pendingInitialLaunchAppId = null;
+    Map<String, dynamic>? target;
+    for (final app in _apps) {
+      if (app['id']?.toString() == targetId) {
+        target = app;
+        break;
+      }
+    }
+    if (target == null) return;
+    if (!isHomeAppReady(target) || !isHomeAppWebEnabled(target)) return;
+    unawaited(_launchApp(target));
   }
 
   Future<void> _runBusy(

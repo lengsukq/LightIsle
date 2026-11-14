@@ -1,12 +1,17 @@
 import { computed, ref, watch, type ComputedRef, type Ref } from "vue";
 import { readApiFailure } from "./apiFailure.ts";
+import { createAppsCenterClient } from "./appsCenterApi.ts";
 import { describeUserFacingError } from "./userFacingError.ts";
+import { isHomeAppReady, type PersonalSpaceSummary } from "./overviewPageModels.ts";
+import type { AppLaunchRequest } from "./composables/useAppsCenterController.ts";
+import type { PublicAppItem } from "./types/appsCenter.ts";
 import type { ServerStats } from "./useHostTelemetry.ts";
-import type { PersonalSpaceSummary } from "./overviewPageModels.ts";
 import type { BackendTask } from "./useTaskCenter.ts";
 
 export function useOverviewAndDisclosures(options: {
   user: Ref<{ username: string; role: "admin" | "member" } | null>;
+  activePage?: Ref<string>;
+  fetchApps?: () => Promise<{ apps?: PublicAppItem[] }>;
   fileSearch: Ref<string>;
   searchViaSpotlight: Ref<boolean>;
   filesLoading: Ref<boolean>;
@@ -37,6 +42,77 @@ export function useOverviewAndDisclosures(options: {
   const personalSpace = ref<PersonalSpaceSummary | null>(null);
   const personalSpaceError = ref("");
   let personalSpaceRequest = 0;
+
+  const overviewAppItems = ref<PublicAppItem[]>([]);
+  const overviewAppsLoading = ref(false);
+  const overviewAppsError = ref("");
+  let overviewAppsRequest = 0;
+  let homeAppLaunchSeq = 0;
+  const pendingAppLaunch = ref<AppLaunchRequest | null>(null);
+
+  function openHomeApp(app: PublicAppItem) {
+    pendingAppLaunch.value = isHomeAppReady(app) ? { appId: app.id, seq: ++homeAppLaunchSeq } : null;
+    if (options.activePage) {
+      options.activePage.value = "apps";
+    }
+  }
+
+  function clearPendingAppLaunch(seq: number) {
+    if (pendingAppLaunch.value?.seq === seq) pendingAppLaunch.value = null;
+  }
+
+  async function refreshOverviewApps() {
+    if (!options.user.value?.username) {
+      overviewAppItems.value = [];
+      overviewAppsError.value = "";
+      overviewAppsLoading.value = false;
+      return;
+    }
+    const generation = ++overviewAppsRequest;
+    overviewAppsLoading.value = true;
+    overviewAppsError.value = "";
+    try {
+      const readApps = options.fetchApps ?? (() => createAppsCenterClient().fetchApps(false));
+      const payload = await readApps();
+      if (generation === overviewAppsRequest) {
+        overviewAppItems.value = Array.isArray(payload?.apps) ? payload.apps : [];
+      }
+    } catch (e) {
+      if (generation === overviewAppsRequest) {
+        overviewAppsError.value = "轻应用列表读取失败：" + describeUserFacingError(e);
+      }
+    } finally {
+      if (generation === overviewAppsRequest) {
+        overviewAppsLoading.value = false;
+      }
+    }
+  }
+
+  watch(
+    [() => options.user.value?.username, () => options.user.value?.role],
+    ([username]) => {
+      if (!username) {
+        overviewAppsRequest += 1;
+        overviewAppItems.value = [];
+        overviewAppsError.value = "";
+        overviewAppsLoading.value = false;
+        return;
+      }
+      void refreshOverviewApps();
+    },
+    { immediate: true },
+  );
+
+  if (options.activePage) {
+    watch(
+      () => options.activePage?.value,
+      (nextPage, prevPage) => {
+        if (nextPage === "overview" && prevPage && prevPage !== "overview" && options.user.value?.username) {
+          void refreshOverviewApps();
+        }
+      },
+    );
+  }
 
   watch(
     [() => options.user.value?.username, () => options.user.value?.role],
@@ -137,6 +213,12 @@ export function useOverviewAndDisclosures(options: {
     rootNames: Object.fromEntries(options.sharedRoots.value.map((root) => [root.rootID, root.name])),
   }));
 
+  const overviewApps = computed(() => ({
+    items: overviewAppItems.value,
+    loading: overviewAppsLoading.value,
+    error: overviewAppsError.value,
+  }));
+
   const overviewPending = computed(() => ({
     offlineCount: isAdminDashboard.value ? options.sharedRoots.value.filter((root) => !root.online).length : 0,
     rootsError: isAdminDashboard.value ? options.rootDiscoveryError.value : "",
@@ -152,6 +234,11 @@ export function useOverviewAndDisclosures(options: {
     personalSpaceRequest += 1;
     personalSpace.value = null;
     personalSpaceError.value = "";
+    overviewAppsRequest += 1;
+    overviewAppItems.value = [];
+    overviewAppsLoading.value = false;
+    overviewAppsError.value = "";
+    pendingAppLaunch.value = null;
     cpuHistory.value = [];
     memoryHistory.value = [];
     showHardwareSpecs.value = false;
@@ -176,10 +263,15 @@ export function useOverviewAndDisclosures(options: {
     togglePendingUploads,
     toggleAdvanced,
     resetOverviewAndDisclosures,
+    refreshOverviewApps,
+    pendingAppLaunch,
+    openHomeApp,
+    clearPendingAppLaunch,
     overviewIdentity,
     overviewSearch,
     overviewTelemetry,
     overviewPersonalSpace,
+    overviewApps,
     overviewPending,
   };
 }

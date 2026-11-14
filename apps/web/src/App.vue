@@ -506,10 +506,11 @@ const {
   advancedUploadsOpen, advancedDiagnosticsOpen, pendingUploadsOpen,
   pendingMediaOpen, adminPendingMediaOpen,
   togglePendingMedia, togglePendingUploads,
-  toggleAdvanced, resetOverviewAndDisclosures,
-  overviewIdentity, overviewSearch, overviewTelemetry, overviewPersonalSpace, overviewPending,
+  toggleAdvanced, resetOverviewAndDisclosures, refreshOverviewApps,
+  pendingAppLaunch, openHomeApp, clearPendingAppLaunch,
+  overviewIdentity, overviewSearch, overviewTelemetry, overviewPersonalSpace, overviewApps, overviewPending,
 } = useOverviewAndDisclosures({
-  user, fileSearch, searchViaSpotlight, filesLoading, searchingFiles, recentSearches,
+  user, activePage: active, fileSearch, searchViaSpotlight, filesLoading, searchingFiles, recentSearches,
   telemetry: { stats, error, polling, cpu, usedMemory, usedDisk, diskActivity, bytes, percent },
   sharedRoots, rootDiscoveryError, rootDiscoveryState, selectedRoot, taskLoaded, taskLoading, taskError, tasks,
 });

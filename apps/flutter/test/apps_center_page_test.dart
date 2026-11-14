@@ -202,6 +202,15 @@ class _FakeAppsApi extends LightIsleApi {
         'launchUrl': '/apps/cpe-monitor/?__li_ticket=tk-123',
       };
     }
+    if (method == 'POST' && path == '/api/v2/apps/network-pulse/launch') {
+      return {
+        'id': 'network-pulse',
+        'status': 'static',
+        'ticket': 'tk-static',
+        'launchUrl': '/apps/network-pulse/?__li_ticket=tk-static',
+        'launchPath': '/apps/network-pulse/',
+      };
+    }
     if (method == 'PUT' &&
         (path == '/api/v2/apps/cpe-monitor' ||
             path == '/api/v2/apps/network-pulse')) {
@@ -653,6 +662,52 @@ void main() {
       expect(find.text('请填写 Mac 本机目录路径'), findsOneWidget);
       expect(adminApi.lastStorageBody, isNull);
       expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'AppsCenterPage auto-launches ready initialLaunchAppId and skips pendingActivation',
+    (tester) async {
+      final api = _FakeAppsApi(isAdmin: true);
+      addTearDown(api.close);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AppsCenterPage(
+            api: api,
+            isAdmin: true,
+            initialApps: api.apps,
+            initialLaunchAppId: 'network-pulse',
+            urlLauncher: (_, {mode = LaunchMode.platformDefault}) async => true,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(api.calls, contains('POST /api/v2/apps/network-pulse/launch'));
+      expect(find.byKey(const ValueKey('workbenchBackButton')), findsOneWidget);
+      expect(find.text('应用工作台 · 轻屿网络脉搏'), findsOneWidget);
+
+      final pendingApi = _FakeAppsApi(isAdmin: true)
+        ..apps[0]['pendingActivation'] = true;
+      addTearDown(pendingApi.close);
+      await tester.pumpWidget(
+        MaterialApp(
+          home: AppsCenterPage(
+            api: pendingApi,
+            isAdmin: true,
+            initialApps: pendingApi.apps,
+            initialLaunchAppId: 'cpe-monitor',
+            urlLauncher: (_, {mode = LaunchMode.platformDefault}) async => true,
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+      expect(
+        pendingApi.calls,
+        isNot(contains('POST /api/v2/apps/cpe-monitor/launch')),
+      );
+      expect(find.byKey(const ValueKey('workbenchBackButton')), findsNothing);
+      expect(find.byKey(const ValueKey('appCard_cpe-monitor')), findsOneWidget);
+      expect(find.text('待首次激活'), findsOneWidget);
     },
   );
 }

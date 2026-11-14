@@ -10,6 +10,8 @@ import {
   getAppDataBackupUrl,
   normalizeLogsResponse,
 } from "../src/appsCenterApi.ts";
+import { findAutoLaunchTarget } from "../src/composables/useAppsCenterController.ts";
+import { filterHomeLaunchableApps } from "../src/overviewPageModels.ts";
 
 const appsViewSource = readFileSync(new URL("../src/AppsCenterView.vue", import.meta.url), "utf8");
 const appVueSource = readFileSync(new URL("../src/App.vue", import.meta.url), "utf8");
@@ -188,8 +190,29 @@ test("App.vue and AppShell.html integrate the Apps Center tab under 生活空间
   assert.match(appVueSource, /key:\s*"apps"\s*as\s*Page,\s*title:\s*"应用中心".*group:\s*"space"/);
   assert.match(appVueSource, /validPages/);
   assert.match(appShellSource, /<AppsCenterView\s+:active="active === 'apps'"/);
+  assert.match(appShellSource, /:apps="overviewApps"/);
+  assert.match(appShellSource, /@open-app="openHomeApp"/);
+  assert.match(appShellSource, /:launch-request="pendingAppLaunch"/);
+  assert.match(appShellSource, /@launch-handled="clearPendingAppLaunch"/);
   assert.doesNotMatch(appShellSource, /<AgentConnections/);
   assert.match(appShellSource, /<FileSearchControls/);
   assert.match(fileSearchControlsSource, /file-spotlight-pill/);
   assert.match(appShellSource, /管理员请前往「任务与通知」统一核对/);
+});
+
+test("Home tile helpers filter non-web apps, sort ready apps first, and guard auto-launch targets", () => {
+  const apps = [
+    { id: "z-pending", name: "待激活", pendingActivation: true, web: { enabled: true, mode: "on-demand" } },
+    { id: "cron-only", name: "纯后台", web: { enabled: false, mode: "none" } },
+    { id: "a-ready", name: "网络脉搏", web: { enabled: true, mode: "static" } },
+    { id: "b-invalid", name: "配置异常", valid: false, web: { enabled: true, mode: "on-demand" } },
+  ];
+  const filtered = filterHomeLaunchableApps(apps);
+  assert.deepEqual(filtered.map((a) => a.id), ["a-ready", "b-invalid", "z-pending"]);
+
+  assert.equal(findAutoLaunchTarget(apps, { appId: "a-ready", seq: 1 })?.id, "a-ready");
+  assert.equal(findAutoLaunchTarget(apps, { appId: "z-pending", seq: 2 }), null);
+  assert.equal(findAutoLaunchTarget(apps, { appId: "b-invalid", seq: 3 }), null);
+  assert.equal(findAutoLaunchTarget(apps, { appId: "cron-only", seq: 4 }), null);
+  assert.equal(findAutoLaunchTarget(apps, { appId: "missing", seq: 5 }), null);
 });

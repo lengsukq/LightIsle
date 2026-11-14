@@ -5,32 +5,55 @@ import { compile } from "@vue/compiler-dom";
 import { parse } from "@vue/compiler-sfc";
 import * as Vue from "vue";
 import { ISLE_CHART_COLORS } from "./isleChartsMath.ts";
-import { buildHostDiskSegments, buildHostMemorySegments, buildQuotaSegments } from "./overviewPageModels.ts";
+import {
+  buildHostDiskSegments,
+  buildHostMemorySegments,
+  buildQuotaSegments,
+  filterHomeLaunchableApps,
+  homeAppBadge,
+  homeAppCategoryKey,
+  homeAppCategoryLabel,
+  isHomeAppReady,
+} from "./overviewPageModels.ts";
 
 const source = readFileSync(new URL("./OverviewPage.vue", import.meta.url), "utf8");
 const template = parse(source, { filename: "OverviewPage.vue" }).descriptor.template.content;
 const render = new Function("Vue", compile(template, { mode: "function" }).code)(Vue);
 const iconNames = [
-  "Activity", "ArrowDownToLine", "ArrowUpRight", "Clapperboard", "CopyCheck", "Folder", "HardDrive", "Images",
-  "IsleCharts", "Monitor", "RecentSearchPopover", "RefreshCcw", "Search", "Server", "ShieldCheck", "Sparkles", "Trash2", "WifiOff",
+  "Activity", "ArrowDownToLine", "ArrowUpRight", "Clapperboard", "CopyCheck", "Cpu", "Folder", "HardDrive", "Images",
+  "IsleCharts", "LayoutDashboard", "Monitor", "RecentSearchPopover", "RefreshCcw", "Router", "Search", "Server",
+  "ShieldCheck", "Sparkles", "Trash2", "Wallet", "WifiOff", "Wrench",
 ];
 const IconStub = Vue.defineComponent({ setup: () => () => null });
 
 const OverviewTestHarness = Vue.defineComponent({
-  props: ["identity", "search", "telemetry", "personalSpace", "pending"],
+  props: ["identity", "search", "telemetry", "personalSpace", "pending", "apps"],
   emits: [
     "search", "return-to-files", "refresh", "navigate", "open-account-settings", "open-pending",
     "open-duplicates", "open-trash", "open-similar-photos", "select-history", "delete-history", "clear-history",
+    "open-apps-center", "open-app", "refresh-apps",
     "update:query", "update:spotlight", "update:expanded",
   ],
   components: Object.fromEntries(iconNames.map(name => [name, IconStub])),
   setup(props, { emit }) {
+    const failedAppIcons = Vue.ref(new Set());
     const view = {
       identity: props.identity,
       search: props.search,
       telemetry: props.telemetry,
       personalSpace: props.personalSpace,
       pending: props.pending,
+      get appsState() { return props.apps ?? { items: [], loading: false, error: "" }; },
+      get launchableApps() { return filterHomeLaunchableApps(view.appsState.items); },
+      get showHomeAppsSection() {
+        return props.identity.isAdmin || view.launchableApps.length > 0 || Boolean(view.appsState.error);
+      },
+      failedAppIcons: failedAppIcons.value,
+      markAppIconFailed(id) { failedAppIcons.value.add(id); },
+      isHomeAppReady,
+      homeAppCategoryKey,
+      homeAppCategoryLabel,
+      homeAppBadge,
       emit,
       searchFocused: false,
       searchComposing: false,
@@ -135,6 +158,9 @@ function mountOverview(props, listeners) {
     onRefresh: listeners.refresh,
     onNavigate: listeners.navigate,
     onOpenPending: listeners.pending,
+    onOpenAppsCenter: listeners.openAppsCenter,
+    onOpenApp: listeners.openApp,
+    onRefreshApps: listeners.refreshApps,
     "onUpdate:query": listeners.query,
   });
   app.mount(root);
@@ -254,5 +280,88 @@ test("OverviewPage allows navigating to downloads for members and blocks short w
     assert.doesNotMatch(source, /update:query.*value\.trim/);
   } finally {
     mounted.unmount();
+  }
+});
+
+test("OverviewPage renders home light-app tiles with role-based visibility, sorting, and empty states", () => {
+  const events = [];
+  const memberEmpty = mountOverview({
+    identity: { username: "小岛", isAdmin: false },
+    search: { query: "", spotlight: false, filesLoading: false, searchingFiles: false },
+    telemetry: telemetry(),
+    personalSpace: { summary: null, error: "", bytes: value => `${value} B` },
+    apps: { items: [{ id: "cron-only", name: "后台脚本", web: { enabled: false, mode: "none" } }], loading: false, error: "" },
+  }, {});
+  try {
+    assert.doesNotMatch(textContent(memberEmpty.root), /家庭轻应用/);
+  } finally {
+    memberEmpty.unmount();
+  }
+
+  const adminEmpty = mountOverview({
+    identity: { username: "admin", isAdmin: true },
+    search: { query: "", spotlight: false, filesLoading: false, searchingFiles: false },
+    telemetry: telemetry(),
+    personalSpace: { summary: null, error: "", bytes: value => `${value} B` },
+    apps: { items: [], loading: false, error: "" },
+  }, {
+    openAppsCenter: () => events.push(["open-apps-center"]),
+  });
+  try {
+    const content = textContent(adminEmpty.root);
+    assert.match(content, /家庭轻应用/);
+    assert.match(content, /安装或添加家庭轻应用/);
+    const guideBtn = find(adminEmpty.root, node => node.type === "button" && node.props.class === "home-apps-guide-tile");
+    guideBtn.props.onClick();
+    assert.deepEqual(events, [["open-apps-center"]]);
+  } finally {
+    adminEmpty.unmount();
+  }
+
+  const memberWithApps = mountOverview({
+    identity: { username: "小岛", isAdmin: false },
+    search: { query: "", spotlight: false, filesLoading: false, searchingFiles: false },
+    telemetry: telemetry(),
+    personalSpace: { summary: null, error: "", bytes: value => `${value} B` },
+    apps: {
+      items: [
+        { id: "bg-worker", name: "纯后台", web: { enabled: false, mode: "none" } },
+        { id: "network-pulse", name: "网络脉搏", category: "network", description: "局域网设备监测", web: { enabled: true, mode: "static" } },
+      ],
+      loading: false,
+      error: "",
+    },
+  }, {
+    openApp: (app) => events.push(["open-app", app.id]),
+  });
+  try {
+    const content = textContent(memberWithApps.root);
+    assert.match(content, /网络脉搏/);
+    assert.match(content, /免密即开/);
+    assert.doesNotMatch(content, /纯后台/);
+    assert.doesNotMatch(content, /纯静态/);
+    const tile = find(memberWithApps.root, node => node.type === "button" && /home-app-tile/.test(String(node.props.class)));
+    tile.props.onClick();
+    assert.deepEqual(events.at(-1), ["open-app", "network-pulse"]);
+  } finally {
+    memberWithApps.unmount();
+  }
+
+  const adminError = mountOverview({
+    identity: { username: "admin", isAdmin: true },
+    search: { query: "", spotlight: false, filesLoading: false, searchingFiles: false },
+    telemetry: telemetry(),
+    personalSpace: { summary: null, error: "", bytes: value => `${value} B` },
+    apps: { items: [], loading: false, error: "轻应用列表读取失败：网络超时" },
+  }, {
+    refreshApps: () => events.push(["refresh-apps"]),
+  });
+  try {
+    assert.match(textContent(adminError.root), /轻应用列表读取失败/);
+    const retryBtn = find(adminError.root, node => node.type === "button" && /重新加载/.test(textContent(node)));
+    retryBtn.props.onClick();
+    assert.deepEqual(events.at(-1), ["refresh-apps"]);
+  } finally {
+    adminError.unmount();
   }
 });
