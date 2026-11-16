@@ -16,10 +16,19 @@ String normalizeCinemaTitleKey(String title) {
   return title.trim().toLowerCase().replaceAll(_cinemaTitlePunctuation, '');
 }
 
+String cinemaIdentityKey(CinemaFilm film) {
+  final base = normalizeCinemaTitleKey(film.displayTitle);
+  if (base.isEmpty) return '';
+  if (film.isSeries && (film.season > 0 || film.episode > 0)) {
+    return '$base#s${film.season}e${film.episode}';
+  }
+  return base;
+}
+
 Set<String> duplicateCinemaTitleKeys(Iterable<CinemaFilm> films) {
   final counts = <String, int>{};
   for (final film in films) {
-    final key = normalizeCinemaTitleKey(film.title);
+    final key = cinemaIdentityKey(film);
     if (key.isEmpty) continue;
     counts[key] = (counts[key] ?? 0) + 1;
   }
@@ -45,7 +54,7 @@ String? cinemaDisambiguationBadge(
   Set<String> duplicateTitleKeys,
 ) {
   if (duplicateTitleKeys.isEmpty) return null;
-  final key = normalizeCinemaTitleKey(film.title);
+  final key = cinemaIdentityKey(film);
   if (!duplicateTitleKeys.contains(key)) return null;
   return cinemaFilmFolderBadge(film.path);
 }

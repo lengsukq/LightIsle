@@ -51,6 +51,16 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
       });
       return;
     }
+    if (token.isNotEmpty &&
+        (token.length < 20 ||
+            token.length > 2048 ||
+            RegExp(r'\s').hasMatch(token))) {
+      _updateState(() {
+        _metaMatch.tmdbMessage =
+            '填写的 TMDB Read Access Token 格式无效（留空可直接使用 Mac 端已配置的 Token）。';
+      });
+      return;
+    }
     final generation = ++_metaMatch.generation;
     final filmId = _film.id;
     _updateState(() {
@@ -111,6 +121,17 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
     );
     if (confirmed != true || !mounted) return;
     final token = _metaMatch.tmdbTokenController.text.trim();
+    if (token.isNotEmpty &&
+        (token.length < 20 ||
+            token.length > 2048 ||
+            RegExp(r'\s').hasMatch(token))) {
+      _updateState(() {
+        _metaMatch.tmdbMessage =
+            '填写的 TMDB Read Access Token 格式无效（留空可直接使用 Mac 端已配置的 Token）。';
+      });
+      return;
+    }
+    final hadPageToken = token.isNotEmpty;
     final generation = ++_metaMatch.generation;
     final filmId = _film.id;
     _updateState(() {
@@ -128,7 +149,9 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
         _film = updated;
         _metaMatch.tmdbCandidates = const [];
         _metaMatch.tmdbTokenController.clear();
-        _metaMatch.message = '已匹配 TMDB 资料；API 凭据已从页面内存清除。';
+        _metaMatch.message = hadPageToken
+            ? '已匹配 TMDB 资料；页面输入的临时凭据已清除。'
+            : '已匹配 TMDB 资料。';
         _metaMatch.isError = false;
       });
       widget.onProgressUpdated(updated);
@@ -372,8 +395,8 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
           enableSuggestions: false,
           enabled: !busy,
           decoration: const InputDecoration(
-            labelText: 'TMDB API Read Access Token',
-            hintText: '仅为本次手动匹配提供',
+            labelText: 'TMDB API Read Access Token（可选）',
+            hintText: '留空将默认使用 Mac 端已配置的 Token',
             border: OutlineInputBorder(),
             prefixIcon: Icon(Icons.key_outlined),
           ),

@@ -144,6 +144,12 @@ const {
   isAdmin: () => props.admin, getRootId: () => props.rootId, getRootGeneration: () => props.rootGeneration ?? 0, getRootEpoch: () => rootEpoch, isDisposed: () => disposed,
   movies, selected, posterFailed, actionError, api, apiPath, load: (reset) => load(reset),
   onScrapeCompleted: () => { void loadHomeShelves(); if (view.value === "series") void loadSeries(); },
+  onFilmRenamed: (filmId, title) => {
+    const patch = (list: Movie[]) => list.map((m) => (m.id === filmId ? { ...m, title, titleSource: "manual" } : m));
+    continueShelf.value = patch(continueShelf.value);
+    recentShelf.value = patch(recentShelf.value);
+    historyFilms.value = patch(historyFilms.value);
+  },
   transcodeErrorMessage,
 });
 

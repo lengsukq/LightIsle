@@ -4,6 +4,7 @@ import '../../core/authenticated_media_image.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/media_image_memory_cache.dart';
+import 'cinema_catalog_display.dart';
 import 'cinema_tv_focus.dart';
 import 'media_models.dart';
 import 'media_ui.dart';
@@ -96,13 +97,17 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
         ),
       ),
     );
+    final epCode = formatCinemaSeasonEpisodeCode(film);
+    final semanticTitle = epCode.isNotEmpty
+        ? '${film.displayTitle} $epCode'
+        : film.displayTitle;
     return CinemaTvFocusable(
       onActivate: widget.selecting ? widget.onToggle : widget.onOpen,
       onLongActivate: widget.onToggle,
       child: Semantics(
         button: true,
         selected: widget.selected,
-        label: widget.selecting ? '选择：${film.title}' : '播放：${film.title}',
+        label: widget.selecting ? '选择：$semanticTitle' : '播放：$semanticTitle',
         child: MouseRegion(
           onEnter: reducedMotion
               ? null
@@ -350,6 +355,7 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
     final durationSec = film.durationSeconds > 0
         ? film.durationSeconds
         : film.duration;
+    final epCode = formatCinemaSeasonEpisodeCode(film);
     final folderSuffix = (widget.folderBadge?.isNotEmpty ?? false)
         ? ' · ${widget.folderBadge}'
         : '';
@@ -364,9 +370,7 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  film.isSeries && film.series.isNotEmpty
-                      ? film.series
-                      : film.title,
+                  film.displayTitle,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: textTheme.titleSmall?.copyWith(
@@ -376,7 +380,7 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
                 ),
                 const SizedBox(height: 1),
                 Text(
-                  '${film.isSeries ? '剧集' : '电影'}${film.isStrm ? ' · STRM 直链' : ''} · ${formatMediaSeconds(durationSec)}$folderSuffix',
+                  '${film.isSeries ? (epCode.isNotEmpty ? epCode : '剧集') : '电影'}${film.isStrm ? ' · STRM 直链' : ''} · ${formatMediaSeconds(durationSec)}$folderSuffix',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: textTheme.bodySmall?.copyWith(

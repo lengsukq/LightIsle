@@ -155,10 +155,26 @@ func TestPickTMBDCandidateConfidence(t *testing.T) {
 	if got := pickTMBDCandidate(localized, "千与。千寻", 2001); got == nil {
 		t.Fatal("normalized Chinese title must match")
 	}
-	// Subtitle / colon-prefix match works even when filename omits the release year.
+	// Subtitle / colon-prefix match works when filename carries an installment number.
 	subtitled := []TMDBCandidate{{ID: 10, Title: "复仇者联盟4：终局之战", Year: "2019"}}
 	if got := pickTMBDCandidate(subtitled, "复仇者联盟4", 0); got == nil || got.ID != 10 {
-		t.Fatalf("colon prefix without year = %+v", got)
+		t.Fatalf("colon prefix with installment number = %+v", got)
+	}
+	// Unnumbered title without release year must NOT auto-bind to spin-offs or specials.
+	spinoffs := []TMDBCandidate{
+		{ID: 21, Title: "唐人街探案：网剧版", Year: "2020"},
+		{ID: 22, Title: "功夫熊猫感恩节特别篇", Year: "2010"},
+	}
+	if got := pickTMBDCandidate(spinoffs, "唐人街探案", 0); got != nil {
+		t.Fatalf("unnumbered yearless title must not match colon spin-off: %+v", got)
+	}
+	if got := pickTMBDCandidate(spinoffs, "功夫熊猫", 0); got != nil {
+		t.Fatalf("unnumbered yearless title must not match prefix special: %+v", got)
+	}
+	// Numbered sequel must not match unnumbered base title even when release year is close.
+	sequels := []TMDBCandidate{{ID: 23, Title: "沙丘2", Year: "2024"}}
+	if got := pickTMBDCandidate(sequels, "沙丘", 2024); got != nil {
+		t.Fatalf("base title must not match numbered sequel: %+v", got)
 	}
 	// Trailing season marker is stripped when matching show title.
 	shows := []TMDBCandidate{{ID: 11, Title: "庆余年", Year: "2019"}}
@@ -323,5 +339,36 @@ func TestAutoRecognizeAndScrapeRealWorldAddedFilms(t *testing.T) {
 	}
 	if episodes[0].Title != "庆余年" || episodes[0].Overview != "范闲传奇" {
 		t.Fatalf("expected episode to inherit formal series title and overview, got %+v", episodes[0])
+	}
+}
+
+func TestScanAutoImportsLocalNFOWithoutTMDBToken(t *testing.T) {
+	lib, _, share := newScrapeTestLibrary(t)
+	if err := os.WriteFile(filepath.Join(share, "Offline.Movie.2024.mp4"), []byte("video"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	const nfoXML = `<?xml version="1.0" encoding="UTF-8"?><movie><title>离线海报电影</title><plot>无需令牌自动读取简介</plot><rating>8.8</rating></movie>`
+	if err := os.WriteFile(filepath.Join(share, "Offline.Movie.2024.nfo"), []byte(nfoXML), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(share, "Groundhog.Day.1993.mkv"), []byte("video2"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// Scan with NO TMDB token configured: sidecar .nfo is imported automatically,
+	// while films without .nfo stay pending so a later SetTMDBToken still scrapes them.
+	scanAndWait(t, lib)
+
+	nfoMovies, _, err := lib.List(1, "movie", "离线海报电影", 10, 0)
+	if err != nil || len(nfoMovies) != 1 {
+		t.Fatalf("expected auto-imported NFO movie, got %+v (err=%v)", nfoMovies, err)
+	}
+	if nfoMovies[0].Overview != "无需令牌自动读取简介" || nfoMovies[0].Rating != 8.8 || nfoMovies[0].ScrapeState != "auto" {
+		t.Fatalf("unexpected NFO movie metadata: %+v", nfoMovies[0])
+	}
+
+	unmatched, _, err := lib.List(1, "unmatched", "", 10, 0)
+	if err != nil || len(unmatched) != 1 || unmatched[0].ScrapeState != "" {
+		t.Fatalf("expected non-NFO movie to stay pending for future TMDB token, got %+v (err=%v)", unmatched, err)
 	}
 }

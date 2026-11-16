@@ -114,7 +114,7 @@ extension _CinemaPageHomeRails on _CinemaPageState {
                         ),
                         const SizedBox(height: 6),
                         Text(
-                          film.title,
+                          film.displayTitle,
                           maxLines: wide ? 2 : 1,
                           overflow: TextOverflow.ellipsis,
                           style:
@@ -130,7 +130,13 @@ extension _CinemaPageHomeRails on _CinemaPageState {
                         Text(
                           [
                             if (film.year > 0) '${film.year}',
-                            film.isSeries ? '剧集' : '电影',
+                            film.isSeries
+                                ? (formatCinemaSeasonEpisodeCode(
+                                        film,
+                                      ).isNotEmpty
+                                      ? formatCinemaSeasonEpisodeCode(film)
+                                      : '剧集')
+                                : '电影',
                             if (film.duration > 0)
                               formatMediaSeconds(film.duration),
                             if (film.videoCodec.isNotEmpty)
@@ -411,7 +417,7 @@ extension _CinemaPageHomeRails on _CinemaPageState {
                                     children: [
                                       Expanded(
                                         child: Text(
-                                          film.title,
+                                          film.displayTitle,
                                           maxLines: 2,
                                           overflow: TextOverflow.ellipsis,
                                           style: theme.textTheme.titleSmall

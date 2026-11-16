@@ -255,8 +255,14 @@ extension _CinemaPageLibrary on _CinemaPageState {
     final updated = film.withTitle(normalized);
     if (mounted) {
       _updateState(() {
-        final index = _catalog.films.indexWhere((item) => item.id == film.id);
-        if (index >= 0) _catalog.films[index] = updated;
+        void replaceIn(List<CinemaFilm> list) {
+          final index = list.indexWhere((item) => item.id == film.id);
+          if (index >= 0) list[index] = updated;
+        }
+        replaceIn(_catalog.films);
+        replaceIn(_catalog.resumeShelf);
+        replaceIn(_catalog.recentShelf);
+        replaceIn(_subpages.history);
         _catalog.actionMessage = '影片展示名称已更新。';
         _catalog.actionIsError = false;
       });

@@ -182,6 +182,13 @@ export function formatCinemaEpisodeCode(season?: number, episode?: number): stri
   return `${s}${e}`;
 }
 
+export function displayCinemaTitle(
+  movie: Pick<Movie, "title" | "kind" | "series" | "titleSource">,
+): string {
+  if (movie.titleSource === "manual") return movie.title;
+  return movie.kind === "series" && movie.series ? movie.series : movie.title;
+}
+
 export function formatCinemaResumeLabel(input: {
   season?: number;
   episode?: number;

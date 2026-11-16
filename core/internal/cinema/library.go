@@ -465,9 +465,13 @@ func (l *Library) scan(job context.Context, scope []string) {
 	if err := l.syncSeries(share); err != nil && st.LastError == "" {
 		st.LastError = err.Error()
 	}
-	if st.LastError == "" && l.TMDBTokenConfigured() {
-		if pending, err := l.pendingScrapeFilms(share, 1); err == nil && len(pending) > 0 {
-			autoScrape = true
+	if st.LastError == "" {
+		if l.TMDBTokenConfigured() {
+			if pending, err := l.pendingScrapeFilms(share, 1); err == nil && len(pending) > 0 {
+				autoScrape = true
+			}
+		} else {
+			l.backfillLocalNFOSidecars(job, share, physicalShare)
 		}
 	}
 }

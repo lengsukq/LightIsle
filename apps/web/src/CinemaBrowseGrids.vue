@@ -3,6 +3,7 @@ import { Clapperboard, Download, Film, Pencil, Play, RotateCcw, Trash2, Tv } fro
 import { formatShortDate } from "./dateTimeFormat.ts";
 import { describeUserFacingError } from "./userFacingError.ts";
 import { duration, percent } from "./useCinemaMetadata.ts";
+import { displayCinemaTitle, formatCinemaEpisodeCode } from "./cinemaSubtitles.ts";
 import IsleBadge from "./IsleBadge.vue";
 import IsleButton from "./IsleButton.vue";
 import IsleEmpty from "./IsleEmpty.vue";
@@ -197,11 +198,15 @@ const emit = defineEmits<{
 
   <div v-if="view === 'films' && mode === 'history'" class="cinema-grid isle-subview-pane">
     <article v-for="movie in historyFilms" :key="movie.id" class="cinema-tile">
-      <button class="cinema-poster" @click="emit('open-film', movie, true)">
+      <button
+        class="cinema-poster"
+        :aria-label="'继续观看 ' + displayCinemaTitle(movie) + (movie.kind === 'series' && formatCinemaEpisodeCode(movie.season, movie.episode) ? ' ' + formatCinemaEpisodeCode(movie.season, movie.episode) : '')"
+        @click="emit('open-film', movie, true)"
+      >
         <img
           v-if="(movie.posterURL || posterReady(movie)) && !posterFailed[movie.id]"
           :src="posterUrl(movie)"
-          :alt="movie.title + '海报'"
+          :alt="displayCinemaTitle(movie) + '海报'"
           loading="lazy"
           decoding="async"
           class="cinema-poster-image"
@@ -213,8 +218,10 @@ const emit = defineEmits<{
         <span class="cinema-watchbar" :style="{ width: percent(movie) + '%' }"></span>
       </button>
       <div class="cinema-details">
-        <strong :title="movie.kind === 'series' && movie.series ? movie.series : movie.title">{{ movie.kind === 'series' && movie.series ? movie.series : movie.title }}</strong>
-        <small>{{ movie.completed ? "已看完" : "看到 " + percent(movie) + "%" }} · {{ duration(movie.durationSeconds || movie.duration) }}</small>
+        <strong :title="displayCinemaTitle(movie)">{{ displayCinemaTitle(movie) }}</strong>
+        <small>
+          <template v-if="movie.kind === 'series'">{{ formatCinemaEpisodeCode(movie.season, movie.episode) || "剧集" }} · </template>{{ movie.completed ? "已看完" : "看到 " + percent(movie) + "%" }} · {{ duration(movie.durationSeconds || movie.duration) }}
+        </small>
         <p v-if="movie.overview" class="cinema-card-overview" :title="movie.overview">{{ movie.overview }}</p>
         <button v-if="movie.position > 5 && !movie.completed" type="button" @click="emit('mark-restart', movie)" title="从头播放" aria-label="从头播放">
           <RotateCcw :size="14" />
@@ -235,7 +242,7 @@ const emit = defineEmits<{
     <article v-for="movie in movies" :key="movie.id" class="cinema-tile">
       <button
         class="cinema-poster"
-        :aria-label="choosingTrash ? '选择 ' + movie.title : '查看影片 ' + movie.title"
+        :aria-label="(choosingTrash ? '选择 ' : '查看影片 ') + displayCinemaTitle(movie) + (movie.kind === 'series' && formatCinemaEpisodeCode(movie.season, movie.episode) ? ' ' + formatCinemaEpisodeCode(movie.season, movie.episode) : '')"
         :aria-pressed="choosingTrash ? trashIds.has(movie.id) : undefined"
         :style="choosingTrash && trashIds.has(movie.id) ? { outline: '3px solid var(--accent-primary)' } : undefined"
         @click="choosingTrash ? emit('toggle-trash-film', movie.id) : emit('open-film', movie)"
@@ -243,7 +250,7 @@ const emit = defineEmits<{
         <img
           v-if="(movie.posterURL || posterReady(movie)) && !posterFailed[movie.id]"
           :src="posterUrl(movie)"
-          :alt="movie.title + '海报'"
+          :alt="displayCinemaTitle(movie) + '海报'"
           loading="lazy"
           decoding="async"
           class="cinema-poster-image"
@@ -260,9 +267,9 @@ const emit = defineEmits<{
         <span class="cinema-watchbar" :style="{ width: percent(movie) + '%' }"></span>
       </button>
       <div class="cinema-details">
-        <strong :title="movie.kind === 'series' && movie.series ? movie.series : movie.title">{{ movie.kind === 'series' && movie.series ? movie.series : movie.title }}</strong>
+        <strong :title="displayCinemaTitle(movie)">{{ displayCinemaTitle(movie) }}</strong>
         <small>
-          {{ movie.kind === "series" ? "剧集" : "电影" }}<template v-if="movie.isStrm"> · STRM 直链</template> · {{ duration(movie.durationSeconds || movie.duration) }}<template v-if="disambiguationMap.get(movie.id)"> · {{ disambiguationMap.get(movie.id) }}</template><template v-if="movie.completed"> · 已看完</template><template v-else-if="movie.position > 5"> · 已看 {{ percent(movie) }}%</template>
+          {{ movie.kind === "series" ? (formatCinemaEpisodeCode(movie.season, movie.episode) || "剧集") : "电影" }}<template v-if="movie.isStrm"> · STRM 直链</template> · {{ duration(movie.durationSeconds || movie.duration) }}<template v-if="disambiguationMap.get(movie.id)"> · {{ disambiguationMap.get(movie.id) }}</template><template v-if="movie.completed"> · 已看完</template><template v-else-if="movie.position > 5"> · 已看 {{ percent(movie) }}%</template>
         </small>
         <p v-if="movie.overview" class="cinema-card-overview" :title="movie.overview">{{ movie.overview }}</p>
         <IsleBadge v-if="mode === 'unmatched' && !movie.metadataSource" variant="warning" size="sm">

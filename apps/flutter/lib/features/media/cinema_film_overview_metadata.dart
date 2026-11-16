@@ -103,6 +103,17 @@ extension _CinemaFilmOverviewMetadata on _CinemaFilmOverviewState {
       });
       return;
     }
+    if (token.isNotEmpty &&
+        (token.length < 20 ||
+            token.length > 2048 ||
+            RegExp(r'\s').hasMatch(token))) {
+      _updateState(() {
+        _statusMessage =
+            '填写的 TMDB Read Access Token 格式无效（留空可直接使用 Mac 端已配置的 Token）。';
+        _statusIsError = true;
+      });
+      return;
+    }
     _updateState(() {
       _tmdbSearching = true;
       _tmdbCandidates = const [];
@@ -137,6 +148,18 @@ extension _CinemaFilmOverviewMetadata on _CinemaFilmOverviewState {
   Future<void> _matchTmdb(TMDBCandidate candidate) async {
     if (!widget.isAdmin || _metadataBusy) return;
     final token = _tmdbTokenController.text.trim();
+    if (token.isNotEmpty &&
+        (token.length < 20 ||
+            token.length > 2048 ||
+            RegExp(r'\s').hasMatch(token))) {
+      _updateState(() {
+        _statusMessage =
+            '填写的 TMDB Read Access Token 格式无效（留空可直接使用 Mac 端已配置的 Token）。';
+        _statusIsError = true;
+      });
+      return;
+    }
+    final hadPageToken = token.isNotEmpty;
     _updateState(() {
       _metadataBusy = true;
       _statusMessage = null;
@@ -150,7 +173,10 @@ extension _CinemaFilmOverviewMetadata on _CinemaFilmOverviewState {
       );
       _tmdbCandidates = const [];
       _tmdbTokenController.clear();
-      _applyUpdatedFilm(updated, '已匹配 TMDB 资料。');
+      _applyUpdatedFilm(
+        updated,
+        hadPageToken ? '已匹配 TMDB 资料；页面输入的临时凭据已清除。' : '已匹配 TMDB 资料。',
+      );
     } catch (error) {
       if (mounted) {
         _updateState(() {

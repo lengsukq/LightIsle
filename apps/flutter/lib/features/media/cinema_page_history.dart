@@ -138,7 +138,7 @@ extension _CinemaPageHistory on _CinemaPageState {
                   color: theme.colorScheme.primary,
                 ),
                 title: Text(
-                  film.title,
+                  film.displayTitle,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                 ),

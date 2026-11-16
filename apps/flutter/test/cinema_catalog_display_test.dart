@@ -37,4 +37,37 @@ void main() {
     expect(cinemaDisambiguationBadge(films[3], dupes), '影视');
     expect(cinemaDisambiguationBadge(films[4], dupes), isNull);
   });
+
+  test('displayTitle preserves manual rename over series and distinct episodes are not duplicates', () {
+    final ep1 = CinemaFilm.fromJson({
+      'id': 10,
+      'title': '庆余年',
+      'path': '影视/庆余年/第2季/EP01.mp4',
+      'kind': 'series',
+      'series': '庆余年',
+      'season': 2,
+      'episode': 1,
+      'titleSource': 'tmdb:tv:95557',
+      'duration': 2700,
+    });
+    final ep2 = CinemaFilm.fromJson({
+      'id': 11,
+      'title': '庆余年',
+      'path': '影视/庆余年/第2季/EP02.mp4',
+      'kind': 'series',
+      'series': '庆余年',
+      'season': 2,
+      'episode': 2,
+      'titleSource': 'tmdb:tv:95557',
+      'duration': 2700,
+    });
+    expect(ep1.displayTitle, '庆余年');
+    final renamed = ep1.withTitle('庆余年 S02E01 特别篇');
+    expect(renamed.titleSource, 'manual');
+    expect(renamed.displayTitle, '庆余年 S02E01 特别篇');
+
+    final dupes = duplicateCinemaTitleKeys([ep1, ep2]);
+    expect(dupes, isEmpty);
+    expect(cinemaDisambiguationBadge(ep1, dupes), isNull);
+  });
 }

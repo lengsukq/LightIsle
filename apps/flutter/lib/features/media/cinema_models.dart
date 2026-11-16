@@ -29,6 +29,7 @@ class CinemaFilm {
     this.overview = '',
     this.rating = 0,
     this.metadataSource = '',
+    this.titleSource = '',
     this.scrapeState = '',
     this.posterURL = '',
     this.isStrm = false,
@@ -63,11 +64,15 @@ class CinemaFilm {
   final String overview;
   final double rating;
   final String metadataSource;
+  final String titleSource;
   final String scrapeState;
   final String posterURL;
   final bool isStrm;
 
   bool get isSeries => kind.toLowerCase() == 'series';
+  String get displayTitle => titleSource == 'manual'
+      ? title
+      : (isSeries && series.isNotEmpty ? series : title);
   bool get canAttemptPlayback => browserPlayback != 'download-only' && playable;
   bool get canResume => position > 5 && !completed;
   double get progressRatio =>
@@ -110,6 +115,7 @@ class CinemaFilm {
       overview: _asString(json['overview']),
       rating: _asDouble(json['rating']),
       metadataSource: _asString(json['metadataSource']),
+      titleSource: _asString(json['titleSource']),
       scrapeState: _asString(json['scrapeState']),
       posterURL: _asString(json['posterURL']),
       isStrm: _asBool(json['isStrm']),
@@ -144,6 +150,7 @@ class CinemaFilm {
     overview: overview,
     rating: rating,
     metadataSource: metadataSource,
+    titleSource: 'manual',
     scrapeState: scrapeState,
     posterURL: posterURL,
     isStrm: isStrm,
@@ -181,6 +188,7 @@ class CinemaFilm {
     overview: overview,
     rating: rating,
     metadataSource: metadataSource,
+    titleSource: titleSource,
     scrapeState: scrapeState,
     posterURL: posterURL,
     isStrm: isStrm,

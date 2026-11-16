@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Film, Play, X } from "lucide-vue-next";
 import { duration, percent } from "./useCinemaMetadata.ts";
-import { formatCinemaResumeLabel } from "./cinemaSubtitles.ts";
+import { displayCinemaTitle, formatCinemaEpisodeCode, formatCinemaResumeLabel } from "./cinemaSubtitles.ts";
 import type { Movie } from "./cinemaTypes.ts";
 
 defineProps<{
@@ -22,6 +22,12 @@ const emit = defineEmits<{
   (e: "filter-mode", mode: string): void;
   (e: "poster-error", id: number): void;
 }>();
+
+function cardLabel(movie: Movie, prefix: string): string {
+  const title = displayCinemaTitle(movie);
+  const code = movie.kind === "series" ? formatCinemaEpisodeCode(movie.season, movie.episode) : "";
+  return code ? `${prefix} ${title} ${code}` : `${prefix} ${title}`;
+}
 </script>
 
 <template>
@@ -36,7 +42,7 @@ const emit = defineEmits<{
         <img
           v-if="(featuredFilm.posterURL || posterReady(featuredFilm)) && !posterFailed[featuredFilm.id]"
           :src="posterUrl(featuredFilm)"
-          :alt="featuredFilm.title + '海报'"
+          :alt="displayCinemaTitle(featuredFilm) + '海报'"
           loading="lazy"
           decoding="async"
           @error="emit('poster-error', featuredFilm.id)"
@@ -47,12 +53,14 @@ const emit = defineEmits<{
         <span class="cinema-featured-kicker">
           {{ featuredFilm.position > 5 && !featuredFilm.completed ? "继续观看" : "来自你的影视库" }}
         </span>
-        <h3>{{ featuredFilm.title }}</h3>
+        <h3>{{ displayCinemaTitle(featuredFilm) }}</h3>
         <p class="cinema-featured-meta">
           {{
             [
               featuredFilm.year || "",
-              featuredFilm.kind === "series" ? "剧集" : "电影",
+              featuredFilm.kind === "series"
+                ? (formatCinemaEpisodeCode(featuredFilm.season, featuredFilm.episode) || "剧集")
+                : "电影",
               duration(featuredFilm.durationSeconds || featuredFilm.duration),
             ].filter(Boolean).join(" · ")
           }}
@@ -81,21 +89,21 @@ const emit = defineEmits<{
           <button
             type="button"
             class="cinema-home-card"
-            :aria-label="'继续观看 ' + movie.title"
+            :aria-label="cardLabel(movie, '继续观看')"
             @click="emit('open-film', movie, true)"
           >
             <span class="cinema-home-cover">
               <img
                 v-if="(movie.posterURL || posterReady(movie)) && !posterFailed[movie.id]"
                 :src="posterUrl(movie)"
-                :alt="movie.title + '海报'"
+                :alt="displayCinemaTitle(movie) + '海报'"
                 loading="lazy"
                 decoding="async"
                 @error="emit('poster-error', movie.id)"
               />
               <Film v-else :size="32" />
             </span>
-            <strong :title="movie.kind === 'series' && movie.series ? movie.series : movie.title">{{ movie.kind === 'series' && movie.series ? movie.series : movie.title }}</strong>
+            <strong :title="displayCinemaTitle(movie)">{{ displayCinemaTitle(movie) }}</strong>
             <small>{{ formatCinemaResumeLabel(movie).replace(/^继续播放\s*/, "") || ("已看 " + percent(movie) + "%") }}</small>
             <span v-if="movie.overview" class="cinema-home-overview" :title="movie.overview">{{ movie.overview }}</span>
             <span class="cinema-home-progress"><span :style="{ width: percent(movie) + '%' }"></span></span>
@@ -124,22 +132,28 @@ const emit = defineEmits<{
           :key="movie.id"
           type="button"
           class="cinema-home-card"
-          :aria-label="'查看影片 ' + movie.title"
+          :aria-label="cardLabel(movie, '查看影片')"
           @click="emit('open-film', movie, false)"
         >
           <span class="cinema-home-cover">
             <img
               v-if="(movie.posterURL || posterReady(movie)) && !posterFailed[movie.id]"
               :src="posterUrl(movie)"
-              :alt="movie.title + '海报'"
+              :alt="displayCinemaTitle(movie) + '海报'"
               loading="lazy"
               decoding="async"
               @error="emit('poster-error', movie.id)"
             />
             <Film v-else :size="32" />
           </span>
-          <strong :title="movie.kind === 'series' && movie.series ? movie.series : movie.title">{{ movie.kind === 'series' && movie.series ? movie.series : movie.title }}</strong>
-          <small>{{ movie.year || "影片" }} · {{ duration(movie.durationSeconds || movie.duration) }}</small>
+          <strong :title="displayCinemaTitle(movie)">{{ displayCinemaTitle(movie) }}</strong>
+          <small>
+            {{
+              movie.kind === "series"
+                ? [formatCinemaEpisodeCode(movie.season, movie.episode) || "剧集", movie.year || "", duration(movie.durationSeconds || movie.duration)].filter(Boolean).join(" · ")
+                : (movie.year || "影片") + " · " + duration(movie.durationSeconds || movie.duration)
+            }}
+          </small>
           <span v-if="movie.overview" class="cinema-home-overview" :title="movie.overview">{{ movie.overview }}</span>
         </button>
       </div>

@@ -380,10 +380,41 @@ func absInt(value int) int {
 	return value
 }
 
+// hasInstallmentMarker reports whether a normalized title ends with an
+// explicit sequel number (e.g. "复仇者联盟4", "dune2", "partii") rather than being
+// a standalone numeric title such as "1917" or "2046".
+func hasInstallmentMarker(norm string) bool {
+	runes := []rune(norm)
+	if len(runes) < 2 {
+		return false
+	}
+	digits := 0
+	for i := len(runes) - 1; i >= 0 && runes[i] >= '0' && runes[i] <= '9'; i-- {
+		digits++
+	}
+	if digits >= 1 && digits <= 2 && digits < len(runes) {
+		return true
+	}
+	for _, roman := range []string{"ii", "iii", "iv", "vi", "vii", "viii", "ix"} {
+		if len(norm) > len(roman)+2 && strings.HasSuffix(norm, roman) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasSequelDigitTail(longer, shorter string) bool {
+	rest := []rune(strings.TrimPrefix(longer, shorter))
+	return len(rest) > 0 && rest[0] >= '0' && rest[0] <= '9'
+}
+
 // pickTMBDCandidate selects a confident automatic match:
 //  1. Normalized title equality (preferring closer release year);
-//  2. Colon/subtitle prefix equality (e.g. "复仇者联盟4" vs "复仇者联盟4：终局之战");
-//  3. Safe prefix containment when year agrees within ±1 (or without a trailing sequel digit).
+//  2. Colon/subtitle prefix equality when release year agrees within ±1, when
+//     the local title carries a colon subtitle, or when the local title ends
+//     with an explicit installment marker (e.g. "复仇者联盟4" vs "复仇者联盟4：终局之战");
+//  3. Safe prefix containment only when release year agrees within ±1 and does
+//     not cross numbered sequels.
 //
 // Candidates whose release year disagrees by more than ±1 are always rejected.
 func pickTMBDCandidate(candidates []TMDBCandidate, title string, year int) *TMDBCandidate {
@@ -470,6 +501,7 @@ func pickTMBDCandidate(candidates []TMDBCandidate, title string, year int) *TMDB
 
 	// Tier 2: Main title before colon subtitle matches on either side.
 	if hit := pickBest(func(c *TMDBCandidate) bool {
+		_, knownYear, _ := yearDiff(c)
 		cNorms := candidateNorms(c)
 		for _, raw := range []string{c.Title, c.OriginalTitle} {
 			for _, sep := range []string{"：", ":"} {
@@ -477,7 +509,7 @@ func pickTMBDCandidate(candidates []TMDBCandidate, title string, year int) *TMDB
 					prefixNorm := normalizeTitle(raw[:idx])
 					if len([]rune(prefixNorm)) >= 2 {
 						for _, want := range wants {
-							if prefixNorm == want {
+							if prefixNorm == want && ((year > 0 && knownYear) || hasInstallmentMarker(want)) {
 								return true
 							}
 						}
@@ -504,21 +536,23 @@ func pickTMBDCandidate(candidates []TMDBCandidate, title string, year int) *TMDB
 		return hit
 	}
 
-	// Tier 3: Safe prefix containment when year agrees within ±1 (or non-sequel suffix).
+	// Tier 3: Safe prefix containment only when release year agrees within ±1.
 	return pickBest(func(c *TMDBCandidate) bool {
 		_, knownYear, _ := yearDiff(c)
+		if year <= 0 || !knownYear {
+			return false
+		}
 		for _, cNorm := range candidateNorms(c) {
 			for _, want := range wants {
-				if year > 0 && knownYear {
-					shorter := min(len([]rune(want)), len([]rune(cNorm)))
-					if shorter >= 2 && (strings.HasPrefix(cNorm, want) || strings.HasPrefix(want, cNorm)) {
-						return true
-					}
-				} else if len([]rune(want)) >= 4 && strings.HasPrefix(cNorm, want) {
-					rest := []rune(strings.TrimPrefix(cNorm, want))
-					if len(rest) > 0 && (rest[0] < '0' || rest[0] > '9') {
-						return true
-					}
+				shorter := min(len([]rune(want)), len([]rune(cNorm)))
+				if shorter < 2 {
+					continue
+				}
+				if strings.HasPrefix(cNorm, want) && !hasSequelDigitTail(cNorm, want) {
+					return true
+				}
+				if strings.HasPrefix(want, cNorm) && !hasSequelDigitTail(want, cNorm) {
+					return true
 				}
 			}
 		}

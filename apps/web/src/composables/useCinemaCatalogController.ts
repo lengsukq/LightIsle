@@ -5,9 +5,9 @@ import { trashMediaOriginals } from "../mediaTrash.ts";
 import { createMediaStatusPoller } from "../mediaStatusPoller.ts";
 import { mediaQueryKey, transitionMediaQuery } from "../mediaQueryContext.ts";
 import {
+  cinemaIdentityKey,
   duplicateCinemaTitleKeys,
   filmFolderBadge,
-  normalizeCinemaTitleKey,
   shouldShowCinemaRecentShelf,
 } from "../cinemaCatalogDisplay.ts";
 import { readCinemaHomeShelves } from "../cinemaHomeShelves.ts";
@@ -89,7 +89,7 @@ export function useCinemaCatalogController({
     const dupes = duplicateTitleSet.value;
     if (!dupes.size) return map;
     for (const movie of movies.value) {
-      if (!dupes.has(normalizeCinemaTitleKey(movie.title))) continue;
+      if (!dupes.has(cinemaIdentityKey(movie))) continue;
       const badge = filmFolderBadge(movie.path);
       if (badge) map.set(movie.id, badge);
     }

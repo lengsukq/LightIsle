@@ -20,10 +20,41 @@ export function normalizeCinemaTitleKey(title: string): string {
     .replace(/[\s:：·・\-_—–.。!！?？()（）[\]【】]+/g, "");
 }
 
-export function duplicateCinemaTitleKeys(films: ReadonlyArray<{ title: string }>): Set<string> {
+export function cinemaIdentityKey(film: {
+  title: string;
+  kind?: string;
+  series?: string;
+  titleSource?: string;
+  season?: number;
+  episode?: number;
+}): string {
+  const display =
+    film.titleSource === "manual"
+      ? film.title
+      : film.kind === "series" && film.series
+        ? film.series
+        : film.title;
+  const base = normalizeCinemaTitleKey(display || "");
+  if (!base) return "";
+  if (film.kind === "series" && ((film.season || 0) > 0 || (film.episode || 0) > 0)) {
+    return `${base}#s${film.season || 0}e${film.episode || 0}`;
+  }
+  return base;
+}
+
+export function duplicateCinemaTitleKeys(
+  films: ReadonlyArray<{
+    title: string;
+    kind?: string;
+    series?: string;
+    titleSource?: string;
+    season?: number;
+    episode?: number;
+  }>,
+): Set<string> {
   const counts = new Map<string, number>();
   for (const film of films) {
-    const key = normalizeCinemaTitleKey(film.title || "");
+    const key = cinemaIdentityKey(film);
     if (!key) continue;
     counts.set(key, (counts.get(key) ?? 0) + 1);
   }

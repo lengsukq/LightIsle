@@ -42,6 +42,7 @@ export function useCinemaMetadata(options: {
   apiPath: (path: string) => string;
   load: (reset?: boolean) => Promise<void>;
   onScrapeCompleted?: () => void;
+  onFilmRenamed?: (filmId: number, title: string) => void;
   transcodeErrorMessage: (error: unknown) => string;
 }) {
   const candidatePosterFailed = ref<Record<number, boolean>>({});
@@ -93,6 +94,15 @@ export function useCinemaMetadata(options: {
     batchProgress.value = "";
   }
 
+  function validateOptionalTMDBToken(raw: string): string {
+    const trimmed = raw.trim();
+    if (!trimmed) return "";
+    if (trimmed.length < 20 || trimmed.length > 2048 || /\s/.test(trimmed)) {
+      return "填写的 TMDB Read Access Token 格式无效（留空可直接使用 Mac 端已配置的 Token）。";
+    }
+    return "";
+  }
+
   function tmdbErrorMessage(error: unknown) {
     if (isTMDBAuthenticationFailure(error)) {
       return "TMDB 拒绝了该访问令牌或其权限（401/403）。请检查 Read Access Token 是否有效且有访问权限。";
@@ -102,8 +112,9 @@ export function useCinemaMetadata(options: {
 
   async function suggestBatch() {
     if (!options.isAdmin() || batchBusy.value) return;
-    if (batchToken.value.trim() && batchToken.value.trim().length < 20) {
-      batchError.value = "填写的 TMDB Read Access Token 长度无效（留空可直接使用 Mac 端已配置的 Token）。";
+    const tokenErr = validateOptionalTMDBToken(batchToken.value);
+    if (tokenErr) {
+      batchError.value = tokenErr;
       return;
     }
     const target = options.movies.value.filter((f) => !f.metadataSource && !f.titleSource).slice(0, 8);
@@ -132,7 +143,7 @@ export function useCinemaMetadata(options: {
           const response = await options.api<{ results: TMDBCandidate[] }>(
             options.apiPath("/api/v2/cinema/" + film.id + "/metadata/tmdb/search"),
             "POST",
-            { accessToken: batchToken.value, query: film.title },
+            { accessToken: batchToken.value.trim(), query: film.title },
             request.signal,
           );
           return response.results
@@ -171,6 +182,11 @@ export function useCinemaMetadata(options: {
 
   async function acceptBatchCandidate(item: BatchCandidate) {
     if (!options.isAdmin() || batchBusy.value) return;
+    const tokenErr = validateOptionalTMDBToken(batchToken.value);
+    if (tokenErr) {
+      batchError.value = tokenErr;
+      return;
+    }
     const film = options.movies.value.find((v) => v.id === item.filmId);
     if (
       !film ||
@@ -188,7 +204,7 @@ export function useCinemaMetadata(options: {
       const updated = await options.api<Movie>(
         options.apiPath("/api/v2/cinema/" + item.filmId + "/metadata/tmdb/match"),
         "POST",
-        { accessToken: batchToken.value, tmdbId: item.match.id },
+        { accessToken: batchToken.value.trim(), tmdbId: item.match.id },
       );
       options.movies.value = options.movies.value.map((v) => (v.id === item.filmId ? { ...v, ...updated } : v));
       batchCandidates.value = batchCandidates.value.filter((v) => v.filmId !== item.filmId);
@@ -325,7 +341,7 @@ export function useCinemaMetadata(options: {
       renameError.value = "请输入影片展示名称。";
       return;
     }
-    if (title === v.title) {
+    if (title === v.title && v.titleSource === "manual") {
       closeRenameModal();
       return;
     }
@@ -337,10 +353,14 @@ export function useCinemaMetadata(options: {
       await options.api(options.apiPath("/api/v2/cinema/" + filmID), "PATCH", { title });
       if (options.isDisposed() || epoch !== options.getRootEpoch()) return;
       v.title = title;
-      options.movies.value = options.movies.value.map((m) => (m.id === filmID ? { ...m, title } : m));
+      v.titleSource = "manual";
+      options.movies.value = options.movies.value.map((m) =>
+        m.id === filmID ? { ...m, title, titleSource: "manual" } : m,
+      );
       if (options.selected.value?.id === filmID) {
-        options.selected.value = { ...options.selected.value, title };
+        options.selected.value = { ...options.selected.value, title, titleSource: "manual" };
       }
+      options.onFilmRenamed?.(filmID, title);
       renameTarget.value = null;
       renameTitle.value = "";
     } catch (e) {
@@ -388,6 +408,11 @@ export function useCinemaMetadata(options: {
       tmdbError.value = "请输入影视搜索关键词。";
       return;
     }
+    const tokenErr = validateOptionalTMDBToken(tmdbToken.value);
+    if (tokenErr) {
+      tmdbError.value = tokenErr;
+      return;
+    }
     const filmID = film.id;
     const request = tmdbSearchRequests.begin();
     const isCurrent = () => request.isCurrent() && options.selected.value?.id === filmID;
@@ -399,7 +424,7 @@ export function useCinemaMetadata(options: {
       const result = await options.api<{ results: TMDBCandidate[] }>(
         options.apiPath("/api/v2/cinema/" + filmID + "/metadata/tmdb/search"),
         "POST",
-        { accessToken: tmdbToken.value, query: tmdbQuery.value.trim() },
+        { accessToken: tmdbToken.value.trim(), query: tmdbQuery.value.trim() },
         request.signal,
       );
       if (isCurrent()) {
@@ -418,6 +443,11 @@ export function useCinemaMetadata(options: {
   async function matchTMDB(candidate: TMDBCandidate) {
     const film = options.selected.value;
     if (!film || !options.isAdmin() || tmdbBusy.value || scraping.value) return;
+    const tokenErr = validateOptionalTMDBToken(tmdbToken.value);
+    if (tokenErr) {
+      tmdbError.value = tokenErr;
+      return;
+    }
     if (
       !(await requestConfirm({
         title: "匹配 TMDB 资料",
@@ -429,6 +459,7 @@ export function useCinemaMetadata(options: {
       return;
     }
     const filmID = film.id;
+    const hadPageToken = tmdbToken.value.trim().length > 0;
     const request = tmdbMatchRequests.begin();
     const isCurrent = () => request.isCurrent() && options.selected.value?.id === filmID;
     tmdbBusy.value = true;
@@ -437,7 +468,7 @@ export function useCinemaMetadata(options: {
       await options.api<Movie>(
         options.apiPath("/api/v2/cinema/" + filmID + "/metadata/tmdb/match"),
         "POST",
-        { accessToken: tmdbToken.value, tmdbId: candidate.id },
+        { accessToken: tmdbToken.value.trim(), tmdbId: candidate.id },
         request.signal,
       );
       if (!isCurrent()) return;
@@ -448,7 +479,9 @@ export function useCinemaMetadata(options: {
         delete options.posterFailed.value[filmID];
         tmdbMatches.value = [];
         tmdbToken.value = "";
-        scrapeMessage.value = "已匹配 TMDB 资料；API 凭据已从页面内存清除。";
+        scrapeMessage.value = hadPageToken
+          ? "已匹配 TMDB 资料；页面输入的临时凭据已清除。"
+          : "已匹配 TMDB 资料。";
       }
     } catch (e) {
       if (isCurrent() && !(e instanceof Error && e.name === "AbortError")) {

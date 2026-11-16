@@ -1,6 +1,7 @@
 package cinema
 
 import (
+	"context"
 	"database/sql"
 	"encoding/xml"
 	"errors"
@@ -165,4 +166,37 @@ func (l *Library) ImportLocalNFO(filmID int64) (Film, error) {
 		return l.Get(filmID, 0)
 	}
 	return Film{}, os.ErrNotExist
+}
+
+// backfillLocalNFOSidecars imports valid local .nfo files for pending films
+// when no TMDB token is configured, leaving items without sidecars untouched
+// so a later SetTMDBToken can still scrape them automatically.
+func (l *Library) backfillLocalNFOSidecars(job context.Context, share, physicalShare string) {
+	rows, err := l.db.Query(`SELECT id FROM films
+		WHERE share=? AND missing_path='' AND metadata_source='' AND scrape_state='' AND kind IN ('movie','series')
+		ORDER BY id`, share)
+	if err != nil {
+		return
+	}
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			rows.Close()
+			return
+		}
+		ids = append(ids, id)
+	}
+	rows.Close()
+	for _, id := range ids {
+		if job.Err() != nil {
+			return
+		}
+		if current, ok := l.files.State(); !ok || current != physicalShare {
+			return
+		}
+		if _, err := l.ImportLocalNFO(id); err == nil {
+			_, _ = l.db.Exec("UPDATE films SET scrape_state='auto' WHERE share=? AND id=? AND metadata_source LIKE 'nfo:%'", share, id)
+		}
+	}
 }

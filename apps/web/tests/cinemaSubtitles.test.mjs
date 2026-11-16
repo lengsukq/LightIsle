@@ -2,10 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   applyTextTracksOffset,
+  displayCinemaTitle,
   formatCinemaResumeLabel,
   parseSubtitleToWebVtt,
   pickInitialSeriesSeason,
 } from "../src/cinemaSubtitles.ts";
+import { duplicateCinemaTitleKeys } from "../src/cinemaCatalogDisplay.ts";
 import { createCinemaKeyboardController } from "../src/cinemaKeyboard.ts";
 
 test("parseSubtitleToWebVtt parses BOM SRT and shifts offsets with non-negative clamping", () => {
@@ -70,6 +72,27 @@ test("formatCinemaResumeLabel and pickInitialSeriesSeason format series/movie re
   ];
   assert.equal(pickInitialSeriesSeason(films, 3), 3);
   assert.equal(pickInitialSeriesSeason(films), 2);
+
+  assert.equal(
+    displayCinemaTitle({ title: "EP05", kind: "series", series: "庆余年", titleSource: "tmdb:tv:95557" }),
+    "庆余年",
+  );
+  assert.equal(
+    displayCinemaTitle({ title: "庆余年 第05集 导演剪辑版", kind: "series", series: "庆余年", titleSource: "manual" }),
+    "庆余年 第05集 导演剪辑版",
+  );
+
+  const distinctEpisodes = [
+    { title: "庆余年", kind: "series", series: "庆余年", season: 2, episode: 1 },
+    { title: "庆余年", kind: "series", series: "庆余年", season: 2, episode: 2 },
+  ];
+  assert.equal(duplicateCinemaTitleKeys(distinctEpisodes).size, 0);
+
+  const duplicateEpisodeCopies = [
+    { title: "庆余年", kind: "series", series: "庆余年", season: 2, episode: 1 },
+    { title: "庆余年", kind: "series", series: "庆余年", season: 2, episode: 1 },
+  ];
+  assert.equal(duplicateCinemaTitleKeys(duplicateEpisodeCopies).size, 1);
 });
 
 test("cinemaKeyboardController handles Space on dock buttons, hold ArrowRight 2x boost, and tiered Esc", async () => {
