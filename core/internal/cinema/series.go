@@ -344,13 +344,15 @@ func (l *Library) applySeriesCandidate(share string, seriesID int64, oldName str
 		}
 	}
 	if _, err := l.db.Exec(`UPDATE films SET
+		title=CASE WHEN manual_title=1 THEN title ELSE ? END,
+		title_source=CASE WHEN manual_title=1 THEN title_source ELSE ? END,
 		metadata_source=CASE WHEN metadata_source='' THEN ? ELSE metadata_source END,
 		poster_path=CASE WHEN poster_path='' THEN ? ELSE poster_path END,
 		overview=CASE WHEN overview='' THEN ? ELSE overview END,
 		rating=CASE WHEN rating=0 THEN ? ELSE rating END,
 		scrape_state=CASE WHEN scrape_state='' THEN 'auto' ELSE scrape_state END
 		WHERE share=? AND series_id=?`,
-		source, poster, candidate.Overview, candidate.Rating, share, targetID); err != nil {
+		candidate.Title, source, source, poster, candidate.Overview, candidate.Rating, share, targetID); err != nil {
 		return 0, err
 	}
 	return targetID, nil
@@ -378,36 +380,49 @@ func absInt(value int) int {
 	return value
 }
 
-// pickTMBDCandidate selects a confident automatic match: normalized title
-// equality (including bilingual/original-title variants) and, when both sides
-// carry a year, a ±1 year agreement. Anything less confident stays unmatched
-// (the scrape records "miss" instead of guessing).
+// pickTMBDCandidate selects a confident automatic match:
+//  1. Normalized title equality (preferring closer release year);
+//  2. Colon/subtitle prefix equality (e.g. "复仇者联盟4" vs "复仇者联盟4：终局之战");
+//  3. Safe prefix containment when year agrees within ±1 (or without a trailing sequel digit).
+//
+// Candidates whose release year disagrees by more than ±1 are always rejected.
 func pickTMBDCandidate(candidates []TMDBCandidate, title string, year int) *TMDBCandidate {
 	variants := titleSearchVariants(title)
-	wants := make([]string, 0, len(variants)+1)
+	wants := make([]string, 0, len(variants)+2)
+	addWant := func(raw string) {
+		if norm := normalizeTitle(raw); norm != "" {
+			for _, existing := range wants {
+				if existing == norm {
+					return
+				}
+			}
+			wants = append(wants, norm)
+		}
+	}
 	for _, v := range variants {
-		if norm := normalizeTitle(v); norm != "" {
-			wants = append(wants, norm)
+		addWant(v)
+		if _, trimmed, ok := stripTrailingSeason(v); ok {
+			addWant(trimmed)
 		}
 	}
-	if len(wants) == 0 {
-		if norm := normalizeTitle(title); norm != "" {
-			wants = append(wants, norm)
-		}
+	if _, trimmed, ok := stripTrailingSeason(title); ok {
+		addWant(trimmed)
 	}
+	addWant(title)
 	if len(wants) == 0 {
 		return nil
 	}
-	yearCompatible := func(c *TMDBCandidate) bool {
+	yearDiff := func(c *TMDBCandidate) (diff int, known bool, ok bool) {
 		if year > 0 && c.Year != "" {
-			if parsed, err := strconv.Atoi(c.Year); err == nil && absInt(parsed-year) > 1 {
-				return false
+			if parsed, err := strconv.Atoi(c.Year); err == nil {
+				d := absInt(parsed - year)
+				return d, true, d <= 1
 			}
 		}
-		return true
+		return 0, false, true
 	}
 	candidateNorms := func(c *TMDBCandidate) []string {
-		out := []string{}
+		out := make([]string, 0, 2)
 		for _, raw := range []string{c.Title, c.OriginalTitle} {
 			if n := normalizeTitle(raw); n != "" {
 				out = append(out, n)
@@ -415,44 +430,100 @@ func pickTMBDCandidate(candidates []TMDBCandidate, title string, year int) *TMDB
 		}
 		return out
 	}
-	for i := range candidates {
-		candidate := &candidates[i]
-		if !yearCompatible(candidate) {
-			continue
-		}
-		for _, cNorm := range candidateNorms(candidate) {
-			for _, want := range wants {
-				if cNorm == want {
-					return candidate
+	pickBest := func(matchFn func(*TMDBCandidate) bool) *TMDBCandidate {
+		var best *TMDBCandidate
+		bestRank := 99
+		for i := range candidates {
+			c := &candidates[i]
+			d, known, ok := yearDiff(c)
+			if !ok || !matchFn(c) {
+				continue
+			}
+			rank := 2
+			if known {
+				rank = d
+			}
+			if best == nil || rank < bestRank {
+				best = c
+				bestRank = rank
+				if bestRank == 0 {
+					return best
 				}
 			}
 		}
+		return best
 	}
-	// Secondary pass: when release year is explicitly known and agrees within ±1,
-	// allow matching the main title before a colon subtitle (e.g. "复仇者联盟4" vs "复仇者联盟4：终局之战").
-	if year > 0 {
-		for i := range candidates {
-			candidate := &candidates[i]
-			if candidate.Year == "" || !yearCompatible(candidate) {
-				continue
+
+	// Tier 1: Exact normalized title match.
+	if hit := pickBest(func(c *TMDBCandidate) bool {
+		for _, cNorm := range candidateNorms(c) {
+			for _, want := range wants {
+				if cNorm == want {
+					return true
+				}
 			}
-			for _, raw := range []string{candidate.Title, candidate.OriginalTitle} {
-				for _, sep := range []string{"：", ":"} {
-					if idx := strings.Index(raw, sep); idx > 0 {
-						prefixNorm := normalizeTitle(raw[:idx])
-						if len([]rune(prefixNorm)) >= 2 {
-							for _, want := range wants {
-								if prefixNorm == want {
-									return candidate
-								}
+		}
+		return false
+	}); hit != nil {
+		return hit
+	}
+
+	// Tier 2: Main title before colon subtitle matches on either side.
+	if hit := pickBest(func(c *TMDBCandidate) bool {
+		cNorms := candidateNorms(c)
+		for _, raw := range []string{c.Title, c.OriginalTitle} {
+			for _, sep := range []string{"：", ":"} {
+				if idx := strings.Index(raw, sep); idx > 0 {
+					prefixNorm := normalizeTitle(raw[:idx])
+					if len([]rune(prefixNorm)) >= 2 {
+						for _, want := range wants {
+							if prefixNorm == want {
+								return true
 							}
 						}
 					}
 				}
 			}
 		}
+		for _, rawWant := range append([]string{title}, variants...) {
+			for _, sep := range []string{"：", ":"} {
+				if idx := strings.Index(rawWant, sep); idx > 0 {
+					prefixNorm := normalizeTitle(rawWant[:idx])
+					if len([]rune(prefixNorm)) >= 2 {
+						for _, cNorm := range cNorms {
+							if prefixNorm == cNorm {
+								return true
+							}
+						}
+					}
+				}
+			}
+		}
+		return false
+	}); hit != nil {
+		return hit
 	}
-	return nil
+
+	// Tier 3: Safe prefix containment when year agrees within ±1 (or non-sequel suffix).
+	return pickBest(func(c *TMDBCandidate) bool {
+		_, knownYear, _ := yearDiff(c)
+		for _, cNorm := range candidateNorms(c) {
+			for _, want := range wants {
+				if year > 0 && knownYear {
+					shorter := min(len([]rune(want)), len([]rune(cNorm)))
+					if shorter >= 2 && (strings.HasPrefix(cNorm, want) || strings.HasPrefix(want, cNorm)) {
+						return true
+					}
+				} else if len([]rune(want)) >= 4 && strings.HasPrefix(cNorm, want) {
+					rest := []rune(strings.TrimPrefix(cNorm, want))
+					if len(rest) > 0 && (rest[0] < '0' || rest[0] > '9') {
+						return true
+					}
+				}
+			}
+		}
+		return false
+	})
 }
 
 func normalizeTitle(value string) string {

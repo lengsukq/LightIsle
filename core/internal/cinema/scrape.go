@@ -322,8 +322,8 @@ func (l *Library) scrapeFilm(job context.Context, token string, service TMDBServ
 	return "miss"
 }
 
-// scrapeSeries matches the show once and lets every episode inherit it.
-// Episode-level titles remain filename-derived in this version.
+// scrapeSeries matches the show once and lets every episode inherit its
+// formal show title, overview, rating and poster (unless manually renamed).
 func (l *Library) scrapeSeries(job context.Context, token string, service TMDBService, share string, film scrapeFilmRow) string {
 	if strings.TrimSpace(film.Series) == "" {
 		return "noseries"
@@ -332,10 +332,13 @@ func (l *Library) scrapeSeries(job context.Context, token string, service TMDBSe
 	if !needs {
 		if seriesID > 0 {
 			if _, err := l.db.Exec(`UPDATE films SET
+				title=CASE WHEN manual_title=1 OR (SELECT name FROM series WHERE id=?)='' THEN title ELSE (SELECT name FROM series WHERE id=?) END,
+				title_source=CASE WHEN manual_title=1 OR (SELECT metadata_source FROM series WHERE id=?)='' THEN title_source ELSE (SELECT metadata_source FROM series WHERE id=?) END,
 				metadata_source=CASE WHEN metadata_source='' THEN (SELECT metadata_source FROM series WHERE id=?) ELSE metadata_source END,
 				poster_path=CASE WHEN poster_path='' THEN (SELECT poster_path FROM series WHERE id=?) ELSE poster_path END,
-				overview=CASE WHEN overview='' THEN (SELECT overview FROM series WHERE id=?) ELSE overview END
-				WHERE share=? AND id=?`, seriesID, seriesID, seriesID, share, film.ID); err != nil {
+				overview=CASE WHEN overview='' THEN (SELECT overview FROM series WHERE id=?) ELSE overview END,
+				rating=CASE WHEN rating=0 THEN COALESCE((SELECT MAX(rating) FROM films WHERE series_id=? AND rating>0),0) ELSE rating END
+				WHERE share=? AND id=?`, seriesID, seriesID, seriesID, seriesID, seriesID, seriesID, seriesID, seriesID, share, film.ID); err != nil {
 				slog.Warn("cinema scrape series episode inherit failed", "filmID", film.ID, "seriesID", seriesID, "error", err)
 				return "failed"
 			}

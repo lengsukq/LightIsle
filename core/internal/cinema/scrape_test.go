@@ -155,6 +155,24 @@ func TestPickTMBDCandidateConfidence(t *testing.T) {
 	if got := pickTMBDCandidate(localized, "千与。千寻", 2001); got == nil {
 		t.Fatal("normalized Chinese title must match")
 	}
+	// Subtitle / colon-prefix match works even when filename omits the release year.
+	subtitled := []TMDBCandidate{{ID: 10, Title: "复仇者联盟4：终局之战", Year: "2019"}}
+	if got := pickTMBDCandidate(subtitled, "复仇者联盟4", 0); got == nil || got.ID != 10 {
+		t.Fatalf("colon prefix without year = %+v", got)
+	}
+	// Trailing season marker is stripped when matching show title.
+	shows := []TMDBCandidate{{ID: 11, Title: "庆余年", Year: "2019"}}
+	if got := pickTMBDCandidate(shows, "庆余年 第二季", 2019); got == nil || got.ID != 11 {
+		t.Fatalf("trailing season match = %+v", got)
+	}
+	// Exact year match beats ±1 year match.
+	multiYear := []TMDBCandidate{
+		{ID: 12, Title: "Same Title", Year: "2020"},
+		{ID: 13, Title: "Same Title", Year: "2021"},
+	}
+	if got := pickTMBDCandidate(multiYear, "Same Title", 2021); got == nil || got.ID != 13 {
+		t.Fatalf("exact year priority = %+v", got)
+	}
 }
 
 func TestScanAutoChainsIncrementalScrapeAndFiltersUnmatched(t *testing.T) {
@@ -298,5 +316,12 @@ func TestAutoRecognizeAndScrapeRealWorldAddedFilms(t *testing.T) {
 	unmatched, _, err := lib.List(1, "unmatched", "", 10, 0)
 	if err != nil || len(unmatched) != 0 {
 		t.Fatalf("expected 0 unmatched items after series and movie auto-scrape, got %+v (err=%v)", unmatched, err)
+	}
+	episodes, _, err := lib.List(1, "series", "", 10, 0)
+	if err != nil || len(episodes) != 1 {
+		t.Fatalf("expected 1 matched episode, got %+v (err=%v)", episodes, err)
+	}
+	if episodes[0].Title != "庆余年" || episodes[0].Overview != "范闲传奇" {
+		t.Fatalf("expected episode to inherit formal series title and overview, got %+v", episodes[0])
 	}
 }

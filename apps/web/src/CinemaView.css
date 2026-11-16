@@ -38,7 +38,7 @@
 .cinema-all-heading{margin:6px 0 14px}
 .cinema-hint-inline{font-size:12.5px;color:var(--text-secondary);font-weight:550}
 .cinema-watchbar{position:absolute;bottom:0;left:0;height:4px;background:linear-gradient(90deg,#E50914,#ff4d4f)}
-.cinema-details{padding:12px 14px;position:relative}.cinema-details strong{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13.5px;font-weight:650;padding-right:46px}.cinema-details small{display:block;color:var(--text-secondary);font-size:11.5px;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cinema-details{padding:12px 14px;position:relative}.cinema-details strong{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13.5px;font-weight:650;padding-right:46px}.cinema-details small{display:block;color:var(--text-secondary);font-size:11.5px;margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.cinema-card-overview{margin:5px 0 0;font-size:11.5px;line-height:1.45;color:var(--text-tertiary);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden}
 .cinema-details button{position:absolute;right:8px;top:10px;background:none;border:0;color:var(--text-secondary);padding:4px;cursor:pointer}
 .cinema-details button+button{right:32px}
 .cinema-details button:hover{color:var(--accent-primary)}
@@ -110,6 +110,7 @@
 .cinema-home-cover img{width:100%;height:100%;object-fit:cover}
 .cinema-home-card strong{font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;width:100%}
 .cinema-home-card small{font-size:12px;color:var(--text-secondary)}
+.cinema-home-overview{font-size:11px;line-height:1.4;color:var(--text-tertiary);display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;width:100%}
 .cinema-home-progress{height:4px;background:var(--fluid-card-border);width:100%;border-radius:99px;overflow:hidden}
 .cinema-home-progress>span{display:block;height:100%;background:var(--accent-primary)}
 .cinema-overview{display:grid;grid-template-columns:minmax(150px,240px) minmax(0,1fr);align-items:start;gap:28px;padding:6px 0 16px}

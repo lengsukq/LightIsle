@@ -95,8 +95,9 @@ const emit = defineEmits<{
               />
               <Film v-else :size="32" />
             </span>
-            <strong :title="movie.title">{{ movie.title }}</strong>
+            <strong :title="movie.kind === 'series' && movie.series ? movie.series : movie.title">{{ movie.kind === 'series' && movie.series ? movie.series : movie.title }}</strong>
             <small>{{ formatCinemaResumeLabel(movie).replace(/^继续播放\s*/, "") || ("已看 " + percent(movie) + "%") }}</small>
+            <span v-if="movie.overview" class="cinema-home-overview" :title="movie.overview">{{ movie.overview }}</span>
             <span class="cinema-home-progress"><span :style="{ width: percent(movie) + '%' }"></span></span>
           </button>
           <button
@@ -137,8 +138,9 @@ const emit = defineEmits<{
             />
             <Film v-else :size="32" />
           </span>
-          <strong :title="movie.title">{{ movie.title }}</strong>
+          <strong :title="movie.kind === 'series' && movie.series ? movie.series : movie.title">{{ movie.kind === 'series' && movie.series ? movie.series : movie.title }}</strong>
           <small>{{ movie.year || "影片" }} · {{ duration(movie.durationSeconds || movie.duration) }}</small>
+          <span v-if="movie.overview" class="cinema-home-overview" :title="movie.overview">{{ movie.overview }}</span>
         </button>
       </div>
     </div>

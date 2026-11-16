@@ -133,6 +133,7 @@ const emit = defineEmits<{
       <div class="cinema-details">
         <strong :title="item.name">{{ item.name }}</strong>
         <small>已看 {{ item.watchedCount }}/{{ item.episodeCount }} 集</small>
+        <p v-if="item.overview" class="cinema-card-overview" :title="item.overview">{{ item.overview }}</p>
         <IsleBadge v-if="item.inProgress && item.nextTitle" variant="accent" size="sm">继续：{{ item.nextTitle }}</IsleBadge>
         <IsleBadge v-else-if="item.watchedCount >= item.episodeCount && item.episodeCount" variant="online" size="sm">已看完</IsleBadge>
         <button v-if="item.nextFilmId" type="button" @click="emit('continue-series', item)" title="继续观看" aria-label="继续观看">
@@ -212,8 +213,9 @@ const emit = defineEmits<{
         <span class="cinema-watchbar" :style="{ width: percent(movie) + '%' }"></span>
       </button>
       <div class="cinema-details">
-        <strong :title="movie.title">{{ movie.title }}</strong>
+        <strong :title="movie.kind === 'series' && movie.series ? movie.series : movie.title">{{ movie.kind === 'series' && movie.series ? movie.series : movie.title }}</strong>
         <small>{{ movie.completed ? "已看完" : "看到 " + percent(movie) + "%" }} · {{ duration(movie.durationSeconds || movie.duration) }}</small>
+        <p v-if="movie.overview" class="cinema-card-overview" :title="movie.overview">{{ movie.overview }}</p>
         <button v-if="movie.position > 5 && !movie.completed" type="button" @click="emit('mark-restart', movie)" title="从头播放" aria-label="从头播放">
           <RotateCcw :size="14" />
         </button>
@@ -258,10 +260,11 @@ const emit = defineEmits<{
         <span class="cinema-watchbar" :style="{ width: percent(movie) + '%' }"></span>
       </button>
       <div class="cinema-details">
-        <strong :title="movie.title">{{ movie.title }}</strong>
+        <strong :title="movie.kind === 'series' && movie.series ? movie.series : movie.title">{{ movie.kind === 'series' && movie.series ? movie.series : movie.title }}</strong>
         <small>
           {{ movie.kind === "series" ? "剧集" : "电影" }}<template v-if="movie.isStrm"> · STRM 直链</template> · {{ duration(movie.durationSeconds || movie.duration) }}<template v-if="disambiguationMap.get(movie.id)"> · {{ disambiguationMap.get(movie.id) }}</template><template v-if="movie.completed"> · 已看完</template><template v-else-if="movie.position > 5"> · 已看 {{ percent(movie) }}%</template>
         </small>
+        <p v-if="movie.overview" class="cinema-card-overview" :title="movie.overview">{{ movie.overview }}</p>
         <IsleBadge v-if="mode === 'unmatched' && !movie.metadataSource" variant="warning" size="sm">
           {{ movie.scrapeState === "miss" ? "自动未命中 · 待手动匹配" : "待匹配资料" }}
         </IsleBadge>

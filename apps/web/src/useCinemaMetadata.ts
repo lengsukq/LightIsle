@@ -41,6 +41,7 @@ export function useCinemaMetadata(options: {
   api: <T>(url: string, method?: string, body?: object, signal?: AbortSignal) => Promise<T>;
   apiPath: (path: string) => string;
   load: (reset?: boolean) => Promise<void>;
+  onScrapeCompleted?: () => void;
   transcodeErrorMessage: (error: unknown) => string;
 }) {
   const candidatePosterFailed = ref<Record<number, boolean>>({});
@@ -478,6 +479,7 @@ export function useCinemaMetadata(options: {
         if (wasRunning && !status.running) {
           scrapeNotice.value = "自动刮削已结束：处理 " + status.processed + " 项，成功匹配 " + status.matched + " 项。";
           void options.load(true);
+          options.onScrapeCompleted?.();
         }
         if (!status.running) stopScrapeTimer();
         else if (scrapeTimer === undefined) {

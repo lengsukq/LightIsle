@@ -364,7 +364,9 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
-                  film.title,
+                  film.isSeries && film.series.isNotEmpty
+                      ? film.series
+                      : film.title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: textTheme.titleSmall?.copyWith(
@@ -382,6 +384,19 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
                     fontSize: 11.5,
                   ),
                 ),
+                if (film.overview.isNotEmpty) ...[
+                  const SizedBox(height: 2),
+                  Text(
+                    film.overview,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: textTheme.bodySmall?.copyWith(
+                      color: surface.onSurfaceVariant.withValues(alpha: .82),
+                      fontSize: 11,
+                      height: 1.35,
+                    ),
+                  ),
+                ],
                 if (film.completed)
                   Text(
                     '已看完',
