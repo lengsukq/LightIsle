@@ -86,10 +86,12 @@ const pluginV2SpecMarkdown = `# LightIsle Plugin v2 Specification (schemaVersion
 - ` + "`on-demand`" + `: Starts ` + "`run-web.sh`" + ` on HTTP request to ` + "`/apps/<id>`" + `, binds ` + "`127.0.0.1:$PORT`" + `, sleeps after ` + "`idleTimeoutSeconds`" + `.
 - ` + "`persistent`" + `: Starts automatically after administrator approval and supervises restarts up to ` + "`restartLimit`" + `.
 
-## Injected Environment Variables
+## Injected Environment Variables & Domain-Agnostic Routing
 - ` + "`PORT`" + `, ` + "`HOST=127.0.0.1`" + `, ` + "`BASE_PATH=/apps/<id>`" + `
 - ` + "`LIGHTISLE_PLUGIN_DIR`" + `, ` + "`LIGHTISLE_PLUGIN_DATA_DIR`" + `
 - ` + "`LIGHTISLE_PROXY_SECRET`" + ` (verified against ` + "`X-LightIsle-Proxy-Secret`" + ` header)
+- Gateway reverse-proxy headers: ` + "`X-Forwarded-Prefix=/apps/<id>`" + `, ` + "`X-Forwarded-Host`" + `, and ` + "`X-Forwarded-Proto`" + `.
+- **Relative-Path Rule (Mandatory)**: Frontend assets, ` + "`fetch`" + ` / WebSocket URLs, and backend HTTP ` + "`Location`" + ` redirects MUST use relative paths (e.g., ` + "`./api/status`" + ` or prefixed with ` + "`BASE_PATH`" + `). Never hardcode ` + "`127.0.0.1`" + `, LAN IPs, or fixed domains so the mini-app switches seamlessly across LAN, Tailscale, and rotating public tunnel domains.
 
 ## Built-in Local & LAN MCP Developer Tools
 - ` + "`lightisle_get_environment`" + ` / ` + "`lightisle_list_apps`" + `

@@ -6,8 +6,115 @@ import 'package:flutter/services.dart';
 
 import 'lightisle_api.dart';
 
-/// One saved server + account + password record, uniquely keyed by normalized
-/// `server|username` and stored only inside the OS Keychain / Android Keystore.
+enum HostEndpointTier { loopback, lan, tailscale, publicDomain }
+
+/// One candidate connection URL bound to a [LoginHistoryEntry] host profile.
+class HostEndpoint {
+  const HostEndpoint({required this.url, this.label, this.certificateFingerprint});
+
+  final String url;
+  final String? label;
+  final String? certificateFingerprint;
+
+  String get normalizedUrl => LoginHistoryEntry.normalizeServer(url);
+  String? get normalizedFingerprint =>
+      LoginHistoryEntry.normalizeFingerprint(certificateFingerprint);
+  bool get isHttps => normalizedUrl.startsWith('https://');
+  String get probeKey =>
+      LoginHistoryEntry.buildServerProbeKey(normalizedUrl, normalizedFingerprint);
+  HostEndpointTier get tier => classifyUrl(normalizedUrl);
+
+  String get defaultTierLabel => switch (tier) {
+    HostEndpointTier.loopback => '本机回环',
+    HostEndpointTier.lan => '局域网',
+    HostEndpointTier.tailscale => 'Tailscale',
+    HostEndpointTier.publicDomain => '公网域名',
+  };
+
+  String get displayLabel =>
+      (label?.trim().isNotEmpty ?? false) ? label!.trim() : defaultTierLabel;
+
+  static HostEndpointTier classifyUrl(String rawUrl) {
+    final parsed = Uri.tryParse(rawUrl.trim());
+    final host = (parsed?.host ?? '').trim().toLowerCase();
+    if (host.isEmpty) return HostEndpointTier.publicDomain;
+    if (host == 'localhost' || host == '127.0.0.1' || host == '::1') {
+      return HostEndpointTier.loopback;
+    }
+    if (host.endsWith('.local')) {
+      return HostEndpointTier.lan;
+    }
+    if (host.endsWith('.ts.net')) {
+      return HostEndpointTier.tailscale;
+    }
+    final parts = host.split('.');
+    if (parts.length == 4) {
+      final octets = <int>[];
+      for (final p in parts) {
+        final v = int.tryParse(p);
+        if (v == null || v < 0 || v > 255) {
+          octets.clear();
+          break;
+        }
+        octets.add(v);
+      }
+      if (octets.length == 4) {
+        if (octets[0] == 127) return HostEndpointTier.loopback;
+        if (octets[0] == 10 ||
+            (octets[0] == 172 && octets[1] >= 16 && octets[1] <= 31) ||
+            (octets[0] == 192 && octets[1] == 168) ||
+            (octets[0] == 169 && octets[1] == 254)) {
+          return HostEndpointTier.lan;
+        }
+        if (octets[0] == 100 && octets[1] >= 64 && octets[1] <= 127) {
+          return HostEndpointTier.tailscale;
+        }
+      }
+    }
+    return HostEndpointTier.publicDomain;
+  }
+
+  HostEndpoint copyWith({
+    String? url,
+    String? label,
+    bool clearLabel = false,
+    String? certificateFingerprint,
+    bool clearFingerprint = false,
+  }) => HostEndpoint(
+    url: url != null ? LoginHistoryEntry.normalizeServer(url) : normalizedUrl,
+    label: clearLabel ? null : (label?.trim() ?? this.label),
+    certificateFingerprint: clearFingerprint
+        ? null
+        : (certificateFingerprint != null
+              ? LoginHistoryEntry.normalizeFingerprint(certificateFingerprint)
+              : normalizedFingerprint),
+  );
+
+  Map<String, dynamic> toJson() => <String, dynamic>{
+    'url': normalizedUrl,
+    if (label != null && label!.trim().isNotEmpty) 'label': label!.trim(),
+    if (normalizedFingerprint != null)
+      'certificateFingerprint': normalizedFingerprint,
+  };
+
+  factory HostEndpoint.fromJson(Map<String, dynamic> json) {
+    final rawUrl = json['url'];
+    final normalized = rawUrl is String
+        ? LoginHistoryEntry.normalizeServer(rawUrl)
+        : '';
+    if (normalized.isEmpty) throw const FormatException('主机候选地址格式无效。');
+    final rawLabel = json['label'];
+    return HostEndpoint(
+      url: normalized,
+      label: rawLabel is String && rawLabel.trim().isNotEmpty ? rawLabel.trim() : null,
+      certificateFingerprint: LoginHistoryEntry.normalizeFingerprint(
+        json['certificateFingerprint'] is String ? json['certificateFingerprint'] as String : null,
+      ),
+    );
+  }
+}
+
+/// Saved host profile + credentials supporting optional multi-address selection.
 class LoginHistoryEntry {
   const LoginHistoryEntry({
     required this.server,
@@ -16,7 +123,12 @@ class LoginHistoryEntry {
     required this.updatedAt,
     this.role,
     this.certificateFingerprint,
+    this.hostLabel,
+    this.autoSelectEndpoint = true,
+    this.endpoints = const <HostEndpoint>[],
   });
+
+  static const int maxEndpointsPerHost = 6;
 
   final String server;
   final String username;
@@ -24,6 +136,22 @@ class LoginHistoryEntry {
   final String? role;
   final String? certificateFingerprint;
   final int updatedAt;
+  final String? hostLabel;
+  final bool autoSelectEndpoint;
+  final List<HostEndpoint> endpoints;
+
+  /// Expands shorthand input (e.g. `192.168.1.100`) and normalizes to canonical origin.
+  static String normalizeUserInputServer(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return '';
+    final withScheme =
+        (trimmed.startsWith('http://') || trimmed.startsWith('https://'))
+        ? trimmed
+        : (RegExp(r'^(\[[^\]]+\]|[^/:]+)(:\d+|/)').hasMatch(trimmed)
+              ? 'http://$trimmed'
+              : 'http://$trimmed:16666');
+    return normalizeServer(withScheme);
+  }
 
   /// Canonical origin (lowercase scheme + host + optional explicit port).
   static String normalizeServer(String raw) {
@@ -48,7 +176,7 @@ class LoginHistoryEntry {
     return RegExp(r'^[0-9a-f]{64}$').hasMatch(cleaned) ? cleaned : null;
   }
 
-  /// Unique key combining normalized server origin and case-insensitive username.
+  /// Unique key combining normalized primary server origin and case-insensitive username.
   static String buildKey(String server, String username) =>
       '${normalizeServer(server)}|${username.trim().toLowerCase()}';
 
@@ -68,33 +196,163 @@ class LoginHistoryEntry {
 
   bool get isAdmin => role == 'admin';
 
+  String get displayHostName {
+    final custom = hostLabel?.trim() ?? '';
+    if (custom.isNotEmpty) return custom;
+    final parsed = Uri.tryParse(server);
+    return (parsed != null && parsed.host.isNotEmpty) ? parsed.host : server;
+  }
+
+  /// Deduplicated candidate endpoints with primary [server] guaranteed first.
+  List<HostEndpoint> get effectiveEndpoints {
+    final primaryUrl = normalizeServer(server);
+    final primaryPin = normalizeFingerprint(certificateFingerprint);
+    final byUrl = <String, HostEndpoint>{};
+    for (final ep in endpoints) {
+      final norm = ep.normalizedUrl;
+      if (norm.isEmpty) continue;
+      byUrl.putIfAbsent(norm, () => ep.copyWith(url: norm));
+    }
+    final existingPrimary = byUrl.remove(primaryUrl);
+    final primaryEndpoint = HostEndpoint(
+      url: primaryUrl,
+      label: existingPrimary?.label,
+      certificateFingerprint:
+          primaryPin ?? existingPrimary?.normalizedFingerprint,
+    );
+    return List<HostEndpoint>.unmodifiable(<HostEndpoint>[
+      if (primaryUrl.isNotEmpty) primaryEndpoint,
+      ...byUrl.values.take(maxEndpointsPerHost - 1),
+    ]);
+  }
+
+  bool get hasMultipleEndpoints => effectiveEndpoints.length > 1;
+
+  bool ownsServer(String candidateServer) {
+    final target = normalizeServer(candidateServer);
+    if (target.isEmpty) return false;
+    return effectiveEndpoints.any((ep) => ep.normalizedUrl == target);
+  }
+
+  HostEndpoint endpointFor(String candidateServer) {
+    final target = normalizeServer(candidateServer);
+    for (final ep in effectiveEndpoints) {
+      if (ep.normalizedUrl == target) return ep;
+    }
+    return HostEndpoint(url: target);
+  }
+
+  /// Picks the best endpoint from already-collected [latencies].
+  /// When [autoSelectEndpoint] is false (turned off by user), strictly returns
+  /// the fixed primary endpoint without switching routes.
+  HostEndpoint selectPreferredEndpoint(
+    Map<String, ServerLatencyResult> latencies,
+  ) {
+    final candidates = effectiveEndpoints;
+    if (candidates.isEmpty) {
+      return HostEndpoint(
+        url: normalizeServer(server),
+        certificateFingerprint: normalizeFingerprint(certificateFingerprint),
+      );
+    }
+    if (!autoSelectEndpoint || candidates.length == 1) {
+      return candidates.first;
+    }
+    final online = <HostEndpoint>[
+      for (final ep in candidates)
+        if (latencies[ep.probeKey]?.state == ServerLatencyState.online) ep,
+    ];
+    if (online.isEmpty) return candidates.first;
+    online.sort((a, b) {
+      final tierCmp = a.tier.index.compareTo(b.tier.index);
+      if (tierCmp != 0) return tierCmp;
+      final aMs = latencies[a.probeKey]?.latencyMs ?? 999999;
+      final bMs = latencies[b.probeKey]?.latencyMs ?? 999999;
+      return aMs.compareTo(bMs);
+    });
+    return online.first;
+  }
+
+  /// Probes candidate addresses concurrently when [autoSelectEndpoint] is true
+  /// and multiple addresses exist; returns the fixed primary address immediately
+  /// when [autoSelectEndpoint] is turned off.
+  Future<HostEndpoint> resolveConnectEndpoint(
+    ServerLatencyProber prober, {
+    Map<String, ServerLatencyResult>? latencyCache,
+  }) async {
+    final candidates = effectiveEndpoints;
+    if (candidates.isEmpty) {
+      return HostEndpoint(
+        url: normalizeServer(server),
+        certificateFingerprint: normalizeFingerprint(certificateFingerprint),
+      );
+    }
+    if (!autoSelectEndpoint || candidates.length == 1) {
+      return candidates.first;
+    }
+    final results = <String, ServerLatencyResult>{};
+    await Future.wait(
+      candidates.map((ep) async {
+        final res = await prober(
+          ep.normalizedUrl,
+          certificateFingerprint: ep.normalizedFingerprint,
+        );
+        results[ep.probeKey] = res;
+      }),
+    );
+    latencyCache?.addAll(results);
+    return selectPreferredEndpoint(results);
+  }
+
   LoginHistoryEntry copyWith({
     String? server,
     String? username,
     String? password,
     String? role,
     String? certificateFingerprint,
+    bool clearCertificateFingerprint = false,
     int? updatedAt,
+    String? hostLabel,
+    bool clearHostLabel = false,
+    bool? autoSelectEndpoint,
+    List<HostEndpoint>? endpoints,
   }) => LoginHistoryEntry(
     server: server != null ? normalizeServer(server) : this.server,
     username: username?.trim() ?? this.username,
     password: password ?? this.password,
     role: role ?? this.role,
-    certificateFingerprint: certificateFingerprint != null
-        ? normalizeFingerprint(certificateFingerprint)
-        : this.certificateFingerprint,
+    certificateFingerprint: clearCertificateFingerprint
+        ? null
+        : (certificateFingerprint != null
+              ? normalizeFingerprint(certificateFingerprint)
+              : this.certificateFingerprint),
     updatedAt: updatedAt ?? this.updatedAt,
+    hostLabel: clearHostLabel ? null : (hostLabel?.trim() ?? this.hostLabel),
+    autoSelectEndpoint: autoSelectEndpoint ?? this.autoSelectEndpoint,
+    endpoints: endpoints ?? this.endpoints,
   );
 
-  Map<String, dynamic> toJson() => <String, dynamic>{
-    'server': normalizeServer(server),
-    'username': username.trim(),
-    'password': password,
-    if (role != null && role!.isNotEmpty) 'role': role,
-    if (normalizeFingerprint(certificateFingerprint) != null)
-      'certificateFingerprint': normalizeFingerprint(certificateFingerprint),
-    'updatedAt': updatedAt,
-  };
+  Map<String, dynamic> toJson() {
+    final canonicalEndpoints = effectiveEndpoints;
+    return <String, dynamic>{
+      'server': normalizeServer(server),
+      'username': username.trim(),
+      'password': password,
+      if (role != null && role!.isNotEmpty) 'role': role,
+      if (normalizeFingerprint(certificateFingerprint) != null)
+        'certificateFingerprint': normalizeFingerprint(certificateFingerprint),
+      if (hostLabel != null && hostLabel!.trim().isNotEmpty)
+        'hostLabel': hostLabel!.trim(),
+      if (!autoSelectEndpoint) 'autoSelectEndpoint': false,
+      if (canonicalEndpoints.length > 1 ||
+          (canonicalEndpoints.length == 1 &&
+              canonicalEndpoints.first.label != null))
+        'endpoints': canonicalEndpoints
+            .map((ep) => ep.toJson())
+            .toList(growable: false),
+      'updatedAt': updatedAt,
+    };
+  }
 
   factory LoginHistoryEntry.fromJson(Map<String, dynamic> json) {
     final rawServer = json['server'];
@@ -110,6 +368,21 @@ class LoginHistoryEntry {
         rawPassword.length > 256) {
       throw const FormatException('登录历史条目格式无效。');
     }
+    final parsedEndpoints = <HostEndpoint>[];
+    if (json['endpoints'] is List) {
+      for (final rawEp in json['endpoints'] as List) {
+        if (rawEp is Map) {
+          try {
+            parsedEndpoints.add(
+              HostEndpoint.fromJson(Map<String, dynamic>.from(rawEp)),
+            );
+          } on FormatException {
+            // Ignore malformed candidate endpoint without losing the account.
+          }
+        }
+      }
+    }
+    final rawLabel = json['hostLabel'];
     return LoginHistoryEntry(
       server: normalizeServer(rawServer),
       username: rawUsername.trim(),
@@ -120,6 +393,13 @@ class LoginHistoryEntry {
             ? json['certificateFingerprint'] as String
             : null,
       ),
+      hostLabel: rawLabel is String && rawLabel.trim().isNotEmpty
+          ? rawLabel.trim()
+          : null,
+      autoSelectEndpoint: json['autoSelectEndpoint'] is bool
+          ? json['autoSelectEndpoint'] as bool
+          : true,
+      endpoints: List<HostEndpoint>.unmodifiable(parsedEndpoints),
       updatedAt: rawUpdated is num && rawUpdated.toInt() > 0
           ? rawUpdated.toInt()
           : 0,
@@ -127,7 +407,7 @@ class LoginHistoryEntry {
   }
 }
 
-/// Device-local vault for remembered `server + username + password` accounts.
+/// Device-local vault for remembered host profiles + credentials.
 class LoginHistoryStore {
   LoginHistoryStore({MethodChannel? channel})
     : _channel = channel ?? const MethodChannel('lightisle/session-vault');
@@ -202,7 +482,7 @@ class LoginHistoryStore {
     final working = List<LoginHistoryEntry>.from(entries.take(maxEntries));
     while (working.isNotEmpty) {
       final encoded = jsonEncode(<String, dynamic>{
-        'version': 1,
+        'version': 2,
         'entries': working.map((e) => e.toJson()).toList(growable: false),
       });
       if (utf8.encode(encoded).length <= _maxPayloadBytes) {
@@ -222,8 +502,9 @@ class LoginHistoryStore {
 
   Future<List<LoginHistoryEntry>> readAll() => _serialize(_readInternal);
 
-  /// Inserts or updates a history entry keyed by normalized `server + username`
-  /// and moves it to the top of the list.
+  /// Inserts or updates a history entry. If an existing host profile for the
+  /// same username already owns `entry.server` among its configured endpoints,
+  /// updates that host profile in place without creating a duplicate entry.
   Future<List<LoginHistoryEntry>> upsert(
     LoginHistoryEntry entry,
   ) => _serialize(() async {
@@ -236,38 +517,128 @@ class LoginHistoryStore {
       throw ArgumentError('登录历史必须包含有效的服务器地址、用户名和密码。');
     }
     final existing = await _readInternal();
-    final canonical = LoginHistoryEntry(
-      server: normalizedServer,
-      username: normalizedUser,
-      password: entry.password,
-      role: entry.role,
-      certificateFingerprint: LoginHistoryEntry.normalizeFingerprint(
-        entry.certificateFingerprint,
-      ),
-      updatedAt: entry.updatedAt > 0
-          ? entry.updatedAt
-          : DateTime.now().millisecondsSinceEpoch,
+    final lowerUser = normalizedUser.toLowerCase();
+    final normalizedPin = LoginHistoryEntry.normalizeFingerprint(
+      entry.certificateFingerprint,
     );
+    final nowTs = entry.updatedAt > 0
+        ? entry.updatedAt
+        : DateTime.now().millisecondsSinceEpoch;
+
+    final matchIdx = existing.indexWhere(
+      (item) =>
+          item.username.toLowerCase() == lowerUser &&
+          item.ownsServer(normalizedServer),
+    );
+
+    final LoginHistoryEntry canonical;
+    if (matchIdx >= 0 && entry.endpoints.isEmpty) {
+      final matched = existing[matchIdx];
+      final updatedEndpoints = matched.effectiveEndpoints
+          .map((ep) {
+            if (ep.normalizedUrl == normalizedServer && normalizedPin != null) {
+              return ep.copyWith(certificateFingerprint: normalizedPin);
+            }
+            return ep;
+          })
+          .toList(growable: false);
+      final primaryPin = matched.server == normalizedServer
+          ? (normalizedPin ?? matched.certificateFingerprint)
+          : matched.certificateFingerprint;
+      canonical = LoginHistoryEntry(
+        server: matched.server,
+        username: normalizedUser,
+        password: entry.password,
+        role: entry.role ?? matched.role,
+        certificateFingerprint: primaryPin,
+        hostLabel: entry.hostLabel ?? matched.hostLabel,
+        autoSelectEndpoint: matched.autoSelectEndpoint,
+        endpoints: updatedEndpoints,
+        updatedAt: nowTs,
+      );
+    } else {
+      canonical = LoginHistoryEntry(
+        server: normalizedServer,
+        username: normalizedUser,
+        password: entry.password,
+        role: entry.role,
+        certificateFingerprint: normalizedPin,
+        hostLabel: entry.hostLabel,
+        autoSelectEndpoint: entry.autoSelectEndpoint,
+        endpoints: entry.endpoints,
+        updatedAt: nowTs,
+      );
+    }
+
     final next = <LoginHistoryEntry>[
       canonical,
-      for (final item in existing)
-        if (item.key != canonical.key) item,
+      for (var i = 0; i < existing.length; i++)
+        if (i != matchIdx && existing[i].key != canonical.key) existing[i],
     ];
     final trimmed = List<LoginHistoryEntry>.unmodifiable(next.take(maxEntries));
     await _writeInternal(trimmed);
     return trimmed;
   });
 
-  /// Updates the stored password if an entry for `server + username` already
-  /// exists (e.g. after the user changes their password in settings).
+  /// Replaces a host profile's multi-address list, primary address, label, and
+  /// `autoSelectEndpoint` toggle atomically.
+  Future<List<LoginHistoryEntry>> saveHostProfile({
+    required String originalKey,
+    required LoginHistoryEntry updatedProfile,
+  }) => _serialize(() async {
+    final normalizedPrimary = LoginHistoryEntry.normalizeServer(
+      updatedProfile.server,
+    );
+    final normalizedUser = updatedProfile.username.trim();
+    if (normalizedPrimary.isEmpty ||
+        normalizedUser.isEmpty ||
+        updatedProfile.password.isEmpty) {
+      throw ArgumentError('主机配置必须保留有效的主地址与账号凭据。');
+    }
+    final existing = await _readInternal();
+    final canonical = updatedProfile.copyWith(
+      server: normalizedPrimary,
+      username: normalizedUser,
+      endpoints: updatedProfile.effectiveEndpoints,
+      updatedAt: DateTime.now().millisecondsSinceEpoch,
+    );
+    final replaced = <LoginHistoryEntry>[];
+    var inserted = false;
+    for (final item in existing) {
+      if (item.key == originalKey || item.key == canonical.key) {
+        if (!inserted) {
+          replaced.add(canonical);
+          inserted = true;
+        }
+      } else {
+        replaced.add(item);
+      }
+    }
+    if (!inserted) {
+      replaced.insert(0, canonical);
+    }
+    final trimmed = List<LoginHistoryEntry>.unmodifiable(
+      replaced.take(maxEntries),
+    );
+    await _writeInternal(trimmed);
+    return trimmed;
+  });
+
+  /// Updates the stored password if an entry for `server + username` (or any
+  /// endpoint belonging to that host profile) exists.
   Future<List<LoginHistoryEntry>> updatePassword(
     String server,
     String username,
     String newPassword,
   ) => _serialize(() async {
-    final targetKey = LoginHistoryEntry.buildKey(server, username);
+    final normalizedServer = LoginHistoryEntry.normalizeServer(server);
+    final lowerUser = username.trim().toLowerCase();
     final existing = await _readInternal();
-    final index = existing.indexWhere((item) => item.key == targetKey);
+    final index = existing.indexWhere(
+      (item) =>
+          item.username.toLowerCase() == lowerUser &&
+          item.ownsServer(normalizedServer),
+    );
     if (index < 0 || newPassword.isEmpty || newPassword.length > 256) {
       return existing;
     }
@@ -285,13 +656,20 @@ class LoginHistoryStore {
     return trimmed;
   });
 
-  /// Removes a single history entry by `server + username` key.
+  /// Removes a single history entry by `server + username` key (or owned server).
   Future<List<LoginHistoryEntry>> remove(String server, String username) =>
       _serialize(() async {
         final targetKey = LoginHistoryEntry.buildKey(server, username);
+        final normalizedServer = LoginHistoryEntry.normalizeServer(server);
+        final lowerUser = username.trim().toLowerCase();
         final existing = await _readInternal();
         final next = List<LoginHistoryEntry>.unmodifiable(
-          existing.where((item) => item.key != targetKey),
+          existing.where(
+            (item) =>
+                item.key != targetKey &&
+                !(item.username.toLowerCase() == lowerUser &&
+                    item.ownsServer(normalizedServer)),
+          ),
         );
         await _writeInternal(next);
         return next;

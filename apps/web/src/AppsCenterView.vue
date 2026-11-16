@@ -123,8 +123,8 @@ const {
       <header class="apps-header">
         <div>
           <h2>应用中心</h2>
-          <p v-if="isAdmin">按需唤醒家庭轻应用与定时采集插件，闲置自动休眠并支持按成员授权。</p>
-          <p v-else>打开已授权的家庭轻应用，免二次登录。</p>
+          <p v-if="isAdmin">按需唤醒家庭轻应用与定时采集插件，闲置自动休眠并支持按成员授权；切换局域网或公网访问域名后应用自动跟随生效。</p>
+          <p v-else>打开已授权的家庭轻应用，免二次登录；更换访问域名后应用自动跟随当前地址。</p>
         </div>
         <IsleButton variant="glass" :disabled="busy" @click="reload(isAdmin)">
           <RefreshCcw :size="15" :class="{ spinning: busy }" />

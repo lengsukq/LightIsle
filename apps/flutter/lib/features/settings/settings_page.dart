@@ -144,6 +144,15 @@ class SettingsPage extends StatelessWidget {
         ),
         actions: [
           TextButton.icon(
+            key: const Key('connectionMultiAddressButton'),
+            onPressed: () {
+              Navigator.pop(dialogContext);
+              unawaited(_openAccountSwitcher(context));
+            },
+            icon: const Icon(Icons.alt_route_rounded),
+            label: const Text('多地址与选线'),
+          ),
+          TextButton.icon(
             onPressed: () {
               Navigator.pop(dialogContext);
               _go(context, NetworkDiagnosticsPage(api: api));

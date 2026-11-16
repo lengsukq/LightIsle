@@ -529,6 +529,12 @@ func (m *Manager) serveDynamicApp(w http.ResponseWriter, r *http.Request, rec *a
 	}
 	fullPath := "/apps/" + rec.id + rest
 
+	clientHost := r.Host
+	clientProto := "http"
+	if isSecureReq(r) {
+		clientProto = "https"
+	}
+
 	proxy := &httputil.ReverseProxy{
 		FlushInterval: -1,
 		Director: func(outReq *http.Request) {
@@ -548,6 +554,10 @@ func (m *Manager) serveDynamicApp(w http.ResponseWriter, r *http.Request, rec *a
 			outReq.Header.Set("X-LightIsle-Username", user.Username)
 			outReq.Header.Set("X-LightIsle-Role", user.Role)
 			outReq.Header.Set("X-Forwarded-Prefix", "/apps/"+rec.id)
+			if clientHost != "" {
+				outReq.Header.Set("X-Forwarded-Host", clientHost)
+			}
+			outReq.Header.Set("X-Forwarded-Proto", clientProto)
 		},
 		Transport: &adaptiveAppTransport{
 			base:         http.DefaultTransport,
@@ -556,6 +566,7 @@ func (m *Manager) serveDynamicApp(w http.ResponseWriter, r *http.Request, rec *a
 			strippedPath: strippedPath,
 		},
 		ModifyResponse: func(resp *http.Response) error {
+			rewritePluginLoopbackLocation(resp.Header, port, rec.id)
 			setAppGatewayHeadersForApp(resp.Header, r, rec.id)
 			return nil
 		},
@@ -687,6 +698,42 @@ func isSecureReq(r *http.Request) bool {
 		}
 	}
 	return false
+}
+
+func rewritePluginLoopbackLocation(h http.Header, loopbackPort int, appID string) {
+	loc := strings.TrimSpace(h.Get("Location"))
+	if loc == "" || loopbackPort <= 0 || !ValidPluginID(appID) {
+		return
+	}
+	parsed, err := url.Parse(loc)
+	if err != nil || !parsed.IsAbs() {
+		return
+	}
+	hostName := strings.ToLower(parsed.Hostname())
+	if (hostName != "127.0.0.1" && hostName != "localhost" && hostName != "::1") ||
+		parsed.Port() != strconv.Itoa(loopbackPort) {
+		return
+	}
+	prefix := "/apps/" + appID
+	relPath := parsed.EscapedPath()
+	if relPath == "" {
+		relPath = "/"
+	} else if !strings.HasPrefix(relPath, "/") {
+		relPath = "/" + relPath
+	}
+	var rewritten string
+	if relPath == prefix || strings.HasPrefix(relPath, prefix+"/") {
+		rewritten = relPath
+	} else {
+		rewritten = prefix + relPath
+	}
+	if parsed.RawQuery != "" {
+		rewritten += "?" + parsed.RawQuery
+	}
+	if parsed.Fragment != "" {
+		rewritten += "#" + parsed.Fragment
+	}
+	h.Set("Location", rewritten)
 }
 
 func writeAppError(w http.ResponseWriter, status int, code, msg string) {

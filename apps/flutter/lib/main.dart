@@ -184,6 +184,101 @@ class _LightIsleAppState extends State<LightIsleApp>
     }
   }
 
+  Future<bool> _tryRestoreViaPreferredHostEndpoint(
+    Map<String, dynamic> snapshot,
+    int transition,
+  ) async {
+    if (widget.restoreApiFactory != null) return false;
+    final savedServer = snapshot['server'];
+    if (savedServer is! String || savedServer.trim().isEmpty) return false;
+    final savedUser = snapshot['offlineUsername'] is String
+        ? (snapshot['offlineUsername'] as String).trim().toLowerCase()
+        : null;
+    LoginHistoryEntry? matched;
+    try {
+      final entries = await _historyStore.readAll();
+      for (final item in entries) {
+        if (!item.ownsServer(savedServer)) continue;
+        if (savedUser != null &&
+            savedUser.isNotEmpty &&
+            item.username.trim().toLowerCase() != savedUser) {
+          continue;
+        }
+        matched = item;
+        break;
+      }
+    } catch (_) {
+      return false;
+    }
+    if (matched == null ||
+        !matched.autoSelectEndpoint ||
+        !matched.hasMultipleEndpoints) {
+      return false;
+    }
+    final prober =
+        widget.latencyProber ??
+        (String url, {String? certificateFingerprint}) => probeServerLatency(
+          url,
+          certificateFingerprint: certificateFingerprint,
+          timeout: const Duration(seconds: 4),
+        );
+    final latencies = <String, ServerLatencyResult>{};
+    final chosen = await matched.resolveConnectEndpoint(
+      prober,
+      latencyCache: latencies,
+    );
+    if (!mounted || transition != _sessionTransition) return true;
+    final normalizedSaved = LoginHistoryEntry.normalizeServer(savedServer);
+    if (chosen.normalizedUrl == normalizedSaved ||
+        latencies[chosen.probeKey]?.state != ServerLatencyState.online) {
+      return false;
+    }
+    LightIsleApi? altApi;
+    try {
+      altApi = LightIsleApi(
+        chosen.normalizedUrl,
+        allowInsecureHttp: true,
+        certificateFingerprint: chosen.normalizedFingerprint,
+      );
+      _restoringApi = altApi;
+      final status = await altApi
+          .get('/api/v2/auth/status')
+          .timeout(const Duration(seconds: 8));
+      if (status['configured'] != true) {
+        altApi.close();
+        return false;
+      }
+      final identity = await altApi
+          .send(
+            'POST',
+            '/api/v2/auth/login',
+            body: <String, dynamic>{
+              'username': matched.username,
+              'password': matched.password,
+            },
+          )
+          .timeout(const Duration(seconds: 10));
+      if (!mounted || transition != _sessionTransition) {
+        altApi.close();
+        return true;
+      }
+      if (!altApi.authenticated ||
+          identity['username'] is! String ||
+          identity['role'] is! String) {
+        altApi.close();
+        return false;
+      }
+      final promoted = altApi;
+      altApi = null;
+      await _signedIn(promoted, identity, restoring: true);
+      return true;
+    } catch (_) {
+      altApi?.close();
+      if (identical(_restoringApi, altApi)) _restoringApi = null;
+      return false;
+    }
+  }
+
   Future<void> _restoreSession() async {
     final transition = ++_sessionTransition;
     setState(() {
@@ -197,6 +292,10 @@ class _LightIsleAppState extends State<LightIsleApp>
         return;
       }
       _offlineSnapshot = snapshot;
+      if (await _tryRestoreViaPreferredHostEndpoint(snapshot, transition)) {
+        return;
+      }
+      if (!mounted || transition != _sessionTransition) return;
       api = (widget.restoreApiFactory ?? LightIsleApi.fromSessionSnapshot)(
         snapshot,
       );
@@ -292,11 +391,14 @@ class _LightIsleAppState extends State<LightIsleApp>
     try {
       final session = api.sessionSnapshot;
       final userID = identity['id'];
+      final uname = identity['username'];
       final snapshot = session == null
           ? null
           : <String, dynamic>{
               ...session,
               if (userID is int && userID > 0) 'offlineAccountId': userID,
+              if (uname is String && uname.trim().isNotEmpty)
+                'offlineUsername': uname.trim(),
             };
       if (snapshot == null) throw StateError('服务器未提供可保留的登录状态，请更新 NAS 后重试。');
       try {

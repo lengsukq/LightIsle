@@ -82,9 +82,11 @@ class _LoginPageState extends State<LoginPage> {
     final entries = source ?? _history;
     if (entries.isEmpty) return;
     final gen = ++_historyProbeGen;
-    final unique = <String, LoginHistoryEntry>{};
+    final unique = <String, HostEndpoint>{};
     for (final entry in entries) {
-      unique.putIfAbsent(entry.serverProbeKey, () => entry);
+      for (final ep in entry.effectiveEndpoints) {
+        unique.putIfAbsent(ep.probeKey, () => ep);
+      }
     }
     setState(() {
       for (final key in unique.keys) {
@@ -94,8 +96,8 @@ class _LoginPageState extends State<LoginPage> {
     await Future.wait(
       unique.entries.map((pair) async {
         final result = await _latencyProber(
-          pair.value.server,
-          certificateFingerprint: pair.value.certificateFingerprint,
+          pair.value.normalizedUrl,
+          certificateFingerprint: pair.value.normalizedFingerprint,
         );
         if (!mounted || gen != _historyProbeGen) return;
         setState(() {
@@ -142,17 +144,22 @@ class _LoginPageState extends State<LoginPage> {
     });
   }
 
-  void _selectHistoryEntry(LoginHistoryEntry entry) {
-    _server.text = entry.server;
+  void _selectHistoryEntry(
+    LoginHistoryEntry entry, {
+    HostEndpoint? forcedEndpoint,
+  }) {
+    final chosen =
+        forcedEndpoint ?? entry.selectPreferredEndpoint(_historyLatencies);
+    _server.text = chosen.normalizedUrl;
     _username.text = entry.username;
     _password.text = entry.password;
-    _pinOrigin = _httpsOrigin(entry.server);
-    _fingerprint.text = entry.certificateFingerprint ?? '';
+    _pinOrigin = _httpsOrigin(chosen.normalizedUrl);
+    _fingerprint.text = chosen.normalizedFingerprint ?? '';
     setState(() {
       _selectedHistoryKey = entry.key;
-      _currentServerLatency = _historyLatencies[entry.serverProbeKey];
-      if (entry.certificateFingerprint != null &&
-          entry.certificateFingerprint!.isNotEmpty) {
+      _currentServerLatency = _historyLatencies[chosen.probeKey];
+      if (chosen.normalizedFingerprint != null &&
+          chosen.normalizedFingerprint!.isNotEmpty) {
         _securityExpanded = true;
       }
       _error = null;
@@ -161,8 +168,33 @@ class _LoginPageState extends State<LoginPage> {
 
   Future<void> _quickLoginHistoryEntry(LoginHistoryEntry entry) async {
     if (_busy) return;
-    _selectHistoryEntry(entry);
+    final chosen = await entry.resolveConnectEndpoint(
+      _latencyProber,
+      latencyCache: _historyLatencies,
+    );
+    if (!mounted) return;
+    _selectHistoryEntry(entry, forcedEndpoint: chosen);
     await _login();
+  }
+
+  Future<void> _openHostEndpointsDialog(LoginHistoryEntry entry) async {
+    if (_busy) return;
+    final updated = await showHostEndpointsDialog(
+      context: context,
+      entry: entry,
+      historyStore: _historyStore,
+      latencyProber: _latencyProber,
+      onManualConnect: (saved, manualEndpoint) async {
+        if (!mounted || _busy) return;
+        _selectHistoryEntry(saved, forcedEndpoint: manualEndpoint);
+        await _login();
+      },
+    );
+    if (!mounted || updated == null) return;
+    await _loadHistory();
+    if (_selectedHistoryKey == entry.key || _selectedHistoryKey == updated.key) {
+      _selectHistoryEntry(updated);
+    }
   }
 
   Future<void> _removeHistoryEntry(LoginHistoryEntry entry) async {
@@ -622,6 +654,7 @@ class _LoginPageState extends State<LoginPage> {
                     onQuickLogin: _quickLoginHistoryEntry,
                     onRemove: _removeHistoryEntry,
                     onRefreshLatencies: _probeHistoryLatencies,
+                    onManageEndpoints: _openHostEndpointsDialog,
                   ),
                   if (widget.expired) const Notice('登录已过期或失效，请重新登录。'),
                   if (widget.notice != null)

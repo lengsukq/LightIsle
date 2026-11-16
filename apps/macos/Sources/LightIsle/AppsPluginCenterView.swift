@@ -125,7 +125,7 @@ struct AppsPluginCenterView: View {
                             )
                         }
                     }
-                    Text("按需唤醒轻应用与定时助手，闲置自动休眠；支持本机与外置盘目录及 AI Agent (MCP) 开发。")
+                    Text("按需唤醒轻应用与定时助手，闲置自动休眠；支持本机与外置盘目录及 AI Agent (MCP) 开发。切换局域网、Tailscale 或公网穿透域名后，轻应用会自动跟随新地址生效。")
                         .font(.system(size: 12.5))
                         .foregroundStyle(IsleTheme.secondaryText)
                         .fixedSize(horizontal: false, vertical: true)

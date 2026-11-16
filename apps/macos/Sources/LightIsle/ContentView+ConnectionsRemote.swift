@@ -6,7 +6,7 @@ extension ContentView {
         VStack(alignment: .leading, spacing: 20) {
             AppleSettingsGroup(
                 title: "Cloudflare Tunnel（可选）",
-                footer: "使用本机已安装的 cloudflared 把 NAS 暴露到公网。免费模式每次启动生成随机临时域名，仅供测试；API Key 模式通过你自己的 Cloudflare 账号创建命名隧道并一键绑定域名。Token 只保存在本机钥匙串，不会写入日志。若系统代理拦截，需对 argotunnel.com 放行直连。"
+                footer: "使用本机已安装的 cloudflared 把 NAS 暴露到公网。免费模式每次启动生成随机临时域名，仅供测试；API Key 模式通过你自己的 Cloudflare 账号创建命名隧道并一键绑定域名。更换临时或自定义域名后，已安装的内部轻应用会自动挂载至新域名下运行，无需重启或重配（仅需在新域名重新登录一次）。Token 只保存在本机钥匙串，不会写入日志。若系统代理拦截，需对 argotunnel.com 放行直连。"
             ) {
                 AppleSettingsRow(title: "cloudflared 二进制", icon: "terminal", iconTint: .gray) {
                     Text(tunnelBinaryDescription)
@@ -137,7 +137,7 @@ extension ContentView {
         VStack(alignment: .leading, spacing: 20) {
             AppleSettingsGroup(
                 title: "FRP 穿透（可选）",
-                footer: "LightIsle 不附带 FRP 程序。一键下载的是官方 frpc 客户端，不包含 frps 服务端。请先准备自己的 FRP 服务端，再通过可视化配置页填写连接和代理规则。FRP 不会自动连接公网；尤其不要把未加密的 HTTP 服务直接映射到公网。"
+                footer: "LightIsle 不附带 FRP 程序。一键下载的是官方 frpc 客户端，不包含 frps 服务端。请先准备自己的 FRP 服务端，再通过可视化配置页填写连接和代理规则。更换公网穿透域名后，内部轻应用会自动跟随新地址生效，无需重配应用。FRP 不会自动连接公网；尤其不要把未加密的 HTTP 服务直接映射到公网。"
             ) {
                 AppleSettingsRow(title: "FRP 客户端", subtitle: "官方 frpc · macOS Apple Silicon · SHA-256 校验后安装", icon: "arrow.down.circle", iconTint: .cyan) {
                     HStack(spacing: 8) {

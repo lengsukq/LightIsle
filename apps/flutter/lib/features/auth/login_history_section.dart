@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 
 import '../../core/login_history_store.dart';
@@ -168,6 +170,7 @@ class CurrentServerLatencyBar extends StatelessWidget {
 
 /// Saved login history list displayed on [LoginPage].
 /// Tapping an item fills `server + username + password + fingerprint`;
+/// the route button manages multi-address & auto-select settings;
 /// the trailing button triggers immediate connection & login.
 class LoginHistorySection extends StatelessWidget {
   const LoginHistorySection({
@@ -180,6 +183,7 @@ class LoginHistorySection extends StatelessWidget {
     required this.onQuickLogin,
     required this.onRemove,
     required this.onRefreshLatencies,
+    this.onManageEndpoints,
   });
 
   final List<LoginHistoryEntry> entries;
@@ -190,6 +194,7 @@ class LoginHistorySection extends StatelessWidget {
   final ValueChanged<LoginHistoryEntry> onQuickLogin;
   final ValueChanged<LoginHistoryEntry> onRemove;
   final VoidCallback onRefreshLatencies;
+  final ValueChanged<LoginHistoryEntry>? onManageEndpoints;
 
   @override
   Widget build(BuildContext context) {
@@ -220,7 +225,7 @@ class LoginHistorySection extends StatelessWidget {
                 const SizedBox(width: 6),
                 Expanded(
                   child: Text(
-                    '历史登录账号（点击填入 · 右侧直连）',
+                    '已保存主机与账号（支持多地址择优与手动选线）',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: theme.textTheme.labelLarge?.copyWith(
@@ -247,7 +252,7 @@ class LoginHistorySection extends StatelessWidget {
             ),
             const SizedBox(height: 8),
             ConstrainedBox(
-              constraints: const BoxConstraints(maxHeight: 220),
+              constraints: const BoxConstraints(maxHeight: 240),
               child: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -256,11 +261,14 @@ class LoginHistorySection extends StatelessWidget {
                       if (i > 0) const SizedBox(height: 6),
                       _HistoryItemTile(
                         entry: entries[i],
-                        latency: latencies[entries[i].serverProbeKey],
+                        latencies: latencies,
                         selected: entries[i].key == selectedKey,
                         busy: busy,
                         onTap: () => onSelect(entries[i]),
                         onQuickLogin: () => onQuickLogin(entries[i]),
+                        onManageEndpoints: onManageEndpoints == null
+                            ? null
+                            : () => onManageEndpoints!(entries[i]),
                         onRemove: () => onRemove(entries[i]),
                       ),
                     ],
@@ -278,20 +286,22 @@ class LoginHistorySection extends StatelessWidget {
 class _HistoryItemTile extends StatelessWidget {
   const _HistoryItemTile({
     required this.entry,
-    required this.latency,
+    required this.latencies,
     required this.selected,
     required this.busy,
     required this.onTap,
     required this.onQuickLogin,
     required this.onRemove,
+    this.onManageEndpoints,
   });
 
   final LoginHistoryEntry entry;
-  final ServerLatencyResult? latency;
+  final Map<String, ServerLatencyResult> latencies;
   final bool selected;
   final bool busy;
   final VoidCallback onTap;
   final VoidCallback onQuickLogin;
+  final VoidCallback? onManageEndpoints;
   final VoidCallback onRemove;
 
   @override
@@ -299,6 +309,10 @@ class _HistoryItemTile extends StatelessWidget {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     final colors = theme.colorScheme;
+    final preferred = entry.selectPreferredEndpoint(latencies);
+    final latency =
+        latencies[preferred.probeKey] ?? latencies[entry.serverProbeKey];
+    final count = entry.effectiveEndpoints.length;
 
     return Material(
       color: selected
@@ -356,6 +370,15 @@ class _HistoryItemTile extends StatelessWidget {
                             height: 1.2,
                           ),
                         ),
+                        if (entry.hostLabel != null &&
+                            entry.hostLabel!.trim().isNotEmpty)
+                          Text(
+                            '· ${entry.hostLabel!.trim()}',
+                            style: theme.textTheme.labelSmall?.copyWith(
+                              color: colors.primary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
                         if (entry.role != null)
                           Text(
                             entry.isAdmin ? '管理员' : '成员',
@@ -363,6 +386,15 @@ class _HistoryItemTile extends StatelessWidget {
                               color: colors.onSurfaceVariant,
                               fontSize: 11,
                             ),
+                          ),
+                        if (count > 1)
+                          IsleStatusBadge(
+                            label: entry.autoSelectEndpoint
+                                ? '自动择优 · $count 线路'
+                                : '固定线路 · $count 线路',
+                            color: entry.autoSelectEndpoint
+                                ? const Color(0xff0a84ff)
+                                : colors.onSurfaceVariant,
                           ),
                         ServerLatencyBadge(
                           key: Key('loginHistoryLatency_${entry.key}'),
@@ -374,7 +406,7 @@ class _HistoryItemTile extends StatelessWidget {
                     Row(
                       children: [
                         Icon(
-                          entry.isHttps
+                          preferred.isHttps
                               ? Icons.lock_outline_rounded
                               : Icons.dns_outlined,
                           size: 12,
@@ -383,7 +415,7 @@ class _HistoryItemTile extends StatelessWidget {
                         const SizedBox(width: 4),
                         Expanded(
                           child: Text(
-                            entry.server,
+                            preferred.normalizedUrl,
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: theme.textTheme.bodySmall?.copyWith(
@@ -397,7 +429,25 @@ class _HistoryItemTile extends StatelessWidget {
                   ],
                 ),
               ),
-              const SizedBox(width: 6),
+              if (onManageEndpoints != null) ...[
+                IconButton(
+                  key: Key('loginHistoryEndpoints_${entry.key}'),
+                  tooltip: '多地址管理与自动择优开关',
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(
+                    minWidth: 30,
+                    minHeight: 30,
+                  ),
+                  padding: EdgeInsets.zero,
+                  onPressed: busy ? null : onManageEndpoints,
+                  icon: Icon(
+                    Icons.alt_route_rounded,
+                    size: 17,
+                    color: count > 1 ? colors.primary : colors.onSurfaceVariant,
+                  ),
+                ),
+                const SizedBox(width: 2),
+              ],
               IslePillButton(
                 key: Key('loginHistoryQuickLogin_${entry.key}'),
                 label: '登录',
@@ -423,6 +473,115 @@ class _HistoryItemTile extends StatelessWidget {
             ],
           ),
         ),
+      ),
+    );
+  }
+}
+
+/// Displays one candidate endpoint row inside [showHostEndpointsDialog].
+class HostEndpointTile extends StatelessWidget {
+  const HostEndpointTile({
+    super.key,
+    required this.endpoint,
+    required this.isPrimary,
+    required this.isActive,
+    required this.canRemove,
+    required this.busy,
+    this.latency,
+    this.connecting = false,
+    this.onSetPrimary,
+    this.onManualConnect,
+    this.onRemove,
+  });
+
+  final HostEndpoint endpoint;
+  final bool isPrimary;
+  final bool isActive;
+  final bool canRemove;
+  final bool busy;
+  final ServerLatencyResult? latency;
+  final bool connecting;
+  final VoidCallback? onSetPrimary;
+  final VoidCallback? onManualConnect;
+  final VoidCallback? onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context), colors = theme.colorScheme;
+    return Container(
+      key: Key('hostEndpointItem_${endpoint.normalizedUrl}'),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerHighest.withValues(alpha: 0.38),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(
+          color: isActive
+              ? const Color(0xff10b981).withValues(alpha: 0.65)
+              : colors.outlineVariant.withValues(alpha: 0.45),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 6,
+            runSpacing: 4,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              IsleStatusBadge(label: endpoint.displayLabel, color: colors.primary),
+              if (isPrimary)
+                const IsleStatusBadge(label: '默认主地址', color: Color(0xff0a84ff)),
+              if (isActive)
+                const IsleStatusBadge(label: '当前已连接', color: Color(0xff10b981)),
+              if (endpoint.normalizedFingerprint != null)
+                IsleStatusBadge(label: '已绑指纹', color: colors.secondary),
+              ServerLatencyBadge(result: latency),
+            ],
+          ),
+          const SizedBox(height: 4),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  endpoint.normalizedUrl,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(fontFamily: 'monospace'),
+                ),
+              ),
+              if (!isPrimary && onSetPrimary != null)
+                TextButton(
+                  key: Key('setPrimaryEndpoint_${endpoint.normalizedUrl}'),
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(horizontal: 6),
+                    minimumSize: const Size(0, 28),
+                  ),
+                  onPressed: busy ? null : onSetPrimary,
+                  child: const Text('设为主地址', style: TextStyle(fontSize: 12)),
+                ),
+              if (onManualConnect != null && !isActive)
+                IslePillButton(
+                  key: Key('manualConnectEndpoint_${endpoint.normalizedUrl}'),
+                  label: connecting ? '连接中…' : '手动连接',
+                  icon: Icons.bolt_rounded,
+                  variant: IslePillVariant.primary,
+                  compact: true,
+                  onPressed: busy ? null : onManualConnect,
+                ),
+              if (canRemove && onRemove != null)
+                IconButton(
+                  key: Key('removeHostEndpoint_${endpoint.normalizedUrl}'),
+                  tooltip: '移除此地址',
+                  visualDensity: VisualDensity.compact,
+                  constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                  padding: EdgeInsets.zero,
+                  onPressed: busy ? null : onRemove,
+                  icon: Icon(Icons.close_rounded, size: 16, color: colors.onSurfaceVariant),
+                ),
+            ],
+          ),
+        ],
       ),
     );
   }

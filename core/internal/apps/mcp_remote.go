@@ -346,7 +346,7 @@ func (m *Manager) MCPLanBootstrapPrompt(lanBaseURL string) string {
 	}
 	httpURL := base + "/api/v2/mcp"
 	sseURL := base + "/api/v2/mcp/sse"
-	return fmt.Sprintf("请帮我将局域网内的「LightIsle（轻屿）全功能管理与控制 MCP Server」注册到你的 MCP 配置文件中：\n\n- MCP 服务名称：lightisle-lan\n- 传输方式：streamable-http（或 http / sse）\n- MCP HTTP 端点：%s\n- 备用 SSE 端点：%s\n- 鉴权请求头：Authorization: Bearer %s（或 X-LightIsle-MCP-Token: %s）\n\n操作要求：\n1. 请将上述局域网 MCP 服务写入你当前的 Agent 配置文件；\n2. 连接后调用 lightisle_get_health、lightisle_get_system、lightisle_list_roots 并读取 lightisle://specs/mcp-security 规范验证连接；\n3. 你可以通过该 MCP 全面获取并管理主机指标、磁盘健康、文件与安全回收站、相册与影视库、下载中心、家庭成员额度、本机定时脚本及轻应用插件（根目录写操作先读取 generation，配置修改先读取 revision；所有调用均纳入审计，严禁格式化磁盘、解绑存储根或物理粉碎文件）。", httpURL, sseURL, token, token)
+	return fmt.Sprintf("请帮我将局域网内的「LightIsle（轻屿）全功能管理与控制 MCP Server」注册到你的 MCP 配置文件中：\n\n- MCP 服务名称：lightisle-lan\n- 传输方式：streamable-http（或 http / sse）\n- MCP HTTP 端点：%s\n- 备用 SSE 端点：%s\n- 鉴权请求头：Authorization: Bearer %s（或 X-LightIsle-MCP-Token: %s）\n\n操作要求：\n1. 请将上述局域网 MCP 服务写入你当前的 Agent 配置文件；\n2. 连接后调用 lightisle_get_health、lightisle_get_system、lightisle_list_roots 并读取 lightisle://specs/mcp-security 规范验证连接；\n3. 你可以通过该 MCP 全面获取并管理主机指标、磁盘健康、文件与安全回收站、相册与影视库、下载中心、家庭成员额度、本机定时脚本及轻应用插件（根目录写操作先读取 generation，配置修改先读取 revision；所有调用均纳入审计，严禁格式化磁盘、解绑存储根或物理粉碎文件）；\n4. 注意网络边界：轻应用（/apps/<id>/）会自动跟随公网隧道或域名切换，但 /api/v2/mcp 管理接口仅限本机或私有局域网直连（拒绝公网反向代理转发），若 Mac 局域网 IP 变更请同步更新此配置中的 url。", httpURL, sseURL, token, token)
 }
 
 func (m *Manager) MCPClientConfigJSON(lanBaseURL string) string {
