@@ -79,9 +79,15 @@ extension _AppsCenterStorageCard on _AppsCenterPageState {
               width: double.infinity,
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(12),
+                color: theme.brightness == Brightness.dark
+                    ? Colors.white.withValues(alpha: 0.03)
+                    : colors.surface,
+                borderRadius: IsleRadius.brSm,
                 border: Border.all(
-                  color: colors.outlineVariant.withValues(alpha: 0.7),
+                  color: IsleGlass.rimBorderColor(
+                    theme.brightness == Brightness.dark,
+                  ),
+                  width: 1.0,
                 ),
               ),
               child: Column(
@@ -111,6 +117,9 @@ extension _AppsCenterStorageCard on _AppsCenterPageState {
                   const SizedBox(height: 8),
                   FilledButton.tonalIcon(
                     key: const ValueKey('addExternalAppStorageButton'),
+                    style: FilledButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                    ),
                     onPressed: _busy
                         ? null
                         : () => _openStoragePathDialog(
@@ -137,6 +146,7 @@ extension _AppsCenterStorageCard on _AppsCenterPageState {
     required List<Map<String, dynamic>> volumes,
   }) {
     final theme = Theme.of(context), colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
     final online = loc['online'] == true;
     final writable = loc['writable'] == true;
     final isDefault = loc['isDefault'] == true;
@@ -149,12 +159,13 @@ extension _AppsCenterStorageCard on _AppsCenterPageState {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: colors.surfaceContainerHighest.withValues(alpha: 0.38),
-        borderRadius: BorderRadius.circular(12),
+        color: isDark ? Colors.white.withValues(alpha: 0.04) : colors.surface,
+        borderRadius: IsleRadius.brSm,
         border: Border.all(
           color: isDefault
-              ? colors.primary.withValues(alpha: 0.55)
-              : colors.outlineVariant.withValues(alpha: 0.45),
+              ? colors.primary.withValues(alpha: 0.45)
+              : IsleGlass.rimBorderColor(isDark),
+          width: 1.0,
         ),
       ),
       child: Column(
@@ -369,7 +380,11 @@ class _AppStoragePathDialogState extends State<_AppStoragePathDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return AlertDialog(
+      shape: IsleShapes.card(
+        side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
+      ),
       title: Text(
         widget.kind == 'external'
             ? (widget.action == 'add' ? '添加其他盘应用存储位置' : '更换其他盘位置')
@@ -391,6 +406,11 @@ class _AppStoragePathDialogState extends State<_AppStoragePathDialog> {
                   children: [
                     for (final vol in widget.volumes)
                       ActionChip(
+                        visualDensity: VisualDensity.compact,
+                        side: BorderSide(
+                          color: IsleGlass.rimBorderColor(isDark),
+                          width: 1.0,
+                        ),
                         label: Text(vol['name']?.toString() ?? ''),
                         onPressed: vol['readOnly'] == true
                             ? null
@@ -421,7 +441,7 @@ class _AppStoragePathDialogState extends State<_AppStoragePathDialog> {
                       ? '/Volumes/MyDisk/LightIsleApps'
                       : '/Users/name/LightIsleApps',
                   errorText: _pathError,
-                  border: const OutlineInputBorder(),
+                  isDense: true,
                 ),
               ),
               const SizedBox(height: 10),
@@ -430,11 +450,12 @@ class _AppStoragePathDialogState extends State<_AppStoragePathDialog> {
                 decoration: InputDecoration(
                   labelText: '显示名称（可选）',
                   hintText: widget.kind == 'external' ? '外置扩展盘' : 'Mac 内置盘',
-                  border: const OutlineInputBorder(),
+                  isDense: true,
                 ),
               ),
               const SizedBox(height: 6),
               CheckboxListTile(
+                dense: true,
                 contentPadding: EdgeInsets.zero,
                 value: _setDefault,
                 onChanged: (v) => setState(() => _setDefault = v == true),

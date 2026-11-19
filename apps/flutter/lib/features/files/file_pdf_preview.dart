@@ -5,6 +5,7 @@ import 'package:pdfx/pdfx.dart';
 
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
+import '../../core/widgets.dart';
 import 'file_models.dart';
 
 const int maxPdfPreviewSize = 64 * 1024 * 1024;
@@ -59,8 +60,6 @@ class _FilePdfPreviewDialogState extends State<FilePdfPreviewDialog> {
       return;
     }
     if (_disposed) return;
-    // Pinch-zoom re-renders pages at an appropriate resolution, important for
-    // phone readers. pdfx owns the native PDF document lifecycle.
     setState(() {
       _controller = PdfControllerPinch(document: PdfDocument.openData(data));
     });
@@ -83,67 +82,84 @@ class _FilePdfPreviewDialogState extends State<FilePdfPreviewDialog> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final borderColor = IsleGlass.rimBorderColor(isDark);
     final controller = _controller;
+
     return Dialog(
       backgroundColor: Colors.transparent,
       elevation: 0,
       insetPadding: EdgeInsets.symmetric(
-        horizontal: MediaQuery.sizeOf(context).width < 600 ? 6 : 20,
-        vertical: MediaQuery.sizeOf(context).width < 600 ? 6 : 24,
+        horizontal: MediaQuery.sizeOf(context).width < 600 ? 8 : 20,
+        vertical: MediaQuery.sizeOf(context).width < 600 ? 8 : 24,
       ),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: IsleRadius.brCard,
         child: Container(
           constraints: BoxConstraints(
             maxWidth: 860,
-            minHeight: MediaQuery.sizeOf(context).height < 620 ? 160 : 350,
+            minHeight: MediaQuery.sizeOf(context).height < 620 ? 160 : 340,
           ),
           decoration: BoxDecoration(
-            color: theme.colorScheme.surface,
-            borderRadius: BorderRadius.circular(24),
-            border: Border.all(
-              color: theme.colorScheme.outlineVariant.withValues(alpha: 0.45),
-              width: 0.85,
-            ),
+            color: colors.surface,
+            borderRadius: IsleRadius.brCard,
+            border: Border.all(color: borderColor, width: 1.0),
+            boxShadow: IsleShadows.floating(isDark),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 14, 10, 10),
+              Container(
+                padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
+                decoration: BoxDecoration(
+                  border: Border(
+                    bottom: BorderSide(color: borderColor, width: 1.0),
+                  ),
+                ),
                 child: Row(
                   children: [
+                    Icon(
+                      Icons.picture_as_pdf_rounded,
+                      size: 18,
+                      color: colors.primary,
+                    ),
+                    const SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         widget.item.name,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.titleMedium?.copyWith(
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontSize: 14.5,
                           fontWeight: FontWeight.w700,
                         ),
                       ),
                     ),
                     IconButton(
+                      visualDensity: VisualDensity.compact,
                       tooltip: '其他应用打开 PDF',
                       onPressed: () {
                         Navigator.of(context).pop();
                         widget.onOpenExternal();
                       },
-                      icon: const Icon(Icons.open_in_new_rounded),
+                      icon: const Icon(Icons.open_in_new_rounded, size: 18),
                     ),
                     IconButton(
+                      visualDensity: VisualDensity.compact,
                       tooltip: '保存 PDF 原件',
                       onPressed: () {
                         Navigator.of(context).pop();
                         widget.onDownload();
                       },
-                      icon: const Icon(Icons.download_rounded),
+                      icon: const Icon(Icons.download_rounded, size: 18),
                     ),
                     IconButton(
+                      visualDensity: VisualDensity.compact,
                       tooltip: '关闭',
                       onPressed: () => Navigator.of(context).pop(),
-                      icon: const Icon(Icons.close_rounded),
+                      icon: const Icon(Icons.close_rounded, size: 19),
                     ),
                   ],
                 ),
@@ -151,27 +167,34 @@ class _FilePdfPreviewDialogState extends State<FilePdfPreviewDialog> {
               Flexible(
                 child: switch ((_error, controller)) {
                   (String message, _) => SingleChildScrollView(
-                    padding: const EdgeInsets.all(18),
+                    padding: const EdgeInsets.all(20),
                     child: Column(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Text(
                           message,
-                          style: TextStyle(color: theme.colorScheme.error),
+                          style: TextStyle(fontSize: 13, color: colors.error),
                         ),
-                        const SizedBox(height: 12),
+                        const SizedBox(height: 10),
                         OutlinedButton.icon(
                           onPressed: _retry,
-                          icon: const Icon(Icons.refresh_rounded),
+                          icon: const Icon(Icons.refresh_rounded, size: 17),
                           label: const Text('重新加载'),
                         ),
-                        const Text('也可以通过右上角打开其他 PDF 阅读器或保存原件。'),
+                        const SizedBox(height: 6),
+                        Text(
+                          '也可以通过右上角打开其他 PDF 阅读器或保存原件。',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: colors.onSurfaceVariant,
+                          ),
+                        ),
                       ],
                     ),
                   ),
-                  (null, null) => const Padding(
-                    padding: EdgeInsets.all(32),
-                    child: Center(child: CircularProgressIndicator()),
+                  (null, null) => const IsleLoadingState(
+                    compact: true,
+                    label: '正在渲染 PDF…',
                   ),
                   (null, final PdfControllerPinch loaded) => PdfViewPinch(
                     controller: loaded,

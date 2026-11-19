@@ -35,21 +35,26 @@ class HomeAppsTileSection extends StatelessWidget {
     if (isAdmin && !loaded && launchable.isEmpty && !hasError) {
       return const SizedBox.shrink();
     }
+    final palette = IslePalette.of(context);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         IsleSectionHeader(
           title: '家庭轻应用',
+          accentColor: palette['brandViolet'],
           action: TextButton(
             key: const ValueKey('homeAppsManageButton'),
             style: TextButton.styleFrom(
               visualDensity: VisualDensity.compact,
-              minimumSize: const Size(40, 32),
+              minimumSize: const Size(36, 28),
               padding: const EdgeInsets.symmetric(horizontal: 8),
             ),
             onPressed: onOpenAppsCenter,
-            child: Text(isAdmin ? '管理应用' : '全部应用'),
+            child: Text(
+              isAdmin ? '管理应用' : '全部应用',
+              style: const TextStyle(fontSize: 12.5),
+            ),
           ),
         ),
         if (hasError) Notice('轻应用列表读取失败：$error', error: true, onRetry: onRetry),
@@ -57,7 +62,7 @@ class HomeAppsTileSection extends StatelessWidget {
           _buildGrid(context, launchable)
         else if (isAdmin && !hasError)
           _buildAdminGuideTile(context),
-        const SizedBox(height: 10),
+        const SizedBox(height: 8),
       ],
     );
   }
@@ -69,8 +74,10 @@ class HomeAppsTileSection extends StatelessWidget {
         final width = constraints.maxWidth;
         final columns = bigText
             ? (width >= 640 ? 2 : 1)
-            : width >= 680
+            : width >= 720
             ? 4
+            : width >= 480
+            ? 3
             : width >= 300
             ? 2
             : 1;
@@ -100,47 +107,37 @@ class HomeAppsTileSection extends StatelessWidget {
   Widget _buildAdminGuideTile(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    final palette = IslePalette.of(context);
+    final accent = palette['brandViolet'];
     return IsleSurface(
       key: const ValueKey('homeAppsAdminGuideTile'),
       onTap: onOpenAppsCenter,
-      radius: IsleRadius.item,
+      tint: accent,
+      radius: IsleRadius.card,
       margin: EdgeInsets.zero,
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
       child: Row(
         children: [
           IsleSquircleBadge(
             icon: Icons.auto_awesome_rounded,
-            color: colors.primary,
-            size: 38,
-            iconSize: 20,
+            color: accent,
+            size: 36,
+            iconSize: 18,
           ),
           const SizedBox(width: 12),
           Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '安装或添加家庭轻应用',
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w700,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  '内置 0 MB 纯静态官方精选模板，进入应用中心即可一键安装并授权家人。',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: colors.onSurfaceVariant,
-                  ),
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
+            child: Text(
+              '安装或添加家庭轻应用',
+              style: theme.textTheme.titleSmall?.copyWith(
+                fontSize: 14,
+                fontWeight: FontWeight.w700,
+              ),
             ),
           ),
           const SizedBox(width: 8),
           Icon(
             Icons.arrow_forward_ios_rounded,
-            size: 14,
+            size: 13,
             color: colors.onSurfaceVariant,
           ),
         ],
@@ -166,13 +163,12 @@ class _HomeAppTileCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    final palette = IslePalette.of(context);
     final id = app['id']?.toString() ?? '';
     final name = app['name']?.toString().trim().isNotEmpty == true
         ? app['name'].toString().trim()
         : id;
-    final description = app['description']?.toString().trim().isNotEmpty == true
-        ? app['description'].toString().trim()
-        : '轻屿本地家庭轻应用';
+    final description = app['description']?.toString().trim() ?? '';
     final category = app['category']?.toString();
     final catColor = appCategoryColor(category, colors);
     final ready = isHomeAppReady(app);
@@ -180,7 +176,7 @@ class _HomeAppTileCard extends StatelessWidget {
     final (String badgeText, Color badgeColor) = () {
       if (!isAdmin) return (appCategoryLabel(category), catColor);
       if (app['pendingActivation'] == true) {
-        return ('待首次激活', const Color(0xFFD97706));
+        return ('待首次激活', palette['brandAmber']);
       }
       if (!ready) return ('启动异常', colors.error);
       return appRuntimeBadge(app, appWebMode(app));
@@ -189,9 +185,10 @@ class _HomeAppTileCard extends StatelessWidget {
     return IsleSurface(
       key: ValueKey('homeAppTile_$id'),
       onTap: onTap,
-      radius: IsleRadius.item,
+      tint: catColor,
+      radius: IsleRadius.card,
       margin: EdgeInsets.zero,
-      padding: EdgeInsets.all(compact ? 11 : 13),
+      padding: EdgeInsets.all(compact ? 11 : 14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -201,39 +198,41 @@ class _HomeAppTileCard extends StatelessWidget {
                 icon: appCategoryIcon(category),
                 color: catColor,
                 size: compact ? 30 : 34,
-                iconSize: compact ? 16 : 18,
+                iconSize: compact ? 15.5 : 17.5,
               ),
               const Spacer(),
               Icon(
                 Icons.arrow_outward_rounded,
-                size: 15,
+                size: 14,
                 color: colors.onSurfaceVariant,
               ),
             ],
           ),
-          SizedBox(height: compact ? 7 : 9),
+          SizedBox(height: compact ? 8 : 10),
           Text(
             name,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style:
-                (compact
-                        ? theme.textTheme.titleSmall
-                        : theme.textTheme.titleMedium)
-                    ?.copyWith(fontWeight: FontWeight.w700, height: 1.2),
-          ),
-          const SizedBox(height: 2),
-          Text(
-            description,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: colors.onSurfaceVariant,
-              fontSize: compact ? 11.5 : 12.2,
-              height: 1.25,
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontSize: compact ? 13 : 14,
+              fontWeight: FontWeight.w700,
+              height: 1.2,
             ),
           ),
-          SizedBox(height: compact ? 7 : 9),
+          if (description.isNotEmpty) ...[
+            const SizedBox(height: 2.5),
+            Text(
+              description,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: colors.onSurfaceVariant,
+                fontSize: compact ? 11.5 : 12,
+                height: 1.25,
+              ),
+            ),
+          ],
+          SizedBox(height: compact ? 8 : 10),
           Row(
             children: [
               Flexible(

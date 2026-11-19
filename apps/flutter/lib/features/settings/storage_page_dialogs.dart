@@ -10,10 +10,17 @@ extension _StoragePageDialogs on _StoragePageState {
   ) async {
     var value = (oldQuota / (1 << 30)).round().toString();
     var presetRevision = 0;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final entered = await showDialog<int>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setModalState) => AlertDialog(
+          shape: IsleShapes.card(
+            side: BorderSide(
+              color: IsleGlass.rimBorderColor(isDark),
+              width: 1.0,
+            ),
+          ),
           title: Text('设置 $rootName 的专属额度 (GiB)'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
@@ -24,7 +31,10 @@ extension _StoragePageDialogs on _StoragePageState {
                 initialValue: value,
                 onChanged: (next) => value = next,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(helperText: '0 表示以后不允许新增数据'),
+                decoration: const InputDecoration(
+                  helperText: '0 表示以后不允许新增数据',
+                  isDense: true,
+                ),
               ),
               const SizedBox(height: 10),
               Wrap(
@@ -33,6 +43,11 @@ extension _StoragePageDialogs on _StoragePageState {
                 children: [
                   for (final preset in const [50, 100, 200, 500, 1024, 0])
                     ActionChip(
+                      visualDensity: VisualDensity.compact,
+                      side: BorderSide(
+                        color: IsleGlass.rimBorderColor(isDark),
+                        width: 1.0,
+                      ),
                       label: Text(preset == 0 ? '0 禁写' : '$preset GiB'),
                       onPressed: () => setModalState(() {
                         value = '$preset';
@@ -99,10 +114,17 @@ extension _StoragePageDialogs on _StoragePageState {
     final selectedCats = _StoragePageState.categories.keys
         .where((cat) => !boundCats.contains(cat))
         .toSet();
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final approved = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setModalState) => AlertDialog(
+          shape: IsleShapes.card(
+            side: BorderSide(
+              color: IsleGlass.rimBorderColor(isDark),
+              width: 1.0,
+            ),
+          ),
           title: Text('为 $username 分配存储空间与限额'),
           content: SizedBox(
             width: 420,
@@ -295,10 +317,17 @@ extension _StoragePageDialogs on _StoragePageState {
     if (loading || !rootsKnown) return;
     var subdir = '';
     var textRevision = 0;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final entered = await showDialog<String>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setModalState) => AlertDialog(
+          shape: IsleShapes.card(
+            side: BorderSide(
+              color: IsleGlass.rimBorderColor(isDark),
+              width: 1.0,
+            ),
+          ),
           title: Text('在 $rootName 新建子目录'),
           content: Column(
             mainAxisSize: MainAxisSize.min,
@@ -380,25 +409,51 @@ extension _StoragePageDialogs on _StoragePageState {
         !roots.any((root) => root['online'] == true)) {
       return;
     }
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final root = await showModalBottomSheet<Map<String, dynamic>>(
       context: context,
       useSafeArea: true,
       isScrollControlled: true,
-      builder: (context) => SizedBox(
-        height: MediaQuery.sizeOf(context).height * .65,
+      showDragHandle: true,
+      shape: IsleShapes.sheet(
+        side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
+      ),
+      builder: (context) => ConstrainedBox(
+        constraints: BoxConstraints(
+          maxHeight: MediaQuery.sizeOf(context).height * .65,
+        ),
         child: ListView(
+          shrinkWrap: true,
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
           children: [
-            const ListTile(title: Text('为用户选择存储硬盘')),
-            ...roots
-                .where((root) => root['online'] == true)
-                .map(
-                  (r) => ListTile(
-                    leading: const Icon(Icons.storage_rounded),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(4, 2, 4, 10),
+              child: Text(
+                '为用户选择存储硬盘',
+                style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+            IsleGroupCard(
+              margin: EdgeInsets.zero,
+              children: [
+                for (final r in roots.where((root) => root['online'] == true))
+                  ListTile(
+                    dense: true,
+                    leading: IsleSquircleBadge(
+                      icon: Icons.storage_rounded,
+                      color: Theme.of(context).colorScheme.primary,
+                      size: 32,
+                      iconSize: 17,
+                    ),
                     title: Text(r['name']?.toString() ?? '硬盘'),
                     subtitle: Text(_physicalFreeLabel(r)),
+                    trailing: const Icon(Icons.chevron_right_rounded, size: 18),
                     onTap: () => Navigator.pop(context, r),
                   ),
-                ),
+              ],
+            ),
           ],
         ),
       ),
@@ -458,13 +513,13 @@ extension _StoragePageDialogs on _StoragePageState {
       margin: const EdgeInsets.symmetric(vertical: 5),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: IslePalette.of(context)['cardItemTop'],
-        borderRadius: BorderRadius.circular(12),
+        color: isDark
+            ? Colors.white.withValues(alpha: 0.04)
+            : Theme.of(context).colorScheme.surface,
+        borderRadius: IsleRadius.brSm,
         border: Border.all(
-          color: isDark
-              ? Colors.white.withValues(alpha: 0.08)
-              : const Color(0xff0f172a).withValues(alpha: 0.05),
-          width: 0.75,
+          color: IsleGlass.rimBorderColor(isDark),
+          width: 1.0,
         ),
       ),
       child: Column(
@@ -492,10 +547,10 @@ extension _StoragePageDialogs on _StoragePageState {
                 StorageCompactDonut(
                   fraction: (used + reserved) / max,
                   color: ((used + reserved) / max) >= 0.92
-                      ? const Color(0xffef4444)
+                      ? const Color(0xffc93b3b)
                       : ((used + reserved) / max) >= 0.8
-                      ? const Color(0xfff59e0b)
-                      : const Color(0xff0071e3),
+                      ? const Color(0xffc27816)
+                      : IslePalette.of(context)['brandBlue'],
                   semanticsLabel:
                       '$rootName 配额已用 ${(((used + reserved) / max).clamp(0.0, 1.0) * 100).round()}%',
                 ),

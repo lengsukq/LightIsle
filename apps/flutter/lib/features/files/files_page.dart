@@ -8,46 +8,47 @@ import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../core/authenticated_media_image.dart';
-import '../../core/isle_quick_jump.dart';
-import '../../core/isle_theme.dart';
 import '../../core/isle_action_menu.dart';
+import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
+import '../media/cinema_detail_dialog.dart';
+import '../media/media_models.dart';
+import '../media/photo_gallery_viewer.dart';
 import '../settings/admin_smb_page.dart';
 import '../settings/dav_page.dart';
 import 'downloads_page.dart';
 import 'duplicate_files_page.dart';
-import 'file_destination_dialog.dart';
 import 'external_file_opener.dart';
-import 'file_preview_support.dart';
-import 'file_name_validation.dart';
-import 'file_share_dialog.dart';
-import 'file_models.dart';
+import 'file_batch_operations.dart';
 import 'file_browser_preferences.dart';
+import 'file_browser_repository.dart';
+import 'file_destination_dialog.dart';
+import 'file_export_service.dart';
+import 'file_media_playlist.dart';
+import 'file_models.dart';
+import 'file_name_validation.dart';
+import 'file_pdf_preview.dart';
+import 'file_preview_support.dart';
 import 'file_search_history_store.dart';
 import 'file_search_widgets.dart';
-import 'file_selection_toolbar.dart';
 import 'file_selection_snapshot.dart';
-import 'file_browser_repository.dart';
-import 'file_batch_operations.dart';
-import 'file_media_playlist.dart';
+import 'file_selection_toolbar.dart';
+import 'file_share_dialog.dart';
 import 'file_text_preview_dialog.dart';
 import 'file_upload_queue_view.dart';
-import 'files_page_state_models.dart';
-export 'file_models.dart' show FileEntry, TrashEntry;
-import 'file_pdf_preview.dart';
+import 'file_upload_service.dart';
 import 'file_upload_stream.dart';
-import 'file_export_service.dart';
+import 'files_page_state_models.dart';
+import 'upload_task_center.dart';
+import 'upload_task_center_page.dart';
+export 'file_export_service.dart'
+    show exportOfflineMediaFile, exportMediaFile, exportMediaFiles;
+export 'file_models.dart' show FileEntry, TrashEntry;
 export 'file_name_validation.dart' show validateFileName;
 export 'file_name_validation.dart' show validateRelativePath;
 export 'file_share_dialog.dart' show openMediaFileShare;
-export 'file_export_service.dart'
-    show exportOfflineMediaFile, exportMediaFile, exportMediaFiles;
-import '../media/photo_gallery_viewer.dart';
-import 'file_upload_service.dart';
-import 'upload_task_center.dart';
-import 'upload_task_center_page.dart';
 
 part 'files_page_preferences.dart';
 part 'files_page_browser.dart';
@@ -302,83 +303,105 @@ class _FilesPageState extends State<FilesPage> {
     }
   }
 
-  Widget _buildReadOnlyBanner(ColorScheme colors, {required bool compact}) {
+  Widget _buildReadOnlyBanner(
+    BuildContext context,
+    ColorScheme colors, {
+    required bool compact,
+  }) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final palette = IslePalette(isDark);
     return Padding(
       padding: const EdgeInsets.only(top: 6),
-      child: Material(
-        color: colors.secondaryContainer,
-        borderRadius: BorderRadius.circular(10),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: Row(
-            children: [
-              Icon(
-                Icons.lock_outline,
-                size: 16,
-                color: colors.onSecondaryContainer,
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  compact
-                      ? '当前目录为只读 · 可浏览、下载或复制。'
-                      : '当前目录为只读。你可以浏览、预览、下载或复制到有写权限的目录。',
-                  style: TextStyle(
-                    fontSize: 12.5,
-                    color: colors.onSecondaryContainer,
-                  ),
-                ),
-              ),
-            ],
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: ShapeDecoration(
+          shape: IsleShapes.sm(
+            side: BorderSide(color: IsleGlass.rimBorderColor(isDark)),
           ),
+          color: palette['cardItemBottom'],
+        ),
+        child: Row(
+          children: [
+            Icon(
+              Icons.lock_outline_rounded,
+              size: 15,
+              color: palette['brandAmber'],
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                compact
+                    ? '当前目录为只读 · 可浏览、下载或复制。'
+                    : '当前目录为只读。你可以浏览、预览、下载或复制到有写权限的目录。',
+                style: TextStyle(fontSize: 12, color: colors.onSurfaceVariant),
+              ),
+            ),
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildBatchProgressBanner(ColorScheme colors) {
+  Widget _buildBatchProgressBanner(BuildContext context, ColorScheme colors) {
     final progress = _transfers.batchProgress!;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return Padding(
       padding: const EdgeInsets.only(top: 6),
-      child: Material(
-        color: colors.primaryContainer,
-        borderRadius: BorderRadius.circular(10),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Expanded(
-                    child: Text(
-                      '正在批量${_transfers.batchActionLabel ?? '处理'} (${progress.index}/${progress.total}) · ${progress.currentName}',
-                      style: TextStyle(
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w600,
-                        color: colors.onPrimaryContainer,
-                      ),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: colors.primaryContainer.withValues(
+            alpha: isDark ? 0.45 : 0.72,
+          ),
+          borderRadius: BorderRadius.circular(11),
+          border: Border.all(
+            color: colors.primary.withValues(alpha: isDark ? 0.35 : 0.22),
+            width: 1.0,
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '正在批量${_transfers.batchActionLabel ?? '处理'} (${progress.index}/${progress.total}) · ${progress.currentName}',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      color: colors.onPrimaryContainer,
                     ),
                   ),
-                  TextButton(
-                    onPressed: _transfers.batchStopRequested
-                        ? null
-                        : () => _refreshState(
-                            () => _transfers.batchStopRequested = true,
-                          ),
-                    child: Text(
-                      _transfers.batchStopRequested ? '正在停止…' : '停止后续项',
-                    ),
+                ),
+                TextButton(
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    minimumSize: const Size(0, 26),
                   ),
-                ],
-              ),
-              LinearProgressIndicator(
+                  onPressed: _transfers.batchStopRequested
+                      ? null
+                      : () => _refreshState(
+                          () => _transfers.batchStopRequested = true,
+                        ),
+                  child: Text(
+                    _transfers.batchStopRequested ? '正在停止…' : '停止后续项',
+                    style: const TextStyle(fontSize: 12),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            ClipRRect(
+              borderRadius: BorderRadius.circular(999),
+              child: LinearProgressIndicator(
+                minHeight: 4,
                 value: progress.total > 0
                     ? (progress.index / progress.total).clamp(0.0, 1.0)
                     : null,
               ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );
@@ -461,6 +484,11 @@ class _FilesPageState extends State<FilesPage> {
                   constraints.maxWidth < IsleLayout.compactPageWidth;
               final inset = IsleLayout.pageInset(constraints.maxWidth);
               final topInset = IsleLayout.pageTopInset(constraints.maxWidth);
+              final contentWidth =
+                  (constraints.maxWidth - inset * 2).clamp(
+                    0.0,
+                    IsleLayout.workbenchMaxWidth,
+                  );
               return RefreshIndicator(
                 onRefresh: _refreshCurrentView,
                 child: ListView(
@@ -473,56 +501,70 @@ class _FilesPageState extends State<FilesPage> {
                     inset + 56,
                   ),
                   children: [
-                    _buildHeader(context),
-                    const SizedBox(height: 6),
-                    _buildToolbar(
-                      context,
-                      compact,
-                      constraints.maxWidth - inset * 2,
+                    Center(
+                      child: ConstrainedBox(
+                        constraints: const BoxConstraints(
+                          maxWidth: IsleLayout.workbenchMaxWidth,
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            _buildHeader(context),
+                            const SizedBox(height: 8),
+                            _buildToolbar(context, compact, contentWidth),
+                            if (_filter.searching) ...[
+                              const SizedBox(height: 6),
+                              Text(
+                                '${_filter.searchScopeSubdir != null && !_filter.searchEntireRoot ? '在当前目录“${_filter.searchScopeSubdir!.split('/').last}”中' : '在当前整盘中'}搜索“${_filter.searchTerm}” · 仅搜索当前账号可访问的名称。',
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
+                            ],
+                            if (!_filter.showingTrash &&
+                                !_dir.canWrite &&
+                                !_dir.loading &&
+                                _dir.error == null)
+                              _buildReadOnlyBanner(
+                                context,
+                                colors,
+                                compact: compact,
+                              ),
+                            if (_transfers.batchBusy &&
+                                _transfers.batchProgress != null)
+                              _buildBatchProgressBanner(context, colors),
+                            if (_dir.error != null)
+                              Notice(
+                                _dir.error!,
+                                error: true,
+                                diagnostic: _dir.error!.startsWith('读取目录失败：')
+                                    ? _dir.directoryDiagnostic
+                                    : null,
+                                retryLabel:
+                                    _transfers.lastFailedBatchRetry != null
+                                    ? '仅重试失败项'
+                                    : '重试',
+                                onRetry: _transfers.lastFailedBatchRetry != null
+                                    ? _retryFailedBatchTransfer
+                                    : _filter.showingTrash
+                                    ? _loadTrash
+                                    : _filter.searching
+                                    ? _searchFiles
+                                    : () => _loadFiles(),
+                              ),
+                            if (_transfers.downloadMessage != null)
+                              _downloadNotice(context),
+                            if ((widget.taskCenter?.jobs ??
+                                    _transfers.uploadJobs)
+                                .isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              _buildUploads(context),
+                            ],
+                            const SizedBox(height: 10),
+                            _buildFileList(context, compact, contentWidth),
+                            const SizedBox(height: 16),
+                          ],
+                        ),
+                      ),
                     ),
-                    if (_filter.searching) ...[
-                      const SizedBox(height: 6),
-                      Text(
-                        '${_filter.searchScopeSubdir != null && !_filter.searchEntireRoot ? '在当前目录“${_filter.searchScopeSubdir!.split('/').last}”中' : '在当前整盘中'}搜索“${_filter.searchTerm}” · 仅搜索当前账号可访问的名称。',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                    ],
-                    if (!_filter.showingTrash &&
-                        !_dir.canWrite &&
-                        !_dir.loading &&
-                        _dir.error == null)
-                      _buildReadOnlyBanner(colors, compact: compact),
-                    if (_transfers.batchBusy &&
-                        _transfers.batchProgress != null)
-                      _buildBatchProgressBanner(colors),
-                    if (_dir.error != null)
-                      Notice(
-                        _dir.error!,
-                        error: true,
-                        diagnostic: _dir.error!.startsWith('读取目录失败：')
-                            ? _dir.directoryDiagnostic
-                            : null,
-                        retryLabel: _transfers.lastFailedBatchRetry != null
-                            ? '仅重试失败项'
-                            : '重试',
-                        onRetry: _transfers.lastFailedBatchRetry != null
-                            ? _retryFailedBatchTransfer
-                            : _filter.showingTrash
-                            ? _loadTrash
-                            : _filter.searching
-                            ? _searchFiles
-                            : () => _loadFiles(),
-                      ),
-                    if (_transfers.downloadMessage != null)
-                      _downloadNotice(context),
-                    if ((widget.taskCenter?.jobs ?? _transfers.uploadJobs)
-                        .isNotEmpty) ...[
-                      const SizedBox(height: 8),
-                      _buildUploads(context),
-                    ],
-                    const SizedBox(height: 8),
-                    _buildFileList(context, compact),
-                    const SizedBox(height: 16),
                   ],
                 ),
               );
@@ -568,24 +610,34 @@ class _RenameFileDialogState extends State<_RenameFileDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: const Text('重命名'),
-    content: TextField(
-      controller: _controller,
-      autofocus: true,
-      maxLength: 150,
-      textInputAction: TextInputAction.done,
-      onSubmitted: (_) => _save(),
-      decoration: InputDecoration(labelText: '名称', errorText: _issue),
-    ),
-    actions: [
-      TextButton(
-        onPressed: () => Navigator.pop(context),
-        child: const Text('取消'),
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return AlertDialog(
+      shape: IsleShapes.card(
+        side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
       ),
-      FilledButton(onPressed: _save, child: const Text('保存')),
-    ],
-  );
+      title: const Text('重命名'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        maxLength: 150,
+        textInputAction: TextInputAction.done,
+        onSubmitted: (_) => _save(),
+        decoration: InputDecoration(
+          isDense: true,
+          labelText: '名称',
+          errorText: _issue,
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _save, child: const Text('保存')),
+      ],
+    );
+  }
 }
 
 String _friendlyDownloadError(Object error, bool archive) {

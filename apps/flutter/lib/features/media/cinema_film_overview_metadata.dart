@@ -191,29 +191,38 @@ extension _CinemaFilmOverviewMetadata on _CinemaFilmOverviewState {
 
   Widget _buildAdminMetadataPanel(BuildContext context) {
     final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
     final busy = _metadataBusy || _tmdbSearching || _doubanSearching;
     return IsleSurface(
       key: const ValueKey('cinemaOverviewMetadataPanel'),
       margin: EdgeInsets.zero,
-      padding: const EdgeInsets.all(18),
+      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
             children: [
-              const Icon(Icons.auto_fix_high_rounded, size: 20),
-              const SizedBox(width: 8),
+              IsleSquircleBadge(
+                icon: Icons.auto_fix_high_rounded,
+                color: theme.colorScheme.primary,
+                size: 32,
+                iconSize: 17,
+              ),
+              const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   '海报与影视资料匹配（管理员）',
-                  style: theme.textTheme.titleMedium?.copyWith(
+                  style: theme.textTheme.titleSmall?.copyWith(
                     fontWeight: FontWeight.w700,
                   ),
                 ),
               ),
               OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                ),
                 onPressed: busy ? null : _importLocalNfo,
-                icon: const Icon(Icons.description_outlined, size: 17),
+                icon: const Icon(Icons.description_outlined, size: 16),
                 label: const Text('导入 NFO'),
               ),
             ],
@@ -225,7 +234,7 @@ extension _CinemaFilmOverviewMetadata on _CinemaFilmOverviewState {
               color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
           TextField(
             controller: _queryController,
             enabled: !busy,
@@ -233,45 +242,63 @@ extension _CinemaFilmOverviewMetadata on _CinemaFilmOverviewState {
             decoration: const InputDecoration(
               labelText: '搜索片名关键词',
               counterText: '',
-              prefixIcon: Icon(Icons.search_rounded),
-              border: OutlineInputBorder(),
+              isDense: true,
+              prefixIcon: Icon(Icons.search_rounded, size: 18),
             ),
           ),
           const SizedBox(height: 10),
           Wrap(
-            spacing: 10,
-            runSpacing: 10,
+            spacing: 8,
+            runSpacing: 8,
             children: [
               FilledButton.tonalIcon(
+                style: FilledButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                ),
                 onPressed: busy ? null : _searchDouban,
                 icon: _doubanSearching
                     ? const SizedBox(
-                        width: 16,
-                        height: 16,
+                        width: 15,
+                        height: 15,
                         child: CircularProgressIndicator(strokeWidth: 2),
                       )
-                    : const Icon(Icons.movie_filter_outlined, size: 18),
+                    : const Icon(Icons.movie_filter_outlined, size: 17),
                 label: Text(_doubanSearching ? '搜索豆瓣中…' : '搜索豆瓣（免凭据）'),
               ),
             ],
           ),
           if (_doubanCandidates.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            for (final candidate in _doubanCandidates)
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(
-                  '${candidate.title}${candidate.year.isEmpty ? '' : ' (${candidate.year})'}',
-                ),
-                subtitle: Text('豆瓣 ID: ${candidate.id}'),
-                trailing: OutlinedButton(
-                  onPressed: busy ? null : () => _matchDouban(candidate),
-                  child: const Text('应用资料'),
-                ),
-              ),
+            const SizedBox(height: 10),
+            IsleGroupCard(
+              margin: EdgeInsets.zero,
+              children: [
+                for (final candidate in _doubanCandidates)
+                  ListTile(
+                    dense: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 2,
+                    ),
+                    title: Text(
+                      '${candidate.title}${candidate.year.isEmpty ? '' : ' (${candidate.year})'}',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    subtitle: Text('豆瓣 ID: ${candidate.id}'),
+                    trailing: OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      onPressed: busy ? null : () => _matchDouban(candidate),
+                      child: const Text('应用资料'),
+                    ),
+                  ),
+              ],
+            ),
           ],
           const SizedBox(height: 14),
-          const Divider(height: 1),
+          Divider(height: 1, color: IsleGlass.rimBorderColor(isDark)),
           const SizedBox(height: 14),
           TextField(
             controller: _tmdbTokenController,
@@ -282,43 +309,61 @@ extension _CinemaFilmOverviewMetadata on _CinemaFilmOverviewState {
             decoration: const InputDecoration(
               labelText: 'TMDB API Read Access Token（可选）',
               hintText: '留空将默认使用 Mac 端已配置的 Token',
-              prefixIcon: Icon(Icons.key_outlined),
-              border: OutlineInputBorder(),
+              isDense: true,
+              prefixIcon: Icon(Icons.key_outlined, size: 18),
             ),
           ),
           const SizedBox(height: 10),
           Align(
             alignment: AlignmentDirectional.centerStart,
             child: FilledButton.icon(
+              style: FilledButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+              ),
               onPressed: busy ? null : _searchTmdb,
               icon: _tmdbSearching
                   ? const SizedBox(
-                      width: 16,
-                      height: 16,
+                      width: 15,
+                      height: 15,
                       child: CircularProgressIndicator(strokeWidth: 2),
                     )
-                  : const Icon(Icons.travel_explore_outlined, size: 18),
+                  : const Icon(Icons.travel_explore_outlined, size: 17),
               label: Text(_tmdbSearching ? '搜索 TMDB 中…' : '搜索 TMDB'),
             ),
           ),
           if (_tmdbCandidates.isNotEmpty) ...[
-            const SizedBox(height: 12),
-            for (final candidate in _tmdbCandidates)
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                title: Text(
-                  '${candidate.title}${candidate.year.isEmpty ? '' : ' (${candidate.year})'}',
-                ),
-                subtitle: Text(
-                  '评分 ${candidate.rating.toStringAsFixed(1)} · ${candidate.overview}',
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                ),
-                trailing: OutlinedButton(
-                  onPressed: busy ? null : () => _matchTmdb(candidate),
-                  child: const Text('选择匹配'),
-                ),
-              ),
+            const SizedBox(height: 10),
+            IsleGroupCard(
+              margin: EdgeInsets.zero,
+              children: [
+                for (final candidate in _tmdbCandidates)
+                  ListTile(
+                    dense: true,
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 12,
+                      vertical: 2,
+                    ),
+                    title: Text(
+                      '${candidate.title}${candidate.year.isEmpty ? '' : ' (${candidate.year})'}',
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    subtitle: Text(
+                      '评分 ${candidate.rating.toStringAsFixed(1)} · ${candidate.overview}',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    trailing: OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      onPressed: busy ? null : () => _matchTmdb(candidate),
+                      child: const Text('选择匹配'),
+                    ),
+                  ),
+              ],
+            ),
           ],
         ],
       ),

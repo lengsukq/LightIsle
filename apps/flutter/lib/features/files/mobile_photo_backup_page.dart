@@ -8,6 +8,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../core/isle_gallery_layout.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
@@ -114,57 +115,129 @@ class _MobilePhotoBackupState extends State<MobilePhotoBackupPage>
     _ => '原片暂不可用或发生变化',
   };
 
-  Widget _buildPendingFailuresCard(int icloudPendingCount) {
-    return IsleSurface(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: EdgeInsets.zero,
-      child: ExpansionTile(
-        title: Text('待处理原片（已记录 ${_progress.failureDetails.length} 项）'),
-        subtitle: Text(
-          icloudPendingCount > 0
-              ? '含 $icloudPendingCount 项 iCloud 云端未下载原片；可在下方开启 Wi-Fi 下载后重新检查。'
-              : '从最新照片重新检查可重试；过大的文件可通过文件管理器单独上传。',
-        ),
-        children: [
-          for (final item in _progress.failureDetails.take(
-            _progress.visibleFailureCount,
-          ))
-            ListTile(
-              dense: true,
-              title: Text(
-                item['name']?.toString().isNotEmpty == true
-                    ? item['name'].toString()
-                    : '未记录名称的原片',
-              ),
-              subtitle: Text(
-                '${_failureReasonLabel(item['reason']?.toString())}'
-                '${item['id'] == null ? '' : ' · 手机编号 ${item['id']}'}',
+  Future<void> _showPendingFailuresDialog(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final borderColor = IsleGlass.rimBorderColor(isDark);
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) {
+          final visible = _progress.failureDetails
+              .take(_progress.visibleFailureCount)
+              .toList(growable: false);
+          return AlertDialog(
+            shape: IsleShapes.card(side: BorderSide(color: borderColor)),
+            title: Text('待处理原片（${_progress.failureDetails.length} 项）'),
+            content: SizedBox(
+              width: 440,
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 380),
+                child: ListView(
+                  shrinkWrap: true,
+                  children: [
+                    for (var i = 0; i < visible.length; i++) ...[
+                      if (i > 0)
+                        Divider(height: 1, thickness: 1, color: borderColor),
+                      ListTile(
+                        dense: true,
+                        visualDensity: VisualDensity.compact,
+                        contentPadding: EdgeInsets.zero,
+                        title: Text(
+                          visible[i]['name']?.toString().isNotEmpty == true
+                              ? visible[i]['name'].toString()
+                              : '未记录名称的原片',
+                          style: const TextStyle(fontSize: 13),
+                        ),
+                        subtitle: Text(
+                          '${_failureReasonLabel(visible[i]['reason']?.toString())}'
+                          '${visible[i]['id'] == null ? '' : ' · 手机编号 ${visible[i]['id']}'}',
+                          style: const TextStyle(fontSize: 11.5),
+                        ),
+                      ),
+                    ],
+                    if (_progress.failureDetails.length >
+                        _progress.visibleFailureCount)
+                      TextButton(
+                        onPressed: () {
+                          setState(() => _progress.visibleFailureCount += 50);
+                          setDialogState(() {});
+                        },
+                        child: const Text('显示更多待处理原片'),
+                      ),
+                  ],
+                ),
               ),
             ),
-          if (_progress.failureDetails.length > _progress.visibleFailureCount)
-            TextButton(
-              onPressed: () =>
-                  setState(() => _progress.visibleFailureCount += 50),
-              child: const Text('显示更多待处理原片'),
-            ),
-        ],
+            actions: [
+              FilledButton.tonal(
+                onPressed: () => Navigator.of(dialogContext).pop(),
+                child: const Text('知道了'),
+              ),
+            ],
+          );
+        },
       ),
     );
   }
 
-  Widget _buildStatusCard(ThemeData theme, ColorScheme colors) {
+  Widget _buildPendingFailuresCard(
+    BuildContext context,
+    int icloudPendingCount,
+  ) {
+    final palette = IslePalette.of(context);
+    final amber = palette['brandAmber'];
     return IsleSurface(
       margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(18),
+      padding: EdgeInsets.zero,
+      tint: amber,
+      onTap: () => _showPendingFailuresDialog(context),
+      child: ListTile(
+        dense: true,
+        visualDensity: VisualDensity.compact,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 3),
+        leading: IsleSquircleBadge(
+          icon: Icons.error_outline_rounded,
+          color: amber,
+          size: 32,
+          iconSize: 16.5,
+        ),
+        title: Text(
+          '待处理原片（已记录 ${_progress.failureDetails.length} 项）',
+          style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700),
+        ),
+        subtitle: Text(
+          icloudPendingCount > 0
+              ? '含 $icloudPendingCount 项 iCloud 云端未下载原片 · 点击查看明细'
+              : '点击查看未完成原片原因明细',
+          style: const TextStyle(fontSize: 12),
+        ),
+        trailing: const Icon(Icons.chevron_right_rounded, size: 18),
+      ),
+    );
+  }
+
+  Widget _buildStatusCard(
+    BuildContext context,
+    ThemeData theme,
+    ColorScheme colors,
+  ) {
+    final palette = IslePalette.of(context);
+    final rose = palette['brandRose'];
+    final sage = palette['brandSage'];
+    return IsleSurface(
+      margin: EdgeInsets.zero,
+      tint: rose,
+      radius: IsleRadius.hero,
+      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
             children: [
-              const IsleSquircleBadge(
+              IsleSquircleBadge(
                 icon: Icons.cloud_sync_rounded,
-                color: Color(0xff06b6d4),
-                size: 36,
+                color: rose,
+                size: 38,
                 iconSize: 19,
               ),
               const SizedBox(width: 12),
@@ -174,14 +247,16 @@ class _MobilePhotoBackupState extends State<MobilePhotoBackupPage>
                   children: [
                     Text(
                       _isAndroid ? '相册备份状态' : '前台备份状态',
-                      style: theme.textTheme.titleSmall?.copyWith(
-                        fontWeight: FontWeight.w700,
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
-                    const SizedBox(height: 2),
+                    const SizedBox(height: 1.5),
                     Text(
-                      '目标位置：${widget.baseDirectory} · ${_options.albumScope == "camera" ? "仅相机拍摄" : "全部媒体"}',
+                      '${widget.baseDirectory} · ${_options.albumScope == "camera" ? "仅相机拍摄" : "全部媒体"}',
                       style: theme.textTheme.bodySmall?.copyWith(
+                        fontSize: 12,
                         color: colors.onSurfaceVariant,
                       ),
                     ),
@@ -195,12 +270,12 @@ class _MobilePhotoBackupState extends State<MobilePhotoBackupPage>
             _progress.message,
             style: TextStyle(
               color: colors.onSurfaceVariant,
-              fontSize: 13.5,
-              height: 1.45,
+              fontSize: 13,
+              height: 1.42,
             ),
           ),
           if (_progress.checked > 0) ...[
-            const SizedBox(height: 8),
+            const SizedBox(height: 10),
             Row(
               children: [
                 IsleDonutGauge(
@@ -208,12 +283,12 @@ class _MobilePhotoBackupState extends State<MobilePhotoBackupPage>
                       ((_progress.uploaded + _progress.skipped) /
                               _progress.checked)
                           .clamp(0.0, 1.0),
-                  color: colors.primary,
-                  size: 32,
-                  strokeWidth: 3.5,
+                  color: sage,
+                  size: 34,
+                  strokeWidth: 3.3,
                   centerText:
                       '${(((_progress.uploaded + _progress.skipped) / _progress.checked).clamp(0.0, 1.0) * 100).round()}%',
-                  centerStyle: Theme.of(context).textTheme.labelSmall?.copyWith(
+                  centerStyle: theme.textTheme.labelSmall?.copyWith(
                     fontSize: 8.5,
                     fontWeight: FontWeight.w700,
                     fontFeatures: const [FontFeature.tabularFigures()],
@@ -224,9 +299,9 @@ class _MobilePhotoBackupState extends State<MobilePhotoBackupPage>
                   child: Text(
                     '已检查 ${_progress.checked} · 新增 ${_progress.uploaded} · 跳过 ${_progress.skipped}',
                     style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                      fontSize: 13,
-                      color: colors.primary,
+                      fontWeight: FontWeight.w700,
+                      fontSize: 12.5,
+                      color: sage,
                     ),
                   ),
                 ),
@@ -234,7 +309,7 @@ class _MobilePhotoBackupState extends State<MobilePhotoBackupPage>
             ),
           ],
           if (_progress.busy) ...[
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
             ClipRRect(
               borderRadius: BorderRadius.circular(3),
               child: LinearProgressIndicator(
@@ -243,13 +318,16 @@ class _MobilePhotoBackupState extends State<MobilePhotoBackupPage>
               ),
             ),
           ],
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
           Wrap(
-            spacing: 10,
-            runSpacing: 10,
+            spacing: 8,
+            runSpacing: 8,
             children: [
               FilledButton.icon(
-                icon: const Icon(Icons.backup_rounded),
+                style: FilledButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                ),
+                icon: const Icon(Icons.backup_rounded, size: 17),
                 label: Text(
                   _progress.pageCursor.isEmpty ? '检查并备份最近照片' : '继续上次备份进度',
                 ),
@@ -263,7 +341,10 @@ class _MobilePhotoBackupState extends State<MobilePhotoBackupPage>
                   _background.enabled &&
                   _background.sessionMatches)
                 OutlinedButton.icon(
-                  icon: const Icon(Icons.sync_rounded),
+                  style: OutlinedButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  icon: const Icon(Icons.sync_rounded, size: 17),
                   label: const Text('立即检查后台备份'),
                   onPressed: _progress.busy || _background.busy
                       ? null
@@ -273,6 +354,9 @@ class _MobilePhotoBackupState extends State<MobilePhotoBackupPage>
                   (_progress.pageCursor.isNotEmpty ||
                       _progress.failureDetails.isNotEmpty))
                 OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
                   onPressed: () => unawaited(_run()),
                   child: Text(
                     _progress.pageCursor.isEmpty &&
@@ -283,6 +367,9 @@ class _MobilePhotoBackupState extends State<MobilePhotoBackupPage>
                 ),
               if (!_progress.busy && _progress.nextCursor.isNotEmpty)
                 OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
                   onPressed: () {
                     _progress.pageCursor = _progress.nextCursor;
                     unawaited(_run(older: true));
@@ -291,6 +378,9 @@ class _MobilePhotoBackupState extends State<MobilePhotoBackupPage>
                 ),
               if (_progress.busy)
                 OutlinedButton(
+                  style: OutlinedButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
                   onPressed: () {
                     setState(() {
                       _progress.cancel = true;
@@ -312,6 +402,7 @@ class _MobilePhotoBackupState extends State<MobilePhotoBackupPage>
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    final palette = IslePalette.of(context);
     final icloudPendingCount = _progress.failureDetails
         .where((item) => item['reason'] == 'icloud_not_downloaded')
         .length;
@@ -319,25 +410,45 @@ class _MobilePhotoBackupState extends State<MobilePhotoBackupPage>
     return Scaffold(
       appBar: IsleAppBar(
         title: Text(_isAndroid ? 'Android 照片增量备份' : 'iOS 照片前台备份'),
-      ),
-      body: IsleListView(
-        children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              if (_progress.failureDetails.isNotEmpty)
-                _buildPendingFailuresCard(icloudPendingCount),
-              _buildStatusCard(theme, colors),
-              _buildOptionsSurface(context, theme, colors),
-              _buildAdvancedDisclosure(theme, colors),
-              IsleHelpDisclosure(
-                summary: '备份范围与限制',
-                details: _isAndroid
-                    ? '前台流式读取原片并分片直传（无需双倍本机缓存空间，单文件最高支持 32 GiB）；手机原片绝不删除，备份到 ${widget.baseDirectory}/设备目录并核对 SHA-256。'
-                    : 'iOS 支持前台备份照片、RAW 原片、视频及 Live Photo 配套 MOV，已核验原片自动走版本快检免重复导出；原片绝不删除，NAS 文件经 SHA-256 核验。',
+        actions: [
+          IconButton(
+            tooltip: '批量与备份记录',
+            onPressed: _progress.busy
+                ? null
+                : () => _showBatchSettingsDialog(context),
+            icon: const Icon(Icons.tune_rounded, size: 20),
+          ),
+          IsleHelpButton(
+            title: '照片备份说明',
+            accentColor: palette['brandRose'],
+            items: [
+              const IsleHelpItem(
+                title: '原画直传与防覆盖校验',
+                body:
+                    '按字节计算 SHA-256 摘要，已备份且内容相同的原片自动跳过；同名但内容不同的文件绝不会覆盖 NAS 原件。',
+              ),
+              IsleHelpItem(
+                title: _isAndroid ? '相机范围与后台调度' : '相机范围与 iCloud 原片',
+                body: _isAndroid
+                    ? '「仅相机拍摄」只扫描 DCIM 相机目录，自动过滤聊天缓存与截图；系统后台备份由 WorkManager 在连接 Wi-Fi 且电量充足时每 6 小时调度，会话通过 Android Keystore 加密保存（最长 7 天）。'
+                    : '「仅相机拍摄」自动过滤屏幕截图；若开启了「优化 iPhone 存储空间」，勾选允许下载 iCloud 原片即可在连接 Wi-Fi 时拉取云端原片备份。',
               ),
             ],
           ),
+        ],
+      ),
+      body: IsleListView(
+        maxWidth: IsleLayout.workbenchMaxWidth,
+        children: [
+          if (_progress.failureDetails.isNotEmpty)
+            _buildPendingFailuresCard(context, icloudPendingCount),
+          IsleWorkbenchSplit(
+            primaryFlex: 6,
+            secondaryFlex: 6,
+            primary: _buildStatusCard(context, theme, colors),
+            secondary: _buildOptionsSurface(context, theme, colors),
+          ),
+          const SizedBox(height: 16),
         ],
       ),
     );

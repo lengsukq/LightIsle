@@ -116,8 +116,6 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
           legacyCustomUrl: savedUrl,
           previouslyEnabled: false,
         );
-        // The old Flutter version persisted the provider credential in local
-        // preferences. Drop that insecure copy; never transmit it to NAS.
         await prefs.remove(PhotoMapTiles.legacyTiandituKey);
         await prefs.remove(PhotoMapTiles.consentKey);
         if (!mounted) return;
@@ -144,7 +142,6 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
   void _onTileError() {
     if (!mounted || !_tileSourceReady || _tilesFailed) return;
     _tileErrors++;
-    // A single missing tile must not disable an otherwise working service.
     if (_tileErrors >= 4) {
       setState(() => _tilesFailed = true);
     }
@@ -306,8 +303,6 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
       _moveCameraSafe(group.location, _zoom);
     }
     try {
-      // Do not trust geolocation points for permission checks: re-query the
-      // authenticated media list after every marker selection.
       final ids = group.ids.take(_maxSameLocationPhotos).toList();
       final json = await widget.api.get(
         '/api/v2/photos',
@@ -368,11 +363,15 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
   }
 
   Future<void> _showMapAssetDetails(PhotoAsset asset) async {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
       showDragHandle: true,
+      shape: IsleShapes.sheet(
+        side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
+      ),
       builder: (_) => FractionallySizedBox(
         heightFactor: 0.78,
         child: PhotoDetailDialog(
@@ -433,7 +432,7 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
     required bool compactOptions,
   }) => ConstrainedBox(
     constraints: BoxConstraints(
-      maxHeight: (viewport.maxHeight * .38).clamp(88.0, 220.0),
+      maxHeight: (viewport.maxHeight * .38).clamp(80.0, 200.0),
     ),
     child: SingleChildScrollView(
       child: Column(
@@ -481,8 +480,11 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
                 ? '请确认拍摄时开启了定位，并等待 NAS 完成索引。'
                 : '请确认 NAS 在线、存储盘已连接，或稍后重试。',
             action: OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+              ),
               onPressed: _load,
-              icon: const Icon(Icons.refresh),
+              icon: const Icon(Icons.refresh_rounded, size: 17),
               label: const Text('重新读取位置'),
             ),
           ),
@@ -646,7 +648,7 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
       if (_opening)
         const Align(
           alignment: Alignment.topCenter,
-          child: LinearProgressIndicator(),
+          child: LinearProgressIndicator(minHeight: 2),
         ),
     ],
   );
@@ -674,7 +676,7 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
           IconButton(
             tooltip: '刷新位置照片',
             onPressed: _loading ? null : _load,
-            icon: const Icon(Icons.refresh),
+            icon: const Icon(Icons.refresh_rounded, size: 20),
           ),
         ],
       ),
@@ -689,7 +691,10 @@ class _PhotoMapPageState extends State<PhotoMapPage> {
             ),
             Expanded(
               child: _loading
-                  ? const Center(child: CircularProgressIndicator())
+                  ? const IsleLoadingState(
+                      compact: true,
+                      label: '正在读取定位足迹…',
+                    )
                   : _points.isEmpty
                   ? _buildEmptyGeoState()
                   : _buildInteractiveMapStack(

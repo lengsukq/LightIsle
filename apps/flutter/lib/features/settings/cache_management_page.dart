@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../core/isle_cache_manager.dart';
+import '../../core/isle_gallery_layout.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
@@ -170,12 +171,13 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
     }
   }
 
-  Color _categoryColor(IsleCacheCategory category) => switch (category) {
-    IsleCacheCategory.thumbnails => const Color(0xFF007AFF),
-    IsleCacheCategory.posters => const Color(0xFFAF52DE),
-    IsleCacheCategory.mapTiles => const Color(0xFF10B981),
-    IsleCacheCategory.metadata => const Color(0xFFFF9500),
-  };
+  Color _categoryColor(IsleCacheCategory category, IslePalette palette) =>
+      switch (category) {
+        IsleCacheCategory.thumbnails => palette['brandRose'],
+        IsleCacheCategory.posters => palette['brandTerracotta'],
+        IsleCacheCategory.mapTiles => palette['brandSage'],
+        IsleCacheCategory.metadata => palette['brandAmber'],
+      };
 
   IconData _categoryIcon(IsleCacheCategory category) => switch (category) {
     IsleCacheCategory.thumbnails => Icons.photo_library_rounded,
@@ -184,28 +186,30 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
     IsleCacheCategory.metadata => Icons.bolt_rounded,
   };
 
-  Widget _buildOverviewCard(BuildContext context, IsleCacheReport report) {
+  Widget _buildOverviewCard(
+    BuildContext context,
+    IsleCacheReport report,
+    IslePalette palette,
+  ) {
     final scheme = Theme.of(context).colorScheme;
+    final mineral = palette['brandBlue'];
     final totalTemp = report.totalTemporaryBytes;
     final totalAll = report.totalAllBytes;
     return IsleSurface(
+      margin: EdgeInsets.zero,
+      tint: mineral,
+      radius: IsleRadius.hero,
+      padding: const EdgeInsets.all(18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Container(
-                width: 42,
-                height: 42,
-                decoration: BoxDecoration(
-                  color: const Color(0xFF00C7BE).withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Icon(
-                  Icons.pie_chart_rounded,
-                  color: Color(0xFF00C7BE),
-                  size: 22,
-                ),
+              IsleSquircleBadge(
+                icon: Icons.pie_chart_rounded,
+                color: mineral,
+                size: 40,
+                iconSize: 20,
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -214,39 +218,43 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
                   children: [
                     Text(
                       '本机临时缓存占用',
-                      style: Theme.of(context).textTheme.labelLarge
-                          ?.copyWith(color: scheme.onSurfaceVariant),
+                      style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
                     ),
-                    const SizedBox(height: 2),
+                    const SizedBox(height: 1),
                     Text(
                       formatBytes(totalTemp),
                       key: const ValueKey('localTotalTempCacheBytes'),
                       style: Theme.of(context).textTheme.headlineSmall
-                          ?.copyWith(fontWeight: FontWeight.w800),
+                          ?.copyWith(
+                            fontWeight: FontWeight.w800,
+                            fontFeatures: const [FontFeature.tabularFigures()],
+                          ),
                     ),
                   ],
                 ),
               ),
               IsleStatusBadge(
                 label: '${report.totalTemporaryEntries} 项缓存',
-                color: const Color(0xFF007AFF),
+                color: mineral,
               ),
             ],
           ),
           const SizedBox(height: 14),
           IsleSegmentedBar(
-            height: 10,
+            height: 8,
             showPercentInLegend: true,
-            legendGap: 10,
-            legendSpacing: 14,
-            legendRunSpacing: 6,
+            legendGap: 8,
+            legendSpacing: 12,
+            legendRunSpacing: 5,
             segments: [
               for (final cat in IsleCacheCategory.values)
                 IsleChartSegment(
                   label: cat.label,
                   value: (report.categories[cat]?.effectiveBytes ?? 0)
                       .toDouble(),
-                  color: _categoryColor(cat),
+                  color: _categoryColor(cat, palette),
                   detail: formatBytes(
                     report.categories[cat]?.effectiveBytes ?? 0,
                   ),
@@ -255,7 +263,7 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
                 IsleChartSegment(
                   label: '离线原件',
                   value: report.totalOfflineBytes.toDouble(),
-                  color: const Color(0xFF64748B),
+                  color: palette['brandViolet'],
                   detail: formatBytes(report.totalOfflineBytes),
                 ),
             ],
@@ -269,9 +277,12 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
   Widget _buildLocalCategoriesCard(
     BuildContext context,
     IsleCacheReport report,
+    IslePalette palette,
   ) {
     final scheme = Theme.of(context).colorScheme;
     return IsleSurface(
+      margin: EdgeInsets.zero,
+      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -280,11 +291,16 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
               Expanded(
                 child: Text(
                   '本机缓存分类管理',
-                  style: Theme.of(context).textTheme.titleMedium
-                      ?.copyWith(fontWeight: FontWeight.w700),
+                  style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
               TextButton(
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                ),
                 onPressed: () {
                   setState(() {
                     if (_selected.length == IsleCacheCategory.values.length) {
@@ -302,12 +318,7 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
               ),
             ],
           ),
-          Text(
-            '勾选需要清理的缓存类别，或点击单项右侧按钮独立清理。清理后再次浏览时会自动重新加载。',
-            style: Theme.of(context).textTheme.bodySmall
-                ?.copyWith(color: scheme.onSurfaceVariant),
-          ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 6),
           for (final cat in IsleCacheCategory.values) ...[
             Builder(
               builder: (context) {
@@ -315,13 +326,14 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
                 final bytes = stat?.effectiveBytes ?? 0;
                 final count = stat?.effectiveEntries ?? 0;
                 final checked = _selected.contains(cat);
-                final color = _categoryColor(cat);
+                final color = _categoryColor(cat, palette);
                 return Padding(
-                  padding: const EdgeInsets.symmetric(vertical: 6),
+                  padding: const EdgeInsets.symmetric(vertical: 4),
                   child: Row(
                     children: [
                       Checkbox(
                         key: ValueKey('cache-check-${cat.id}'),
+                        visualDensity: VisualDensity.compact,
                         value: checked,
                         onChanged: (val) {
                           setState(() {
@@ -333,14 +345,11 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
                           });
                         },
                       ),
-                      Container(
-                        width: 36,
-                        height: 36,
-                        decoration: BoxDecoration(
-                          color: color.withValues(alpha: 0.14),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        child: Icon(_categoryIcon(cat), color: color, size: 19),
+                      IsleSquircleBadge(
+                        icon: _categoryIcon(cat),
+                        color: color,
+                        size: 32,
+                        iconSize: 16.5,
                       ),
                       const SizedBox(width: 10),
                       Expanded(
@@ -350,12 +359,18 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
                             Text(
                               cat.label,
                               style: Theme.of(context).textTheme.bodyMedium
-                                  ?.copyWith(fontWeight: FontWeight.w600),
+                                  ?.copyWith(
+                                    fontSize: 13.5,
+                                    fontWeight: FontWeight.w700,
+                                  ),
                             ),
                             Text(
-                              '${formatBytes(bytes)} · $count 项 · ${cat.subtitle}',
+                              '${formatBytes(bytes)} · $count 项',
                               style: Theme.of(context).textTheme.bodySmall
-                                  ?.copyWith(color: scheme.onSurfaceVariant),
+                                  ?.copyWith(
+                                    fontSize: 11.5,
+                                    color: scheme.onSurfaceVariant,
+                                  ),
                             ),
                           ],
                         ),
@@ -374,11 +389,11 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
                 );
               },
             ),
-            if (cat != IsleCacheCategory.values.last) const Divider(height: 12),
+            if (cat != IsleCacheCategory.values.last) const Divider(height: 8),
           ],
           const SizedBox(height: 12),
           Wrap(
-            spacing: 10,
+            spacing: 8,
             runSpacing: 8,
             children: [
               IslePillButton(
@@ -388,6 +403,7 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
                     : '清理所选缓存 (${_selected.length})',
                 icon: Icons.cleaning_services_rounded,
                 variant: IslePillVariant.primary,
+                compact: true,
                 onPressed: _clearingLocal || _selected.isEmpty
                     ? null
                     : () => _clearLocalCategories(_selected.toSet()),
@@ -396,6 +412,7 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
                 key: const ValueKey('clearAllLocalCachesBtn'),
                 label: '一键清空全部临时缓存',
                 icon: Icons.delete_sweep_rounded,
+                compact: true,
                 onPressed: _clearingLocal
                     ? null
                     : () => _clearLocalCategories(
@@ -412,27 +429,33 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
   Widget _buildOfflineMediaSection(
     BuildContext context,
     IsleCacheReport report,
+    IslePalette palette,
   ) {
-    final scheme = Theme.of(context).colorScheme;
+    final rose = palette['brandRose'];
+    final terracotta = palette['brandTerracotta'];
     return IsleSurface(
+      margin: EdgeInsets.zero,
+      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '本机离线媒体库（安全隔离）',
-            style: Theme.of(context).textTheme.titleMedium
-                ?.copyWith(fontWeight: FontWeight.w700),
+            '本机离线媒体库',
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+            ),
           ),
-          const SizedBox(height: 4),
-          Text(
-            '您主动下载到本机的离线照片与影片不会随上方临时缓存被清理，可在此独立查看和管理。',
-            style: Theme.of(context).textTheme.bodySmall
-                ?.copyWith(color: scheme.onSurfaceVariant),
-          ),
-          const SizedBox(height: 10),
+          const SizedBox(height: 6),
           ListTile(
+            dense: true,
             contentPadding: EdgeInsets.zero,
-            leading: const Icon(Icons.photo_rounded, color: Color(0xFF007AFF)),
+            leading: IsleSquircleBadge(
+              icon: Icons.photo_rounded,
+              color: rose,
+              size: 32,
+              iconSize: 16.5,
+            ),
             title: const Text('本机离线照片库'),
             subtitle: Text(
               '${formatBytes(report.offlinePhotoBytes)} · ${report.offlinePhotoCount} 张照片',
@@ -455,12 +478,15 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
                     },
             ),
           ),
-          const Divider(height: 8),
+          const Divider(height: 4),
           ListTile(
+            dense: true,
             contentPadding: EdgeInsets.zero,
-            leading: const Icon(
-              Icons.video_library_rounded,
-              color: Color(0xFFAF52DE),
+            leading: IsleSquircleBadge(
+              icon: Icons.video_library_rounded,
+              color: terracotta,
+              size: 32,
+              iconSize: 16.5,
             ),
             title: const Text('我的离线影片库'),
             subtitle: Text(
@@ -489,10 +515,11 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
     );
   }
 
-  Widget _buildServerCacheCard(BuildContext context) {
+  Widget _buildServerCacheCard(BuildContext context, IslePalette palette) {
     final status = _serverStatus;
     if (status == null) return const SizedBox.shrink();
-    final scheme = Theme.of(context).colorScheme;
+    final mineral = palette['brandBlue'];
+    final sage = palette['brandSage'];
     final thumbs = status['thumbnails'] is Map
         ? Map<String, dynamic>.from(status['thumbnails'] as Map)
         : const <String, dynamic>{};
@@ -513,24 +540,22 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
     );
 
     return IsleSurface(
+      margin: EdgeInsets.zero,
+      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
             'NAS 服务端派生缓存',
-            style: Theme.of(context).textTheme.titleMedium
-                ?.copyWith(fontWeight: FontWeight.w700),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            'Mac 服务端生成的缩略图与地图瓦片缓存，供全家所有设备共享加速。清理服务端缓存绝不会删除任何原始照片或视频文件。',
-            style: Theme.of(context).textTheme.bodySmall
-                ?.copyWith(color: scheme.onSurfaceVariant),
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
+            ),
           ),
           if (serverUsedTotal > 0 || totalServerMax > 0) ...[
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
             IsleSegmentedBar(
-              height: 8,
+              height: 7,
               showPercentInLegend: serverUsedTotal > 0,
               legendGap: 6,
               legendSpacing: 12,
@@ -539,43 +564,41 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
                 IsleChartSegment(
                   label: '缩略图与海报',
                   value: thumbBytes.toDouble(),
-                  color: const Color(0xFF007AFF),
+                  color: mineral,
                   detail: formatBytes(thumbBytes),
                 ),
                 IsleChartSegment(
                   label: '地图瓦片代理',
                   value: tileBytes.toDouble(),
-                  color: const Color(0xFF10B981),
+                  color: sage,
                   detail: formatBytes(tileBytes),
                 ),
                 if (serverBudgetLeft > 0)
                   IsleChartSegment(
                     label: '剩余配额',
                     value: serverBudgetLeft.toDouble(),
-                    color: scheme.surfaceContainerHighest,
+                    color: palette['cardItemBottom'],
                     detail: formatBytes(serverBudgetLeft),
                   ),
               ],
             ),
           ],
-          const SizedBox(height: 10),
+          const SizedBox(height: 8),
           ListTile(
+            dense: true,
             contentPadding: EdgeInsets.zero,
             leading: thumbMax > 0
                 ? IsleDonutGauge(
                     fraction: (thumbBytes / thumbMax).clamp(0.0, 1.0),
-                    color: const Color(0xFF007AFF),
-                    size: 36,
-                    strokeWidth: 4,
+                    color: mineral,
+                    size: 34,
+                    strokeWidth: 3.5,
                     centerText:
                         '${((thumbBytes / thumbMax).clamp(0.0, 1.0) * 100).round()}%',
                     centerStyle: Theme.of(context).textTheme.labelSmall
-                        ?.copyWith(fontSize: 9, fontWeight: FontWeight.w700),
+                        ?.copyWith(fontSize: 8.5, fontWeight: FontWeight.w700),
                   )
-                : const Icon(
-                    Icons.burst_mode_rounded,
-                    color: Color(0xFF007AFF),
-                  ),
+                : Icon(Icons.burst_mode_rounded, color: mineral, size: 20),
             title: const Text('服务端缩略图与海报磁盘缓存'),
             subtitle: Text(
               '已用 ${formatBytes(thumbBytes)}${thumbMax > 0 ? ' / 上限 ${formatBytes(thumbMax)}' : ''} · $thumbCount 项',
@@ -592,21 +615,22 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
                   )
                 : null,
           ),
-          const Divider(height: 8),
+          const Divider(height: 4),
           ListTile(
+            dense: true,
             contentPadding: EdgeInsets.zero,
             leading: tileMax > 0
                 ? IsleDonutGauge(
                     fraction: (tileBytes / tileMax).clamp(0.0, 1.0),
-                    color: const Color(0xFF10B981),
-                    size: 36,
-                    strokeWidth: 4,
+                    color: sage,
+                    size: 34,
+                    strokeWidth: 3.5,
                     centerText:
                         '${((tileBytes / tileMax).clamp(0.0, 1.0) * 100).round()}%',
                     centerStyle: Theme.of(context).textTheme.labelSmall
-                        ?.copyWith(fontSize: 9, fontWeight: FontWeight.w700),
+                        ?.copyWith(fontSize: 8.5, fontWeight: FontWeight.w700),
                   )
-                : const Icon(Icons.public_rounded, color: Color(0xFF10B981)),
+                : Icon(Icons.public_rounded, color: sage, size: 20),
             title: const Text('服务端天地图瓦片代理缓存'),
             subtitle: Text(
               '已用 ${formatBytes(tileBytes)}${tileMax > 0 ? ' / 上限 ${formatBytes(tileMax)}' : ''} · $tileCount 张瓦片',
@@ -624,11 +648,12 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
                 : null,
           ),
           if (widget.isAdmin) ...[
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             IslePillButton(
               key: const ValueKey('clearAllServerCachesBtn'),
               label: _clearingServer ? '正在清理服务端…' : '一键清理全部服务端缓存',
               icon: Icons.dns_rounded,
+              compact: true,
               onPressed: _clearingServer
                   ? null
                   : () => _clearServerCache(const [
@@ -644,6 +669,7 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
 
   @override
   Widget build(BuildContext context) {
+    final palette = IslePalette.of(context);
     final report =
         _report ??
         const IsleCacheReport(
@@ -658,25 +684,49 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
             onPressed: _loading ? null : _refresh,
             icon: const Icon(Icons.refresh_rounded),
           ),
+          IsleHelpButton(
+            title: '缓存与离线库说明',
+            accentColor: palette['brandBlue'],
+            items: const [
+              IsleHelpItem(
+                title: '临时缓存安全清理',
+                body: '清理缩略图、海报、地图瓦片与元数据仅释放临时派生文件，绝不会删除 NAS 原件，下次浏览时将按需重新加载。',
+              ),
+              IsleHelpItem(
+                title: '离线原件独立保留',
+                body: '手动保存至本机的离线照片与离线影片不受「清空全部临时缓存」影响，可在下方离线媒体库中单独管理。',
+              ),
+            ],
+          ),
         ],
       ),
       body: IsleListView(
+        maxWidth: IsleLayout.workbenchMaxWidth,
         children: [
           if (_notice != null)
             Padding(
-              padding: const EdgeInsets.only(bottom: 12),
+              padding: const EdgeInsets.only(bottom: 10),
               child: Notice(_notice!, error: _noticeError),
             ),
-          _buildOverviewCard(context, report),
+          _buildOverviewCard(context, report, palette),
           const SizedBox(height: 12),
-          _buildLocalCategoriesCard(context, report),
-          const SizedBox(height: 12),
-          _buildOfflineMediaSection(context, report),
-          if (_serverStatus != null) ...[
-            const SizedBox(height: 12),
-            _buildServerCacheCard(context),
-          ],
-          const SizedBox(height: 24),
+          IsleWorkbenchSplit(
+            breakpoint: 880,
+            primaryFlex: 6,
+            secondaryFlex: 6,
+            primary: _buildLocalCategoriesCard(context, report, palette),
+            secondary: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _buildOfflineMediaSection(context, report, palette),
+                if (_serverStatus != null) ...[
+                  const SizedBox(height: 12),
+                  _buildServerCacheCard(context, palette),
+                ],
+              ],
+            ),
+          ),
+          const SizedBox(height: 16),
         ],
       ),
     );

@@ -3,13 +3,15 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../core/insecure_http_allowlist.dart';
+import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/login_history_store.dart';
-import '../../core/widgets.dart';
 import '../../core/user_facing_error.dart';
+import '../../core/widgets.dart';
+import 'login_flow_background.dart';
 import 'login_history_section.dart';
 import 'nas_discovery_picker.dart';
-import 'login_flow_background.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({
@@ -19,6 +21,7 @@ class LoginPage extends StatefulWidget {
     this.notice,
     this.historyStore,
     this.latencyProber,
+    @visibleForTesting this.httpAllowlist,
     @visibleForTesting this.apiFactory,
   });
   final String? notice;
@@ -26,6 +29,8 @@ class LoginPage extends StatefulWidget {
   final bool expired;
   final LoginHistoryStore? historyStore;
   final ServerLatencyProber? latencyProber;
+  @visibleForTesting
+  final InsecureHttpAllowlist? httpAllowlist;
   @visibleForTesting
   final LightIsleApi Function(
     String serverUrl, {
@@ -47,7 +52,10 @@ class _LoginPageState extends State<LoginPage> {
       widget.historyStore ?? LoginHistoryStore();
   late final ServerLatencyProber _latencyProber =
       widget.latencyProber ?? probeServerLatency;
+  late final InsecureHttpAllowlist _httpAllowlist =
+      widget.httpAllowlist ?? InsecureHttpAllowlist.instance;
   List<LoginHistoryEntry> _history = const [];
+  Set<String> _allowedHttpOrigins = const {};
   final Map<String, ServerLatencyResult> _historyLatencies = {};
   ServerLatencyResult? _currentServerLatency;
   String? _selectedHistoryKey;
@@ -58,11 +66,64 @@ class _LoginPageState extends State<LoginPage> {
   String? _pinOrigin;
   String? _error;
   LightIsleApi? _connecting;
+
   @override
   void initState() {
     super.initState();
+    _allowedHttpOrigins = _httpAllowlist.origins;
     _loadAddress();
+    unawaited(_loadHttpAllowlist());
     unawaited(_loadHistory());
+  }
+
+  Future<void> _loadHttpAllowlist() async {
+    final loaded = await _httpAllowlist.load();
+    if (!mounted) return;
+    setState(() => _allowedHttpOrigins = loaded);
+  }
+
+  Future<void> _toggleCurrentHttpAllowlist(bool enable, String origin) async {
+    if (_busy) return;
+    if (enable) {
+      final confirmed = await confirmAction(
+        context,
+        '允许公网明文 HTTP 连接？',
+        '将 $origin 加入本机明文 HTTP 白名单后，登录密码与会话 Cookie 将不经 TLS 加密传输。\n\n仅建议在个人临时调试或信任的网络环境使用；长期外网访问请优先配置 HTTPS。',
+        action: '确认加入白名单',
+      );
+      if (!confirmed || !mounted) return;
+      try {
+        final updated = await _httpAllowlist.add(
+          origin,
+          preferences: _preferences,
+        );
+        if (!mounted) return;
+        setState(() {
+          _allowedHttpOrigins = updated;
+          _error = null;
+        });
+      } catch (error) {
+        if (!mounted) return;
+        setState(() => _error = userFacingError(error));
+      }
+      return;
+    }
+    final updated = await _httpAllowlist.remove(
+      origin,
+      preferences: _preferences,
+    );
+    if (!mounted) return;
+    setState(() => _allowedHttpOrigins = updated);
+  }
+
+  Future<void> _removeAllowedHttpOrigin(String origin) async {
+    if (_busy) return;
+    final updated = await _httpAllowlist.remove(
+      origin,
+      preferences: _preferences,
+    );
+    if (!mounted) return;
+    setState(() => _allowedHttpOrigins = updated);
   }
 
   Future<void> _loadHistory() async {
@@ -120,8 +181,9 @@ class _LoginPageState extends State<LoginPage> {
     if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
       return trimmed;
     }
-    final hasPortOrPath = RegExp(r'^(\[[^\]]+\]|[^/:]+)(:\d+|/)')
-        .hasMatch(trimmed);
+    final hasPortOrPath = RegExp(
+      r'^(\[[^\]]+\]|[^/:]+)(:\d+|/)',
+    ).hasMatch(trimmed);
     return hasPortOrPath ? 'http://$trimmed' : 'http://$trimmed:16666';
   }
 
@@ -192,7 +254,8 @@ class _LoginPageState extends State<LoginPage> {
     );
     if (!mounted || updated == null) return;
     await _loadHistory();
-    if (_selectedHistoryKey == entry.key || _selectedHistoryKey == updated.key) {
+    if (_selectedHistoryKey == entry.key ||
+        _selectedHistoryKey == updated.key) {
       _selectHistoryEntry(updated);
     }
   }
@@ -278,9 +341,8 @@ class _LoginPageState extends State<LoginPage> {
           widget.apiFactory?.call(rawServer, certificateFingerprint: rawPin) ??
           LightIsleApi(
             rawServer,
-            // Accept both advertised schemes without an extra UI toggle, but the
-            // transport still refuses cleartext connections to public IPs.
             allowInsecureHttp: true,
+            allowedInsecureHttpOrigins: widget.httpAllowlist?.origins,
             certificateFingerprint: rawPin,
           );
       _connecting = api;
@@ -343,8 +405,13 @@ class _LoginPageState extends State<LoginPage> {
     } catch (error) {
       api?.close();
       if (mounted) {
+        final needsAllowlist =
+            error is ArgumentError &&
+            InsecureHttpAllowlist.requiresAllowlist(rawServer) &&
+            !_httpAllowlist.contains(rawServer);
         setState(() {
           _error = userFacingError(error);
+          if (needsAllowlist) _securityExpanded = true;
         });
       }
     } finally {
@@ -382,11 +449,12 @@ class _LoginPageState extends State<LoginPage> {
                   width >= 960 &&
                   constraints.maxHeight >= 580 &&
                   textScale <= 1.45;
+              final medium = !wide && width >= 600 && textScale <= 1.35;
               final inset = width < 360
-                  ? 18.0
+                  ? 14.0
                   : width < 680
-                  ? 24.0
-                  : 42.0;
+                  ? 20.0
+                  : 36.0;
               return Center(
                 child: SingleChildScrollView(
                   key: const Key('loginScrollView'),
@@ -395,29 +463,38 @@ class _LoginPageState extends State<LoginPage> {
                       ScrollViewKeyboardDismissBehavior.onDrag,
                   padding: EdgeInsets.symmetric(
                     horizontal: inset,
-                    vertical: width < 600 ? 22 : 40,
+                    vertical: width < 600 ? 16 : 28,
                   ),
                   child: ConstrainedBox(
-                    constraints: BoxConstraints(maxWidth: wide ? 1090 : 460),
+                    constraints: BoxConstraints(
+                      maxWidth: wide
+                          ? 960
+                          : medium
+                          ? 540
+                          : 400,
+                    ),
                     child: wide
                         ? Row(
                             crossAxisAlignment: CrossAxisAlignment.center,
                             children: [
                               const Expanded(
-                                flex: 11,
+                                flex: 10,
                                 child: Padding(
-                                  padding: EdgeInsets.only(right: 44),
+                                  padding: EdgeInsets.only(right: 40),
                                   child: LoginBrandHeader(wide: true),
                                 ),
                               ),
-                              const SizedBox(width: 32),
                               Expanded(
                                 flex: 9,
-                                child: _buildForm(context, wide: true),
+                                child: _buildForm(
+                                  context,
+                                  wide: true,
+                                  medium: false,
+                                ),
                               ),
                             ],
                           )
-                        : _buildForm(context, wide: false),
+                        : _buildForm(context, wide: false, medium: medium),
                   ),
                 ),
               );
@@ -429,6 +506,11 @@ class _LoginPageState extends State<LoginPage> {
   );
 
   List<Widget> _buildServerAddressFields(ThemeData theme, ColorScheme colors) {
+    final normalized = _normalizeServerAddress(_server.text);
+    final showNormalizedHint =
+        _server.text.trim().isNotEmpty &&
+        !_server.text.trim().startsWith('http://') &&
+        !_server.text.trim().startsWith('https://');
     return [
       TextFormField(
         controller: _server,
@@ -438,126 +520,188 @@ class _LoginPageState extends State<LoginPage> {
         autocorrect: false,
         onChanged: _addressChanged,
         decoration: const InputDecoration(
+          isDense: true,
           labelText: '服务器地址',
-          hintText: 'http://192.168.1.100:16666',
-          prefixIcon: Icon(Icons.dns_outlined, size: 20),
+          hintText: '192.168.1.100:16666',
+          prefixIcon: Icon(Icons.dns_outlined, size: 19),
         ),
         validator: (v) =>
             v == null || v.trim().isEmpty ? '请输入 Mac 管理端显示的连接地址' : null,
       ),
-      if (_server.text.trim().isNotEmpty &&
-          !_server.text.trim().startsWith('http://') &&
-          !_server.text.trim().startsWith('https://'))
+      if (showNormalizedHint)
         Padding(
-          padding: const EdgeInsets.only(top: 6, left: 4),
+          padding: const EdgeInsets.only(top: 4, left: 4),
           child: Text(
-            '将自动补全连接地址：${_normalizeServerAddress(_server.text)}',
+            '将连接：$normalized',
             style: theme.textTheme.labelSmall?.copyWith(
               color: colors.primary,
               fontWeight: FontWeight.w600,
             ),
           ),
         ),
-      CurrentServerLatencyBar(
-        serverUrl: _normalizeServerAddress(_server.text),
-        result: _currentServerLatency,
-        enabled: !_busy,
-        onProbe: _probeCurrentServer,
-      ),
-      NasDiscoveryPicker(
-        enabled: !_busy,
-        onSelected: (server) async {
-          if (_busy) return;
-          _server.text = server.address;
-          _addressChanged(server.address);
-          setState(() {
-            _securityExpanded = _httpsOrigin(server.address) != null;
-            _error = null;
-          });
-          if (_username.text.trim().isEmpty) {
-            _usernameFocus.requestFocus();
-          }
-        },
-      ),
       Padding(
         padding: const EdgeInsets.only(top: 6),
-        child: Text(
-          '家庭局域网默认使用 HTTP；需要加密时可在 Mac 设置中开启 HTTPS。HTTP 请勿暴露到公网。',
-          style: theme.textTheme.bodySmall?.copyWith(
-            color: colors.onSurfaceVariant,
-          ),
+        child: Wrap(
+          spacing: 8,
+          runSpacing: 4,
+          crossAxisAlignment: WrapCrossAlignment.center,
+          children: [
+            NasDiscoveryPicker(
+              enabled: !_busy,
+              onSelected: (server) async {
+                if (_busy) return;
+                _server.text = server.address;
+                _addressChanged(server.address);
+                setState(() {
+                  _securityExpanded = _httpsOrigin(server.address) != null;
+                  _error = null;
+                });
+                if (_username.text.trim().isEmpty) {
+                  _usernameFocus.requestFocus();
+                }
+              },
+            ),
+            CurrentServerLatencyBar(
+              serverUrl: normalized,
+              result: _currentServerLatency,
+              enabled: !_busy,
+              onProbe: _probeCurrentServer,
+            ),
+          ],
         ),
       ),
     ];
   }
 
-  List<Widget> _buildCredentialFields() {
-    return [
-      TextFormField(
-        controller: _username,
-        focusNode: _usernameFocus,
-        enabled: !_busy,
-        textInputAction: TextInputAction.next,
-        autocorrect: false,
-        autofillHints: const [AutofillHints.username],
-        onChanged: (_) {
-          if (_selectedHistoryKey != null &&
-              LoginHistoryEntry.buildKey(_server.text, _username.text) !=
-                  _selectedHistoryKey) {
-            setState(() => _selectedHistoryKey = null);
-          }
-        },
-        decoration: const InputDecoration(
-          labelText: '用户名',
-          prefixIcon: Icon(Icons.person_outline_rounded, size: 20),
+  Widget _buildUsernameField() => TextFormField(
+    controller: _username,
+    focusNode: _usernameFocus,
+    enabled: !_busy,
+    textInputAction: TextInputAction.next,
+    autocorrect: false,
+    autofillHints: const [AutofillHints.username],
+    onChanged: (_) {
+      if (_selectedHistoryKey != null &&
+          LoginHistoryEntry.buildKey(_server.text, _username.text) !=
+              _selectedHistoryKey) {
+        setState(() => _selectedHistoryKey = null);
+      }
+    },
+    decoration: const InputDecoration(
+      isDense: true,
+      labelText: '用户名',
+      prefixIcon: Icon(Icons.person_outline_rounded, size: 19),
+    ),
+    validator: (v) => v == null || v.trim().isEmpty ? '请输入用户名' : null,
+  );
+
+  Widget _buildPasswordField() => TextFormField(
+    controller: _password,
+    enabled: !_busy,
+    obscureText: _hide,
+    textInputAction: TextInputAction.done,
+    autofillHints: const [AutofillHints.password],
+    decoration: InputDecoration(
+      isDense: true,
+      labelText: '密码',
+      prefixIcon: const Icon(Icons.lock_outline_rounded, size: 19),
+      suffixIcon: IconButton(
+        tooltip: _hide ? '显示密码' : '隐藏密码',
+        visualDensity: VisualDensity.compact,
+        onPressed: () => setState(() => _hide = !_hide),
+        icon: Icon(
+          _hide ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+          size: 19,
         ),
-        validator: (v) => v == null || v.trim().isEmpty ? '请输入用户名' : null,
       ),
-      const SizedBox(height: 16),
-      TextFormField(
-        controller: _password,
-        enabled: !_busy,
-        obscureText: _hide,
-        textInputAction: TextInputAction.done,
-        autofillHints: const [AutofillHints.password],
-        decoration: InputDecoration(
-          labelText: '密码',
-          prefixIcon: const Icon(Icons.lock_outline_rounded, size: 20),
-          suffixIcon: IconButton(
-            tooltip: _hide ? '显示密码' : '隐藏密码',
-            onPressed: () => setState(() => _hide = !_hide),
-            icon: Icon(
-              _hide ? Icons.visibility_outlined : Icons.visibility_off_outlined,
+    ),
+    validator: (v) => v == null || v.isEmpty ? '请输入密码' : null,
+    onFieldSubmitted: (_) => _login(),
+  );
+
+  List<Widget> _buildCredentialFields({required bool sideBySide}) {
+    if (sideBySide) {
+      return [
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(child: _buildUsernameField()),
+            const SizedBox(width: 12),
+            Expanded(child: _buildPasswordField()),
+          ],
+        ),
+      ];
+    }
+    return [
+      _buildUsernameField(),
+      const SizedBox(height: 11),
+      _buildPasswordField(),
+    ];
+  }
+
+  List<Widget> _buildSecurityPinFields(ColorScheme colors) {
+    final normalizedServer = _normalizeServerAddress(_server.text);
+    final publicHttpOrigin =
+        InsecureHttpAllowlist.requiresAllowlist(normalizedServer)
+        ? InsecureHttpAllowlist.normalizeOrigin(normalizedServer)
+        : null;
+    final currentOriginAllowed =
+        publicHttpOrigin != null &&
+        _allowedHttpOrigins.contains(publicHttpOrigin);
+    final sortedAllowlist = _allowedHttpOrigins.toList()..sort();
+    final securityLabel = _fingerprint.text.isNotEmpty
+        ? '连接安全设置 · 已记住证书指纹'
+        : currentOriginAllowed
+        ? '连接安全设置 · 已信任明文 HTTP'
+        : sortedAllowlist.isNotEmpty
+        ? '连接安全设置 · ${sortedAllowlist.length} 条 HTTP 白名单'
+        : '连接安全设置';
+    return [
+      Row(
+        children: [
+          Flexible(
+            child: TextButton.icon(
+              key: const Key('connectionSecurityToggle'),
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                minimumSize: const Size(0, 32),
+              ),
+              onPressed: _busy
+                  ? null
+                  : () =>
+                        setState(() => _securityExpanded = !_securityExpanded),
+              icon: Icon(
+                _securityExpanded ? Icons.expand_less : Icons.shield_outlined,
+                size: 16,
+              ),
+              label: Text(
+                securityLabel,
+                style: const TextStyle(fontSize: 12),
+              ),
             ),
           ),
-        ),
-        validator: (v) => v == null || v.isEmpty ? '请输入密码' : null,
-        onFieldSubmitted: (_) => _login(),
-      ),
-    ];
-  }
-
-  List<Widget> _buildSecurityPinFields() {
-    return [
-      Align(
-        alignment: Alignment.centerLeft,
-        child: TextButton.icon(
-          onPressed: _busy
-              ? null
-              : () => setState(() => _securityExpanded = !_securityExpanded),
-          icon: Icon(
-            _securityExpanded ? Icons.expand_less : Icons.shield_outlined,
+          const Spacer(),
+          IconButton(
+            tooltip: '首次连接指引',
+            visualDensity: VisualDensity.compact,
+            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            padding: EdgeInsets.zero,
+            onPressed: _busy ? null : () => showLoginSetupGuideDialog(context),
+            icon: Icon(
+              Icons.help_outline_rounded,
+              size: 17,
+              color: colors.onSurfaceVariant,
+            ),
           ),
-          label: Text(
-            _fingerprint.text.isEmpty ? '连接安全设置' : '连接安全设置 · 已记住证书指纹',
-          ),
-        ),
+        ],
       ),
       IsleAnimatedExpand(
         expanded: _securityExpanded,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
+            const SizedBox(height: 4),
             TextFormField(
               key: const Key('certificateFingerprint'),
               controller: _fingerprint,
@@ -567,11 +711,11 @@ class _LoginPageState extends State<LoginPage> {
               minLines: 2,
               maxLines: 3,
               decoration: const InputDecoration(
-                labelText: '连接验证信息（加密连接时使用）',
-                helperText:
-                    '第一次连接 Mac 时，从 Mac「连接其他设备」中复制验证信息并仔细核对。使用已受信任的证书时可留空。',
-                helperMaxLines: 5,
-                prefixIcon: Icon(Icons.verified_user_outlined, size: 20),
+                isDense: true,
+                labelText: 'HTTPS 证书 SHA-256 指纹（可选）',
+                helperText: '仅自签名 HTTPS 首次连接需核对；受信任证书可留空。',
+                helperMaxLines: 3,
+                prefixIcon: Icon(Icons.verified_user_outlined, size: 19),
               ),
               validator: (value) {
                 final pin = (value ?? '').replaceAll(RegExp(r'[:\s]'), '');
@@ -586,18 +730,108 @@ class _LoginPageState extends State<LoginPage> {
               },
             ),
             const SizedBox(height: 8),
+            if (publicHttpOrigin != null)
+              SwitchListTile.adaptive(
+                key: const Key('allowInsecureHttpOriginSwitch'),
+                dense: true,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 2),
+                value: currentOriginAllowed,
+                onChanged: _busy
+                    ? null
+                    : (v) => _toggleCurrentHttpAllowlist(v, publicHttpOrigin),
+                title: const Text(
+                  '允许此地址使用明文 HTTP',
+                  style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+                ),
+                subtitle: Text(
+                  '$publicHttpOrigin（风险自担：密码与会话不加密）',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: colors.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            if (sortedAllowlist.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Text(
+                '本机明文 HTTP 白名单（精确 Origin）',
+                style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w600,
+                  color: colors.onSurfaceVariant,
+                ),
+              ),
+              const SizedBox(height: 4),
+              for (final origin in sortedAllowlist)
+                Row(
+                  children: [
+                    Icon(
+                      Icons.warning_amber_rounded,
+                      size: 14,
+                      color: colors.tertiary,
+                    ),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        origin,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                    ),
+                    IconButton(
+                      key: Key('removeHttpAllowlist_$origin'),
+                      tooltip: '移出白名单',
+                      visualDensity: VisualDensity.compact,
+                      constraints: const BoxConstraints(
+                        minWidth: 28,
+                        minHeight: 28,
+                      ),
+                      padding: EdgeInsets.zero,
+                      onPressed: _busy
+                          ? null
+                          : () => _removeAllowedHttpOrigin(origin),
+                      icon: Icon(
+                        Icons.close_rounded,
+                        size: 15,
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                ),
+            ] else if (publicHttpOrigin == null)
+              Padding(
+                padding: const EdgeInsets.only(left: 4, bottom: 2),
+                child: Text(
+                  '公网地址默认要求 HTTPS；输入公网 http:// 地址时，可在此按精确 Origin 加入本机白名单。',
+                  style: TextStyle(
+                    fontSize: 11.5,
+                    color: colors.onSurfaceVariant,
+                  ),
+                ),
+              ),
+            const SizedBox(height: 8),
           ],
         ),
       ),
     ];
   }
 
-  Widget _buildForm(BuildContext context, {required bool wide}) {
+  Widget _buildForm(
+    BuildContext context, {
+    required bool wide,
+    required bool medium,
+  }) {
     final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
     final colors = theme.colorScheme;
     final screenWidth = MediaQuery.sizeOf(context).width;
-    final cardPadding = screenWidth < 380 ? 16.0 : (wide ? 30.0 : 22.0);
+    final cardPadding = screenWidth < 380
+        ? 16.0
+        : wide
+        ? 26.0
+        : medium
+        ? 22.0
+        : 20.0;
     return AutofillGroup(
       child: Form(
         key: _form,
@@ -605,46 +839,26 @@ class _LoginPageState extends State<LoginPage> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             if (!wide) ...[
-              const LoginBrandHeader(wide: false),
-              const SizedBox(height: 20),
+              LoginBrandHeader(wide: false, medium: medium),
+              const SizedBox(height: 18),
             ],
-            Container(
+            IsleSurface(
+              radius: IsleRadius.hero,
               padding: EdgeInsets.all(cardPadding),
-              decoration: ShapeDecoration(
-                shape: IsleShapes.hero(
-                  side: BorderSide(
-                    color: IsleGlass.specularBorder(isDark),
-                    width: 1.0,
-                  ),
-                ),
-                gradient: IsleGlass.cardGradient(
-                  isDark,
-                  accent: colors.primary,
-                ),
-                shadows: IsleShadows.floating(isDark),
-              ),
+              glass: true,
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   if (wide) ...[
                     Text(
                       '欢迎回来',
-                      style: theme.textTheme.headlineSmall?.copyWith(
+                      style: theme.textTheme.titleLarge?.copyWith(
                         fontWeight: FontWeight.w800,
-                        letterSpacing: -0.4,
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      '连接你的设备，继续浏览私人空间。',
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: colors.onSurfaceVariant,
+                        letterSpacing: -0.45,
                       ),
                     ),
                     const SizedBox(height: 16),
                   ],
-                  const LoginSetupHelpCard(),
-                  const SizedBox(height: 16),
                   LoginHistorySection(
                     entries: _history,
                     latencies: _historyLatencies,
@@ -660,38 +874,38 @@ class _LoginPageState extends State<LoginPage> {
                   if (widget.notice != null)
                     Notice(widget.notice!, error: true),
                   ..._buildServerAddressFields(theme, colors),
-                  const SizedBox(height: 16),
-                  ..._buildCredentialFields(),
-                  const SizedBox(height: 6),
-                  ..._buildSecurityPinFields(),
+                  const SizedBox(height: 11),
+                  ..._buildCredentialFields(sideBySide: medium),
+                  const SizedBox(height: 4),
+                  ..._buildSecurityPinFields(colors),
                   if (_error != null) Notice(_error!, error: true),
-                  const SizedBox(height: 10),
+                  const SizedBox(height: 8),
                   FilledButton.icon(
                     style: FilledButton.styleFrom(
-                      minimumSize: const Size.fromHeight(48),
+                      minimumSize: const Size.fromHeight(44),
                     ),
                     onPressed: _busy ? null : _login,
                     icon: _busy
                         ? const SizedBox.square(
-                            dimension: 18,
+                            dimension: 16,
                             child: CircularProgressIndicator(
                               strokeWidth: 2,
                               color: Colors.white,
                             ),
                           )
-                        : const Icon(Icons.login_rounded, size: 20),
+                        : const Icon(Icons.arrow_forward_rounded, size: 18),
                     label: Text(_busy ? '正在连接…' : '连接并登录'),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 18),
+            const SizedBox(height: 12),
             Text(
-              '请保持 Mac 原生管理端运行。局域网连接默认自动开启，首次管理员初始化、存储授权和备份恢复仍在 Mac 管理端完成。',
+              '家庭局域网默认使用 HTTP；开启 HTTPS 时可核对证书指纹',
               textAlign: TextAlign.center,
               style: theme.textTheme.bodySmall?.copyWith(
-                color: colors.onSurfaceVariant.withValues(alpha: 0.8),
-                height: 1.5,
+                fontSize: 11.5,
+                color: colors.onSurfaceVariant.withValues(alpha: 0.76),
               ),
             ),
           ],

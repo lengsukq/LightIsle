@@ -19,7 +19,7 @@ String fileSearchKindLabel(String kind) {
   return '全部';
 }
 
-///Finder-style scope switcher (`当前目录` ↔ `当前整盘`) + file kind chips.
+/// Finder-style scope switcher (`当前目录` ↔ `当前整盘`) + file kind chips.
 class FileSearchScopeAndKindBar extends StatelessWidget {
   const FileSearchScopeAndKindBar({
     super.key,
@@ -40,7 +40,10 @@ class FileSearchScopeAndKindBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final borderColor = IsleGlass.rimBorderColor(isDark);
     final hasSubdirScope =
         subdirLabel != null && subdirLabel!.isNotEmpty && onToggleScope != null;
 
@@ -50,20 +53,20 @@ class FileSearchScopeAndKindBar extends StatelessWidget {
         if (hasSubdirScope) ...[
           SingleChildScrollView(
             scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
             child: Row(
               children: [
                 Text(
                   '搜索范围：',
                   style: TextStyle(
-                    fontSize: 12,
+                    fontSize: 11.5,
                     color: colors.onSurfaceVariant,
-                    fontWeight: FontWeight.w500,
+                    fontWeight: FontWeight.w600,
                   ),
                 ),
                 ChoiceChip(
                   key: const ValueKey('filesSearchScopeSubdirChip'),
-                  avatar: const Icon(Icons.folder_outlined, size: 15),
+                  avatar: const Icon(Icons.folder_outlined, size: 14.5),
                   label: Text(
                     '当前目录“$subdirLabel”',
                     overflow: TextOverflow.ellipsis,
@@ -71,6 +74,12 @@ class FileSearchScopeAndKindBar extends StatelessWidget {
                   ),
                   selected: !searchEntireRoot,
                   visualDensity: VisualDensity.compact,
+                  side: BorderSide(
+                    color: !searchEntireRoot
+                        ? colors.primary.withValues(alpha: 0.45)
+                        : borderColor,
+                    width: 1.0,
+                  ),
                   onSelected: busy
                       ? null
                       : (selected) {
@@ -81,10 +90,16 @@ class FileSearchScopeAndKindBar extends StatelessWidget {
                 const SizedBox(width: 6),
                 ChoiceChip(
                   key: const ValueKey('filesSearchScopeRootChip'),
-                  avatar: const Icon(Icons.dns_outlined, size: 15),
+                  avatar: const Icon(Icons.dns_outlined, size: 14.5),
                   label: const Text('当前整盘', style: TextStyle(fontSize: 12)),
                   selected: searchEntireRoot,
                   visualDensity: VisualDensity.compact,
+                  side: BorderSide(
+                    color: searchEntireRoot
+                        ? colors.primary.withValues(alpha: 0.45)
+                        : borderColor,
+                    width: 1.0,
+                  ),
                   onSelected: busy
                       ? null
                       : (selected) {
@@ -98,7 +113,7 @@ class FileSearchScopeAndKindBar extends StatelessWidget {
         ],
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 3),
           child: Row(
             children: [
               for (final entry in kFileSearchKinds)
@@ -111,6 +126,12 @@ class FileSearchScopeAndKindBar extends StatelessWidget {
                     label: Text(entry.$2, style: const TextStyle(fontSize: 12)),
                     selected: selectedKind == entry.$1,
                     visualDensity: VisualDensity.compact,
+                    side: BorderSide(
+                      color: selectedKind == entry.$1
+                          ? colors.primary.withValues(alpha: 0.45)
+                          : borderColor,
+                      width: 1.0,
+                    ),
                     onSelected: busy
                         ? null
                         : (selected) {
@@ -148,9 +169,12 @@ class FileSearchHistoryStrip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     if (terms.isEmpty) return const SizedBox.shrink();
-    final colors = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final borderColor = IsleGlass.rimBorderColor(isDark);
     return Padding(
-      padding: const EdgeInsets.only(top: 6, bottom: 2),
+      padding: const EdgeInsets.only(top: 5, bottom: 2),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -158,7 +182,7 @@ class FileSearchHistoryStrip extends StatelessWidget {
             children: [
               Icon(
                 Icons.history_rounded,
-                size: 14,
+                size: 13.5,
                 color: colors.onSurfaceVariant,
               ),
               const SizedBox(width: 4),
@@ -167,7 +191,7 @@ class FileSearchHistoryStrip extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 11.5,
                   color: colors.onSurfaceVariant,
-                  fontWeight: FontWeight.w500,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
               const Spacer(),
@@ -176,8 +200,8 @@ class FileSearchHistoryStrip extends StatelessWidget {
                 onPressed: busy ? null : onClearAll,
                 style: TextButton.styleFrom(
                   visualDensity: VisualDensity.compact,
-                  minimumSize: const Size(36, 26),
-                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  minimumSize: const Size(32, 24),
+                  padding: const EdgeInsets.symmetric(horizontal: 6),
                 ),
                 child: const Text('清空', style: TextStyle(fontSize: 11.5)),
               ),
@@ -197,6 +221,7 @@ class FileSearchHistoryStrip extends StatelessWidget {
                     style: const TextStyle(fontSize: 12),
                   ),
                   visualDensity: VisualDensity.compact,
+                  side: BorderSide(color: borderColor, width: 1.0),
                   onPressed: busy ? null : () => onTapTerm(term),
                   onDeleted: busy ? null : () => onRemoveTerm(term),
                   deleteButtonTooltipMessage: '删除记录',
@@ -309,7 +334,8 @@ class FileSearchEmptyState extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
     final hasKindFilter = searchKind.isNotEmpty;
     final kindLabel = fileSearchKindLabel(searchKind);
     final title = hasKindFilter
@@ -324,55 +350,68 @@ class FileSearchEmptyState extends StatelessWidget {
         : '请尝试更简短的关键词、检查拼写，或开启「全文搜索」。';
 
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 32, horizontal: 24),
+      padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 20),
       child: Column(
         children: [
           Icon(
             hasKindFilter
                 ? Icons.filter_alt_off_outlined
                 : Icons.search_off_rounded,
-            size: 52,
+            size: 38,
             color: colors.outline,
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           Text(
             title,
             textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.titleMedium
-                ?.copyWith(fontWeight: FontWeight.w700),
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontSize: 14.5,
+              fontWeight: FontWeight.w700,
+            ),
           ),
-          const SizedBox(height: 6),
+          const SizedBox(height: 5),
           Text(
             subtitle,
             textAlign: TextAlign.center,
-            style: Theme.of(context).textTheme.bodyMedium
-                ?.copyWith(color: colors.onSurfaceVariant),
+            style: theme.textTheme.bodySmall?.copyWith(
+              fontSize: 12.5,
+              color: colors.onSurfaceVariant,
+            ),
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
           Wrap(
-            spacing: 10,
-            runSpacing: 8,
+            spacing: 8,
+            runSpacing: 6,
             alignment: WrapAlignment.center,
             children: [
               if (hasKindFilter)
                 FilledButton.icon(
                   key: const ValueKey('filesSearchResetKindButton'),
+                  style: FilledButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
                   onPressed: onResetKind,
-                  icon: const Icon(Icons.clear_all_rounded, size: 17),
+                  icon: const Icon(Icons.clear_all_rounded, size: 16),
                   label: const Text('切回全部类型'),
                 ),
               if (searchingSubdir)
                 OutlinedButton.icon(
                   key: const ValueKey('filesSearchExpandRootButton'),
+                  style: OutlinedButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
                   onPressed: onExpandToRoot,
-                  icon: const Icon(Icons.dns_outlined, size: 17),
+                  icon: const Icon(Icons.dns_outlined, size: 16),
                   label: const Text('扩大到当前整盘'),
                 ),
               OutlinedButton.icon(
                 key: const ValueKey('filesSearchExitEmptyButton'),
                 onPressed: onExitSearch,
-                style: OutlinedButton.styleFrom(shape: IsleShapes.pill()),
-                icon: const Icon(Icons.arrow_back_rounded, size: 17),
+                style: OutlinedButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  shape: IsleShapes.pill(),
+                ),
+                icon: const Icon(Icons.arrow_back_rounded, size: 16),
                 label: const Text('返回原目录'),
               ),
             ],

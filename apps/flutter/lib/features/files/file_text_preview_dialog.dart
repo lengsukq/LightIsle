@@ -28,46 +28,36 @@ class FileTextPreviewDialog extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final colors = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
+    final borderColor = IsleGlass.rimBorderColor(isDark);
+
     return Dialog(
       backgroundColor: Colors.transparent,
       elevation: 0,
-      insetPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 24),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       child: ClipRRect(
-        borderRadius: BorderRadius.circular(24),
+        borderRadius: IsleRadius.brCard,
         child: BackdropFilter(
-          filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
+          filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
           child: Container(
             constraints: const BoxConstraints(maxWidth: 820),
             decoration: BoxDecoration(
-              color: theme.colorScheme.surface.withValues(
-                alpha: isDark ? 0.88 : 0.94,
-              ),
-              borderRadius: BorderRadius.circular(24),
-              border: Border.all(
-                color: isDark
-                    ? Colors.white.withValues(alpha: 0.16)
-                    : theme.colorScheme.outlineVariant.withValues(alpha: 0.45),
-                width: 0.85,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: Colors.black.withValues(alpha: isDark ? 0.45 : 0.15),
-                  blurRadius: 36,
-                  offset: const Offset(0, 12),
-                ),
-              ],
+              color: colors.surface.withValues(alpha: isDark ? 0.92 : 0.97),
+              borderRadius: IsleRadius.brCard,
+              border: Border.all(color: borderColor, width: 1.0),
+              boxShadow: IsleShadows.floating(isDark),
             ),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 16, 14, 12),
+                  padding: const EdgeInsets.fromLTRB(16, 10, 8, 10),
                   child: Row(
                     children: [
                       badge,
-                      const SizedBox(width: 12),
+                      const SizedBox(width: 10),
                       Expanded(
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
@@ -76,83 +66,87 @@ class FileTextPreviewDialog extends StatelessWidget {
                               item.name,
                               maxLines: 1,
                               overflow: TextOverflow.ellipsis,
-                              style: theme.textTheme.titleMedium?.copyWith(
+                              style: theme.textTheme.titleSmall?.copyWith(
+                                fontSize: 14.5,
                                 fontWeight: FontWeight.w700,
                                 letterSpacing: -0.2,
                               ),
                             ),
-                            const SizedBox(height: 2),
+                            const SizedBox(height: 1.5),
                             Text(
                               '${formatBytes(item.size)} · QuickLook 快速查看',
                               style: theme.textTheme.bodySmall?.copyWith(
-                                color: theme.colorScheme.onSurfaceVariant,
+                                fontSize: 11.5,
+                                color: colors.onSurfaceVariant,
                               ),
                             ),
                           ],
                         ),
                       ),
                       IconButton(
+                        visualDensity: VisualDensity.compact,
                         tooltip: '其他应用打开',
                         onPressed: () {
                           Navigator.pop(context);
                           onOpenExternal();
                         },
-                        icon: const Icon(Icons.open_in_new_rounded),
+                        icon: const Icon(Icons.open_in_new_rounded, size: 18),
                       ),
                       IconButton(
+                        visualDensity: VisualDensity.compact,
                         tooltip: '下载文件',
                         onPressed: () {
                           Navigator.pop(context);
                           onDownload();
                         },
-                        icon: const Icon(Icons.download_rounded),
+                        icon: const Icon(Icons.download_rounded, size: 18),
                       ),
                       IconButton(
+                        visualDensity: VisualDensity.compact,
                         tooltip: '关闭',
                         onPressed: () => Navigator.pop(context),
-                        icon: const Icon(Icons.close_rounded),
+                        icon: const Icon(Icons.close_rounded, size: 19),
                       ),
                     ],
                   ),
                 ),
-                Divider(
-                  height: 1,
-                  color: isDark
-                      ? Colors.white.withValues(alpha: 0.08)
-                      : theme.colorScheme.outlineVariant.withValues(
-                          alpha: 0.35,
-                        ),
-                ),
+                Divider(height: 1, thickness: 1, color: borderColor),
                 Flexible(
                   child: Padding(
-                    padding: const EdgeInsets.all(18),
+                    padding: const EdgeInsets.all(14),
                     child: error != null
                         ? Padding(
-                            padding: const EdgeInsets.all(24),
-                            child: Text('无法预览：$error'),
+                            padding: const EdgeInsets.all(18),
+                            child: Text(
+                              '无法预览：$error',
+                              style: TextStyle(
+                                fontSize: 13,
+                                color: colors.error,
+                              ),
+                            ),
                           )
                         : Container(
                             constraints: const BoxConstraints(maxHeight: 520),
                             decoration: BoxDecoration(
                               color: isDark
-                                  ? Colors.black.withValues(alpha: 0.45)
-                                  : theme.colorScheme.surfaceContainerHighest
-                                        .withValues(alpha: 0.5),
-                              borderRadius: BorderRadius.circular(16),
+                                  ? Colors.black.withValues(alpha: 0.36)
+                                  : colors.surfaceContainerHighest.withValues(
+                                      alpha: 0.42,
+                                    ),
+                              borderRadius: BorderRadius.circular(12),
                               border: Border.all(
-                                color: isDark
-                                    ? Colors.white.withValues(alpha: 0.08)
-                                    : theme.colorScheme.outlineVariant
-                                          .withValues(alpha: 0.3),
+                                color: borderColor,
+                                width: 1.0,
                               ),
                             ),
-                            padding: const EdgeInsets.all(16),
+                            padding: const EdgeInsets.all(14),
                             child: SingleChildScrollView(
                               child: SelectableText(
                                 text ?? '',
                                 style: theme.textTheme.bodyMedium?.copyWith(
+                                  fontSize: 13,
                                   fontFamily: 'monospace',
-                                  height: 1.55,
+                                  height: 1.5,
                                 ),
                               ),
                             ),

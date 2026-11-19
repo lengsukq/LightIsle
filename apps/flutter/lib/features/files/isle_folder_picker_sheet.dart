@@ -4,8 +4,8 @@ import '../../core/lightisle_api.dart';
 import '../../core/widgets.dart';
 import 'file_destination_dialog.dart';
 
-/// Refined Liquid Glass folder browser & destination picker widget adhering to
-/// LightIsle's iOS continuous-curvature (squircle) and translucent surface style.
+/// Folder browser & destination picker widget adhering to
+/// LightIsle's continuous-curvature (squircle) and crisp 1px border style.
 class IsleFolderBrowserCard extends StatefulWidget {
   const IsleFolderBrowserCard({
     super.key,
@@ -47,23 +47,24 @@ class _IsleFolderBrowserCardState extends State<IsleFolderBrowserCard> {
     }
   }
 
-  Widget _buildBreadcrumbBar(ColorScheme colors) {
+  Widget _buildBreadcrumbBar(ColorScheme colors, Color borderColor) {
     return Wrap(
-      spacing: 6,
-      runSpacing: 6,
+      spacing: 5,
+      runSpacing: 5,
       crossAxisAlignment: WrapCrossAlignment.center,
       children: [
         for (var i = 0; i < widget.breadcrumbs.length; i++) ...[
           if (i > 0)
             Icon(
               Icons.chevron_right_rounded,
-              size: 15,
-              color: colors.onSurfaceVariant.withValues(alpha: 0.6),
+              size: 14,
+              color: colors.onSurfaceVariant.withValues(alpha: 0.65),
             ),
           _BreadcrumbPill(
             label: widget.breadcrumbs[i].$1,
             active: widget.breadcrumbs[i].$2 == widget.directory,
             isRoot: i == 0,
+            borderColor: borderColor,
             onTap:
                 widget.loading || widget.breadcrumbs[i].$2 == widget.directory
                 ? null
@@ -73,8 +74,10 @@ class _IsleFolderBrowserCardState extends State<IsleFolderBrowserCard> {
         if (widget.sourceParentDirectory != null &&
             widget.sourceParentDirectory != widget.directory)
           ActionChip(
-            avatar: const Icon(Icons.my_location_rounded, size: 14),
-            label: const Text('定位到来源所在目录'),
+            visualDensity: VisualDensity.compact,
+            side: BorderSide(color: borderColor, width: 1.0),
+            avatar: const Icon(Icons.my_location_rounded, size: 13.5),
+            label: const Text('定位到来源所在目录', style: TextStyle(fontSize: 12)),
             onPressed: widget.loading
                 ? null
                 : () => widget.onBrowse(widget.sourceParentDirectory!),
@@ -82,8 +85,10 @@ class _IsleFolderBrowserCardState extends State<IsleFolderBrowserCard> {
         if (widget.canWrite && !widget.loading)
           ActionChip(
             key: const ValueKey('destination-new-folder'),
-            avatar: const Icon(Icons.create_new_folder_outlined, size: 14),
-            label: const Text('新建文件夹'),
+            visualDensity: VisualDensity.compact,
+            side: BorderSide(color: borderColor, width: 1.0),
+            avatar: const Icon(Icons.create_new_folder_outlined, size: 13.5),
+            label: const Text('新建文件夹', style: TextStyle(fontSize: 12)),
             onPressed: widget.onCreateSubfolder,
           ),
       ],
@@ -94,21 +99,16 @@ class _IsleFolderBrowserCardState extends State<IsleFolderBrowserCard> {
     ThemeData theme,
     ColorScheme colors, {
     required bool isDark,
+    required Color borderColor,
   }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 7),
       decoration: ShapeDecoration(
         color: isDark
-            ? Colors.white.withValues(alpha: 0.04)
-            : const Color(0xff0f172a).withValues(alpha: 0.035),
-        shape: IsleShapes.squircle(
-          12,
-          side: BorderSide(
-            color: colors.outlineVariant.withValues(
-              alpha: isDark ? 0.25 : 0.16,
-            ),
-            width: 0.75,
-          ),
+            ? Colors.white.withValues(alpha: 0.035)
+            : colors.surfaceContainerHighest.withValues(alpha: 0.30),
+        shape: IsleShapes.sm(
+          side: BorderSide(color: borderColor, width: 1.0),
         ),
       ),
       child: Wrap(
@@ -124,7 +124,7 @@ class _IsleFolderBrowserCardState extends State<IsleFolderBrowserCard> {
                 widget.directory == '.'
                     ? Icons.dns_rounded
                     : Icons.folder_open_rounded,
-                size: 15,
+                size: 14.5,
                 color: colors.primary,
               ),
               const SizedBox(width: 6),
@@ -136,6 +136,7 @@ class _IsleFolderBrowserCardState extends State<IsleFolderBrowserCard> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: theme.textTheme.bodySmall?.copyWith(
+                    fontSize: 12,
                     fontWeight: FontWeight.w600,
                     color: colors.onSurface,
                   ),
@@ -159,19 +160,17 @@ class _IsleFolderBrowserCardState extends State<IsleFolderBrowserCard> {
     required ColorScheme colors,
     required IslePalette palette,
     required bool isDark,
+    required Color borderColor,
     required List<String> parts,
     required List<(String, String)> filteredFolders,
   }) {
+    final hasUpRow = widget.directory != '.';
     return Container(
-      constraints: const BoxConstraints(maxHeight: 220, minHeight: 72),
+      constraints: const BoxConstraints(maxHeight: 204, minHeight: 68),
       decoration: ShapeDecoration(
         color: palette['cardItemTop'],
-        shape: IsleShapes.squircle(
-          16,
-          side: BorderSide(
-            color: IsleGlass.rimBorderColor(isDark),
-            width: 0.85,
-          ),
+        shape: IsleShapes.md(
+          side: BorderSide(color: borderColor, width: 1.0),
         ),
       ),
       clipBehavior: Clip.antiAlias,
@@ -179,27 +178,29 @@ class _IsleFolderBrowserCardState extends State<IsleFolderBrowserCard> {
         type: MaterialType.transparency,
         child: ListView(
           shrinkWrap: true,
-          padding: const EdgeInsets.symmetric(vertical: 4),
+          padding: EdgeInsets.zero,
           children: [
-            if (widget.directory != '.')
+            if (hasUpRow)
               ListTile(
                 dense: true,
+                visualDensity: VisualDensity.compact,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10),
                 leading: Container(
-                  width: 30,
-                  height: 30,
+                  width: 28,
+                  height: 28,
                   decoration: IsleDecorations.iconBadge(
                     colors.primary.withValues(alpha: isDark ? 0.20 : 0.10),
-                    radius: 8,
+                    radius: 7,
                   ),
                   child: Icon(
                     Icons.arrow_upward_rounded,
                     color: colors.primary,
-                    size: 16,
+                    size: 15,
                   ),
                 ),
                 title: const Text(
                   '上一级',
-                  style: TextStyle(fontWeight: FontWeight.w600),
+                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
                 ),
                 subtitle: Text(
                   parts.length <= 1
@@ -207,6 +208,7 @@ class _IsleFolderBrowserCardState extends State<IsleFolderBrowserCard> {
                       : parts.take(parts.length - 1).join('/'),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontSize: 11.5),
                 ),
                 onTap: widget.loading
                     ? null
@@ -216,61 +218,75 @@ class _IsleFolderBrowserCardState extends State<IsleFolderBrowserCard> {
                             : parts.take(parts.length - 1).join('/'),
                       ),
               ),
-            for (final (name, path) in filteredFolders)
+            for (var idx = 0; idx < filteredFolders.length; idx++) ...[
+              if (idx > 0 || hasUpRow)
+                Divider(
+                  height: 1,
+                  thickness: 1,
+                  indent: 46,
+                  color: borderColor,
+                ),
               ListTile(
                 dense: true,
+                visualDensity: VisualDensity.compact,
+                contentPadding: const EdgeInsets.symmetric(horizontal: 10),
                 leading: Container(
-                  width: 30,
-                  height: 30,
+                  width: 28,
+                  height: 28,
                   decoration: IsleDecorations.iconBadge(
-                    const Color(0xff0ea5e9)
+                    palette['brandAmber']
                         .withValues(alpha: isDark ? 0.22 : 0.12),
-                    radius: 8,
+                    radius: 7,
                   ),
-                  child: const Icon(
+                  child: Icon(
                     Icons.folder_rounded,
-                    color: Color(0xff0ea5e9),
-                    size: 17,
+                    color: palette['brandAmber'],
+                    size: 15.5,
                   ),
                 ),
                 title: Text(
-                  name,
+                  filteredFolders[idx].$1,
                   overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(fontWeight: FontWeight.w600),
+                  style: const TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
                 trailing: Icon(
                   Icons.chevron_right_rounded,
-                  size: 18,
+                  size: 17,
                   color: colors.onSurfaceVariant,
                 ),
-                onTap: widget.loading ? null : () => widget.onBrowse(path),
+                onTap: widget.loading
+                    ? null
+                    : () => widget.onBrowse(filteredFolders[idx].$2),
               ),
+            ],
             if (widget.loading)
-              const Center(
-                child: Padding(
-                  padding: EdgeInsets.all(16),
-                  child: CircularProgressIndicator(),
-                ),
+              const IsleLoadingState(
+                compact: true,
+                padding: EdgeInsets.symmetric(vertical: 12),
               )
             else if (filteredFolders.isEmpty)
               Padding(
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 18,
+                  horizontal: 14,
+                  vertical: 16,
                 ),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Icon(
                       Icons.folder_off_outlined,
-                      size: 18,
+                      size: 16,
                       color: colors.onSurfaceVariant,
                     ),
-                    const SizedBox(width: 8),
+                    const SizedBox(width: 6),
                     Flexible(
                       child: Text(
                         _filterQuery.trim().isEmpty ? '当前没有子文件夹' : '没有匹配的文件夹',
                         style: theme.textTheme.bodySmall?.copyWith(
+                          fontSize: 12,
                           color: colors.onSurfaceVariant,
                         ),
                       ),
@@ -280,9 +296,12 @@ class _IsleFolderBrowserCardState extends State<IsleFolderBrowserCard> {
               ),
             if (widget.hasMore && !widget.loading)
               TextButton.icon(
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                ),
                 onPressed: widget.onLoadMore,
-                icon: const Icon(Icons.expand_more_rounded, size: 16),
-                label: const Text('更多文件夹'),
+                icon: const Icon(Icons.expand_more_rounded, size: 15),
+                label: const Text('更多文件夹', style: TextStyle(fontSize: 12)),
               ),
           ],
         ),
@@ -295,6 +314,7 @@ class _IsleFolderBrowserCardState extends State<IsleFolderBrowserCard> {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
+    final borderColor = IsleGlass.rimBorderColor(isDark);
     final palette = IslePalette.of(context);
     final parts = widget.directory == '.'
         ? <String>[]
@@ -313,30 +333,36 @@ class _IsleFolderBrowserCardState extends State<IsleFolderBrowserCard> {
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _buildBreadcrumbBar(colors),
-        const SizedBox(height: 8),
-        _buildPathStatusHeader(theme, colors, isDark: isDark),
+        _buildBreadcrumbBar(colors, borderColor),
+        const SizedBox(height: 6),
+        _buildPathStatusHeader(
+          theme,
+          colors,
+          isDark: isDark,
+          borderColor: borderColor,
+        ),
         if (widget.folders.length > 5) ...[
-          const SizedBox(height: 8),
+          const SizedBox(height: 6),
           TextField(
             onChanged: (v) => setState(() => _filterQuery = v),
             decoration: const InputDecoration(
               isDense: true,
-              prefixIcon: Icon(Icons.search_rounded, size: 18),
+              prefixIcon: Icon(Icons.search_rounded, size: 17),
               hintText: '筛选当前层级文件夹…',
               contentPadding: EdgeInsets.symmetric(
-                horizontal: 12,
-                vertical: 10,
+                horizontal: 10,
+                vertical: 8,
               ),
             ),
           ),
         ],
-        const SizedBox(height: 8),
+        const SizedBox(height: 6),
         _buildFolderListContainer(
           theme: theme,
           colors: colors,
           palette: palette,
           isDark: isDark,
+          borderColor: borderColor,
           parts: parts,
           filteredFolders: filteredFolders,
         ),
@@ -350,12 +376,14 @@ class _BreadcrumbPill extends StatelessWidget {
     required this.label,
     required this.active,
     required this.isRoot,
+    required this.borderColor,
     required this.onTap,
   });
 
   final String label;
   final bool active;
   final bool isRoot;
+  final Color borderColor;
   final VoidCallback? onTap;
 
   @override
@@ -364,22 +392,30 @@ class _BreadcrumbPill extends StatelessWidget {
     return TextButton.icon(
       onPressed: onTap,
       style: TextButton.styleFrom(
-        minimumSize: const Size(36, 32),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        minimumSize: const Size(32, 28),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 3),
         backgroundColor: active
-            ? colors.primaryContainer.withValues(alpha: 0.75)
-            : colors.surfaceContainerHighest.withValues(alpha: 0.35),
+            ? colors.primaryContainer.withValues(alpha: 0.72)
+            : colors.surfaceContainerHighest.withValues(alpha: 0.30),
         foregroundColor: active ? colors.primary : colors.onSurface,
-        shape: const StadiumBorder(),
+        shape: StadiumBorder(
+          side: BorderSide(
+            color: active
+                ? colors.primary.withValues(alpha: 0.36)
+                : borderColor,
+            width: 1.0,
+          ),
+        ),
       ),
       icon: Icon(
         isRoot ? Icons.home_outlined : Icons.folder_outlined,
-        size: 14,
+        size: 13.5,
       ),
       label: Text(
         label,
         style: TextStyle(
-          fontSize: 12.5,
+          fontSize: 12,
           fontWeight: active ? FontWeight.w700 : FontWeight.w500,
         ),
       ),

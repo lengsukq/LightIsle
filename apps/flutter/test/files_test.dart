@@ -10,6 +10,7 @@ import 'package:lightisle/features/files/file_browser_preferences.dart';
 import 'package:lightisle/features/files/file_shares_page.dart';
 import 'package:lightisle/features/files/files_page.dart';
 import 'package:lightisle/features/files/file_text_preview_dialog.dart';
+import 'package:lightisle/features/media/cinema_detail_dialog.dart';
 import 'package:lightisle/features/media/photo_gallery_viewer.dart';
 
 part 'files_test_fakes.dart';

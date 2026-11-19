@@ -38,9 +38,13 @@ extension _StoragePageSwitch on _StoragePageState {
     }
     if (!mounted) throw const _AdminConfirmationCancelledException();
     var enteredPassword = '';
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final password = await showDialog<String>(
       context: context,
       builder: (dialogContext) => AlertDialog(
+        shape: IsleShapes.card(
+          side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
+        ),
         title: const Text('管理员身份确认'),
         content: TextField(
           autofocus: true,
@@ -129,9 +133,16 @@ extension _StoragePageSwitch on _StoragePageState {
         .toList(growable: false);
     if (loading || !rootsKnown) return;
     if (targetRoots.isEmpty) {
+      final isDark = Theme.of(context).brightness == Brightness.dark;
       await showDialog<void>(
         context: context,
         builder: (context) => AlertDialog(
+          shape: IsleShapes.card(
+            side: BorderSide(
+              color: IsleGlass.rimBorderColor(isDark),
+              width: 1.0,
+            ),
+          ),
           title: const Text('尚未登记目标外置硬盘'),
           content: const Text(
             '当前仅登记了 1 块在线存储硬盘。请先在 Mac 管理端「个人空间」或「存储 → 存储位置」中点击「选择外置盘设为主存储…」或「+ 添加外置盘…」，登记外置硬盘并刷新后，即可将现有数据迁移过去。',
@@ -157,10 +168,17 @@ extension _StoragePageSwitch on _StoragePageState {
     final dialogTitle = singleCategoryLabel != null
         ? '更换 $username 的「$singleCategoryLabel」硬盘'
         : '将 $username 的「$sourceName」迁移到新目录';
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => StatefulBuilder(
         builder: (context, setModalState) => AlertDialog(
+          shape: IsleShapes.card(
+            side: BorderSide(
+              color: IsleGlass.rimBorderColor(isDark),
+              width: 1.0,
+            ),
+          ),
           title: Text(dialogTitle),
           content: SizedBox(
             width: 440,

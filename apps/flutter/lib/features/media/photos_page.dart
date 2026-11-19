@@ -9,7 +9,6 @@ import '../../core/authenticated_media_image.dart';
 import '../../core/isle_action_menu.dart';
 import '../../core/isle_cache_manager.dart';
 import '../../core/isle_data_cache.dart';
-import '../../core/isle_quick_jump.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/media_image_memory_cache.dart';
@@ -149,8 +148,6 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
   }
 
   bool _onViewportScrollNotification(ScrollNotification notification) {
-    // Near-endless scroll: paging fires automatically as the viewport
-    // approaches the sentinel; the manual button stays as the fallback.
     if (notification is ScrollUpdateNotification &&
         (notification.scrollDelta ?? 0) > 0 &&
         notification.metrics.axis == Axis.vertical &&
@@ -222,10 +219,13 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
         children: [
           _buildPageHeader(context),
           _photoNavigation(),
-          if (_fullTimelineSelected &&
-              _feed.assets.isNotEmpty &&
-              !_selection.selecting)
-            _buildMemoriesCarousel(),
+          IsleAnimatedExpand(
+            expanded:
+                _fullTimelineSelected &&
+                _feed.assets.isNotEmpty &&
+                !_selection.selecting,
+            child: _buildMemoriesCarousel(),
+          ),
           _buildSelectionToolbar(),
           _buildStatusBanners(),
         ],
@@ -245,20 +245,21 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
     if (_scope.personalFavoritesOnly) return '我的收藏';
     if (_scope.favoritesOnly) return '共享收藏';
     if (_scope.onThisDay) return '那年今天';
-    return '按时间整理的照片和视频';
+    return '';
   }
 
   Widget _buildPageHeader(BuildContext context) {
+    final palette = IslePalette.of(context);
     return Padding(
       padding: EdgeInsets.fromLTRB(
         _pageInset,
         IsleLayout.pageTopInset(MediaQuery.sizeOf(context).width),
         _pageInset,
-        0,
+        4,
       ),
       child: IslePageHeader(
+        accentColor: palette['brandRose'],
         title: '图库',
-        hideSubtitleOnCompact: _fullTimelineSelected,
         subtitle: _headerSubtitle,
         trailing: _buildHeaderTrailingActions(),
       ),
@@ -284,16 +285,11 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
           const SizedBox(width: 4),
         ],
         IconButton(
-          key: const ValueKey('photoGridDensityToggle'),
           visualDensity: VisualDensity.compact,
-          tooltip: _feed.comfortableGrid ? '切换为紧凑网格' : '切换为舒适视图',
+          tooltip: '搜索照片',
           onPressed: () =>
-              setState(() => _feed.comfortableGrid = !_feed.comfortableGrid),
-          icon: Icon(
-            _feed.comfortableGrid
-                ? Icons.grid_on_rounded
-                : Icons.grid_view_rounded,
-          ),
+              setState(() => _scope.showSearch = !_scope.showSearch),
+          icon: const Icon(Icons.search_rounded, size: 19),
         ),
         IconButton(
           visualDensity: VisualDensity.compact,
@@ -311,27 +307,14 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
             _selection.selecting
                 ? Icons.close_rounded
                 : Icons.checklist_rounded,
+            size: 19,
           ),
-        ),
-        if (MediaQuery.sizeOf(context).width >= 600)
-          IconButton(
-            visualDensity: VisualDensity.compact,
-            tooltip: '足迹地图',
-            onPressed: _openPhotoMap,
-            icon: const Icon(Icons.map_outlined),
-          ),
-        IconButton(
-          visualDensity: VisualDensity.compact,
-          tooltip: '搜索照片',
-          onPressed: () =>
-              setState(() => _scope.showSearch = !_scope.showSearch),
-          icon: const Icon(Icons.search_rounded),
         ),
         IconButton(
           visualDensity: VisualDensity.compact,
           tooltip: '上传照片与视频',
           onPressed: _upload,
-          icon: const Icon(Icons.add_rounded),
+          icon: const Icon(Icons.add_rounded, size: 20),
         ),
         _buildOverflowMenuButton(),
       ],
@@ -339,12 +322,17 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
   }
 
   Widget _buildOverflowMenuButton() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return PopupMenuButton<String>(
+      style: IconButton.styleFrom(visualDensity: VisualDensity.compact),
       tooltip: '更多照片操作',
+      icon: const Icon(Icons.more_horiz_rounded, size: 19),
       onSelected: _photoAction,
       position: PopupMenuPosition.under,
-      constraints: const BoxConstraints(minWidth: 218, maxWidth: 270),
-      shape: IsleShapes.menu(),
+      constraints: const BoxConstraints(minWidth: 208, maxWidth: 260),
+      shape: IsleShapes.md(
+        side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
+      ),
       itemBuilder: (_) => _buildOverflowMenuItems(),
     );
   }
@@ -355,9 +343,11 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
         defaultTargetPlatform == TargetPlatform.iOS;
     return [
       isleActionMenuItem(
-        value: 'offline',
-        icon: Icons.offline_pin_outlined,
-        label: '本机离线照片库',
+        value: 'gridDensity',
+        icon: _feed.comfortableGrid
+            ? Icons.grid_on_rounded
+            : Icons.grid_view_rounded,
+        label: _feed.comfortableGrid ? '切换为紧凑网格' : '切换为舒适视图',
       ),
       if (_fullTimelineSelected &&
           _scope.query.isEmpty &&
@@ -367,6 +357,21 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
           icon: Icons.calendar_month_outlined,
           label: '年月跳转',
         ),
+      isleActionMenuItem(
+        value: 'map',
+        icon: Icons.map_outlined,
+        label: '足迹地图',
+      ),
+      isleActionMenuItem(
+        value: 'similarCleanup',
+        icon: Icons.auto_fix_high_outlined,
+        label: '连拍相似清理',
+      ),
+      isleActionMenuItem(
+        value: 'offline',
+        icon: Icons.offline_pin_outlined,
+        label: '本机离线照片库',
+      ),
       isleActionMenuItem(
         value: 'today',
         icon: Icons.history_rounded,
@@ -475,63 +480,92 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
             .where((a) => selectedIds.contains(a.id))
             .any((a) => !widget.isAdmin && !a.canWrite);
 
+    final compactOutlined = OutlinedButton.styleFrom(
+      visualDensity: VisualDensity.compact,
+      minimumSize: const Size(0, 32),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+    );
+    final compactTonal = FilledButton.styleFrom(
+      visualDensity: VisualDensity.compact,
+      minimumSize: const Size(0, 32),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+    );
+
     return IsleAnimatedExpand(
       expanded: _selection.selecting,
       child: Padding(
-        padding: EdgeInsets.fromLTRB(_pageInset, 0, _pageInset, 14),
+        padding: EdgeInsets.fromLTRB(_pageInset, 0, _pageInset, 10),
         child: MediaSelectionActionBar(
           label: '已选 ${selectedIds.length} 项',
           actions: [
             OutlinedButton.icon(
+              style: compactOutlined,
               onPressed: busy || _feed.assets.isEmpty
                   ? null
                   : _selectVisiblePhotos,
-              icon: const Icon(Icons.select_all_rounded, size: 17),
+              icon: const Icon(Icons.select_all_rounded, size: 15),
               label: Text(allPageSelected ? '取消全选' : '全选当前页'),
             ),
             TextButton(
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                minimumSize: const Size(0, 32),
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                textStyle: const TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
               onPressed: busy ? null : () => setState(_selection.clear),
               child: const Text('完成'),
             ),
             OutlinedButton.icon(
+              style: compactOutlined,
               onPressed: busy || selectedIds.isEmpty ? null : _batchFavorite,
               icon: Icon(
                 allSelectedFavorited
                     ? Icons.star_outline_rounded
                     : Icons.star_border_rounded,
-                size: 17,
+                size: 15,
               ),
               label: Text(allSelectedFavorited ? '取消收藏' : '收藏'),
             ),
             FilledButton.tonalIcon(
+              style: compactTonal,
               onPressed: busy || selectedIds.isEmpty
                   ? null
                   : _batchAddToPrivateAlbum,
-              icon: const Icon(Icons.add_to_photos_outlined, size: 17),
+              icon: const Icon(Icons.add_to_photos_outlined, size: 15),
               label: const Text('加入相册'),
             ),
             if (_scope.activePrivateAlbum > 0 ||
                 (widget.isAdmin && _scope.activeAlbum > 0))
               OutlinedButton.icon(
+                style: compactOutlined,
                 onPressed: busy || selectedIds.isEmpty
                     ? null
                     : _batchRemoveFromCurrentAlbum,
-                icon: const Icon(Icons.remove_circle_outline_rounded, size: 17),
+                icon: const Icon(Icons.remove_circle_outline_rounded, size: 15),
                 label: const Text('移出相册'),
               ),
             OutlinedButton.icon(
+              style: compactOutlined,
               onPressed: busy || selectedIds.isEmpty ? null : _batchExport,
-              icon: const Icon(Icons.download_outlined, size: 17),
+              icon: const Icon(Icons.download_outlined, size: 15),
               label: const Text('保存原文件'),
             ),
             OutlinedButton.icon(
+              style: compactOutlined,
               onPressed: busy || selectedIds.isEmpty ? null : _batchShare,
-              icon: const Icon(Icons.ios_share_outlined, size: 17),
+              icon: const Icon(Icons.ios_share_outlined, size: 15),
               label: const Text('分享'),
             ),
             FilledButton.tonalIcon(
+              style: compactTonal,
               onPressed: canTrashSelected ? _batchTrashAssets : null,
-              icon: const Icon(Icons.delete_outline_rounded, size: 17),
+              icon: const Icon(Icons.delete_outline_rounded, size: 15),
               label: const Text('移入回收站'),
             ),
           ],
@@ -599,22 +633,25 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
         children: [
           if (_feed.assets.isNotEmpty)
             Padding(
-              padding: EdgeInsets.fromLTRB(_pageInset, 20, _pageInset, 26),
+              padding: EdgeInsets.fromLTRB(_pageInset, 16, _pageInset, 22),
               child: Center(
                 child: _feed.nextCursor > 0
                     ? OutlinedButton.icon(
+                        style: OutlinedButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                        ),
                         onPressed: _feed.loadingMore
                             ? null
                             : () => _loadAssets(reset: false),
                         icon: _feed.loadingMore
                             ? const SizedBox(
-                                width: 16,
-                                height: 16,
+                                width: 15,
+                                height: 15,
                                 child: CircularProgressIndicator(
                                   strokeWidth: 2,
                                 ),
                               )
-                            : const Icon(Icons.expand_more),
+                            : const Icon(Icons.expand_more, size: 18),
                         label: Text(_feed.loadingMore ? '正在加载' : '加载更多媒体'),
                       )
                     : Text(
@@ -623,7 +660,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                       ),
               ),
             ),
-          const SizedBox(height: 76),
+          const SizedBox(height: 68),
         ],
       ),
     );
@@ -632,8 +669,8 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
   Widget _buildTimelineScrubberOverlay(BuildContext context) {
     return Positioned(
       right: 4,
-      top: 76,
-      bottom: 40,
+      top: 72,
+      bottom: 36,
       child: PhotoTimelineScrubber(
         scrollController: _timeline.scrollController,
         months: _timeline.months,

@@ -163,10 +163,14 @@ class _PhotoPersonSharesCardState extends State<PhotoPersonSharesCard> {
     final shareId = item['id'];
     final label = item['label']?.toString() ?? '共享人物相册';
     if (shareId == null) return;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
+      shape: IsleShapes.sheet(
+        side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
+      ),
       builder: (_) => _SharedPersonAssetsSheet(
         api: widget.api,
         shareId: shareId is num ? shareId.toInt() : 0,
@@ -175,8 +179,111 @@ class _PhotoPersonSharesCardState extends State<PhotoPersonSharesCard> {
     );
   }
 
+  Widget _buildGroupedSharesList(
+    BuildContext context, {
+    required List<Map<String, dynamic>> items,
+    required bool incoming,
+    required bool isDark,
+    required Color borderColor,
+    required ColorScheme colors,
+  }) {
+    return Container(
+      decoration: ShapeDecoration(
+        shape: IsleShapes.sm(side: BorderSide(color: borderColor, width: 1.0)),
+        color: isDark
+            ? Colors.white.withValues(alpha: 0.03)
+            : colors.surfaceContainerHighest.withValues(alpha: 0.26),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          for (var i = 0; i < items.length; i++) ...[
+            if (i > 0)
+              Divider(
+                height: 1,
+                thickness: 1,
+                indent: 46,
+                color: borderColor,
+              ),
+            ListTile(
+              dense: true,
+              visualDensity: VisualDensity.compact,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 10,
+                vertical: 2,
+              ),
+              leading: IsleSquircleBadge(
+                icon: incoming
+                    ? Icons.photo_album_outlined
+                    : Icons.people_alt_outlined,
+                color: colors.primary,
+                size: 28,
+                iconSize: 15,
+              ),
+              title: Text(
+                items[i]['label']?.toString() ?? '',
+                style: const TextStyle(
+                  fontSize: 13.5,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+              subtitle: Text(
+                incoming
+                    ? '来自 ${items[i]['ownerUsername'] ?? '家人'} · ${items[i]['photoCount'] ?? 0} 张只读照片'
+                    : '共享给 ${items[i]['memberUsername'] ?? '成员'} · ${items[i]['photoCount'] ?? 0} 张 · 零拷贝只读',
+                style: const TextStyle(fontSize: 12),
+              ),
+              trailing: Wrap(
+                spacing: 4,
+                children: [
+                  if (incoming)
+                    FilledButton.tonal(
+                      style: FilledButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        minimumSize: const Size(0, 28),
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                      ),
+                      onPressed: () => _openShareGallery(items[i]),
+                      child: const Text('浏览', style: TextStyle(fontSize: 12)),
+                    )
+                  else
+                    OutlinedButton(
+                      style: OutlinedButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        minimumSize: const Size(0, 28),
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                      ),
+                      onPressed: () => _openShareGallery(items[i]),
+                      child: const Text('预览', style: TextStyle(fontSize: 12)),
+                    ),
+                  TextButton(
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      minimumSize: const Size(0, 28),
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                    onPressed: _busy ? null : () => _deleteShare(items[i]),
+                    child: Text(
+                      incoming ? '退出' : '撤销',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final borderColor = IsleGlass.rimBorderColor(isDark);
     final incoming = _shares
         .where((s) => s['direction'] == 'incoming')
         .toList(growable: false);
@@ -196,20 +303,28 @@ class _PhotoPersonSharesCardState extends State<PhotoPersonSharesCard> {
         : (memberIds.isNotEmpty ? memberIds.first : null);
 
     return IsleSurface(
+      margin: EdgeInsets.zero,
       radius: IsleRadius.card,
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.all(14),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
             children: [
-              const Icon(Icons.family_restroom_rounded, size: 20),
+              IsleSquircleBadge(
+                icon: Icons.family_restroom_rounded,
+                color: colors.primary,
+                size: 30,
+                iconSize: 16,
+              ),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   '宝宝 / 家人自动只读共享视图',
-                  style: Theme.of(context).textTheme.titleMedium
-                      ?.copyWith(fontWeight: FontWeight.w700),
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontSize: 14.5,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
               ),
               IconButton(
@@ -223,7 +338,10 @@ class _PhotoPersonSharesCardState extends State<PhotoPersonSharesCard> {
           const SizedBox(height: 4),
           Text(
             '将指定人物聚类只读共享给家庭成员，后续备份的新照片会自动出现，无需手动挑图或复制原片。',
-            style: Theme.of(context).textTheme.bodySmall,
+            style: theme.textTheme.bodySmall?.copyWith(
+              fontSize: 12,
+              color: colors.onSurfaceVariant,
+            ),
           ),
           if (_error != null) ...[
             const SizedBox(height: 8),
@@ -231,14 +349,14 @@ class _PhotoPersonSharesCardState extends State<PhotoPersonSharesCard> {
           ],
           if (_notice != null) ...[const SizedBox(height: 8), Notice(_notice!)],
           if (widget.persons.isNotEmpty && _members.isNotEmpty) ...[
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
             Wrap(
-              spacing: 10,
-              runSpacing: 10,
+              spacing: 8,
+              runSpacing: 8,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 SizedBox(
-                  width: 190,
+                  width: 186,
                   child: KeyedSubtree(
                     key: ValueKey('personSharePerson_$activePersonId'),
                     child: DropdownButtonFormField<int>(
@@ -247,7 +365,6 @@ class _PhotoPersonSharesCardState extends State<PhotoPersonSharesCard> {
                       decoration: const InputDecoration(
                         labelText: '选择人物',
                         isDense: true,
-                        border: OutlineInputBorder(),
                       ),
                       items: [
                         for (final p in widget.persons)
@@ -264,7 +381,7 @@ class _PhotoPersonSharesCardState extends State<PhotoPersonSharesCard> {
                   ),
                 ),
                 SizedBox(
-                  width: 165,
+                  width: 160,
                   child: KeyedSubtree(
                     key: ValueKey('personShareMember_$activeMemberId'),
                     child: DropdownButtonFormField<int>(
@@ -273,7 +390,6 @@ class _PhotoPersonSharesCardState extends State<PhotoPersonSharesCard> {
                       decoration: const InputDecoration(
                         labelText: '共享给成员',
                         isDense: true,
-                        border: OutlineInputBorder(),
                       ),
                       items: [
                         for (final m in _members)
@@ -291,7 +407,7 @@ class _PhotoPersonSharesCardState extends State<PhotoPersonSharesCard> {
                   ),
                 ),
                 SizedBox(
-                  width: 190,
+                  width: 186,
                   child: TextField(
                     controller: _labelCtl,
                     maxLength: 40,
@@ -299,11 +415,13 @@ class _PhotoPersonSharesCardState extends State<PhotoPersonSharesCard> {
                       labelText: '共享名称（如宝宝成长册）',
                       counterText: '',
                       isDense: true,
-                      border: OutlineInputBorder(),
                     ),
                   ),
                 ),
                 FilledButton.tonalIcon(
+                  style: FilledButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
                   onPressed: _busy ? null : _createShare,
                   icon: const Icon(Icons.share_outlined, size: 16),
                   label: const Text('生成只读共享'),
@@ -312,65 +430,49 @@ class _PhotoPersonSharesCardState extends State<PhotoPersonSharesCard> {
             ),
           ],
           if (_loading && _shares.isEmpty) ...[
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
             const IsleLoadingState(compact: true, label: '正在加载人物共享…'),
           ] else if (_loading) ...[
             const SizedBox(height: 8),
-            const LinearProgressIndicator(),
+            const LinearProgressIndicator(minHeight: 2),
           ],
           if (incoming.isNotEmpty) ...[
-            const SizedBox(height: 14),
-            Text('家人共享给我的人物相册', style: Theme.of(context).textTheme.labelLarge),
-            const SizedBox(height: 6),
-            for (final item in incoming)
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.photo_album_outlined),
-                title: Text(item['label']?.toString() ?? ''),
-                subtitle: Text(
-                  '来自 ${item['ownerUsername'] ?? '家人'} · ${item['photoCount'] ?? 0} 张只读照片',
-                ),
-                trailing: Wrap(
-                  spacing: 6,
-                  children: [
-                    FilledButton.tonal(
-                      onPressed: () => _openShareGallery(item),
-                      child: const Text('浏览'),
-                    ),
-                    TextButton(
-                      onPressed: _busy ? null : () => _deleteShare(item),
-                      child: const Text('退出'),
-                    ),
-                  ],
-                ),
+            const SizedBox(height: 12),
+            Text(
+              '家人共享给我的人物相册',
+              style: theme.textTheme.labelMedium?.copyWith(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
               ),
+            ),
+            const SizedBox(height: 6),
+            _buildGroupedSharesList(
+              context,
+              items: incoming,
+              incoming: true,
+              isDark: isDark,
+              borderColor: borderColor,
+              colors: colors,
+            ),
           ],
           if (outgoing.isNotEmpty) ...[
-            const SizedBox(height: 14),
-            Text('我共享给家人的人物视图', style: Theme.of(context).textTheme.labelLarge),
-            const SizedBox(height: 6),
-            for (final item in outgoing)
-              ListTile(
-                contentPadding: EdgeInsets.zero,
-                leading: const Icon(Icons.people_alt_outlined),
-                title: Text(item['label']?.toString() ?? ''),
-                subtitle: Text(
-                  '共享给 ${item['memberUsername'] ?? '成员'} · ${item['photoCount'] ?? 0} 张 · 零拷贝只读',
-                ),
-                trailing: Wrap(
-                  spacing: 6,
-                  children: [
-                    OutlinedButton(
-                      onPressed: () => _openShareGallery(item),
-                      child: const Text('预览'),
-                    ),
-                    TextButton(
-                      onPressed: _busy ? null : () => _deleteShare(item),
-                      child: const Text('撤销'),
-                    ),
-                  ],
-                ),
+            const SizedBox(height: 12),
+            Text(
+              '我共享给家人的人物视图',
+              style: theme.textTheme.labelMedium?.copyWith(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
               ),
+            ),
+            const SizedBox(height: 6),
+            _buildGroupedSharesList(
+              context,
+              items: outgoing,
+              incoming: false,
+              isDark: isDark,
+              borderColor: borderColor,
+              colors: colors,
+            ),
           ],
         ],
       ),
@@ -432,7 +534,7 @@ class _SharedPersonAssetsSheetState extends State<_SharedPersonAssetsSheet> {
       initialChildSize: 0.78,
       maxChildSize: 0.94,
       builder: (context, controller) => Padding(
-        padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -441,20 +543,24 @@ class _SharedPersonAssetsSheetState extends State<_SharedPersonAssetsSheet> {
                 Expanded(
                   child: Text(
                     widget.title,
-                    style: Theme.of(context).textTheme.titleMedium
-                        ?.copyWith(fontWeight: FontWeight.w700),
+                    style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
                   ),
                 ),
                 IconButton(
+                  visualDensity: VisualDensity.compact,
                   tooltip: '关闭人物照片预览',
                   onPressed: () => Navigator.pop(context),
-                  icon: const Icon(Icons.close_rounded),
+                  icon: const Icon(Icons.close_rounded, size: 20),
                 ),
               ],
             ),
             const SizedBox(height: 8),
             if (_loading)
-              const Expanded(child: Center(child: CircularProgressIndicator()))
+              const Expanded(
+                child: IsleLoadingState(compact: true, label: '正在加载照片…'),
+              )
             else if (_error != null)
               Notice(_error!, error: true, onRetry: _load)
             else if (_assets.isEmpty)
@@ -464,9 +570,9 @@ class _SharedPersonAssetsSheetState extends State<_SharedPersonAssetsSheet> {
                 child: GridView.builder(
                   controller: controller,
                   gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
-                    maxCrossAxisExtent: 136,
-                    mainAxisSpacing: 6,
-                    crossAxisSpacing: 6,
+                    maxCrossAxisExtent: 128,
+                    mainAxisSpacing: 4,
+                    crossAxisSpacing: 4,
                   ),
                   itemCount: _assets.length,
                   itemBuilder: (context, idx) {
@@ -476,7 +582,7 @@ class _SharedPersonAssetsSheetState extends State<_SharedPersonAssetsSheet> {
                         item['liveVideoAssetId'] is num &&
                         (item['liveVideoAssetId'] as num) > 0;
                     return ClipRRect(
-                      borderRadius: BorderRadius.circular(10),
+                      borderRadius: BorderRadius.circular(8),
                       child: Stack(
                         fit: StackFit.expand,
                         children: [
@@ -488,23 +594,23 @@ class _SharedPersonAssetsSheetState extends State<_SharedPersonAssetsSheet> {
                           ),
                           if (isLive)
                             Positioned(
-                              top: 5,
-                              left: 5,
+                              top: 4,
+                              left: 4,
                               child: DecoratedBox(
                                 decoration: BoxDecoration(
                                   color: Colors.black54,
-                                  borderRadius: BorderRadius.circular(10),
+                                  borderRadius: BorderRadius.circular(8),
                                 ),
                                 child: const Padding(
                                   padding: EdgeInsets.symmetric(
                                     horizontal: 5,
-                                    vertical: 2,
+                                    vertical: 1.5,
                                   ),
                                   child: Text(
                                     'LIVE',
                                     style: TextStyle(
                                       color: Colors.white,
-                                      fontSize: 9.5,
+                                      fontSize: 9,
                                       fontWeight: FontWeight.w700,
                                     ),
                                   ),

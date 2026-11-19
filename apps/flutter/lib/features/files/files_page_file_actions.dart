@@ -31,8 +31,57 @@ extension _FilesPageFileActions on _FilesPageState {
     }
   }
 
+  Future<CinemaFilm?> _lookupCinemaFilm(String path) async {
+    try {
+      final response = await widget.api.get(
+        '/api/v2/cinema/lookup',
+        query: {'path': path},
+      );
+      final film = CinemaFilm.fromJson(response);
+      return film.id > 0 ? film : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<void> _openCinemaPlayer(CinemaFilm initialFilm) async {
+    CinemaFilm? next = initialFilm;
+    while (next != null && mounted) {
+      final current = next;
+      next = await Navigator.of(context).push<CinemaFilm>(
+        buildIslePageRoute<CinemaFilm>(
+          fullscreenDialog: true,
+          builder: (_) => CinemaDetailDialog(
+            api: widget.api,
+            film: current,
+            isAdmin: widget.isAdmin,
+            accountName: widget.accountName,
+            onRename: (renamed) async => renamed,
+            onProgressUpdated: (_) {},
+            playerOnly: true,
+          ),
+        ),
+      );
+    }
+  }
+
   Future<void> _preview(FileEntry item) async {
     final kind = classifyFilePreview(item.name);
+    if (kind == FilePreviewKind.video) {
+      final generation = _dir.loadGeneration;
+      final rootIdentity = _dir.rootIdentity;
+      final directory = _dir.path;
+      final cinemaFilm = await _lookupCinemaFilm(item.path);
+      if (!mounted ||
+          !_browserRequestCurrent(generation, rootIdentity) ||
+          directory != _dir.path) {
+        return;
+      }
+      if (cinemaFilm != null) {
+        await _openCinemaPlayer(cinemaFilm);
+        return;
+      }
+    }
     if (kind == FilePreviewKind.image || kind == FilePreviewKind.video) {
       final playlist = FileMediaPlaylist.fromDirectory(_dir.entries, item);
       await Navigator.of(context).push<void>(

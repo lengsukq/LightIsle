@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/isle_theme.dart';
 import '../../core/widgets.dart';
 
 String _formatStorageGiB(double bytes) =>
@@ -16,8 +17,6 @@ double _storageDouble(Object? value, [double fallback = 0]) {
   return double.tryParse(value?.toString() ?? '') ?? fallback;
 }
 
-/// Computes root-level usage proportions across members + filesystem headroom
-/// for [StoragePage] without storing or assuming a fake cross-disk total quota.
 class StorageRootUsageSummary {
   const StorageRootUsageSummary({
     required this.total,
@@ -43,8 +42,9 @@ class StorageRootUsageSummary {
     if (root['online'] != true) return null;
     final total = _storageDouble(root['filesystemTotalBytes']);
     if (total <= 0) return null;
-    final free = _storageDouble(root['filesystemAvailableBytes'])
-        .clamp(0.0, total);
+    final free = _storageDouble(
+      root['filesystemAvailableBytes'],
+    ).clamp(0.0, total);
     final rootId = root['rootID']?.toString() ?? '';
     final generation = _storageInt(root['generation'], -1);
 
@@ -80,7 +80,6 @@ class StorageRootUsageSummary {
   }
 }
 
-/// Compact multi-segment capacity bar for a registered online storage root.
 class StorageRootBreakdownBar extends StatelessWidget {
   const StorageRootBreakdownBar({super.key, required this.summary});
 
@@ -88,33 +87,33 @@ class StorageRootBreakdownBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
+    final palette = IslePalette.of(context);
     final segments = <IsleChartSegment>[
       if (summary.accounted > 0)
         IsleChartSegment(
           label: '成员已入账',
           value: summary.accounted,
-          color: const Color(0xff0071e3),
+          color: palette['brandBlue'],
           detail: _formatStorageGiB(summary.accounted),
         ),
       if (summary.reserved > 0)
         IsleChartSegment(
           label: '预占',
           value: summary.reserved,
-          color: const Color(0xfff59e0b),
+          color: palette['brandAmber'],
           detail: _formatStorageGiB(summary.reserved),
         ),
       if (summary.otherUsed > 0)
         IsleChartSegment(
           label: summary.accounted > 0 ? '磁盘其他占用' : '磁盘已用',
           value: summary.otherUsed,
-          color: colors.secondary.withValues(alpha: 0.55),
+          color: palette['brandTerracotta'].withValues(alpha: 0.65),
           detail: _formatStorageGiB(summary.otherUsed),
         ),
       IsleChartSegment(
         label: '可用',
         value: summary.free,
-        color: const Color(0xff10b981).withValues(alpha: 0.72),
+        color: palette['brandSage'].withValues(alpha: 0.72),
         detail: _formatStorageGiB(summary.free),
       ),
     ];
@@ -128,7 +127,6 @@ class StorageRootBreakdownBar extends StatelessWidget {
   }
 }
 
-/// Compact ring gauge badge showing a percentage inside [StoragePage] cards.
 class StorageCompactDonut extends StatelessWidget {
   const StorageCompactDonut({
     super.key,
@@ -147,7 +145,7 @@ class StorageCompactDonut extends StatelessWidget {
     return IsleDonutGauge(
       fraction: clamped,
       color: color,
-      size: 30,
+      size: 32,
       strokeWidth: 3.5,
       centerText: '${(clamped * 100).round()}%',
       centerStyle: Theme.of(context).textTheme.labelSmall?.copyWith(
@@ -160,7 +158,6 @@ class StorageCompactDonut extends StatelessWidget {
   }
 }
 
-/// Multi-segment quota bar (accounted + upload reserved + remaining quota).
 class StorageQuotaSegmentedBar extends StatelessWidget {
   const StorageQuotaSegmentedBar({
     super.key,
@@ -178,12 +175,13 @@ class StorageQuotaSegmentedBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
+    final palette = IslePalette.of(context);
     final ratio = max > 0 ? ((used + reserved) / max).clamp(0.0, 1.0) : 0.0;
     final accountedColor = ratio >= 0.92
-        ? const Color(0xffef4444)
+        ? colors.error
         : ratio >= 0.8
-        ? const Color(0xfff59e0b)
-        : const Color(0xff0071e3);
+        ? palette['brandAmber']
+        : palette['brandBlue'];
     final remaining = (max - used - reserved).clamp(0.0, max);
 
     return IsleSegmentedBar(
@@ -204,13 +202,13 @@ class StorageQuotaSegmentedBar extends StatelessWidget {
           IsleChartSegment(
             label: '上传预占',
             value: reserved,
-            color: const Color(0xfff59e0b),
+            color: palette['brandAmber'],
             detail: _formatStorageGiB(reserved),
           ),
         IsleChartSegment(
           label: '剩余额度',
           value: remaining,
-          color: colors.surfaceContainerHighest,
+          color: palette['cardItemBottom'],
           detail: _formatStorageGiB(remaining),
         ),
       ],
@@ -221,7 +219,6 @@ class StorageQuotaSegmentedBar extends StatelessWidget {
   }
 }
 
-/// Compact root status row with inline usage ring gauge and segmented breakdown.
 class StorageRootSummaryRow extends StatelessWidget {
   const StorageRootSummaryRow({
     super.key,
@@ -241,15 +238,21 @@ class StorageRootSummaryRow extends StatelessWidget {
     final online = root['online'] == true;
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    final palette = IslePalette.of(context);
+    final sage = palette['brandSage'];
+    final amber = palette['brandAmber'];
+    final mineral = palette['brandBlue'];
     final ratio = summary?.usedFraction ?? 0.0;
     final ringColor = ratio >= 0.9
-        ? const Color(0xffef4444)
+        ? colors.error
         : ratio >= 0.78
-        ? const Color(0xfff59e0b)
-        : const Color(0xff0071e3);
+        ? amber
+        : mineral;
 
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 6),
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.all(12),
+      decoration: IsleDecorations.recessedWell(context, radius: 12),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -259,9 +262,7 @@ class StorageRootSummaryRow extends StatelessWidget {
                 online
                     ? Icons.check_circle_outline_rounded
                     : Icons.do_not_disturb_on_outlined,
-                color: online
-                    ? const Color(0xff10b981)
-                    : const Color(0xfff59e0b),
+                color: online ? sage : amber,
                 size: 20,
               ),
               const SizedBox(width: 10),
@@ -275,13 +276,10 @@ class StorageRootSummaryRow extends StatelessWidget {
                       children: [
                         Text(
                           root['name']?.toString() ?? '未命名存储位置',
-                          style: const TextStyle(fontWeight: FontWeight.w600),
+                          style: const TextStyle(fontWeight: FontWeight.w700),
                         ),
                         if (root['isDefault'] == true)
-                          const IsleStatusBadge(
-                            label: '默认主目录',
-                            color: Color(0xff0071e3),
-                          ),
+                          IsleStatusBadge(label: '默认主目录', color: mineral),
                       ],
                     ),
                     const SizedBox(height: 2),
@@ -306,7 +304,7 @@ class StorageRootSummaryRow extends StatelessWidget {
             ],
           ),
           if (summary != null) ...[
-            const SizedBox(height: 6),
+            const SizedBox(height: 8),
             Padding(
               padding: const EdgeInsets.only(left: 30),
               child: StorageRootBreakdownBar(summary: summary!),

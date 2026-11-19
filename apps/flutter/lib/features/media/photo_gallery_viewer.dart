@@ -77,17 +77,35 @@ class PhotoGalleryViewer extends StatefulWidget {
   static Route<void> route(WidgetBuilder builder) => PageRouteBuilder<void>(
     opaque: false,
     barrierColor: Colors.transparent,
-    transitionDuration: const Duration(milliseconds: 220),
-    reverseTransitionDuration: const Duration(milliseconds: 180),
+    transitionDuration: const Duration(milliseconds: 280),
+    reverseTransitionDuration: const Duration(milliseconds: 200),
     pageBuilder: (context, _, _) => builder(context),
-    transitionsBuilder: (context, animation, _, child) => FadeTransition(
-      opacity: CurvedAnimation(
-        parent: animation,
-        curve: Curves.easeOutCubic,
-        reverseCurve: Curves.easeInCubic,
-      ),
-      child: child,
-    ),
+    transitionsBuilder: (context, animation, _, child) {
+      if (IsleMotion.reducedMotion(context)) {
+        return child;
+      }
+      return AnimatedBuilder(
+        animation: animation,
+        child: child,
+        builder: (context, viewerChild) {
+          final isReverse = animation.status == AnimationStatus.reverse;
+          final t = animation.value.clamp(0.0, 1.0);
+          final progress = isReverse
+              ? Curves.easeOutCubic.transform(t)
+              : IsleMotion.gentleSpring.transform(t);
+          final opacity = isReverse
+              ? Curves.easeOut.transform(t)
+              : const Interval(0.0, 0.78, curve: Curves.easeOut).transform(t);
+          final scale = isReverse
+              ? (0.975 + 0.025 * progress)
+              : (0.962 + 0.038 * progress);
+          return Opacity(
+            opacity: opacity.clamp(0.0, 1.0),
+            child: Transform.scale(scale: scale, child: viewerChild),
+          );
+        },
+      );
+    },
   );
 
   @override
@@ -431,45 +449,52 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
                         ),
                       ),
                     ),
-                  if (_chromeVisible &&
-                      (defaultTargetPlatform == TargetPlatform.macOS ||
-                          defaultTargetPlatform == TargetPlatform.windows ||
-                          defaultTargetPlatform == TargetPlatform.linux ||
-                          MediaQuery.sizeOf(context).width >= 600)) ...[
+                  if (defaultTargetPlatform == TargetPlatform.macOS ||
+                      defaultTargetPlatform == TargetPlatform.windows ||
+                      defaultTargetPlatform == TargetPlatform.linux ||
+                      MediaQuery.sizeOf(context).width >= 600) ...[
                     if (_index > 0)
                       Positioned(
                         left: 20,
                         top: 0,
                         bottom: 0,
-                        child: Center(
-                          child: ClipOval(
-                            child: IsleGlassBackdrop(
-                              blur: 16,
-                              child: Material(
-                                color: Colors.transparent,
-                                shape: const CircleBorder(),
-                                clipBehavior: Clip.antiAlias,
-                                child: InkWell(
-                                  onTap: () => unawaited(_navigate(-1)),
-                                  child: Container(
-                                    width: 44,
-                                    height: 44,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: Colors.black.withValues(
-                                        alpha: 0.45,
-                                      ),
-                                      border: Border.all(
-                                        color: Colors.white.withValues(
-                                          alpha: 0.22,
+                        child: IgnorePointer(
+                          ignoring: !_chromeVisible,
+                          child: AnimatedOpacity(
+                            opacity: _chromeVisible ? 1.0 : 0.0,
+                            duration: chromeDuration,
+                            curve: IsleMotion.silk,
+                            child: Center(
+                              child: ClipOval(
+                                child: IsleGlassBackdrop(
+                                  blur: 16,
+                                  child: Material(
+                                    color: Colors.transparent,
+                                    shape: const CircleBorder(),
+                                    clipBehavior: Clip.antiAlias,
+                                    child: InkWell(
+                                      onTap: () => unawaited(_navigate(-1)),
+                                      child: Container(
+                                        width: 44,
+                                        height: 44,
+                                        decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          color: Colors.black.withValues(
+                                            alpha: 0.45,
+                                          ),
+                                          border: Border.all(
+                                            color: Colors.white.withValues(
+                                              alpha: 0.22,
+                                            ),
+                                            width: 0.8,
+                                          ),
                                         ),
-                                        width: 0.8,
+                                        child: const Icon(
+                                          Icons.chevron_left_rounded,
+                                          color: Colors.white,
+                                          size: 28,
+                                        ),
                                       ),
-                                    ),
-                                    child: const Icon(
-                                      Icons.chevron_left_rounded,
-                                      color: Colors.white,
-                                      size: 28,
                                     ),
                                   ),
                                 ),
@@ -483,35 +508,43 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
                         right: 20,
                         top: 0,
                         bottom: 0,
-                        child: Center(
-                          child: ClipOval(
-                            child: IsleGlassBackdrop(
-                              blur: 16,
-                              child: Material(
-                                color: Colors.transparent,
-                                shape: const CircleBorder(),
-                                clipBehavior: Clip.antiAlias,
-                                child: InkWell(
-                                  onTap: () => unawaited(_navigate(1)),
-                                  child: Container(
-                                    width: 44,
-                                    height: 44,
-                                    decoration: BoxDecoration(
-                                      shape: BoxShape.circle,
-                                      color: Colors.black.withValues(
-                                        alpha: 0.45,
-                                      ),
-                                      border: Border.all(
-                                        color: Colors.white.withValues(
-                                          alpha: 0.22,
+                        child: IgnorePointer(
+                          ignoring: !_chromeVisible,
+                          child: AnimatedOpacity(
+                            opacity: _chromeVisible ? 1.0 : 0.0,
+                            duration: chromeDuration,
+                            curve: IsleMotion.silk,
+                            child: Center(
+                              child: ClipOval(
+                                child: IsleGlassBackdrop(
+                                  blur: 16,
+                                  child: Material(
+                                    color: Colors.transparent,
+                                    shape: const CircleBorder(),
+                                    clipBehavior: Clip.antiAlias,
+                                    child: InkWell(
+                                      onTap: () => unawaited(_navigate(1)),
+                                      child: Container(
+                                        width: 44,
+                                        height: 44,
+                                        decoration: BoxDecoration(
+                                          shape: BoxShape.circle,
+                                          color: Colors.black.withValues(
+                                            alpha: 0.45,
+                                          ),
+                                          border: Border.all(
+                                            color: Colors.white.withValues(
+                                              alpha: 0.22,
+                                            ),
+                                            width: 0.8,
+                                          ),
                                         ),
-                                        width: 0.8,
+                                        child: const Icon(
+                                          Icons.chevron_right_rounded,
+                                          color: Colors.white,
+                                          size: 28,
+                                        ),
                                       ),
-                                    ),
-                                    child: const Icon(
-                                      Icons.chevron_right_rounded,
-                                      color: Colors.white,
-                                      size: 28,
                                     ),
                                   ),
                                 ),
@@ -527,19 +560,26 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
                     right: 0,
                     child: IgnorePointer(
                       ignoring: !_chromeVisible,
-                      child: AnimatedOpacity(
-                        opacity: _chromeVisible ? 1.0 : 0.0,
+                      child: AnimatedSlide(
+                        offset: _chromeVisible
+                            ? Offset.zero
+                            : const Offset(0, -0.10),
                         duration: chromeDuration,
-                        curve: Curves.easeOutCubic,
-                        child: DecoratedBox(
-                          decoration: const BoxDecoration(
-                            gradient: LinearGradient(
-                              begin: Alignment.topCenter,
-                              end: Alignment.bottomCenter,
-                              colors: [Color(0xB5000000), Colors.transparent],
+                        curve: IsleMotion.silk,
+                        child: AnimatedOpacity(
+                          opacity: _chromeVisible ? 1.0 : 0.0,
+                          duration: chromeDuration,
+                          curve: IsleMotion.silk,
+                          child: DecoratedBox(
+                            decoration: const BoxDecoration(
+                              gradient: LinearGradient(
+                                begin: Alignment.topCenter,
+                                end: Alignment.bottomCenter,
+                                colors: [Color(0xB5000000), Colors.transparent],
+                              ),
                             ),
+                            child: _buildModernHeader(asset, safe.top),
                           ),
-                          child: _buildModernHeader(asset, safe.top),
                         ),
                       ),
                     ),
@@ -551,14 +591,21 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
                       bottom: 0,
                       child: IgnorePointer(
                         ignoring: !_chromeVisible,
-                        child: AnimatedOpacity(
-                          opacity: _chromeVisible ? 1.0 : 0.0,
+                        child: AnimatedSlide(
+                          offset: _chromeVisible
+                              ? Offset.zero
+                              : const Offset(0, 0.12),
                           duration: chromeDuration,
-                          curve: Curves.easeOutCubic,
-                          child: _buildBottomToolbar(
-                            context,
-                            asset,
-                            safe.bottom,
+                          curve: IsleMotion.silk,
+                          child: AnimatedOpacity(
+                            opacity: _chromeVisible ? 1.0 : 0.0,
+                            duration: chromeDuration,
+                            curve: IsleMotion.silk,
+                            child: _buildBottomToolbar(
+                              context,
+                              asset,
+                              safe.bottom,
+                            ),
                           ),
                         ),
                       ),
@@ -566,12 +613,21 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
                 ],
               ),
             ),
-            if (wideSidebar)
-              PhotoViewerInfoSidebar(
-                asset: asset,
-                onClose: () => setState(() => _showInfoSidebar = false),
-                onOpenFullDetails: () => unawaited(_openFullDetailsAndSync()),
+            ClipRect(
+              child: AnimatedSize(
+                duration: disableAnimations ? Duration.zero : IsleMotion.normal,
+                curve: IsleMotion.gentleSpring,
+                alignment: Alignment.centerLeft,
+                child: wideSidebar
+                    ? PhotoViewerInfoSidebar(
+                        asset: asset,
+                        onClose: () => setState(() => _showInfoSidebar = false),
+                        onOpenFullDetails: () =>
+                            unawaited(_openFullDetailsAndSync()),
+                      )
+                    : const SizedBox.shrink(),
               ),
+            ),
           ],
         ),
       ),

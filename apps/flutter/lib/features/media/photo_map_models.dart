@@ -165,117 +165,157 @@ Future<({PhotoMapTileSource source, String customUrl})?> _showTileConfigSheet(
   var source = initialSource;
   var input = initialUrl;
   String? validation;
+  final isDark = Theme.of(context).brightness == Brightness.dark;
   final saved = await showModalBottomSheet<bool>(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
+    shape: IsleShapes.sheet(
+      side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
+    ),
     builder: (sheetContext) => StatefulBuilder(
-      builder: (sheetContext, update) => Padding(
-        padding: EdgeInsets.fromLTRB(
-          20,
-          14,
-          20,
-          MediaQuery.viewInsetsOf(sheetContext).bottom + 24,
-        ),
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.85,
+      builder: (sheetContext, update) {
+        final theme = Theme.of(sheetContext);
+        final sheetDark = theme.brightness == Brightness.dark;
+        return Padding(
+          padding: EdgeInsets.fromLTRB(
+            20,
+            10,
+            20,
+            MediaQuery.viewInsetsOf(sheetContext).bottom + 20,
           ),
-          child: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  '选择地图来源',
-                  style: Theme.of(sheetContext).textTheme.titleLarge,
-                ),
-                const SizedBox(height: 12),
-                const Text('在线地图由第三方提供，可能收到访问 IP 和浏览范围，但不会收到照片原件。'),
-                const SizedBox(height: 12),
-                DropdownButtonFormField<PhotoMapTileSource>(
-                  initialValue: source,
-                  isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: '地图来源',
-                    border: OutlineInputBorder(),
-                  ),
-                  items: [
-                    for (final candidate in PhotoMapTileSource.values)
-                      DropdownMenuItem(
-                        value: candidate,
-                        child: Text(candidate.label),
+          child: ConstrainedBox(
+            constraints: BoxConstraints(
+              maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.85,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 36,
+                      height: 4,
+                      margin: const EdgeInsets.only(bottom: 12),
+                      decoration: BoxDecoration(
+                        color: IsleGlass.rimBorderColor(
+                          sheetDark,
+                          hovered: true,
+                        ),
+                        borderRadius: IsleRadius.brPill,
                       ),
-                  ],
-                  onChanged: (value) {
-                    if (value != null) {
-                      update(() {
-                        source = value;
-                        validation = null;
-                      });
-                    }
-                  },
-                ),
-                if (source == PhotoMapTileSource.tianditu) ...[
-                  const SizedBox(height: 12),
-                  const Text(
-                    '天地图由 Mac 统一配置。请管理员到 Mac 版 LightIsle「设置 → 媒体服务」填写 Key，手机无需单独设置。',
-                  ),
-                ] else if (source == PhotoMapTileSource.custom) ...[
-                  const SizedBox(height: 12),
-                  TextFormField(
-                    key: ValueKey(
-                      input == PhotoMapTiles.openStreetMapUrl
-                          ? 'default-custom-url'
-                          : 'custom-url',
                     ),
-                    initialValue: input,
-                    onChanged: (value) => input = value,
-                    decoration: InputDecoration(
-                      labelText: '自定义地图地址',
-                      hintText: PhotoMapTiles.openStreetMapUrl,
-                      errorText: validation,
-                      border: const OutlineInputBorder(),
+                  ),
+                  Text(
+                    '选择地图来源',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w700,
                     ),
-                    autocorrect: false,
-                    keyboardType: TextInputType.url,
                   ),
-                  TextButton(
-                    onPressed: () => update(() {
-                      input = PhotoMapTiles.openStreetMapUrl;
-                      validation = null;
-                    }),
-                    child: const Text('恢复默认地址'),
+                  const SizedBox(height: 6),
+                  Text(
+                    '在线地图由第三方提供，可能收到访问 IP 和浏览范围，但不会收到照片原件。',
+                    style: theme.textTheme.bodySmall?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
                   ),
-                ] else ...[
-                  const SizedBox(height: 12),
-                  const Text('使用 OpenStreetMap 在线地图。请遵守服务商的使用规定。'),
-                ],
-                const SizedBox(height: 12),
-                Align(
-                  alignment: Alignment.centerLeft,
-                  child: FilledButton(
-                    onPressed: () {
-                      final issue = switch (source) {
-                        PhotoMapTileSource.tianditu => null,
-                        PhotoMapTileSource.openStreetMap => null,
-                        PhotoMapTileSource.custom =>
-                          PhotoMapTiles.validateCustomUrl(input),
-                      };
-                      if (issue != null) {
-                        update(() => validation = issue);
-                      } else {
-                        Navigator.pop(sheetContext, true);
+                  const SizedBox(height: 14),
+                  DropdownButtonFormField<PhotoMapTileSource>(
+                    initialValue: source,
+                    isExpanded: true,
+                    decoration: const InputDecoration(
+                      labelText: '地图来源',
+                      isDense: true,
+                    ),
+                    items: [
+                      for (final candidate in PhotoMapTileSource.values)
+                        DropdownMenuItem(
+                          value: candidate,
+                          child: Text(candidate.label),
+                        ),
+                    ],
+                    onChanged: (value) {
+                      if (value != null) {
+                        update(() {
+                          source = value;
+                          validation = null;
+                        });
                       }
                     },
-                    child: const Text('保存地图设置'),
                   ),
-                ),
-              ],
+                  if (source == PhotoMapTileSource.tianditu) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      '天地图由 Mac 统一配置。请管理员到 Mac 版 LightIsle「设置 → 媒体服务」填写 Key，手机无需单独设置。',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ] else if (source == PhotoMapTileSource.custom) ...[
+                    const SizedBox(height: 12),
+                    TextFormField(
+                      key: ValueKey(
+                        input == PhotoMapTiles.openStreetMapUrl
+                            ? 'default-custom-url'
+                            : 'custom-url',
+                      ),
+                      initialValue: input,
+                      onChanged: (value) => input = value,
+                      decoration: InputDecoration(
+                        labelText: '自定义地图地址',
+                        hintText: PhotoMapTiles.openStreetMapUrl,
+                        errorText: validation,
+                        isDense: true,
+                      ),
+                      autocorrect: false,
+                      keyboardType: TextInputType.url,
+                    ),
+                    TextButton(
+                      style: TextButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      onPressed: () => update(() {
+                        input = PhotoMapTiles.openStreetMapUrl;
+                        validation = null;
+                      }),
+                      child: const Text('恢复默认地址'),
+                    ),
+                  ] else ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      '使用 OpenStreetMap 在线地图。请遵守服务商的使用规定。',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: theme.colorScheme.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
+                  const SizedBox(height: 14),
+                  Align(
+                    alignment: Alignment.centerLeft,
+                    child: FilledButton(
+                      onPressed: () {
+                        final issue = switch (source) {
+                          PhotoMapTileSource.tianditu => null,
+                          PhotoMapTileSource.openStreetMap => null,
+                          PhotoMapTileSource.custom =>
+                            PhotoMapTiles.validateCustomUrl(input),
+                        };
+                        if (issue != null) {
+                          update(() => validation = issue);
+                        } else {
+                          Navigator.pop(sheetContext, true);
+                        }
+                      },
+                      child: const Text('保存地图设置'),
+                    ),
+                  ),
+                ],
+              ),
             ),
           ),
-        ),
-      ),
+        );
+      },
     ),
   );
   if (saved != true) return null;
@@ -321,10 +361,10 @@ class _PhotoMapOptionsHeader extends StatelessWidget {
     return IsleSurface(
       margin: EdgeInsets.symmetric(
         horizontal: IsleLayout.pageInset(MediaQuery.sizeOf(context).width),
-        vertical: 6,
+        vertical: 4,
       ),
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      radius: 14,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      radius: IsleRadius.md,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -341,9 +381,17 @@ class _PhotoMapOptionsHeader extends StatelessWidget {
             Align(
               alignment: Alignment.centerLeft,
               child: TextButton.icon(
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                ),
                 onPressed: onToggleExpand,
                 icon: Icon(
                   expanded ? Icons.expand_less_rounded : Icons.tune_rounded,
+                  size: 16,
                 ),
                 label: Text(expanded ? '收起地图选项' : '地图选项'),
               ),
@@ -360,7 +408,7 @@ class _PhotoMapOptionsHeader extends StatelessWidget {
                   children: [
                     Icon(
                       tileSourceReady ? Icons.public : Icons.info_outline,
-                      size: 16,
+                      size: 15,
                       color: tileSourceReady
                           ? theme.colorScheme.primary
                           : theme.colorScheme.onSurfaceVariant,
@@ -377,7 +425,14 @@ class _PhotoMapOptionsHeader extends StatelessWidget {
                   ],
                 ),
                 TextButton.icon(
-                  icon: const Icon(Icons.settings_outlined),
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 4,
+                    ),
+                  ),
+                  icon: const Icon(Icons.settings_outlined, size: 16),
                   label: const Text('地图设置'),
                   onPressed: onConfigureTiles,
                 ),
@@ -386,15 +441,20 @@ class _PhotoMapOptionsHeader extends StatelessWidget {
             if (!tileSourceReady && tileSource == PhotoMapTileSource.tianditu)
               Wrap(
                 crossAxisAlignment: WrapCrossAlignment.center,
+                spacing: 6,
                 children: [
                   Text(
                     mapStatusError
                         ? '无法读取地图设置，请检查 Mac 是否在线。'
                         : '天地图还没有设置，请管理员在 Mac 版 LightIsle「设置 → 媒体服务」填写 Key。',
+                    style: theme.textTheme.bodySmall,
                   ),
                   TextButton.icon(
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                    ),
                     onPressed: onRefreshConfig,
-                    icon: const Icon(Icons.refresh),
+                    icon: const Icon(Icons.refresh, size: 16),
                     label: const Text('重新检查'),
                   ),
                 ],

@@ -514,49 +514,84 @@ extension _PhotosPageBatchActions on _PhotosPageState {
         mounted &&
         _feed.generation == listGeneration &&
         (widget.api.selectedRoot?.identity ?? 'default') == rootIdentity;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final choice = await showModalBottomSheet<int>(
       context: context,
       showDragHandle: true,
-      builder: (sheetContext) => SafeArea(
-        child: ListView(
-          shrinkWrap: true,
-          padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
-          children: [
-            Text('整理到相册', style: Theme.of(sheetContext).textTheme.titleLarge),
-            const SizedBox(height: 10),
-            ListTile(
-              key: const ValueKey('batchToFolderAlbumTile'),
-              leading: const Icon(Icons.folder_special_outlined),
-              title: const Text('文件夹相册（复制或移动）'),
-              subtitle: const Text('整理到照片目录中的真实文件夹，支持新建相册与家庭共享'),
-              trailing: const Icon(Icons.chevron_right_rounded),
-              onTap: () => Navigator.pop(sheetContext, -1),
-            ),
-            if (_catalog.privateAlbums.isNotEmpty) ...[
-              const Divider(height: 20),
-              Padding(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 16,
-                  vertical: 4,
-                ),
-                child: Text(
-                  '旧版私人相册',
-                  style: Theme.of(sheetContext).textTheme.labelMedium?.copyWith(
-                    color: Theme.of(sheetContext).colorScheme.onSurfaceVariant,
-                  ),
+      shape: IsleShapes.sheet(
+        side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
+      ),
+      builder: (sheetContext) {
+        final sheetTheme = Theme.of(sheetContext);
+        return SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.fromLTRB(16, 4, 16, 24),
+            children: [
+              Text(
+                '整理到相册',
+                style: sheetTheme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
                 ),
               ),
-              for (final album in _catalog.privateAlbums)
-                ListTile(
-                  leading: const Icon(Icons.photo_album_outlined),
-                  title: Text(album.name),
-                  subtitle: Text('${album.count} 项 · 仅自己可见'),
-                  onTap: () => Navigator.pop(sheetContext, album.id),
+              const SizedBox(height: 10),
+              IsleGroupCard(
+                margin: EdgeInsets.zero,
+                children: [
+                  ListTile(
+                    key: const ValueKey('batchToFolderAlbumTile'),
+                    dense: true,
+                    leading: IsleSquircleBadge(
+                      icon: Icons.folder_special_outlined,
+                      color: sheetTheme.colorScheme.primary,
+                      size: 32,
+                      iconSize: 17,
+                    ),
+                    title: const Text('文件夹相册（复制或移动）'),
+                    subtitle: const Text('整理到照片目录中的真实文件夹，支持新建相册与家庭共享'),
+                    trailing: const Icon(Icons.chevron_right_rounded, size: 18),
+                    onTap: () => Navigator.pop(sheetContext, -1),
+                  ),
+                ],
+              ),
+              if (_catalog.privateAlbums.isNotEmpty) ...[
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(4, 14, 4, 6),
+                  child: Text(
+                    '旧版私人相册',
+                    style: sheetTheme.textTheme.labelMedium?.copyWith(
+                      color: sheetTheme.colorScheme.onSurfaceVariant,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                 ),
+                IsleGroupCard(
+                  margin: EdgeInsets.zero,
+                  children: [
+                    for (final album in _catalog.privateAlbums)
+                      ListTile(
+                        dense: true,
+                        leading: IsleSquircleBadge(
+                          icon: Icons.photo_album_outlined,
+                          color: sheetTheme.colorScheme.secondary,
+                          size: 32,
+                          iconSize: 17,
+                        ),
+                        title: Text(album.name),
+                        subtitle: Text('${album.count} 项 · 仅自己可见'),
+                        trailing: const Icon(
+                          Icons.chevron_right_rounded,
+                          size: 18,
+                        ),
+                        onTap: () => Navigator.pop(sheetContext, album.id),
+                      ),
+                  ],
+                ),
+              ],
             ],
-          ],
-        ),
-      ),
+          ),
+        );
+      },
     );
     if (choice == null || !mounted) return;
     if (!stillCurrent() ||

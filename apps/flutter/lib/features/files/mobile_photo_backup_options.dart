@@ -150,54 +150,52 @@ extension _MobilePhotoBackupOptions on _MobilePhotoBackupState {
     ThemeData theme,
     ColorScheme colors,
   ) {
+    final isDark = theme.brightness == Brightness.dark;
+    final borderColor = IsleGlass.rimBorderColor(isDark);
     Widget divider() => Divider(
       height: 1,
-      indent: 16,
-      endIndent: 16,
-      color: colors.outlineVariant.withValues(alpha: 0.3),
+      thickness: 1,
+      indent: 14,
+      endIndent: 14,
+      color: borderColor,
     );
 
     return IsleSurface(
-      margin: const EdgeInsets.only(bottom: 12),
+      margin: EdgeInsets.zero,
       padding: EdgeInsets.zero,
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(16, 14, 16, 12),
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text(
                   '备份相册范围',
                   style: theme.textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w600,
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
-                const SizedBox(height: 4),
-                Text(
-                  _isAndroid
-                      ? (_options.albumScope == 'camera'
-                            ? '仅扫描相机目录（DCIM），自动排除微信表情包、应用缓存图片与屏幕截图。'
-                            : '扫描手机上的全部图片媒体（可能包含聊天缓存、下载图与屏幕截图）。')
-                      : (_options.albumScope == 'camera'
-                            ? '聚焦拍摄照片与实况影像，自动排除屏幕截图。'
-                            : '扫描系统照片库中的全部项目（含屏幕截图与保存的图片）。'),
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: colors.onSurfaceVariant,
-                  ),
-                ),
-                const SizedBox(height: 10),
+                const SizedBox(height: 8),
                 SegmentedButton<String>(
+                  style: SegmentedButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                    textStyle: const TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
                   segments: const [
                     ButtonSegment<String>(
                       value: 'camera',
-                      icon: Icon(Icons.camera_alt_outlined, size: 17),
+                      icon: Icon(Icons.camera_alt_outlined, size: 16),
                       label: Text('仅相机拍摄（推荐）'),
                     ),
                     ButtonSegment<String>(
                       value: 'all',
-                      icon: Icon(Icons.photo_library_outlined, size: 17),
+                      icon: Icon(Icons.photo_library_outlined, size: 16),
                       label: Text('全部手机媒体'),
                     ),
                   ],
@@ -210,9 +208,16 @@ extension _MobilePhotoBackupOptions on _MobilePhotoBackupState {
             ),
           ),
           divider(),
-          SwitchListTile(
-            title: const Text('进入此页面或返回前台时自动检查'),
-            subtitle: const Text('只在 App 前台自动启动；不是 Android 系统后台定时任务。'),
+          SwitchListTile.adaptive(
+            dense: true,
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 14,
+              vertical: 2,
+            ),
+            title: const Text(
+              '进入此页面或返回前台时自动检查',
+              style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600),
+            ),
             value: _options.onForeground,
             onChanged: _progress.busy
                 ? null
@@ -222,8 +227,16 @@ extension _MobilePhotoBackupOptions on _MobilePhotoBackupState {
                   },
           ),
           divider(),
-          SwitchListTile(
-            title: const Text('仅 Wi-Fi 备份'),
+          SwitchListTile.adaptive(
+            dense: true,
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 14,
+              vertical: 2,
+            ),
+            title: const Text(
+              '仅 Wi-Fi 备份',
+              style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600),
+            ),
             value: _options.wifiOnly,
             onChanged: _progress.busy
                 ? null
@@ -234,10 +247,15 @@ extension _MobilePhotoBackupOptions on _MobilePhotoBackupState {
           ),
           if (_isIOS) ...[
             divider(),
-            SwitchListTile(
-              title: const Text('Wi-Fi 下允许下载 iCloud 原片后备份'),
-              subtitle: const Text(
-                '开启「优化 iPhone 存储空间」时，仅在连接 Wi-Fi 期间向 iCloud 请求尚未落盘的原片。',
+            SwitchListTile.adaptive(
+              dense: true,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 2,
+              ),
+              title: const Text(
+                'Wi-Fi 下允许下载 iCloud 原片后备份',
+                style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600),
               ),
               value: _options.allowICloudDownload,
               onChanged: _progress.busy
@@ -250,10 +268,15 @@ extension _MobilePhotoBackupOptions on _MobilePhotoBackupState {
           ],
           if (_isAndroid && _personalDestination) ...[
             divider(),
-            SwitchListTile(
-              title: const Text('系统后台自动备份（每 6 小时检查）'),
-              subtitle: const Text(
-                '需明确授权；系统在 Wi-Fi 和电量允许时调度。完整登录会话以 Android Keystore 加密保存最多 7 天，关闭或退出登录即清除。',
+            SwitchListTile.adaptive(
+              dense: true,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 14,
+                vertical: 2,
+              ),
+              title: const Text(
+                '系统后台自动备份（每 6 小时检查）',
+                style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600),
               ),
               value: _background.enabled,
               onChanged: _background.busy
@@ -263,12 +286,15 @@ extension _MobilePhotoBackupOptions on _MobilePhotoBackupState {
           ],
           if (_isAndroid) _buildAndroidBackgroundStatus(theme, colors),
           divider(),
-          SwitchListTile(
-            title: const Text('同时备份视频'),
-            subtitle: Text(
-              _isAndroid
-                  ? '需要系统视频读取授权。前台支持流式上传超 2 GiB 的 4K/长视频；定时后台备份仍只处理照片。'
-                  : '包含普通视频和 Live Photo 的配套视频原片；可能明显增加存储和网络用量。',
+          SwitchListTile.adaptive(
+            dense: true,
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 14,
+              vertical: 2,
+            ),
+            title: const Text(
+              '同时备份视频',
+              style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600),
             ),
             value: _options.includeVideos,
             onChanged: _progress.busy
@@ -299,10 +325,15 @@ extension _MobilePhotoBackupOptions on _MobilePhotoBackupState {
                   },
           ),
           divider(),
-          SwitchListTile(
-            title: const Text('按拍摄年月分目录（YYYY/MM）'),
-            subtitle: const Text(
-              '开启后前台备份按拍摄时间写入 设备目录/2026/05/…，方便在 Finder 中按月份浏览。',
+          SwitchListTile.adaptive(
+            dense: true,
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 14,
+              vertical: 2,
+            ),
+            title: const Text(
+              '按拍摄年月分目录（YYYY/MM）',
+              style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600),
             ),
             value: _options.organizeByYearMonth,
             onChanged: _progress.busy
@@ -317,67 +348,80 @@ extension _MobilePhotoBackupOptions on _MobilePhotoBackupState {
     );
   }
 
-  Widget _buildAdvancedDisclosure(ThemeData theme, ColorScheme colors) {
-    return IsleDisclosureCard(
-      title: const Text('高级批量设置与备份记录'),
-      initiallyExpanded: false,
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              DropdownButtonFormField<int>(
-                initialValue: _options.batchPages,
-                decoration: InputDecoration(
-                  labelText: '单次前台检查批量',
-                  helperText: '大相册首次备份可选择 1200 或 4000 张；手机会逐张核验，不会并发大量读取原片。',
-                  filled: true,
-                  fillColor: colors.surfaceContainerHighest.withValues(
-                    alpha: 0.35,
-                  ),
-                  border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(
-                      color: colors.outlineVariant.withValues(alpha: 0.4),
-                    ),
-                  ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(12),
-                    borderSide: BorderSide(
-                      color: colors.outlineVariant.withValues(alpha: 0.4),
-                    ),
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(
-                    horizontal: 14,
-                    vertical: 12,
-                  ),
-                ),
-                items: const [
-                  DropdownMenuItem(value: 10, child: Text('400 张 · 省电模式')),
-                  DropdownMenuItem(value: 30, child: Text('1200 张 · 普通批量')),
-                  DropdownMenuItem(value: 100, child: Text('4000 张 · 首次补跑')),
-                ],
-                onChanged: _progress.busy
-                    ? null
-                    : (value) {
-                        if (value == null) return;
-                        _updateState(() => _options.batchPages = value);
-                        unawaited(_saveOptions());
-                      },
-              ),
-              const SizedBox(height: 10),
-              Text(
-                '最近成功核对：${_progress.lastVerifiedAt > 0 ? DateTime.fromMillisecondsSinceEpoch(_progress.lastVerifiedAt).toLocal().toString().substring(0, 16) : "尚无"} · '
-                '最近扫描至末尾：${_progress.lastCompleteAt > 0 ? DateTime.fromMillisecondsSinceEpoch(_progress.lastCompleteAt).toLocal().toString().substring(0, 16) : "尚无"}',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: colors.onSurfaceVariant,
-                ),
-              ),
-            ],
+  Future<void> _showBatchSettingsDialog(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          shape: IsleShapes.card(
+            side: BorderSide(color: IsleGlass.rimBorderColor(isDark)),
           ),
+          title: const Text('批量与备份记录'),
+          content: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 380),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                DropdownButtonFormField<int>(
+                  initialValue: _options.batchPages,
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    labelText: '单次前台检查批量',
+                  ),
+                  items: const [
+                    DropdownMenuItem(value: 10, child: Text('400 张 · 省电模式')),
+                    DropdownMenuItem(value: 30, child: Text('1200 张 · 普通批量')),
+                    DropdownMenuItem(value: 100, child: Text('4000 张 · 首次补跑')),
+                  ],
+                  onChanged: _progress.busy
+                      ? null
+                      : (value) {
+                          if (value == null) return;
+                          _updateState(() => _options.batchPages = value);
+                          setDialogState(() {});
+                          unawaited(_saveOptions());
+                        },
+                ),
+                const SizedBox(height: 12),
+                IsleKeyValueRow(
+                  label: '最近核对',
+                  value: _progress.lastVerifiedAt > 0
+                      ? DateTime.fromMillisecondsSinceEpoch(
+                          _progress.lastVerifiedAt,
+                        ).toLocal().toString().substring(0, 16)
+                      : '尚无',
+                ),
+                IsleKeyValueRow(
+                  label: '最近扫描至末尾',
+                  value: _progress.lastCompleteAt > 0
+                      ? DateTime.fromMillisecondsSinceEpoch(
+                          _progress.lastCompleteAt,
+                        ).toLocal().toString().substring(0, 16)
+                      : '尚无',
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '大相册首次备份可选 1200 或 4000 张；客户端逐张校验，不会并发读取大量原片。',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    fontSize: 12,
+                    color: colors.onSurfaceVariant,
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            FilledButton.tonal(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('完成'),
+            ),
+          ],
         ),
-      ],
+      ),
     );
   }
 }

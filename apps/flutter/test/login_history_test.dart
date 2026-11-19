@@ -3,6 +3,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:lightisle/core/insecure_http_allowlist.dart';
 import 'package:lightisle/core/isle_theme.dart';
 import 'package:lightisle/core/lightisle_api.dart';
 import 'package:lightisle/core/login_history_store.dart';
@@ -302,6 +303,158 @@ void main() {
 
       expect(switchedIdentity?['username'], 'bob');
       expect(switchedApi, isNotNull);
+    },
+  );
+
+  test(
+    'InsecureHttpAllowlist enforces exact-origin matching and persistence',
+    () async {
+      InsecureHttpAllowlist.instance.resetForTesting();
+      addTearDown(InsecureHttpAllowlist.instance.resetForTesting);
+
+      final origin80 = Uri(scheme: 'http', host: 'nas.invalid').origin;
+      final origin8080 = Uri(scheme: 'http', host: 'nas.invalid', port: 8080).origin;
+      final origin8081 = Uri(scheme: 'http', host: 'nas.invalid', port: 8081).origin;
+      final subOrigin = Uri(scheme: 'http', host: 'sub.nas.invalid', port: 8080).origin;
+      final frpOrigin = Uri(scheme: 'http', host: 'frp.invalid', port: 9000).origin;
+
+      expect(
+        InsecureHttpAllowlist.normalizeOrigin('HTTP://NAS.INVALID:80/'),
+        origin80,
+      );
+      expect(
+        InsecureHttpAllowlist.normalizeOrigin(origin8080),
+        origin8080,
+      );
+      expect(
+        InsecureHttpAllowlist.normalizeOrigin(
+          Uri(scheme: 'https', host: 'nas.invalid').origin,
+        ),
+        isNull,
+      );
+      expect(
+        InsecureHttpAllowlist.normalizeOrigin('$origin80/api'),
+        isNull,
+      );
+      expect(
+        InsecureHttpAllowlist.requiresAllowlist(
+          Uri(scheme: 'http', host: '192.168.1.10', port: 16666).origin,
+        ),
+        isFalse,
+      );
+      expect(InsecureHttpAllowlist.requiresAllowlist(origin8080), isTrue);
+
+      final allowedApi = LightIsleApi(
+        origin8080,
+        allowedInsecureHttpOrigins: <String>{origin8080},
+      );
+      expect(allowedApi.uri('/api/v2/auth/status').origin, origin8080);
+      allowedApi.close();
+
+      expect(
+        () => LightIsleApi(
+          origin8081,
+          allowInsecureHttp: true,
+          allowedInsecureHttpOrigins: <String>{origin8080},
+        ),
+        throwsArgumentError,
+      );
+      expect(
+        () => LightIsleApi(
+          subOrigin,
+          allowInsecureHttp: true,
+          allowedInsecureHttpOrigins: <String>{origin8080},
+        ),
+        throwsArgumentError,
+      );
+
+      final defaultPortApi = LightIsleApi(
+        '$origin80:80',
+        allowedInsecureHttpOrigins: <String>{origin80},
+      );
+      expect(defaultPortApi.uri('/api/v2/auth/status').origin, origin80);
+      defaultPortApi.close();
+
+      await InsecureHttpAllowlist.instance.add(frpOrigin);
+      expect(
+        () => LightIsleApi(frpOrigin, allowInsecureHttp: false),
+        throwsArgumentError,
+      );
+      final persistedApi = LightIsleApi(frpOrigin, allowInsecureHttp: true);
+      expect(persistedApi.uri('/api/v2/auth/status').origin, frpOrigin);
+      persistedApi.close();
+
+      final reloaded = InsecureHttpAllowlist();
+      await reloaded.load();
+      expect(reloaded.contains(frpOrigin), isTrue);
+
+      await InsecureHttpAllowlist.instance.remove(frpOrigin);
+      expect(
+        () => LightIsleApi(frpOrigin, allowInsecureHttp: true),
+        throwsArgumentError,
+      );
+
+      final probe = await probeServerLatency(
+        frpOrigin,
+        timeout: const Duration(milliseconds: 200),
+      );
+      expect(probe.state, ServerLatencyState.invalid);
+    },
+  );
+
+  testWidgets(
+    'LoginPage connection security settings confirm and manage exact-origin HTTP allowlist',
+    (tester) async {
+      final origin = Uri(scheme: 'http', host: 'frp.invalid', port: 8080).origin;
+      final allowlist = InsecureHttpAllowlist(
+        preferencesKey: 'widget.httpAllowlist',
+      );
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildIsleTheme(Brightness.light),
+          builder: (context, child) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(disableAnimations: true),
+            child: child!,
+          ),
+          home: LoginPage(
+            onSignedIn: (_, _) {},
+            httpAllowlist: allowlist,
+            latencyProber: (_, {certificateFingerprint}) async =>
+                const ServerLatencyResult.offline(),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.enterText(find.byType(TextFormField).first, origin);
+      await tester.pump();
+
+      await tester.tap(find.byKey(const Key('connectionSecurityToggle')));
+      await tester.pumpAndSettle();
+
+      final toggle = find.byKey(const Key('allowInsecureHttpOriginSwitch'));
+      expect(toggle, findsOneWidget);
+
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      expect(find.text('允许公网明文 HTTP 连接？'), findsOneWidget);
+      await tester.tap(find.text('取消'));
+      await tester.pumpAndSettle();
+      expect(allowlist.contains(origin), isFalse);
+
+      await tester.tap(toggle);
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('确认加入白名单'));
+      await tester.pumpAndSettle();
+      expect(allowlist.contains(origin), isTrue);
+
+      final removeButton = find.byKey(Key('removeHttpAllowlist_$origin'));
+      expect(removeButton, findsOneWidget);
+
+      await tester.tap(removeButton);
+      await tester.pumpAndSettle();
+      expect(allowlist.contains(origin), isFalse);
+      expect(removeButton, findsNothing);
     },
   );
 }

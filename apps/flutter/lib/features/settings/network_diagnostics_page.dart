@@ -4,6 +4,7 @@ import 'dart:math' as math;
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../../core/isle_gallery_layout.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/widgets.dart';
@@ -12,7 +13,6 @@ import 'tailscale_status_card.dart';
 
 part 'network_diagnostics_painters.dart';
 
-/// A native LightIsle-style dashboard rather than an external speedtest web UI.
 class NetworkDiagnosticsPage extends StatefulWidget {
   const NetworkDiagnosticsPage({super.key, required this.api, this.controller});
   final LightIsleApi api;
@@ -99,15 +99,18 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
                   children: [
                     Text(
                       '连接检测中断',
-                      style: Theme.of(context).textTheme.titleLarge,
+                      style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                     const SizedBox(height: 3),
                     Text(
                       widget.api.uri('/').host,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodySmall
-                          ?.copyWith(color: scheme.onSurfaceVariant),
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        color: scheme.onSurfaceVariant,
+                      ),
                     ),
                   ],
                 ),
@@ -162,8 +165,9 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
           const SizedBox(height: 12),
           Text(
             '中断阶段：${test.failureStep ?? '连接检查'} · 已完成 ${test.completedSteps}/${test.totalSteps} 步',
-            style: Theme.of(context).textTheme.bodySmall
-                ?.copyWith(color: scheme.onSurfaceVariant),
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
           ),
           const SizedBox(height: 15),
           SizedBox(
@@ -203,7 +207,7 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
         test.stage == NetworkTestStage.completed) {
       return 'Mbps';
     }
-    return test.busy ? '% 已完成' : 'NAS LINK';
+    return test.busy ? '% 已完成' : 'Mbps';
   }
 
   Widget _buildHeroGauge(
@@ -214,9 +218,12 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
     required bool wide,
     required double maxWidth,
   }) {
+    final mineral = palette['brandBlue'];
+    final sage = palette['brandSage'];
+    final amber = palette['brandAmber'];
     return SizedBox(
-      width: wide ? 280 : math.min(216, maxWidth - 32),
-      height: wide ? 280 : 204,
+      width: wide ? 260 : math.min(208, maxWidth - 32),
+      height: wide ? 260 : 196,
       child: AnimatedBuilder(
         animation: _motion,
         builder: (context, child) => CustomPaint(
@@ -230,16 +237,16 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
                     .clamp(0.0, 1.0),
             pulse: _motion.value,
             animated: test.busy && !reduced,
-            primary: palette['brandBlue'],
-            secondary: palette['brandCyan'],
-            tertiary: palette['brandIndigo'],
+            primary: mineral,
+            secondary: sage,
+            tertiary: amber,
             track: scheme.outlineVariant,
           ),
           child: child,
         ),
         child: Center(
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 55),
+            padding: const EdgeInsets.symmetric(horizontal: 52),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
@@ -254,17 +261,18 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
                   size: 24,
                   color: test.stage == NetworkTestStage.failed
                       ? scheme.error
-                      : palette['brandBlue'],
+                      : mineral,
                 ),
-                const SizedBox(height: 13),
+                const SizedBox(height: 12),
                 FittedBox(
                   fit: BoxFit.scaleDown,
                   child: Text(
                     _gaugePrimaryText(test),
                     style: Theme.of(context).textTheme.displayMedium?.copyWith(
-                      fontSize: 46,
-                      fontWeight: FontWeight.w700,
-                      letterSpacing: -1.8,
+                      fontSize: 44,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -1.6,
+                      fontFeatures: const [FontFeature.tabularFigures()],
                     ),
                   ),
                 ),
@@ -273,7 +281,7 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
                   _gaugeUnitText(test),
                   style: Theme.of(context).textTheme.labelMedium?.copyWith(
                     color: scheme.onSurfaceVariant,
-                    letterSpacing: 1.6,
+                    letterSpacing: 1.2,
                   ),
                 ),
               ],
@@ -290,6 +298,7 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
     required IslePalette palette,
     required bool wide,
   }) {
+    final sage = palette['brandSage'];
     return Column(
       crossAxisAlignment: wide
           ? CrossAxisAlignment.start
@@ -298,22 +307,25 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
         Text(
           test.stage == NetworkTestStage.completed
               ? test.verdict
-              : '当前 NAS 连接检测',
-          style: Theme.of(context).textTheme.titleLarge,
+              : '连接测速',
+          style: Theme.of(
+            context,
+          ).textTheme.headlineSmall?.copyWith(fontWeight: FontWeight.w800),
           textAlign: wide ? TextAlign.start : TextAlign.center,
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 6),
         Text(
           test.stageText,
-          style: Theme.of(context).textTheme.bodyMedium
-              ?.copyWith(color: scheme.onSurfaceVariant),
+          style: Theme.of(
+            context,
+          ).textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
         ),
-        const SizedBox(height: 9),
+        const SizedBox(height: 8),
         Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.dns_outlined, size: 16, color: scheme.onSurfaceVariant),
-            const SizedBox(width: 7),
+            Icon(Icons.dns_outlined, size: 15, color: scheme.onSurfaceVariant),
+            const SizedBox(width: 6),
             Flexible(
               child: Text(
                 widget.api.uri('/').host,
@@ -324,29 +336,30 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
             ),
           ],
         ),
-        const SizedBox(height: 22),
+        const SizedBox(height: 18),
         SizedBox(
-          width: wide ? 270 : double.infinity,
+          width: wide ? 260 : double.infinity,
           child: LinearProgressIndicator(
             value: test.progress,
             minHeight: 5,
             borderRadius: BorderRadius.circular(10),
-            color: palette['brandCyan'],
+            color: sage,
             backgroundColor: scheme.outlineVariant.withValues(alpha: .5),
           ),
         ),
-        const SizedBox(height: 8),
-        Text(
-          test.busy
-              ? '检测步骤 ${test.completedSteps} / ${test.totalSteps}'
-              : '只使用内存测试数据，不创建 NAS 文件',
-          textAlign: wide ? TextAlign.start : TextAlign.center,
-          style: Theme.of(context).textTheme.bodySmall
-              ?.copyWith(color: scheme.onSurfaceVariant),
-        ),
-        const SizedBox(height: 19),
+        if (test.busy) ...[
+          const SizedBox(height: 6),
+          Text(
+            '检测步骤 ${test.completedSteps} / ${test.totalSteps}',
+            textAlign: wide ? TextAlign.start : TextAlign.center,
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+          ),
+        ],
+        const SizedBox(height: 16),
         SizedBox(
-          width: wide ? 270 : double.infinity,
+          width: wide ? 260 : double.infinity,
           child: test.busy
               ? OutlinedButton.icon(
                   key: const ValueKey('networkTestStop'),
@@ -374,14 +387,18 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
   Widget _hero(NetworkDiagnosticsController test) {
     final scheme = Theme.of(context).colorScheme;
     final palette = IslePalette.of(context);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final reduced = IsleLayout.opaqueNavigation(context);
     final wideText = MediaQuery.textScalerOf(context).scale(14) < 19;
+    final mineral = palette['brandBlue'];
+    final amber = palette['brandAmber'];
+
     return Container(
       decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(28),
+        borderRadius: IsleRadius.brHero,
         border: Border.all(
-          color: scheme.outlineVariant.withValues(alpha: .55),
-          width: .8,
+          color: IsleGlass.rimBorderColor(isDark),
+          width: 1.0,
         ),
         gradient: reduced
             ? null
@@ -389,15 +406,19 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
                 begin: Alignment.topLeft,
                 end: Alignment.bottomRight,
                 colors: [
-                  palette['brandBlue'].withValues(alpha: .12),
-                  scheme.surface.withValues(alpha: .95),
-                  palette['brandIndigo'].withValues(alpha: .09),
+                  Color.alphaBlend(
+                    mineral.withValues(alpha: isDark ? .12 : .06),
+                    palette['cardTop'],
+                  ),
+                  palette['cardTop'],
+                  Color.alphaBlend(
+                    amber.withValues(alpha: isDark ? .09 : .04),
+                    palette['cardBottom'],
+                  ),
                 ],
               ),
-        color: reduced ? scheme.surface : null,
-        boxShadow: IsleShadows.card(
-          Theme.of(context).brightness == Brightness.dark,
-        ),
+        color: reduced ? palette['cardTop'] : null,
+        boxShadow: IsleShadows.raised(isDark),
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -425,7 +446,7 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
                 ? Row(
                     children: [
                       gauge,
-                      const SizedBox(width: 22),
+                      const SizedBox(width: 26),
                       Expanded(child: controls),
                     ],
                   )
@@ -450,21 +471,23 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
     required String unit,
     required String detail,
   }) => IsleSurface(
-    radius: 18,
+    margin: EdgeInsets.zero,
+    tint: tint,
+    radius: IsleRadius.card,
     padding: const EdgeInsets.all(15),
     child: Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Row(
           children: [
-            Icon(icon, color: tint, size: 19),
+            IsleSquircleBadge(icon: icon, color: tint, size: 30, iconSize: 16),
             const SizedBox(width: 8),
             Expanded(
               child: Text(label, style: Theme.of(context).textTheme.labelLarge),
             ),
           ],
         ),
-        const SizedBox(height: 13),
+        const SizedBox(height: 12),
         Row(
           crossAxisAlignment: CrossAxisAlignment.end,
           children: [
@@ -474,8 +497,10 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
                 alignment: Alignment.centerLeft,
                 child: Text(
                   value,
-                  style: Theme.of(context).textTheme.headlineSmall
-                      ?.copyWith(fontWeight: FontWeight.w700),
+                  style: Theme.of(context).textTheme.headlineSmall?.copyWith(
+                    fontWeight: FontWeight.w800,
+                    fontFeatures: const [FontFeature.tabularFigures()],
+                  ),
                 ),
               ),
             ),
@@ -486,13 +511,17 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
             ),
           ],
         ),
-        const SizedBox(height: 5),
-        Text(
-          detail,
-          maxLines: 2,
-          style: Theme.of(context).textTheme.bodySmall
-              ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
-        ),
+        if (detail.isNotEmpty) ...[
+          const SizedBox(height: 4),
+          Text(
+            detail,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
+          ),
+        ],
       ],
     ),
   );
@@ -502,7 +531,7 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
     return LayoutBuilder(
       builder: (context, constraints) {
         final columns =
-            constraints.maxWidth >= 820 &&
+            constraints.maxWidth >= 780 &&
                 MediaQuery.textScalerOf(context).scale(14) < 19
             ? 4
             : 2;
@@ -519,16 +548,12 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
                 : _value(test.downloadMbps),
             unit: test.downloadMbps == null ? '' : 'Mbps',
             detail: test.downloadMbps == null
-                ? test.mode == NetworkTestMode.observe
-                      ? '此模式不测吞吐'
-                      : test.stage == NetworkTestStage.failed
-                      ? '中断前尚未测出'
-                      : '等待测试'
+                ? ''
                 : '${_value(test.downloadMbps! / 8)} MB/s',
           ),
           _metric(
             icon: Icons.north_rounded,
-            tint: palette['brandCyan'],
+            tint: palette['brandSage'],
             label: '上传速度',
             value: test.uploadMbps == null
                 ? test.stage == NetworkTestStage.failed
@@ -537,16 +562,12 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
                 : _value(test.uploadMbps),
             unit: test.uploadMbps == null ? '' : 'Mbps',
             detail: test.uploadMbps == null
-                ? test.mode == NetworkTestMode.observe
-                      ? '此模式不测吞吐'
-                      : test.stage == NetworkTestStage.failed
-                      ? '中断前尚未测出'
-                      : '等待测试'
+                ? ''
                 : '${_value(test.uploadMbps! / 8)} MB/s',
           ),
           _metric(
             icon: Icons.timer_outlined,
-            tint: palette['brandIndigo'],
+            tint: palette['brandAmber'],
             label: '平均延迟',
             value:
                 test.averageLatency == null &&
@@ -554,7 +575,7 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
                 ? '未完成'
                 : _value(test.averageLatency),
             unit: test.averageLatency == null ? '' : 'ms',
-            detail: 'HTTP 应用层往返',
+            detail: '',
           ),
           _metric(
             icon: Icons.multiline_chart_rounded,
@@ -564,7 +585,7 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
                 ? '未完成'
                 : _value(test.jitter),
             unit: test.jitter == null ? '' : 'ms',
-            detail: '连续往返时间变化',
+            detail: '',
           ),
         ];
         return Wrap(
@@ -580,24 +601,25 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
 
   Widget _latency(NetworkDiagnosticsController test) {
     final scheme = Theme.of(context).colorScheme;
+    final palette = IslePalette.of(context);
+    final mineral = palette['brandBlue'];
     return IsleSurface(
-      radius: 20,
+      margin: EdgeInsets.zero,
+      radius: IsleRadius.card,
       padding: const EdgeInsets.all(18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(
-                Icons.show_chart_rounded,
-                size: 21,
-                color: IslePalette.of(context)['brandBlue'],
-              ),
+              Icon(Icons.show_chart_rounded, size: 21, color: mineral),
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
                   '稳定性趋势',
-                  style: Theme.of(context).textTheme.titleMedium,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
                 ),
               ),
               Text(
@@ -608,13 +630,13 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
           ),
           const SizedBox(height: 14),
           SizedBox(
-            height: 110,
+            height: 112,
             width: double.infinity,
             child: CustomPaint(
               key: const ValueKey('networkTestLatencyChart'),
               painter: _LatencyLinePainter(
                 test.latencyPoints,
-                IslePalette.of(context)['brandBlue'],
+                mineral,
                 scheme.error,
                 scheme.outlineVariant,
               ),
@@ -638,22 +660,17 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               Text(
-                'Core 本次进程运行  ${test.coreUptimeText}',
+                'Core 运行  ${test.coreUptimeText}',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
               if (test.restartHints > 0)
                 Text(
                   '检测期间发现 ${test.restartHints} 次进程重启迹象',
-                  style: Theme.of(context).textTheme.bodySmall
-                      ?.copyWith(color: scheme.error),
+                  style: Theme.of(
+                    context,
+                  ).textTheme.bodySmall?.copyWith(color: scheme.error),
                 ),
             ],
-          ),
-          const SizedBox(height: 8),
-          Text(
-            '红点表示 HTTP 请求失败。请求失败率不等于网络层丢包率。',
-            style: Theme.of(context).textTheme.bodySmall
-                ?.copyWith(color: scheme.onSurfaceVariant),
           ),
         ],
       ),
@@ -661,68 +678,86 @@ class _NetworkDiagnosticsPageState extends State<NetworkDiagnosticsPage>
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: IsleAppBar(title: const Text('连接测速')),
-    body: ListenableBuilder(
-      listenable: _test,
-      builder: (context, _) => IsleListView(
-        maxWidth: 880,
-        children: [
-          _hero(_test),
-          const SizedBox(height: 14),
-          TailscaleStatusCard(api: widget.api),
-          const SizedBox(height: 18),
-          Row(
-            children: [
-              const Expanded(child: IsleSectionHeader(title: '检测模式')),
-              Text(switch (_test.mode) {
-                NetworkTestMode.quick => '约 8 MiB 流量',
-                NetworkTestMode.standard => '约 32 MiB 流量',
-                NetworkTestMode.observe => '约 1 分钟 · 轻量请求',
-              }, style: Theme.of(context).textTheme.bodySmall),
+  Widget build(BuildContext context) {
+    final palette = IslePalette.of(context);
+    final mineral = palette['brandBlue'];
+    return Scaffold(
+      appBar: IsleAppBar(
+        title: const Text('连接测速'),
+        actions: [
+          IsleHelpButton(
+            title: '连接测速说明',
+            accentColor: mineral,
+            items: const [
+              IsleHelpItem(
+                title: '端到端真实链路检测',
+                body: '测量当前手机或电脑与家里的轻屿 Mac 之间的实际吞吐、往返延迟与抖动（涵盖局域网直连或异地组网隧道），不等同于运营商公网宽带测速。',
+              ),
+              IsleHelpItem(
+                title: '三种检测模式',
+                body: '快速模式（约 8 MiB）适合日常排查，标准模式（约 32 MiB）测试峰值吞吐，持续观察模式（约 1 分钟）用于捕捉无线或远程链路的间歇抖动。',
+              ),
             ],
           ),
-          Wrap(
-            spacing: 10,
-            runSpacing: 8,
-            children: [
-              for (final mode in NetworkTestMode.values)
-                ChoiceChip(
-                  key: ValueKey('networkTestMode:${mode.name}'),
-                  selected: _test.mode == mode,
-                  label: Text(mode.label),
-                  avatar: Icon(switch (mode) {
-                    NetworkTestMode.quick => Icons.bolt_rounded,
-                    NetworkTestMode.standard => Icons.query_stats_rounded,
-                    NetworkTestMode.observe => Icons.monitor_heart_outlined,
-                  }, size: 18),
-                  onSelected: _test.busy ? null : (_) => _test.selectMode(mode),
-                ),
-            ],
-          ),
-          const SizedBox(height: 20),
-          const IsleSectionHeader(title: '实时指标'),
-          _metrics(_test),
-          const SizedBox(height: 18),
-          _latency(_test),
-          const SizedBox(height: 12),
-          const IsleHelpDisclosure(
-            summary: '如何理解测速结果？',
-            details:
-                '只连接当前登录的 LightIsle NAS，不连接第三方测速服务器。'
-                '下载数据由服务器内存生成，上传数据在服务器内存中直接丢弃，不保存文件。'
-                '延迟是 HTTP 往返而不是 ICMP Ping，失败率也不是 IP 丢包率。'
-                '测速结果受 Wi-Fi、路由器、手机、TLS、远程隧道和 NAS 处理能力共同影响，'
-                '不能仅凭某项数值确定问题发生的位置。'
-                '快速检测约用 8 MiB，完整检测约用 32 MiB 数据流量。'
-                '持续观察模式约一分钟，每两秒发送轻量健康请求，不进行上传/下载吞吐测速；'
-                '连续失败次数可用于发现短时中断，但不能证明 NAS 的长期运行时间。'
-                'Core 运行时长只计算当前 Go 服务进程，不代表 Mac 的开机时间；重启迹象只用于辅助排查。'
-                '离开页面会停止检测，锁屏持续测速不保证。',
-          ),
-          const SizedBox(height: 24),
         ],
       ),
-    ),
-  );
+      body: ListenableBuilder(
+        listenable: _test,
+        builder: (context, _) => IsleListView(
+          maxWidth: IsleLayout.workbenchMaxWidth,
+          children: [
+            IsleWorkbenchSplit(
+              breakpoint: 980,
+              primaryFlex: 7,
+              secondaryFlex: 5,
+              primary: _hero(_test),
+              secondary: TailscaleStatusCard(api: widget.api),
+            ),
+            const SizedBox(height: 16),
+            Row(
+              children: [
+                Expanded(
+                  child: IsleSectionHeader(
+                    title: '检测模式',
+                    accentColor: mineral,
+                  ),
+                ),
+                Text(switch (_test.mode) {
+                  NetworkTestMode.quick => '约 8 MiB',
+                  NetworkTestMode.standard => '约 32 MiB',
+                  NetworkTestMode.observe => '约 1 分钟',
+                }, style: Theme.of(context).textTheme.bodySmall),
+              ],
+            ),
+            Wrap(
+              spacing: 10,
+              runSpacing: 8,
+              children: [
+                for (final mode in NetworkTestMode.values)
+                  ChoiceChip(
+                    key: ValueKey('networkTestMode:${mode.name}'),
+                    selected: _test.mode == mode,
+                    label: Text(mode.label),
+                    avatar: Icon(switch (mode) {
+                      NetworkTestMode.quick => Icons.bolt_rounded,
+                      NetworkTestMode.standard => Icons.query_stats_rounded,
+                      NetworkTestMode.observe => Icons.monitor_heart_outlined,
+                    }, size: 18),
+                    onSelected: _test.busy
+                        ? null
+                        : (_) => _test.selectMode(mode),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 16),
+            IsleSectionHeader(title: '实时指标', accentColor: mineral),
+            _metrics(_test),
+            const SizedBox(height: 16),
+            _latency(_test),
+            const SizedBox(height: 20),
+          ],
+        ),
+      ),
+    );
+  }
 }

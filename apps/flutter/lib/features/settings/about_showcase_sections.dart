@@ -2,6 +2,7 @@ import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
 
+import '../../core/isle_style.dart';
 import 'about_showcase_painters.dart';
 import 'about_showcase_widgets.dart';
 
@@ -65,7 +66,7 @@ class AboutArchitectureShowcase extends StatelessWidget {
   final ColorScheme colors;
   final ThemeData theme;
 
-  Widget _buildArchitectureStage(double effectivePhase) {
+  Widget _buildArchitectureStage(double effectivePhase, IslePalette palette) {
     return LayoutBuilder(
       builder: (context, constraints) {
         final isWide = constraints.maxWidth >= 520;
@@ -73,7 +74,7 @@ class AboutArchitectureShowcase extends StatelessWidget {
           icon: Icons.laptop_mac_rounded,
           title: 'Mac 原生核心',
           subtitle: 'lightisled · 静默常驻',
-          accent: const Color(0xFF0071E3),
+          accent: palette['brandBlue'],
           isDark: isDark,
           pulse: 0.5 + 0.5 * math.sin(effectivePhase * math.pi * 2),
         );
@@ -81,7 +82,7 @@ class AboutArchitectureShowcase extends StatelessWidget {
           icon: Icons.dns_rounded,
           title: '物理卷 Root A',
           subtitle: '100 GiB 独立配额 · device+inode',
-          accent: const Color(0xFF0071E3),
+          accent: palette['brandAmber'],
           isDark: isDark,
           pulse: 0.5 + 0.5 * math.cos(effectivePhase * math.pi * 2),
         );
@@ -89,7 +90,7 @@ class AboutArchitectureShowcase extends StatelessWidget {
           icon: Icons.shield_rounded,
           title: 'Time Machine 保护',
           subtitle: '无私有格式锁定 · 原片直存',
-          accent: const Color(0xFF10B981),
+          accent: palette['brandSage'],
           isDark: isDark,
           pulse: 0.5 + 0.5 * math.sin(effectivePhase * math.pi * 2 + 1.5),
         );
@@ -155,6 +156,7 @@ class AboutArchitectureShowcase extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = IslePalette(isDark);
     final effectivePhase = (phase + scrollOffset * 0.0008) % 1.0;
     final activeStep = ((effectivePhase * 3).floor()) % 3;
 
@@ -164,9 +166,9 @@ class AboutArchitectureShowcase extends StatelessWidget {
       colors: colors,
       highlighted: activeStep == 0,
       badgeLabel: '独立常驻后台',
-      badgeColor: const Color(0xFF0071E3),
+      badgeColor: palette['brandBlue'],
       icon: Icons.laptop_mac_rounded,
-      iconGradient: const [Color(0xFF0071E3), Color(0xFF38BDF8)],
+      iconGradient: [palette['brandBlue'], palette['brandCyan']],
       title: 'Mac 原生管理端独立运行',
       subtitle: 'NAS 服务、存储权限与设备通信由原生服务管理；关闭当前客户端不会中断 NAS 运行。',
       tags: const ['常驻后台', '关闭界面不中断', '静默低功耗'],
@@ -177,9 +179,9 @@ class AboutArchitectureShowcase extends StatelessWidget {
       colors: colors,
       highlighted: activeStep == 1,
       badgeLabel: '原片无损直存',
-      badgeColor: const Color(0xFF10B981),
+      badgeColor: palette['brandSage'],
       icon: Icons.backup_rounded,
-      iconGradient: const [Color(0xFF10B981), Color(0xFF34D399)],
+      iconGradient: [palette['brandSage'], const Color(0xFF4AC28E)],
       title: '原片由用户自主防护',
       subtitle: '原始照片、视频与文件建议通过 macOS Time Machine 或独立备份工具保护，客户端不替您冒险。',
       tags: const ['Time Machine 原生兼容', '无私有格式锁定', '本地数据绝对隐私'],
@@ -190,9 +192,9 @@ class AboutArchitectureShowcase extends StatelessWidget {
       colors: colors,
       highlighted: activeStep == 2,
       badgeLabel: '轻巧敏捷',
-      badgeColor: const Color(0xFFF59E0B),
+      badgeColor: palette['brandAmber'],
       icon: Icons.spa_rounded,
-      iconGradient: const [Color(0xFFF59E0B), Color(0xFFFBBF24)],
+      iconGradient: [palette['brandAmber'], palette['brandTerracotta']],
       title: '轻量透明，无企业级冗余',
       subtitle: '专为个人与家庭设计，不额外堆砌冗余复杂服务，保持整机稳定与资源轻简。',
       tags: const ['零冗余后台堆积', '单机专属调优', '家庭日常首选'],
@@ -202,10 +204,11 @@ class AboutArchitectureShowcase extends StatelessWidget {
       isDark: isDark,
       chapterNumber: '01',
       eyebrow: 'NATIVE SANCTUARY · 原生家庭数据原则',
-      accent: const Color(0xFF0071E3),
+      accent: palette['brandBlue'],
       title: '系统架构与数据原则',
-      subtitle: '轻屿将 Mac 变成安静可靠的家庭私有云主机：原生守护进程常驻低功耗运行，每块外置硬盘独立核算配额，原始数据始终以标准文件形态交由您和 Time Machine 守护。',
-      stageCanvas: _buildArchitectureStage(effectivePhase),
+      subtitle:
+          '轻屿将 Mac 变成安静可靠的家庭私有云主机：原生守护进程常驻低功耗运行，每块外置硬盘独立核算配额，原始数据始终以标准文件形态交由您和 Time Machine 守护。',
+      stageCanvas: _buildArchitectureStage(effectivePhase, palette),
       bottomContent: LayoutBuilder(
         builder: (context, constraints) {
           final w = constraints.maxWidth;
@@ -272,29 +275,34 @@ class AboutMediaExperienceShowcase extends StatelessWidget {
   final bool isDark;
 
   static const _memories = <(String, String, Color, IconData)>[
-    ('那年今日', '2023 · 镰仓海街', Color(0xFF8B5CF6), Icons.auto_awesome_rounded),
-    ('星标精选', '128 张家庭高光', Color(0xFFEC4899), Icons.favorite_rounded),
-    ('足迹地图', 'EXIF 经纬度聚簇', Color(0xFF06B6D4), Icons.map_rounded),
-    ('共享相册', '受控软链接直通', Color(0xFF10B981), Icons.folder_shared_rounded),
+    ('那年今日', '2023 · 镰仓海街', Color(0xFF7D5A8F), Icons.auto_awesome_rounded),
+    ('星标精选', '128 张家庭高光', Color(0xFFB53858), Icons.favorite_rounded),
+    ('足迹地图', 'EXIF 经纬度聚簇', Color(0xFF1D6F72), Icons.map_rounded),
+    ('共享相册', '受控软链接直通', Color(0xFF216E53), Icons.folder_shared_rounded),
   ];
 
   static const _posters = <(int, String, String, String, Color)>[
-    (1, '深海归屿', '4K HDR10 · 原盘', '9.4', Color(0xFF0071E3)),
-    (2, '镰仓物语', '杜比视界 · 双语', '9.2', Color(0xFF8B5CF6)),
-    (3, '流光之屿', 'REMUX · 无损音轨', '9.0', Color(0xFF10B981)),
-    (4, '星际漫游', 'IMAX 画幅 · 4K', '9.5', Color(0xFFF59E0B)),
+    (1, '深海归屿', '4K HDR10 · 原盘', '9.4', Color(0xFF2E7D8C)),
+    (2, '镰仓物语', '杜比视界 · 双语', '9.2', Color(0xFF8B639E)),
+    (3, '流光之屿', 'REMUX · 无损音轨', '9.0', Color(0xFF2E8B67)),
+    (4, '星际漫游', 'IMAX 画幅 · 4K', '9.5', Color(0xFFD4893B)),
   ];
 
-  Widget _buildPhotoRadarPod(double p, {required bool isWide}) {
+  Widget _buildPhotoRadarPod(
+    double p, {
+    required bool isWide,
+    required IslePalette palette,
+  }) {
+    final plum = palette['brandViolet'];
     return Container(
       height: isWide ? 148 : 112,
       decoration: BoxDecoration(
         color: isDark
-            ? const Color(0xFF0A1120).withValues(alpha: 0.65)
-            : Colors.white.withValues(alpha: 0.72),
+            ? const Color(0xFF1A1916).withValues(alpha: 0.78)
+            : Colors.white.withValues(alpha: 0.80),
         borderRadius: BorderRadius.circular(14),
         border: Border.all(
-          color: const Color(0xFF8B5CF6).withValues(alpha: 0.24),
+          color: plum.withValues(alpha: 0.28),
         ),
       ),
       child: Stack(
@@ -313,19 +321,19 @@ class AboutMediaExperienceShowcase extends StatelessWidget {
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
                   color: isDark
-                      ? const Color(0xFF0F172A).withValues(alpha: 0.88)
-                      : Colors.white.withValues(alpha: 0.92),
+                      ? const Color(0xFF22201C).withValues(alpha: 0.92)
+                      : Colors.white.withValues(alpha: 0.94),
                   borderRadius: BorderRadius.circular(8),
                   border: Border.all(
-                    color: const Color(0xFF8B5CF6).withValues(alpha: 0.35),
+                    color: plum.withValues(alpha: 0.35),
                   ),
                 ),
-                child: const Text(
+                child: Text(
                   'EXIF · GPS 实时聚簇',
                   style: TextStyle(
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
-                    color: Color(0xFF8B5CF6),
+                    color: plum,
                   ),
                 ),
               ),
@@ -336,22 +344,23 @@ class AboutMediaExperienceShowcase extends StatelessWidget {
     );
   }
 
-  Widget _buildPhotoChapter(double p) {
+  Widget _buildPhotoChapter(double p, IslePalette palette) {
     return AboutChapterContainer(
       isDark: isDark,
       chapterNumber: '02',
       eyebrow: 'MEMORIES & TIMELINE · 光影图库漫游',
-      accent: const Color(0xFF8B5CF6),
+      accent: palette['brandViolet'],
       title: '回忆精选与多维时间线',
-      subtitle: '对齐 Google Photos 的「那年今日 / 星标精选 / 足迹地图」横向漫游，支持按相机型号、GPS 与拍摄日期多维检索，并通过受控相对软链接与家人安全共享文件夹相册。',
+      subtitle:
+          '对齐 Google Photos 的「那年今日 / 星标精选 / 足迹地图」横向漫游，支持按相机型号、GPS 与拍摄日期多维检索，并通过受控相对软链接与家人安全共享文件夹相册。',
       stageCanvas: DecoratedBox(
         decoration: BoxDecoration(
           gradient: LinearGradient(
             begin: Alignment.topLeft,
             end: Alignment.bottomRight,
             colors: isDark
-                ? const [Color(0xFF0E1729), Color(0xFF14213D)]
-                : const [Color(0xFFF5F3FF), Color(0xFFEDE9FE)],
+                ? const [Color(0xFF1B1916), Color(0xFF23201B)]
+                : const [Color(0xFFFAF6EE), Color(0xFFF2ECE1)],
           ),
         ),
         child: LayoutBuilder(
@@ -399,7 +408,11 @@ class AboutMediaExperienceShowcase extends StatelessWidget {
                       ],
                     ],
                   );
-            final radarPod = _buildPhotoRadarPod(p, isWide: isWide);
+            final radarPod = _buildPhotoRadarPod(
+              p,
+              isWide: isWide,
+              palette: palette,
+            );
             return Padding(
               padding: const EdgeInsets.all(14),
               child: isWide
@@ -427,14 +440,15 @@ class AboutMediaExperienceShowcase extends StatelessWidget {
     );
   }
 
-  Widget _buildCinemaChapter(double p) {
+  Widget _buildCinemaChapter(double p, IslePalette palette) {
     return AboutChapterContainer(
       isDark: isDark,
       chapterNumber: '03',
       eyebrow: 'PRIVATE CINEMA · 巨幕私人影院',
-      accent: const Color(0xFFE50914),
+      accent: palette['brandTerracotta'],
       title: '巨幕海报墙与智能刮削',
-      subtitle: '全宽巨幕 Billboard、TOP 10 口碑序列与红线续播进度条；扫描完成自动衔接 TMDB 增量刮削，影片详情页支持免凭据豆瓣搜索、TMDB 匹配与本地 NFO 一键导入。',
+      subtitle:
+          '全宽巨幕 Billboard、TOP 10 口碑序列与暖调续播进度条；扫描完成自动衔接 TMDB 增量刮削，影片详情页支持免凭据豆瓣搜索、TMDB 匹配与本地 NFO 一键导入。',
       stageCanvas: LayoutBuilder(
         builder: (context, constraints) {
           final w = constraints.maxWidth;
@@ -471,7 +485,7 @@ class AboutMediaExperienceShowcase extends StatelessWidget {
                                 vertical: 3.5,
                               ),
                               decoration: BoxDecoration(
-                                color: const Color(0xFFE50914),
+                                color: const Color(0xFFC25934),
                                 borderRadius: BorderRadius.circular(6),
                               ),
                               child: const Text(
@@ -500,7 +514,7 @@ class AboutMediaExperienceShowcase extends StatelessWidget {
                                 style: TextStyle(
                                   fontSize: 11.5,
                                   fontWeight: FontWeight.w600,
-                                  color: Color(0xFFE2E8F0),
+                                  color: Color(0xFFE6E1D8),
                                 ),
                               ),
                             ),
@@ -547,13 +561,14 @@ class AboutMediaExperienceShowcase extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = IslePalette(isDark);
     final p = (phase + scrollOffset * 0.001) % 1.0;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        _buildPhotoChapter(p),
+        _buildPhotoChapter(p, palette),
         const SizedBox(height: 18),
-        _buildCinemaChapter(p),
+        _buildCinemaChapter(p, palette),
       ],
     );
   }
@@ -578,6 +593,7 @@ class AboutCrossPlatformShowcase extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = IslePalette(isDark);
     final p = (phase + scrollOffset * 0.0009) % 1.0;
     final activeCard = ((p * 2).floor()) % 2;
 
@@ -587,9 +603,9 @@ class AboutCrossPlatformShowcase extends StatelessWidget {
       colors: colors,
       highlighted: activeCard == 0,
       badgeLabel: '全家设备通用',
-      badgeColor: const Color(0xFF8B5CF6),
+      badgeColor: palette['brandViolet'],
       icon: Icons.devices_rounded,
-      iconGradient: const [Color(0xFF8B5CF6), Color(0xFFA78BFA)],
+      iconGradient: [palette['brandViolet'], palette['brandRose']],
       title: '跨平台统一体验',
       subtitle: '支持 macOS、iOS、Android 等多平台，使用一致的文件与媒体流转界面。',
       tags: const ['Mac / iPhone / Android', '一致流转操作', '原生丝滑渲染'],
@@ -600,9 +616,9 @@ class AboutCrossPlatformShowcase extends StatelessWidget {
       colors: colors,
       highlighted: activeCard == 1,
       badgeLabel: '系统安全隔离',
-      badgeColor: const Color(0xFF06B6D4),
+      badgeColor: palette['brandCyan'],
       icon: Icons.lock_outline_rounded,
-      iconGradient: const [Color(0xFF06B6D4), Color(0xFF38BDF8)],
+      iconGradient: [palette['brandCyan'], palette['brandBlue']],
       title: '凭据与会话安全',
       subtitle: '登录会话保存在设备的安全存储中，不保存明文密码；可随时改密或撤销。',
       tags: const ['系统级安全钥匙串', '不保存明文密码', '会话随时安全撤销'],
@@ -612,9 +628,10 @@ class AboutCrossPlatformShowcase extends StatelessWidget {
       isDark: isDark,
       chapterNumber: '04',
       eyebrow: 'CROSS-PLATFORM & SECURITY · 多端流转与隐私安全',
-      accent: const Color(0xFF06B6D4),
+      accent: palette['brandCyan'],
       title: '关于客户端与全端互联',
-      subtitle: '无论是 Mac 原生端、iPhone / iPad、Android 还是 Web 浏览器，乃至局域网 Finder 原生 SMB 与 WebDAV 挂载，均遵循同一套物理根身份校验与安全会话保护。',
+      subtitle:
+          '无论是 Mac 原生端、iPhone / iPad、Android 还是 Web 浏览器，乃至局域网 Finder 原生 SMB 与 WebDAV 挂载，均遵循同一套物理根身份校验与安全会话保护。',
       stageCanvas: LayoutBuilder(
         builder: (context, constraints) {
           final isWide = constraints.maxWidth >= 560;
@@ -622,7 +639,7 @@ class AboutCrossPlatformShowcase extends StatelessWidget {
             icon: Icons.verified_user_rounded,
             title: 'Argon2id · Keychain',
             subtitle: '物理根代际鉴权中心',
-            accent: const Color(0xFF10B981),
+            accent: palette['brandSage'],
             isDark: isDark,
             pulse: 0.5 + 0.5 * math.sin(p * math.pi * 2),
           );

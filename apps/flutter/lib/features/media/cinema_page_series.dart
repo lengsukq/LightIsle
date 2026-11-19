@@ -239,7 +239,7 @@ extension _CinemaPageSeries on _CinemaPageState {
                 physics: const NeverScrollableScrollPhysics(),
                 mainAxisSpacing: 8,
                 crossAxisSpacing: 8,
-                childAspectRatio: textScale > 1.35 ? 2.6 : 3.4,
+                childAspectRatio: textScale > 1.35 ? 2.8 : 3.7,
                 children: <Widget>[
                   for (final series in filteredSeries)
                     IsleSurface(
@@ -248,10 +248,21 @@ extension _CinemaPageSeries on _CinemaPageState {
                         horizontal: 12,
                         vertical: 8,
                       ),
-                      radius: IsleRadius.item,
+                      radius: IsleRadius.md,
                       onTap: () => unawaited(_openSeries(series)),
                       child: Row(
                         children: <Widget>[
+                          IsleSquircleBadge(
+                            icon: series.hasContinue && series.inProgress
+                                ? Icons.play_arrow_rounded
+                                : Icons.live_tv_rounded,
+                            color: series.hasContinue && series.inProgress
+                                ? const Color(0xFFE50914)
+                                : theme.colorScheme.primary,
+                            size: 34,
+                            iconSize: 18,
+                          ),
+                          const SizedBox(width: 10),
                           Expanded(
                             child: Column(
                               mainAxisAlignment: MainAxisAlignment.center,
@@ -261,7 +272,9 @@ extension _CinemaPageSeries on _CinemaPageState {
                                   series.name,
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
-                                  style: theme.textTheme.titleSmall,
+                                  style: theme.textTheme.titleSmall?.copyWith(
+                                    fontWeight: FontWeight.w600,
+                                  ),
                                 ),
                                 const SizedBox(height: 2),
                                 Text(
@@ -277,12 +290,11 @@ extension _CinemaPageSeries on _CinemaPageState {
                               ],
                             ),
                           ),
-                          const SizedBox(width: 8),
+                          const SizedBox(width: 6),
                           Icon(
-                            series.hasContinue && series.inProgress
-                                ? Icons.play_circle_outline
-                                : Icons.live_tv_outlined,
-                            color: theme.colorScheme.primary,
+                            Icons.chevron_right_rounded,
+                            size: 18,
+                            color: theme.colorScheme.onSurfaceVariant,
                           ),
                         ],
                       ),
@@ -306,7 +318,7 @@ extension _CinemaPageSeries on _CinemaPageState {
       child: IsleSurface(
         margin: EdgeInsets.zero,
         padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-        radius: IsleRadius.item,
+        radius: IsleRadius.md,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -315,8 +327,13 @@ extension _CinemaPageSeries on _CinemaPageState {
               runSpacing: 6,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: <Widget>[
-                const Icon(Icons.auto_awesome_rounded, size: 18),
-                Text('TMDB 自动刮削', style: theme.textTheme.titleSmall),
+                const Icon(Icons.auto_awesome_rounded, size: 17),
+                Text(
+                  'TMDB 自动刮削',
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
                 if (status != null &&
                     status.tmdbConfigured &&
                     status.processed > 0)
@@ -326,7 +343,7 @@ extension _CinemaPageSeries on _CinemaPageState {
                       1.0,
                     ),
                     color: const Color(0xFFF97316),
-                    size: 30,
+                    size: 28,
                     strokeWidth: 3.5,
                     centerText:
                         '${((status.matched / status.processed).clamp(0.0, 1.0) * 100).round()}%',
@@ -340,6 +357,9 @@ extension _CinemaPageSeries on _CinemaPageState {
                   ),
                 if (status == null)
                   TextButton(
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                    ),
                     onPressed: _refreshScrape,
                     child: const Text('查看状态'),
                   )
@@ -363,14 +383,17 @@ extension _CinemaPageSeries on _CinemaPageState {
                     ),
                   ),
                   OutlinedButton.icon(
+                    style: OutlinedButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                    ),
                     onPressed: _indexing.scrapeBusy ? null : _startScrape,
                     icon: _indexing.scrapeBusy
                         ? const SizedBox(
-                            width: 15,
-                            height: 15,
+                            width: 14,
+                            height: 14,
                             child: CircularProgressIndicator(strokeWidth: 2),
                           )
-                        : const Icon(Icons.refresh_rounded, size: 16),
+                        : const Icon(Icons.refresh_rounded, size: 15),
                     label: const Text('重试未匹配项'),
                   ),
                 ],

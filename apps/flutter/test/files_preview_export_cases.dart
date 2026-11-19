@@ -357,4 +357,67 @@ void _registerFilesPreviewExportTests() {
     expect(find.byType(FileTextPreviewDialog), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('cinema-indexed video in files upgrades directly to CinemaDetailDialog', (
+    tester,
+  ) async {
+    final api = _CinemaLookupFilesApi();
+    addTearDown(api.close);
+
+    await tester.pumpWidget(
+      MaterialApp(
+        theme: ThemeData(useMaterial3: true),
+        home: Scaffold(body: FilesPage(api: api, isAdmin: false)),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.ensureVisible(find.text('clip.mp4'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('clip.mp4'));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(CinemaDetailDialog), findsOneWidget);
+    expect(find.byType(PhotoGalleryViewer), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
+}
+
+class _CinemaLookupFilesApi extends _FilesParityTestApi {
+  _CinemaLookupFilesApi() : super(withVideo: true);
+
+  @override
+  Future<Map<String, dynamic>> get(
+    String path, {
+    Map<String, String>? query,
+  }) async {
+    if (path == '/api/v2/cinema/lookup') {
+      return {
+        'id': 42,
+        'title': 'Indexed Film',
+        'path': query?['path'] ?? 'clip.mp4',
+        'kind': 'movie',
+        'playable': true,
+        'browserPlayback': 'verified-direct',
+        'probeStatus': 'ready',
+      };
+    }
+    if (path == '/api/v2/cinema/42') {
+      return {
+        'id': 42,
+        'title': 'Indexed Film',
+        'path': 'clip.mp4',
+        'kind': 'movie',
+        'playable': true,
+        'browserPlayback': 'verified-direct',
+        'probeStatus': 'ready',
+      };
+    }
+    if (path == '/api/v2/cinema/42/tracks') {
+      return {'audio': <Object>[], 'subtitles': <Object>[]};
+    }
+    if (path == '/api/v2/cinema' || path == '/api/v2/cinema/transcode/status') {
+      return {'films': <Object>[], 'available': false};
+    }
+    return super.get(path, query: query);
+  }
 }

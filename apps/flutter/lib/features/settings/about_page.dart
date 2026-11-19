@@ -34,10 +34,10 @@ class _AboutPageState extends State<AboutPage>
 
   static const List<(String, double)> _chapters = <(String, double)>[
     ('序幕', 0),
-    ('01 原生核心', 420),
-    ('02 光影图库', 1120),
-    ('03 私人影院', 1480),
-    ('04 跨端互联', 1840),
+    ('01 原生核心', 380),
+    ('02 光影图库', 1020),
+    ('03 私人影院', 1360),
+    ('04 跨端互联', 1700),
   ];
 
   @override
@@ -212,7 +212,7 @@ class _AboutPageState extends State<AboutPage>
         ),
       ),
       body: IsleContent(
-        maxWidth: 1040,
+        maxWidth: 1120,
         child: LayoutBuilder(
           builder: (context, constraints) {
             final inset = IsleLayout.pageInset(constraints.maxWidth);
@@ -220,7 +220,7 @@ class _AboutPageState extends State<AboutPage>
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
                 Padding(
-                  padding: EdgeInsets.fromLTRB(inset, 4, inset, 12),
+                  padding: EdgeInsets.fromLTRB(inset, 4, inset, 10),
                   child: _WebpageChapterBar(
                     chapters: _chapters,
                     activeIndex: _activeChapter,
@@ -252,7 +252,7 @@ class _AboutPageState extends State<AboutPage>
                             inset,
                             0,
                             inset,
-                            inset + 64,
+                            inset + 44,
                           ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -267,10 +267,10 @@ class _AboutPageState extends State<AboutPage>
                                   isDark: isDark,
                                 ),
                               ),
-                              const SizedBox(height: 16),
+                              const SizedBox(height: 12),
                               ScrollShowcaseStage(
                                 scrollOffset: _scrollOffset,
-                                anchorOffset: 240,
+                                anchorOffset: 220,
                                 disableAnimations: disableAnimations,
                                 child: AboutOpenSourceShowcaseCard(
                                   isDark: isDark,
@@ -280,10 +280,10 @@ class _AboutPageState extends State<AboutPage>
                                   onCopyRepo: () => _copyRepo(context),
                                 ),
                               ),
-                              const SizedBox(height: 18),
+                              const SizedBox(height: 14),
                               ScrollShowcaseStage(
                                 scrollOffset: _scrollOffset,
-                                anchorOffset: 520,
+                                anchorOffset: 480,
                                 disableAnimations: disableAnimations,
                                 child: AboutArchitectureShowcase(
                                   phase: phase,
@@ -293,10 +293,10 @@ class _AboutPageState extends State<AboutPage>
                                   theme: theme,
                                 ),
                               ),
-                              const SizedBox(height: 18),
+                              const SizedBox(height: 14),
                               ScrollShowcaseStage(
                                 scrollOffset: _scrollOffset,
-                                anchorOffset: 1180,
+                                anchorOffset: 1080,
                                 disableAnimations: disableAnimations,
                                 child: AboutMediaExperienceShowcase(
                                   phase: phase,
@@ -304,10 +304,10 @@ class _AboutPageState extends State<AboutPage>
                                   isDark: isDark,
                                 ),
                               ),
-                              const SizedBox(height: 18),
+                              const SizedBox(height: 14),
                               ScrollShowcaseStage(
                                 scrollOffset: _scrollOffset,
-                                anchorOffset: 1820,
+                                anchorOffset: 1680,
                                 disableAnimations: disableAnimations,
                                 child: AboutCrossPlatformShowcase(
                                   phase: phase,
@@ -317,9 +317,9 @@ class _AboutPageState extends State<AboutPage>
                                   theme: theme,
                                 ),
                               ),
-                              const SizedBox(height: 26),
-                              AboutFooterNotice(colors: colors, theme: theme),
                               const SizedBox(height: 20),
+                              AboutFooterNotice(colors: colors, theme: theme),
+                              const SizedBox(height: 14),
                             ],
                           ),
                         );
@@ -396,25 +396,22 @@ class _WebpageChapterBarState extends State<_WebpageChapterBar> {
     final opaque = IsleLayout.opaqueNavigation(context);
     final isDark = widget.isDark;
     final colors = widget.colors;
+    final palette = IslePalette(isDark);
     final chapters = widget.chapters;
 
     final barContent = MediaQuery.withClampedTextScaling(
       maxScaleFactor: 1.15,
       child: Container(
-        height: 44,
-        padding: const EdgeInsets.all(5),
+        height: 42,
+        padding: const EdgeInsets.all(4),
         decoration: BoxDecoration(
           color: opaque
               ? colors.surface
-              : (isDark
-                    ? const Color(0xCC111827)
-                    : Colors.white.withValues(alpha: 0.90)),
+              : palette['cardTop'].withValues(alpha: isDark ? 0.86 : 0.92),
           borderRadius: BorderRadius.circular(14),
           border: Border.all(
-            color: isDark
-                ? Colors.white.withValues(alpha: 0.12)
-                : const Color(0xFF0F172A).withValues(alpha: 0.08),
-            width: 0.8,
+            color: IsleGlass.rimBorderColor(isDark),
+            width: 1.0,
           ),
           boxShadow: IsleShadows.card(isDark),
         ),
@@ -474,9 +471,7 @@ class _WebpageChapterBarState extends State<_WebpageChapterBar> {
                   width: 1,
                   height: 18,
                   margin: const EdgeInsets.symmetric(horizontal: 6),
-                  color: isDark
-                      ? Colors.white.withValues(alpha: 0.12)
-                      : const Color(0xFF0F172A).withValues(alpha: 0.08),
+                  color: IsleGlass.rimBorderColor(isDark),
                 ),
                 _AutoTourPill(
                   active: widget.autoTourActive,
@@ -496,7 +491,7 @@ class _WebpageChapterBarState extends State<_WebpageChapterBar> {
     return ClipRRect(
       borderRadius: BorderRadius.circular(14),
       child: BackdropFilter(
-        filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
+        filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
         child: barContent,
       ),
     );
@@ -530,7 +525,7 @@ class _ChapterPill extends StatelessWidget {
         child: AnimatedContainer(
           duration: IsleMotion.fast,
           height: 34,
-          padding: EdgeInsets.symmetric(horizontal: expandWidth ? 8 : 12),
+          padding: EdgeInsets.symmetric(horizontal: expandWidth ? 8 : 11),
           decoration: BoxDecoration(
             color: selected
                 ? colors.primary.withValues(alpha: isDark ? 0.24 : 0.12)
@@ -594,7 +589,7 @@ class _AutoTourPill extends StatelessWidget {
         child: AnimatedContainer(
           duration: IsleMotion.fast,
           height: 34,
-          padding: EdgeInsets.symmetric(horizontal: compact ? 9 : 12),
+          padding: EdgeInsets.symmetric(horizontal: compact ? 9 : 11),
           decoration: BoxDecoration(
             color: active
                 ? colors.primary.withValues(alpha: isDark ? 0.24 : 0.14)

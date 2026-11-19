@@ -5,14 +5,13 @@ import '../../core/lightisle_api.dart';
 import '../../core/personal_storage_routing.dart';
 import '../../core/widgets.dart';
 
-/// A browser target is always a *registered, authenticated* NAS root and a
-/// root-relative directory, never a macOS mount path or arbitrary filesystem
-/// address. Null represents only the administrator's legacy shared folder.
 typedef OpenStorageDirectory = void Function(
   LightIsleRoot? root,
   String directory,
 );
 
+/// Physical drive bay cards with hardware slot header, warm ochre/sage capacity
+/// gauges, and recessed bound-directory chips.
 class AdminVolumeBrowser extends StatelessWidget {
   const AdminVolumeBrowser({
     super.key,
@@ -32,10 +31,10 @@ class AdminVolumeBrowser extends StatelessWidget {
     Map<String, dynamic> volume, {
     required TextTheme text,
     required Color secondary,
+    required IslePalette palette,
+    required bool isDark,
   }) {
     final mount = volume['mount'];
-    // No guessing by disk name or free capacity: APFS volumes can
-    // share these values and user-facing labels can be duplicated.
     final matches = mount is String
         ? roots.where((root) => root.volumeMount == mount).toList()
         : <LightIsleRoot>[];
@@ -52,13 +51,15 @@ class AdminVolumeBrowser extends StatelessWidget {
         (mount is String &&
             (mount.contains('/Recovery') || mount.contains('/Preboot')));
     final gaugeColor = used >= 0.9
-        ? const Color(0xffef4444)
+        ? palette['error']
         : used >= 0.78
-        ? const Color(0xfff59e0b)
-        : (isSystemVolume ? const Color(0xff64748b) : const Color(0xff0ea5e9));
+        ? palette['warning']
+        : (isSystemVolume ? palette['brandIndigo'] : palette['brandSage']);
+
     return IsleSurface(
       key: ValueKey('physicalVolume:${volume['mount'] ?? volume['name']}'),
-      radius: 16,
+      radius: IsleRadius.card,
+      tint: isSystemVolume ? null : palette['brandSage'],
       margin: EdgeInsets.zero,
       onTap: target != null && onOpen != null
           ? () => onOpen!(target, '.')
@@ -73,22 +74,36 @@ class AdminVolumeBrowser extends StatelessWidget {
                 icon: isSystemVolume
                     ? Icons.laptop_mac_rounded
                     : Icons.dns_rounded,
-                color: isSystemVolume
-                    ? const Color(0xff64748b)
-                    : const Color(0xff0ea5e9),
+                color: gaugeColor,
                 size: 32,
-                iconSize: 17,
+                iconSize: 16.5,
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: Text(
-                  volume['name']?.toString() ?? '存储卷',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: text.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.2,
-                  ),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      volume['name']?.toString() ?? '存储卷',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: text.titleSmall?.copyWith(
+                        fontSize: 14,
+                        fontWeight: FontWeight.w800,
+                        letterSpacing: -0.2,
+                      ),
+                    ),
+                    Text(
+                      '${formatBytes(volume['free'] as num?)} 可用 / ${formatBytes(volume['total'] as num?)}',
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                      style: text.bodySmall?.copyWith(
+                        fontSize: 11.5,
+                        color: secondary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
                 ),
               ),
               if (total > 0) ...[
@@ -96,84 +111,73 @@ class AdminVolumeBrowser extends StatelessWidget {
                   fraction: used,
                   color: gaugeColor,
                   size: 30,
-                  strokeWidth: 3.5,
+                  strokeWidth: 3.4,
                   centerText: '${(used * 100).round()}%',
                   centerStyle: text.labelSmall?.copyWith(
-                    fontSize: 9,
-                    fontWeight: FontWeight.w700,
+                    fontSize: 8.5,
+                    fontWeight: FontWeight.w800,
                     fontFeatures: const [FontFeature.tabularFigures()],
                   ),
                   semanticsLabel:
                       '${volume['name'] ?? '存储卷'} 已使用 ${(used * 100).round()}%',
                 ),
-                const SizedBox(width: 8),
+                const SizedBox(width: 6),
               ],
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 6.5,
+                  vertical: 2,
+                ),
                 decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.surfaceContainerHighest
-                      .withValues(alpha: 0.6),
+                  color: palette['cardItemBottom'],
                   borderRadius: BorderRadius.circular(6),
+                  border: Border.all(
+                    color: IsleGlass.rimBorderColor(isDark),
+                    width: 0.9,
+                  ),
                 ),
                 child: Text(
                   (volume['filesystem']?.toString() ?? '未知').toUpperCase(),
                   style: text.labelSmall?.copyWith(
                     fontSize: 10,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 0.4,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.35,
                     color: secondary,
                   ),
                 ),
               ),
               if (volume['readOnly'] == true) ...[
-                const SizedBox(width: 6),
-                const IsleStatusBadge(label: '只读', color: Color(0xfff59e0b)),
+                const SizedBox(width: 5),
+                IsleStatusBadge(label: '只读', color: palette['warning']),
               ],
               if (target != null && onOpen != null) ...[
                 const SizedBox(width: 4),
                 Icon(
                   Icons.chevron_right_rounded,
                   color: secondary.withValues(alpha: 0.7),
-                  size: 18,
+                  size: 17,
                 ),
               ],
             ],
           ),
-          const SizedBox(height: 6),
-          Row(
-            children: [
-              Expanded(
-                child: Text(
-                  '${formatBytes(volume['free'] as num?)} 可用 / '
-                  '${formatBytes(volume['total'] as num?)}',
-                  overflow: TextOverflow.ellipsis,
-                  maxLines: 1,
-                  style: text.bodySmall?.copyWith(
-                    color: secondary,
-                    fontWeight: FontWeight.w500,
-                  ),
-                ),
-              ),
-              if (matches.isEmpty)
-                Flexible(
-                  child: Text(
-                    rootsError != null
-                        ? '目录暂无法确认'
-                        : isSystemVolume
-                        ? '系统分区（仅容量）'
-                        : '未登记为 NAS 目录',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: text.labelSmall?.copyWith(color: secondary),
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 6),
+          if (matches.isEmpty) ...[
+            const SizedBox(height: 6),
+            Text(
+              rootsError != null
+                  ? '目录暂无法确认'
+                  : isSystemVolume
+                  ? '系统分区（仅容量）'
+                  : '未登记为 NAS 目录',
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: text.labelSmall?.copyWith(fontSize: 11, color: secondary),
+            ),
+          ],
+          const SizedBox(height: 8),
           IsleSegmentedBar(
-            height: 7,
+            height: 6.5,
             showLegend: total > 0,
-            legendGap: 5,
+            legendGap: 4,
             legendSpacing: 10,
             legendRunSpacing: 2,
             segments: total > 0
@@ -187,60 +191,82 @@ class AdminVolumeBrowser extends StatelessWidget {
                     IsleChartSegment(
                       label: '可用',
                       value: free.clamp(0.0, total),
-                      color: Theme.of(context)
-                          .colorScheme
-                          .surfaceContainerHighest,
+                      color: Theme.of(
+                        context,
+                      ).colorScheme.surfaceContainerHighest,
                       detail: formatBytes(free),
                     ),
                   ]
                 : const [],
           ),
           if (matches.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            for (final root in matches)
-              Row(
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: IsleDecorations.recessedWell(
+                context,
+                radius: IsleRadius.sm,
+              ),
+              child: Column(
                 children: [
-                  Icon(
-                    root.online
-                        ? Icons.folder_outlined
-                        : Icons.cloud_off_outlined,
-                    size: 16,
-                    color: secondary,
-                  ),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: Text(
-                      root.name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: text.bodySmall?.copyWith(
-                        fontWeight: FontWeight.w600,
-                      ),
+                  for (final root in matches)
+                    Row(
+                      children: [
+                        Icon(
+                          root.online
+                              ? Icons.folder_rounded
+                              : Icons.cloud_off_outlined,
+                          size: 15,
+                          color: root.online
+                              ? palette['brandAmber']
+                              : secondary,
+                        ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            root.name,
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                            style: text.bodySmall?.copyWith(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                        TextButton(
+                          style: TextButton.styleFrom(
+                            visualDensity: VisualDensity.compact,
+                            minimumSize: const Size(40, 26),
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 7,
+                              vertical: 2,
+                            ),
+                          ),
+                          onPressed: root.online && onOpen != null
+                              ? () => onOpen!(root, '.')
+                              : null,
+                          child: Text(
+                            root.online ? '浏览文件' : '离线',
+                            style: const TextStyle(fontSize: 12),
+                          ),
+                        ),
+                      ],
                     ),
-                  ),
-                  TextButton(
-                    style: TextButton.styleFrom(
-                      visualDensity: VisualDensity.compact,
-                      minimumSize: const Size(44, 30),
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 2,
-                      ),
-                    ),
-                    onPressed: root.online && onOpen != null
-                        ? () => onOpen!(root, '.')
-                        : null,
-                    child: Text(root.online ? '浏览文件' : '离线'),
-                  ),
                 ],
               ),
+            ),
           ],
         ],
       ),
     );
   }
 
-  Widget _buildStandaloneRootsSection(BuildContext context, Color secondary) {
+  Widget _buildStandaloneRootsSection(
+    BuildContext context,
+    Color secondary,
+    IslePalette palette,
+    bool isDark,
+  ) {
     final mountedPaths = volumes
         .map((v) => v['mount'])
         .whereType<String>()
@@ -259,49 +285,83 @@ class AdminVolumeBrowser extends StatelessWidget {
     if (rootsError == null && roots.isNotEmpty && standaloneRoots.isEmpty) {
       return const SizedBox.shrink();
     }
+    final borderColor = IsleGlass.rimBorderColor(isDark);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const SizedBox(height: 12),
-        const IsleSectionHeader(title: '已登记的 NAS 目录'),
+        const SizedBox(height: 8),
+        IsleSectionHeader(
+          title: '已登记的 NAS 目录',
+          accentColor: palette['brandAmber'],
+        ),
         if (rootsError != null)
           Notice('无法验证已登记目录：$rootsError', error: true)
         else if (roots.isEmpty)
           const Notice('暂无已登记的 NAS 目录。请在 Mac 管理端添加后再浏览。')
         else
-          IsleResponsiveGrid(
-            minItemWidth: 300,
-            maxColumns: standaloneRoots.length >= 2 ? 2 : 1,
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              for (final root in standaloneRoots)
-                IsleSurface(
-                  key: ValueKey('adminBrowseRoot:${root.id}'),
-                  radius: 16,
-                  margin: EdgeInsets.zero,
-                  padding: EdgeInsets.zero,
-                  onTap: root.online && onOpen != null
-                      ? () => onOpen!(root, '.')
-                      : null,
-                  child: ListTile(
-                    leading: Icon(
-                      Icons.folder_outlined,
-                      color: root.online ? const Color(0xff0ea5e9) : secondary,
+          IsleSurface(
+            margin: EdgeInsets.zero,
+            padding: EdgeInsets.zero,
+            radius: IsleRadius.card,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (var i = 0; i < standaloneRoots.length; i++) ...[
+                  if (i > 0)
+                    Divider(
+                      height: 1,
+                      thickness: 0.7,
+                      indent: 48,
+                      color: borderColor,
                     ),
-                    title: Text(root.name),
-                    subtitle: Text(
-                      root.online ? '查看此 NAS 目录下的文件' : '存储卷离线或已更换',
-                    ),
-                    trailing: Icon(
-                      root.online
-                          ? Icons.chevron_right_rounded
-                          : Icons.cloud_off_outlined,
-                    ),
-                    enabled: root.online && onOpen != null,
+                  Builder(
+                    builder: (context) {
+                      final root = standaloneRoots[i];
+                      return ListTile(
+                        key: ValueKey('adminBrowseRoot:${root.id}'),
+                        dense: true,
+                        visualDensity: VisualDensity.compact,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 13,
+                          vertical: 2,
+                        ),
+                        leading: IsleSquircleBadge(
+                          icon: Icons.folder_rounded,
+                          color: root.online
+                              ? palette['brandAmber']
+                              : secondary,
+                          size: 32,
+                          iconSize: 16.5,
+                        ),
+                        title: Text(
+                          root.name,
+                          style: const TextStyle(
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        subtitle: root.online
+                            ? null
+                            : const Text(
+                                '存储卷离线或已更换',
+                                style: TextStyle(fontSize: 12),
+                              ),
+                        trailing: Icon(
+                          root.online
+                              ? Icons.chevron_right_rounded
+                              : Icons.cloud_off_outlined,
+                          size: 18,
+                        ),
+                        enabled: root.online && onOpen != null,
+                        onTap: root.online && onOpen != null
+                            ? () => onOpen!(root, '.')
+                            : null,
+                      );
+                    },
                   ),
-                ),
-            ],
+                ],
+              ],
+            ),
           ),
       ],
     );
@@ -309,20 +369,29 @@ class AdminVolumeBrowser extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final text = Theme.of(context).textTheme;
-    final secondary = Theme.of(context).colorScheme.onSurfaceVariant;
+    final theme = Theme.of(context);
+    final text = theme.textTheme;
+    final secondary = theme.colorScheme.onSurfaceVariant;
+    final isDark = theme.brightness == Brightness.dark;
+    final palette = IslePalette(isDark);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const IsleSectionHeader(title: '存储卷'),
+        IsleSectionHeader(
+          title: '存储卷与磁盘槽位',
+          accentColor: palette['brandSage'],
+          helpTitle: '存储卷与访问边界',
+          helpBody:
+              '存储卷对应 macOS 物理磁盘或 APFS 分区；移动端文件浏览仅开放已在 Mac 管理端登记的 NAS 目录，不会直接读取 Macintosh HD 系统分区或未授权目录。',
+        ),
         if (volumes.isEmpty)
           const Notice('当前没有可用的存储卷信息。')
         else
           IsleResponsiveGrid(
-            minItemWidth: 340,
+            minItemWidth: 320,
             maxColumns: 2,
-            spacing: 10,
-            runSpacing: 10,
+            spacing: 12,
+            runSpacing: 12,
             children: [
               for (final volume in volumes)
                 _buildVolumeCard(
@@ -330,17 +399,12 @@ class AdminVolumeBrowser extends StatelessWidget {
                   volume,
                   text: text,
                   secondary: secondary,
+                  palette: palette,
+                  isDark: isDark,
                 ),
             ],
           ),
-        _buildStandaloneRootsSection(context, secondary),
-        const SizedBox(height: 8),
-        const IsleHelpDisclosure(
-          summary: '为什么不能直接打开整个 Macintosh HD？',
-          details:
-              '存储卷是 macOS 物理磁盘/分区，NAS 文件浏览仅允许进入已经在 Mac 端登记的共享目录。'
-              '即使是管理员也不会通过移动端读取未授权的系统目录或 Recovery 分区。',
-        ),
+        _buildStandaloneRootsSection(context, secondary, palette, isDark),
       ],
     );
   }
@@ -360,34 +424,54 @@ class MemberStorageBrowser extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const sections = <(String, String, IconData)>[
-      ('files', '普通文件', Icons.folder_outlined),
-      ('photos', '我的图库', Icons.photo_library_outlined),
-      ('cinema', '我的影视', Icons.movie_outlined),
+    final palette = IslePalette.of(context);
+    final sections = <(String, String, IconData, Color)>[
+      ('files', '普通文件', Icons.folder_rounded, palette['brandAmber']),
+      ('photos', '我的图库', Icons.photo_library_rounded, palette['brandRose']),
+      ('cinema', '我的影视', Icons.movie_rounded, palette['brandTerracotta']),
     ];
     final allocations = objectList(storage['locations']);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final borderColor = IsleGlass.rimBorderColor(isDark);
+    final secondary = Theme.of(context).colorScheme.onSurfaceVariant;
+    final assignedSections = sections
+        .where(
+          (entry) => allocations.any(
+            (a) =>
+                a['category'] == (entry.$1 == 'cinema' ? 'videos' : entry.$1),
+          ),
+        )
+        .toList(growable: false);
+
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const SizedBox(height: 12),
-        const IsleSectionHeader(title: '我的存储目录'),
-        if (allocations.isEmpty)
+        const SizedBox(height: 8),
+        IsleSectionHeader(
+          title: '我的存储目录',
+          accentColor: palette['brandAmber'],
+        ),
+        if (assignedSections.isEmpty)
           const Notice('管理员还没有为你分配个人存储目录。')
         else
-          IsleResponsiveGrid(
-            minItemWidth: 280,
-            maxColumns: 3,
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              for (final (section, label, icon) in sections)
-                if (allocations.any(
-                  (entry) =>
-                      entry['category'] ==
-                      (section == 'cinema' ? 'videos' : section),
-                ))
+          IsleSurface(
+            margin: EdgeInsets.zero,
+            padding: EdgeInsets.zero,
+            radius: IsleRadius.card,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                for (var i = 0; i < assignedSections.length; i++) ...[
+                  if (i > 0)
+                    Divider(
+                      height: 1,
+                      thickness: 0.7,
+                      indent: 48,
+                      color: borderColor,
+                    ),
                   Builder(
                     builder: (context) {
+                      final (section, label, icon, tone) = assignedSections[i];
                       final route = resolvePersonalRoute(
                         storage,
                         roots,
@@ -397,33 +481,47 @@ class MemberStorageBrowser extends StatelessWidget {
                           route.kind == PersonalRouteKind.personal &&
                           route.root != null &&
                           route.path != null;
-                      return IsleSurface(
-                        radius: 16,
-                        margin: EdgeInsets.zero,
-                        padding: EdgeInsets.zero,
-                        child: ListTile(
-                          key: ValueKey('memberStorage:$section'),
-                          leading: Icon(icon),
-                          title: Text(label),
-                          subtitle: Text(
-                            online
-                                ? '${route.root!.name} · 已分配个人目录'
-                                : '存储位置离线或绑定尚未验证',
-                          ),
-                          trailing: Icon(
-                            online
-                                ? Icons.chevron_right_rounded
-                                : Icons.cloud_off_outlined,
-                          ),
-                          enabled: online && onOpen != null,
-                          onTap: online && onOpen != null
-                              ? () => onOpen!(route.root!, route.path!)
-                              : null,
+                      return ListTile(
+                        key: ValueKey('memberStorage:$section'),
+                        dense: true,
+                        visualDensity: VisualDensity.compact,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 13,
+                          vertical: 3,
                         ),
+                        leading: IsleSquircleBadge(
+                          icon: icon,
+                          color: online ? tone : secondary,
+                          size: 32,
+                          iconSize: 16.5,
+                        ),
+                        title: Text(
+                          label,
+                          style: const TextStyle(
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        subtitle: Text(
+                          online ? route.root!.name : '存储位置离线或绑定尚未验证',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                        trailing: Icon(
+                          online
+                              ? Icons.chevron_right_rounded
+                              : Icons.cloud_off_outlined,
+                          size: 18,
+                        ),
+                        enabled: online && onOpen != null,
+                        onTap: online && onOpen != null
+                            ? () => onOpen!(route.root!, route.path!)
+                            : null,
                       );
                     },
                   ),
-            ],
+                ],
+              ],
+            ),
           ),
       ],
     );

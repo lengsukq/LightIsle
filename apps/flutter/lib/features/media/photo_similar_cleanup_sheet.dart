@@ -140,7 +140,6 @@ class _PhotoSimilarCleanupPageState extends State<PhotoSimilarCleanupPage> {
 
   @override
   Widget build(BuildContext context) {
-    final inset = IsleLayout.pageInset(MediaQuery.sizeOf(context).width);
     return PopScope(
       canPop: false,
       onPopInvokedWithResult: (didPop, _) {
@@ -156,62 +155,36 @@ class _PhotoSimilarCleanupPageState extends State<PhotoSimilarCleanupPage> {
             IconButton(
               tooltip: '重新检测相似照片',
               onPressed: _loading || _busyGroupId != null ? null : _load,
-              icon: const Icon(Icons.refresh_rounded),
+              icon: const Icon(Icons.refresh_rounded, size: 20),
             ),
           ],
         ),
-        body: SafeArea(
-          top: false,
-          child: ListView(
-            padding: EdgeInsets.fromLTRB(inset, 12, inset, 28),
-            children: [
-              IsleIntroCard(
-                icon: Icons.auto_fix_high_rounded,
-                title: '智能最佳照片推荐 · 每组至少保留 1 张原片',
-                description:
-                    '综合分析连拍时间差、画面特征相似度、清晰度与画质美学评分，自动勾选建议清理的重复废片。$_quotaNote',
-              ),
-              if (_message != null) ...[
-                const SizedBox(height: 10),
-                Notice(_message!),
-              ],
-              if (_error != null) ...[
-                const SizedBox(height: 10),
-                Notice(_error!, error: true, onRetry: _loading ? null : _load),
-              ],
-              const SizedBox(height: 12),
-              if (_loading)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 48),
-                  child: Center(child: CircularProgressIndicator()),
-                )
-              else if (_groups.isEmpty)
-                const IsleSurface(
-                  child: Padding(
-                    padding: EdgeInsets.symmetric(vertical: 28, horizontal: 16),
-                    child: Column(
-                      children: [
-                        Icon(Icons.check_circle_outline_rounded, size: 42),
-                        SizedBox(height: 10),
-                        Text(
-                          '暂未发现需要清理的连拍或高相似照片',
-                          style: TextStyle(fontWeight: FontWeight.w600),
-                        ),
-                        SizedBox(height: 6),
-                        Text(
-                          '后台完成离线画面特征提取后，连拍与相似废片会自动汇总到这里供你对比。',
-                          textAlign: TextAlign.center,
-                        ),
-                      ],
-                    ),
-                  ),
-                )
-              else ...[
-                _buildCleanupComparisonCard(context),
-                for (final group in _groups) _buildGroupCard(context, group),
-              ],
+        body: IsleListView(
+          maxWidth: IsleLayout.secondaryPageWidth,
+          children: [
+            IsleIntroCard(
+              icon: Icons.auto_fix_high_rounded,
+              title: '智能最佳照片推荐 · 每组至少保留 1 张原片',
+              description:
+                  '综合分析连拍时间差、画面特征相似度、清晰度与画质美学评分，自动勾选建议清理的重复废片。$_quotaNote',
+            ),
+            if (_message != null) Notice(_message!),
+            if (_error != null)
+              Notice(_error!, error: true, onRetry: _loading ? null : _load),
+            if (_loading)
+              const IsleLoadingState(compact: true, label: '正在检测连拍与相似照片…')
+            else if (_groups.isEmpty)
+              const IsleEmptyStateCard(
+                '后台完成离线画面特征提取后，连拍与相似废片会自动汇总到这里供你对比。',
+                title: '暂未发现需要清理的连拍或高相似照片',
+                icon: Icons.check_circle_outline_rounded,
+              )
+            else ...[
+              _buildCleanupComparisonCard(context),
+              for (final group in _groups) _buildGroupCard(context, group),
             ],
-          ),
+            const SizedBox(height: 20),
+          ],
         ),
       ),
     );
@@ -229,17 +202,18 @@ class _PhotoSimilarCleanupPageState extends State<PhotoSimilarCleanupPage> {
         ? (trashCount / totalPhotos).clamp(0.0, 1.0)
         : 0.0;
     return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.only(bottom: 12),
       child: IsleSurface(
         margin: EdgeInsets.zero,
+        padding: const EdgeInsets.all(14),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             IsleDonutGauge(
               fraction: trashRatio,
               color: const Color(0xFFEF4444),
-              size: 46,
-              strokeWidth: 4.5,
+              size: 42,
+              strokeWidth: 4.0,
               centerText: '${(trashRatio * 100).round()}%',
               semanticsLabel:
                   '共 ${_groups.length} 组 $totalPhotos 张，已选清理 $trashCount 张',
@@ -252,16 +226,18 @@ class _PhotoSimilarCleanupPageState extends State<PhotoSimilarCleanupPage> {
                   Text(
                     '待整理 ${_groups.length} 组 · 已选清理 $trashCount/$totalPhotos 张'
                     '${reclaimBytes > 0 ? '（约可省 ${formatMediaSize(reclaimBytes)}）' : ''}',
-                    style: Theme.of(context).textTheme.bodySmall
-                        ?.copyWith(fontWeight: FontWeight.w600),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                  const SizedBox(height: 8),
+                  const SizedBox(height: 6),
                   IsleSegmentedBar(
-                    height: 8,
+                    height: 7,
                     showPercentInLegend: true,
-                    legendGap: 6,
-                    legendSpacing: 12,
-                    legendRunSpacing: 4,
+                    legendGap: 5,
+                    legendSpacing: 10,
+                    legendRunSpacing: 3,
                     segments: [
                       IsleChartSegment(
                         label: '保留精选',
@@ -293,9 +269,10 @@ class _PhotoSimilarCleanupPageState extends State<PhotoSimilarCleanupPage> {
     final colors = Theme.of(context).colorScheme;
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.only(bottom: 12),
       child: IsleSurface(
         margin: EdgeInsets.zero,
+        padding: const EdgeInsets.all(14),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -315,32 +292,39 @@ class _PhotoSimilarCleanupPageState extends State<PhotoSimilarCleanupPage> {
                     const SizedBox(width: 8),
                     Text(
                       '${group.items.length} 张 · ${formatMediaDate(group.takenAt)}',
-                      style: Theme.of(context).textTheme.titleSmall
-                          ?.copyWith(fontWeight: FontWeight.w700),
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w700,
+                      ),
                     ),
                   ],
                 ),
                 FilledButton.tonalIcon(
+                  style: FilledButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
                   onPressed: busy || selectedTrash.isEmpty
                       ? null
                       : () => _trashSelectedInGroup(group),
                   icon: busy
                       ? const SizedBox(
-                          width: 15,
-                          height: 15,
+                          width: 14,
+                          height: 14,
                           child: CircularProgressIndicator(strokeWidth: 2),
                         )
-                      : const Icon(Icons.delete_outline_rounded, size: 17),
+                      : const Icon(Icons.delete_outline_rounded, size: 16),
                   label: Text('清理已选 (${selectedTrash.length})'),
                 ),
               ],
             ),
             if (group.recommendReason.isNotEmpty) ...[
-              const SizedBox(height: 6),
+              const SizedBox(height: 4),
               Text(
                 '推荐依据：${group.recommendReason}',
-                style: Theme.of(context).textTheme.bodySmall
-                    ?.copyWith(color: colors.onSurfaceVariant),
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                  fontSize: 12,
+                  color: colors.onSurfaceVariant,
+                ),
               ),
             ],
             const SizedBox(height: 10),
@@ -375,18 +359,23 @@ class _PhotoSimilarCleanupPageState extends State<PhotoSimilarCleanupPage> {
     required bool isKeep,
     required bool isTrash,
   }) {
-    final colors = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
     return Container(
-      width: 176,
+      width: 168,
       decoration: BoxDecoration(
-        borderRadius: IsleRadius.brItem,
+        color: isDark
+            ? Colors.white.withValues(alpha: 0.03)
+            : colors.surfaceContainerHighest.withValues(alpha: 0.25),
+        borderRadius: IsleRadius.brMd,
         border: Border.all(
           color: isKeep
               ? const Color(0xFF10B981)
               : isTrash
               ? colors.error
-              : colors.outlineVariant,
-          width: isKeep || isTrash ? 2 : 1,
+              : IsleGlass.rimBorderColor(isDark),
+          width: isKeep || isTrash ? 1.8 : 1.0,
         ),
       ),
       clipBehavior: Clip.antiAlias,
@@ -394,7 +383,7 @@ class _PhotoSimilarCleanupPageState extends State<PhotoSimilarCleanupPage> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           SizedBox(
-            height: 126,
+            height: 118,
             child: Stack(
               fit: StackFit.expand,
               children: [
@@ -420,7 +409,7 @@ class _PhotoSimilarCleanupPageState extends State<PhotoSimilarCleanupPage> {
                         '最佳推荐',
                         style: TextStyle(
                           color: Colors.white,
-                          fontSize: 11,
+                          fontSize: 10.5,
                           fontWeight: FontWeight.w700,
                         ),
                       ),
@@ -438,13 +427,15 @@ class _PhotoSimilarCleanupPageState extends State<PhotoSimilarCleanupPage> {
                   item.name,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.labelMedium
-                      ?.copyWith(fontWeight: FontWeight.w600),
+                  style: theme.textTheme.labelMedium?.copyWith(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
                 ),
                 const SizedBox(height: 2),
                 Text(
                   '${formatMediaSize(item.size)} · 清晰度 ${(item.sharpness * 100).round()}%',
-                  style: Theme.of(context).textTheme.bodySmall,
+                  style: theme.textTheme.bodySmall?.copyWith(fontSize: 11),
                 ),
                 const SizedBox(height: 6),
                 Row(
@@ -456,12 +447,16 @@ class _PhotoSimilarCleanupPageState extends State<PhotoSimilarCleanupPage> {
                             : () => _selectKeep(group, item.assetId),
                         style: OutlinedButton.styleFrom(
                           visualDensity: VisualDensity.compact,
+                          minimumSize: const Size(0, 28),
                           padding: const EdgeInsets.symmetric(horizontal: 6),
                         ),
-                        child: Text(isKeep ? '保留此张' : '设为保留'),
+                        child: Text(
+                          isKeep ? '保留此张' : '设为保留',
+                          style: const TextStyle(fontSize: 11.5),
+                        ),
                       ),
                     ),
-                    const SizedBox(width: 6),
+                    const SizedBox(width: 4),
                     Checkbox(
                       visualDensity: VisualDensity.compact,
                       value: isTrash,

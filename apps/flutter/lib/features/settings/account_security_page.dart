@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
+import '../../core/isle_gallery_layout.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/login_history_store.dart';
@@ -20,11 +21,9 @@ String? validateNewPassword(String? value) {
 String accountTime(Object? value) {
   final seconds = value is num ? value.toInt() : 0;
   if (seconds <= 0) return '—';
-  return DateTime.fromMillisecondsSinceEpoch(seconds * 1000)
-      .toLocal()
-      .toString()
-      .split('.')
-      .first;
+  return DateTime.fromMillisecondsSinceEpoch(
+    seconds * 1000,
+  ).toLocal().toString().split('.').first;
 }
 
 class AccountSecurityPage extends StatefulWidget {
@@ -158,8 +157,9 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
       _current.clear();
       _next.clear();
       _confirm.clear();
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('密码已更新，请重新登录。')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('密码已更新，请重新登录。')));
       await widget.onSignedOut();
     } catch (error) {
       if (mounted) _showActionError(error);
@@ -176,212 +176,151 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
     super.dispose();
   }
 
-  Widget _buildPasswordCard(BuildContext context) => IsleSurface(
-    margin: EdgeInsets.zero,
-    child: Form(
-      key: _form,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Text(
-            '修改密码',
-            style: Theme.of(context).textTheme.titleMedium
-                ?.copyWith(fontWeight: FontWeight.w700, letterSpacing: -0.2),
-          ),
-          const SizedBox(height: 14),
-          TextFormField(
-            controller: _current,
-            enabled: !_busy,
-            obscureText: true,
-            decoration: InputDecoration(
-              labelText: '当前密码',
-              filled: true,
-              fillColor: Theme.of(context).colorScheme.surfaceContainerHighest
-                  .withValues(alpha: 0.35),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(
-                  color: Theme.of(context).colorScheme.outlineVariant
-                      .withValues(alpha: 0.4),
+  Widget _buildPasswordCard(BuildContext context, IslePalette palette) {
+    final theme = Theme.of(context);
+    final sage = palette['brandSage'];
+    return IsleSurface(
+      margin: EdgeInsets.zero,
+      padding: const EdgeInsets.all(18),
+      child: Form(
+        key: _form,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                IsleSquircleBadge(
+                  icon: Icons.lock_outline_rounded,
+                  color: sage,
+                  size: 34,
+                  iconSize: 18,
                 ),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(
-                  color: Theme.of(context).colorScheme.outlineVariant
-                      .withValues(alpha: 0.4),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    '修改密码',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
                 ),
+              ],
+            ),
+            const SizedBox(height: 14),
+            TextFormField(
+              controller: _current,
+              enabled: !_busy,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: '当前密码',
+                isDense: true,
               ),
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 14,
-                vertical: 12,
+              validator: (v) => v == null || v.isEmpty ? '请输入当前密码' : null,
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: _next,
+              enabled: !_busy,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: '新密码',
+                helperText: '12–256 位',
+                isDense: true,
+              ),
+              validator: validateNewPassword,
+            ),
+            const SizedBox(height: 10),
+            TextFormField(
+              controller: _confirm,
+              enabled: !_busy,
+              obscureText: true,
+              decoration: const InputDecoration(
+                labelText: '再次输入新密码',
+                isDense: true,
+              ),
+              validator: (v) => v != _next.text ? '两次输入的密码不一致' : null,
+            ),
+            const SizedBox(height: 16),
+            Align(
+              alignment: Alignment.centerLeft,
+              child: FilledButton.icon(
+                onPressed: _busy ? null : _changePassword,
+                icon: const Icon(Icons.lock_reset, size: 18),
+                label: const Text('更新密码'),
               ),
             ),
-            validator: (v) => v == null || v.isEmpty ? '请输入当前密码' : null,
-          ),
-          const SizedBox(height: 10),
-          TextFormField(
-            controller: _next,
-            enabled: !_busy,
-            obscureText: true,
-            decoration: InputDecoration(
-              labelText: '新密码',
-              helperText: '12–256 字节，首尾不能有空白字符',
-              filled: true,
-              fillColor: Theme.of(context).colorScheme.surfaceContainerHighest
-                  .withValues(alpha: 0.35),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(
-                  color: Theme.of(context).colorScheme.outlineVariant
-                      .withValues(alpha: 0.4),
-                ),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(
-                  color: Theme.of(context).colorScheme.outlineVariant
-                      .withValues(alpha: 0.4),
-                ),
-              ),
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 14,
-                vertical: 12,
-              ),
-            ),
-            validator: validateNewPassword,
-          ),
-          const SizedBox(height: 10),
-          TextFormField(
-            controller: _confirm,
-            enabled: !_busy,
-            obscureText: true,
-            decoration: InputDecoration(
-              labelText: '再次输入新密码',
-              filled: true,
-              fillColor: Theme.of(context).colorScheme.surfaceContainerHighest
-                  .withValues(alpha: 0.35),
-              border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(
-                  color: Theme.of(context).colorScheme.outlineVariant
-                      .withValues(alpha: 0.4),
-                ),
-              ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(12),
-                borderSide: BorderSide(
-                  color: Theme.of(context).colorScheme.outlineVariant
-                      .withValues(alpha: 0.4),
-                ),
-              ),
-              contentPadding: const EdgeInsets.symmetric(
-                horizontal: 14,
-                vertical: 12,
-              ),
-            ),
-            validator: (v) => v != _next.text ? '两次输入的密码不一致' : null,
-          ),
-          const SizedBox(height: 14),
-          Align(
-            alignment: Alignment.centerLeft,
-            child: FilledButton.icon(
-              onPressed: _busy ? null : _changePassword,
-              icon: const Icon(Icons.lock_reset),
-              label: const Text('更新密码'),
-            ),
-          ),
-        ],
-      ),
-    ),
-  );
-
-  Widget _buildSessionsSection(BuildContext context) => Column(
-    crossAxisAlignment: CrossAxisAlignment.stretch,
-    children: [
-      Wrap(
-        spacing: 12,
-        runSpacing: 8,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          Text(
-            '登录会话',
-            style: Theme.of(context).textTheme.titleMedium
-                ?.copyWith(fontWeight: FontWeight.w700, letterSpacing: -0.2),
-          ),
-          TextButton.icon(
-            onPressed: _loading || _busy ? null : _load,
-            icon: const Icon(Icons.refresh),
-            label: const Text('刷新会话'),
-          ),
-          OutlinedButton(
-            onPressed: _busy || _loading ? null : () => _revoke(null),
-            child: const Text('退出其他会话'),
-          ),
-        ],
-      ),
-      Padding(
-        padding: const EdgeInsets.only(bottom: 8),
-        child: Text(
-          '展示已登录终端型号、客户端 IP 与最近活跃时间，支持单设备远程下线。',
-          style: Theme.of(context).textTheme.bodySmall
-              ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
+          ],
         ),
       ),
-      if (_loadError != null) Notice(_loadError!, error: true, onRetry: _load),
-      if (_loading || _busy) const LinearProgressIndicator(),
-      if (!_loading && _loadError == null && _sessions.isEmpty)
-        const Notice('暂无登录会话。'),
-      if (_sessions.isNotEmpty)
-        IsleResponsiveGrid(
-          minItemWidth: 280,
-          maxColumns: 2,
-          spacing: 10,
-          runSpacing: 10,
+    );
+  }
+
+  Widget _buildSessionsSection(BuildContext context, IslePalette palette) {
+    final theme = Theme.of(context);
+    final sage = palette['brandSage'];
+    final mineral = palette['brandBlue'];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
           children: [
-            for (final session in _sessions)
-              Builder(
-                builder: (context) {
-                  final isCurrent = session['current'] == true;
-                  final colors = Theme.of(context).colorScheme;
-                  final isDark =
-                      Theme.of(context).brightness == Brightness.dark;
-                  final revocable =
-                      !isCurrent &&
-                      session['id'] is String &&
-                      (session['id'] as String).isNotEmpty;
-                  return IsleSurface(
-                    radius: 16,
-                    margin: EdgeInsets.zero,
-                    padding: EdgeInsets.zero,
-                    child: ListTile(
+            Expanded(
+              child: Text(
+                '登录会话',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+            OutlinedButton(
+              style: OutlinedButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+              ),
+              onPressed: _busy || _loading ? null : () => _revoke(null),
+              child: const Text('退出其他会话'),
+            ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        if (_loadError != null) Notice(_loadError!, error: true, onRetry: _load),
+        if (_loading || _busy) const LinearProgressIndicator(),
+        if (!_loading && _loadError == null && _sessions.isEmpty)
+          const Notice('暂无登录会话。'),
+        if (_sessions.isNotEmpty)
+          IsleGroupCard(
+            margin: EdgeInsets.zero,
+            children: [
+              for (final session in _sessions)
+                Builder(
+                  builder: (context) {
+                    final isCurrent = session['current'] == true;
+                    final colors = theme.colorScheme;
+                    final revocable =
+                        !isCurrent &&
+                        session['id'] is String &&
+                        (session['id'] as String).isNotEmpty;
+                    return ListTile(
+                      dense: true,
                       contentPadding: const EdgeInsets.symmetric(
                         horizontal: 14,
-                        vertical: 4,
+                        vertical: 5,
                       ),
-                      leading: Container(
-                        width: 32,
-                        height: 32,
-                        decoration: BoxDecoration(
-                          color: (isCurrent ? colors.primary : colors.secondary)
-                              .withValues(alpha: isDark ? 0.22 : 0.12),
-                          borderRadius: BorderRadius.circular(8),
-                        ),
-                        child: Icon(
-                          isCurrent
-                              ? Icons.phone_iphone_rounded
-                              : Icons.devices_rounded,
-                          color: isCurrent ? colors.primary : colors.secondary,
-                          size: 18,
-                        ),
+                      leading: IsleSquircleBadge(
+                        icon: isCurrent
+                            ? Icons.phone_iphone_rounded
+                            : Icons.devices_rounded,
+                        color: isCurrent ? sage : mineral,
+                        size: 34,
+                        iconSize: 17,
                       ),
                       title: Text(
                         (session['deviceLabel']?.toString().trim().isNotEmpty ??
                                 false)
                             ? session['deviceLabel'].toString().trim()
                             : (isCurrent ? '当前设备' : '远程登录设备'),
-                        style: Theme.of(context).textTheme.titleSmall
-                            ?.copyWith(fontWeight: FontWeight.w700),
+                        style: theme.textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                       subtitle: Text(
                         [
@@ -394,75 +333,102 @@ class _AccountSecurityPageState extends State<AccountSecurityPage> {
                           '登录：${accountTime(session['createdAt'])}',
                           if (session['lastSeenAt'] is num &&
                               (session['lastSeenAt'] as num) > 0)
-                            '最近活跃：${accountTime(session['lastSeenAt'])}',
-                          '到期：${accountTime(session['expiresAt'])}',
-                        ].join('\n'),
+                            '活跃：${accountTime(session['lastSeenAt'])}',
+                        ].join(' · '),
                         style: TextStyle(
-                          fontSize: 12.5,
-                          height: 1.45,
+                          fontSize: 12,
+                          height: 1.35,
                           color: colors.onSurfaceVariant,
                         ),
                       ),
                       trailing: isCurrent
-                          ? const IsleBadgePill(
+                          ? IsleBadgePill(
                               label: '本机当前',
-                              color: Color(0xff10b981),
+                              color: sage,
                               icon: Icons.fiber_manual_record,
                             )
                           : revocable
                           ? TextButton(
+                              style: TextButton.styleFrom(
+                                visualDensity: VisualDensity.compact,
+                              ),
                               onPressed: _busy || _loading
                                   ? null
                                   : () => _revoke(session['id'] as String),
                               child: const Text('远程下线'),
                             )
                           : null,
-                    ),
-                  );
-                },
-              ),
-          ],
-        ),
-      if (_truncated) const Notice('会话较多，仅显示最近的部分记录。可使用“退出其他会话”统一撤销。'),
-    ],
-  );
+                    );
+                  },
+                ),
+            ],
+          ),
+        if (_truncated) const Notice('会话较多，仅显示最近的部分记录。可使用“退出其他会话”统一撤销。'),
+      ],
+    );
+  }
 
   @override
-  Widget build(BuildContext context) => PopScope(
-    canPop: !_busy,
-    child: Scaffold(
-      appBar: IsleAppBar(title: const Text('密码与登录会话')),
-      body: IsleListView(
-        children: [
-          if (_actionError != null) Notice(_actionError!, error: true),
-          if (_notice != null) Notice(_notice!),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
-              if (constraints.maxWidth >= 700 && textScale <= 1.35) {
-                return Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Expanded(flex: 5, child: _buildPasswordCard(context)),
-                    const SizedBox(width: 16),
-                    Expanded(flex: 6, child: _buildSessionsSection(context)),
-                  ],
-                );
-              }
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _buildPasswordCard(context),
-                  const SizedBox(height: 18),
-                  _buildSessionsSection(context),
-                ],
-              );
-            },
-          ),
-        ],
+  Widget build(BuildContext context) {
+    final palette = IslePalette.of(context);
+    final sage = palette['brandSage'];
+    return PopScope(
+      canPop: !_busy,
+      child: Scaffold(
+        appBar: IsleAppBar(
+          title: const Text('密码与登录会话'),
+          actions: [
+            IconButton(
+              tooltip: '刷新会话',
+              onPressed: _loading || _busy ? null : _load,
+              icon: const Icon(Icons.refresh_rounded),
+            ),
+            IsleHelpButton(
+              title: '密码与会话安全说明',
+              accentColor: sage,
+              items: const [
+                IsleHelpItem(
+                  title: '全端会话联动失效',
+                  body: '更新账号登录密码后，当前账号在所有手机、平板与电脑上的已登录会话将立即失效，需重新验证登录。',
+                ),
+                IsleHelpItem(
+                  title: 'WebDAV 独立密码隔离',
+                  body: '修改主账号登录密码不会影响已为访达或 Infuse 单独生成的 WebDAV 访问密码；如需停用请前往 WebDAV 页面撤销。',
+                ),
+              ],
+            ),
+          ],
+        ),
+        body: IsleListView(
+          maxWidth: IsleLayout.workbenchMaxWidth,
+          children: [
+            IsleFocalStage(
+              icon: Icons.security_rounded,
+              accent: sage,
+              title: '密码与登录会话',
+              metrics: [
+                IsleFocalMetric(
+                  label: '活跃会话',
+                  value: '${_sessions.length}',
+                  accent: sage,
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            if (_actionError != null) Notice(_actionError!, error: true),
+            if (_notice != null) Notice(_notice!),
+            IsleWorkbenchSplit(
+              breakpoint: 720,
+              primaryFlex: 5,
+              secondaryFlex: 6,
+              primary: _buildPasswordCard(context, palette),
+              secondary: _buildSessionsSection(context, palette),
+            ),
+          ],
+        ),
       ),
-    ),
-  );
+    );
+  }
 }
 
 class ResetMemberPasswordDialog extends StatefulWidget {
@@ -483,6 +449,7 @@ class _ResetMemberPasswordDialogState extends State<ResetMemberPasswordDialog> {
   final _password = TextEditingController(), _confirm = TextEditingController();
   bool _busy = false;
   String? _error;
+
   @override
   void dispose() {
     _password.dispose();
@@ -511,53 +478,66 @@ class _ResetMemberPasswordDialogState extends State<ResetMemberPasswordDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => PopScope(
-    canPop: !_busy,
-    child: AlertDialog(
-      title: Text('重置 ${widget.user['username']} 的密码'),
-      content: SizedBox(
-        width: 420,
-        child: SingleChildScrollView(
-          child: Form(
-            key: _form,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                const Text('仅恢复普通成员账号。更新后该成员的所有会话都会失效。'),
-                const SizedBox(height: 16),
-                TextFormField(
-                  controller: _password,
-                  enabled: !_busy,
-                  obscureText: true,
-                  decoration: const InputDecoration(labelText: '新密码'),
-                  validator: validateNewPassword,
-                ),
-                const SizedBox(height: 12),
-                TextFormField(
-                  controller: _confirm,
-                  enabled: !_busy,
-                  obscureText: true,
-                  decoration: const InputDecoration(labelText: '确认新密码'),
-                  validator: (v) => v != _password.text ? '两次输入的密码不一致' : null,
-                ),
-                if (_error != null) Notice(_error!, error: true),
-                if (_busy) const LinearProgressIndicator(),
-              ],
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return PopScope(
+      canPop: !_busy,
+      child: AlertDialog(
+        shape: IsleShapes.card(
+          side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
+        ),
+        title: Text('重置 ${widget.user['username']} 的密码'),
+        content: SizedBox(
+          width: 420,
+          child: SingleChildScrollView(
+            child: Form(
+              key: _form,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text('更新后该成员的所有会话都会失效。'),
+                  const SizedBox(height: 14),
+                  TextFormField(
+                    controller: _password,
+                    enabled: !_busy,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: '新密码',
+                      isDense: true,
+                    ),
+                    validator: validateNewPassword,
+                  ),
+                  const SizedBox(height: 10),
+                  TextFormField(
+                    controller: _confirm,
+                    enabled: !_busy,
+                    obscureText: true,
+                    decoration: const InputDecoration(
+                      labelText: '确认新密码',
+                      isDense: true,
+                    ),
+                    validator: (v) =>
+                        v != _password.text ? '两次输入的密码不一致' : null,
+                  ),
+                  if (_error != null) Notice(_error!, error: true),
+                  if (_busy) const LinearProgressIndicator(),
+                ],
+              ),
             ),
           ),
         ),
+        actions: [
+          TextButton(
+            onPressed: _busy ? null : () => Navigator.pop(context),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: _busy ? null : _reset,
+            child: const Text('重置密码'),
+          ),
+        ],
       ),
-      actions: [
-        TextButton(
-          onPressed: _busy ? null : () => Navigator.pop(context),
-          child: const Text('取消'),
-        ),
-        FilledButton(
-          onPressed: _busy ? null : _reset,
-          child: const Text('重置密码'),
-        ),
-      ],
-    ),
-  );
+    );
+  }
 }

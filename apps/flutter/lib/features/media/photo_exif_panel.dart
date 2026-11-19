@@ -42,17 +42,21 @@ class PhotoExifPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
     final primaryText = darkOverlay ? Colors.white : scheme.onSurface;
     final secondaryText = darkOverlay
         ? Colors.white70
         : scheme.onSurfaceVariant;
     final cardColor = darkOverlay
-        ? Colors.white.withValues(alpha: 0.08)
-        : scheme.surfaceContainerHigh.withValues(alpha: 0.7);
+        ? Colors.white.withValues(alpha: 0.06)
+        : (isDark
+              ? Colors.white.withValues(alpha: 0.035)
+              : scheme.surfaceContainerHighest.withValues(alpha: 0.30));
     final borderColor = darkOverlay
         ? Colors.white.withValues(alpha: 0.14)
-        : scheme.outlineVariant.withValues(alpha: 0.45);
+        : IsleGlass.rimBorderColor(isDark);
 
     final cameraLine = [
       asset.cameraMake.trim(),
@@ -101,22 +105,22 @@ class PhotoExifPanel extends StatelessWidget {
       children: [
         if (cameraLine.isNotEmpty || asset.lensModel.isNotEmpty)
           Container(
-            margin: const EdgeInsets.only(bottom: 12),
-            padding: const EdgeInsets.all(12),
+            margin: const EdgeInsets.only(bottom: 10),
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
             decoration: BoxDecoration(
               color: cardColor,
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: borderColor, width: 0.8),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: borderColor, width: 1.0),
             ),
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Icon(
                   Icons.photo_camera_outlined,
-                  size: 18,
+                  size: 17,
                   color: darkOverlay ? const Color(0xFF9CDCF5) : scheme.primary,
                 ),
-                const SizedBox(width: 10),
+                const SizedBox(width: 9),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -127,14 +131,17 @@ class PhotoExifPanel extends StatelessWidget {
                           style: TextStyle(
                             color: primaryText,
                             fontWeight: FontWeight.w600,
-                            fontSize: 13.5,
+                            fontSize: 13,
                           ),
                         ),
                       if (asset.lensModel.isNotEmpty) ...[
-                        const SizedBox(height: 2),
+                        const SizedBox(height: 1.5),
                         Text(
                           asset.lensModel,
-                          style: TextStyle(color: secondaryText, fontSize: 12),
+                          style: TextStyle(
+                            color: secondaryText,
+                            fontSize: 11.5,
+                          ),
                         ),
                       ],
                     ],
@@ -145,7 +152,7 @@ class PhotoExifPanel extends StatelessWidget {
           ),
         if (_parameterBadges.isNotEmpty)
           Padding(
-            padding: const EdgeInsets.only(bottom: 14),
+            padding: const EdgeInsets.only(bottom: 10),
             child: Wrap(
               spacing: 6,
               runSpacing: 6,
@@ -153,19 +160,19 @@ class PhotoExifPanel extends StatelessWidget {
                 for (final badge in _parameterBadges)
                   Container(
                     padding: const EdgeInsets.symmetric(
-                      horizontal: 9,
-                      vertical: 5,
+                      horizontal: 8,
+                      vertical: 4,
                     ),
                     decoration: BoxDecoration(
                       color: cardColor,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: borderColor, width: 0.7),
+                      borderRadius: BorderRadius.circular(7),
+                      border: Border.all(color: borderColor, width: 1.0),
                     ),
                     child: Text(
                       badge,
                       style: TextStyle(
                         color: primaryText,
-                        fontSize: 12,
+                        fontSize: 11.5,
                         fontWeight: FontWeight.w600,
                         fontFeatures: const [FontFeature.tabularFigures()],
                       ),
@@ -174,62 +181,64 @@ class PhotoExifPanel extends StatelessWidget {
               ],
             ),
           ),
-        Wrap(
-          spacing: 14,
-          runSpacing: 12,
-          children: [
-            for (final row in rows)
-              SizedBox(
-                width: darkOverlay ? double.infinity : 220,
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Icon(row.$1, size: 17, color: secondaryText),
-                    const SizedBox(width: 9),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            row.$2,
-                            style: TextStyle(
-                              color: secondaryText,
-                              fontSize: 11.5,
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          Text(
-                            row.$3,
-                            style: TextStyle(
-                              color: primaryText,
-                              fontSize: 13,
-                              fontFeatures: const [
-                                FontFeature.tabularFigures(),
-                              ],
-                            ),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ],
+        Container(
+          decoration: BoxDecoration(
+            color: cardColor,
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: borderColor, width: 1.0),
+          ),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              for (var i = 0; i < rows.length; i++) ...[
+                if (i > 0) Divider(height: 1, thickness: 1, color: borderColor),
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 11,
+                    vertical: 7.5,
+                  ),
+                  child: Row(
+                    children: [
+                      Icon(rows[i].$1, size: 15.5, color: secondaryText),
+                      const SizedBox(width: 8),
+                      Text(
+                        rows[i].$2,
+                        style: TextStyle(color: secondaryText, fontSize: 12),
                       ),
-                    ),
-                  ],
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          rows[i].$3,
+                          textAlign: TextAlign.right,
+                          style: TextStyle(
+                            color: primaryText,
+                            fontSize: 12.5,
+                            fontWeight: FontWeight.w600,
+                            fontFeatures: const [FontFeature.tabularFigures()],
+                          ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
-              ),
-          ],
+              ],
+            ],
+          ),
         ),
         if (asset.path.isNotEmpty) ...[
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
             decoration: BoxDecoration(
               color: cardColor,
               borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: borderColor, width: 0.7),
+              border: Border.all(color: borderColor, width: 1.0),
             ),
             child: Row(
               children: [
-                Icon(Icons.folder_outlined, size: 16, color: secondaryText),
+                Icon(Icons.folder_outlined, size: 15, color: secondaryText),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
@@ -247,12 +256,12 @@ class PhotoExifPanel extends StatelessWidget {
                   tooltip: '复制文件路径',
                   visualDensity: VisualDensity.compact,
                   constraints: const BoxConstraints.tightFor(
-                    width: 28,
-                    height: 28,
+                    width: 26,
+                    height: 26,
                   ),
                   padding: EdgeInsets.zero,
                   color: secondaryText,
-                  iconSize: 15,
+                  iconSize: 14.5,
                   onPressed: () {
                     Clipboard.setData(ClipboardData(text: asset.path));
                     ScaffoldMessenger.of(context).showSnackBar(
@@ -274,7 +283,7 @@ class PhotoExifPanel extends StatelessWidget {
 }
 
 /// Wide-desktop right sidebar in [PhotoGalleryViewer] toggled by `I` or the
-/// toolbar info icon, styled after Lightroom / Apple Photos inspector drawers.
+/// toolbar info icon.
 class PhotoViewerInfoSidebar extends StatelessWidget {
   const PhotoViewerInfoSidebar({
     super.key,
@@ -292,20 +301,20 @@ class PhotoViewerInfoSidebar extends StatelessWidget {
     final safe = MediaQuery.paddingOf(context);
     return ClipRRect(
       borderRadius: const BorderRadius.only(
-        topLeft: Radius.circular(20),
-        bottomLeft: Radius.circular(20),
+        topLeft: Radius.circular(18),
+        bottomLeft: Radius.circular(18),
       ),
       child: IsleGlassBackdrop(
         blur: 22,
         child: Container(
-          width: 332,
-          padding: EdgeInsets.fromLTRB(16, safe.top + 14, 16, safe.bottom + 16),
+          width: 320,
+          padding: EdgeInsets.fromLTRB(14, safe.top + 12, 14, safe.bottom + 14),
           decoration: BoxDecoration(
-            color: const Color(0xDB10151E),
+            color: const Color(0xE010151E),
             border: Border(
               left: BorderSide(
                 color: Colors.white.withValues(alpha: 0.16),
-                width: 0.8,
+                width: 1.0,
               ),
             ),
           ),
@@ -319,16 +328,17 @@ class PhotoViewerInfoSidebar extends StatelessWidget {
                       '照片与 EXIF 信息',
                       style: TextStyle(
                         color: Colors.white,
-                        fontSize: 16,
+                        fontSize: 15,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
                   ),
                   IconButton(
+                    visualDensity: VisualDensity.compact,
                     tooltip: '收起信息栏 (Esc / I)',
                     color: Colors.white70,
                     onPressed: onClose,
-                    icon: const Icon(Icons.close_rounded, size: 20),
+                    icon: const Icon(Icons.close_rounded, size: 19),
                   ),
                 ],
               ),
@@ -336,25 +346,27 @@ class PhotoViewerInfoSidebar extends StatelessWidget {
                 asset.name,
                 maxLines: 2,
                 overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: Colors.white70, fontSize: 12.5),
+                style: const TextStyle(color: Colors.white70, fontSize: 12),
               ),
-              const SizedBox(height: 14),
+              const SizedBox(height: 12),
               Expanded(
                 child: SingleChildScrollView(
                   child: PhotoExifPanel(asset: asset, darkOverlay: true),
                 ),
               ),
               if (onOpenFullDetails != null) ...[
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
                 OutlinedButton.icon(
                   style: OutlinedButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
                     foregroundColor: Colors.white,
                     side: BorderSide(
-                      color: Colors.white.withValues(alpha: 0.25),
+                      color: Colors.white.withValues(alpha: 0.24),
+                      width: 1.0,
                     ),
                   ),
                   onPressed: onOpenFullDetails,
-                  icon: const Icon(Icons.photo_album_outlined, size: 18),
+                  icon: const Icon(Icons.photo_album_outlined, size: 17),
                   label: const Text('相册管理与人物场景标签'),
                 ),
               ],

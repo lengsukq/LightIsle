@@ -5,17 +5,16 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../../core/isle_quick_jump.dart';
+import '../../core/isle_gallery_layout.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
-import 'accounts_page.dart';
+import 'app_detail_page.dart';
 import 'apps_center_helpers.dart';
 import 'apps_center_sheets.dart';
-import 'network_diagnostics_page.dart';
-import 'storage_page.dart';
 
+export 'app_detail_page.dart';
 export 'apps_center_sheets.dart';
 
 part 'apps_center_cards.dart';
@@ -166,9 +165,7 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
     try {
       final res = await widget.api.get('/api/v2/apps');
       if (mounted) _applySnapshot(res);
-    } catch (_) {
-      // Keep original action error visible.
-    }
+    } catch (_) {}
   }
 
   Future<void> _reload({required bool refresh}) =>
@@ -191,65 +188,19 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
       _notice = null;
     });
     try {
-      final res = await widget.api.send(
-        'POST',
-        '/api/v2/apps/${Uri.encodeComponent(id)}/launch',
+      final launched = await launchLightIsleApp(
+        api: widget.api,
+        appId: id,
+        preferExternal: preferExternal,
+        urlLauncher: widget.urlLauncher,
       );
-      if (!mounted) return;
-      final launchPath = res['launchUrl']?.toString().trim() ?? '/apps/$id/';
-      final cleanPath = res['launchPath']?.toString().trim() ?? '/apps/$id/';
-      final origin = widget.api.uri('/').origin;
-      final urlText = launchPath.startsWith('http')
-          ? launchPath
-          : '$origin${launchPath.startsWith('/') ? launchPath : '/$launchPath'}';
-      final displayUrl = cleanPath.startsWith('http')
-          ? cleanPath
-          : '$origin${cleanPath.startsWith('/') ? cleanPath : '/$cleanPath'}';
-      final targetUri = Uri.parse(urlText);
-      final launcher =
-          widget.urlLauncher ??
-          (Uri u, {LaunchMode mode = LaunchMode.platformDefault}) =>
-              launchUrl(u, mode: mode);
-      var opened = false;
-      Object? lastLaunchError;
-      if (!preferExternal) {
-        try {
-          opened = await launcher(targetUri, mode: LaunchMode.inAppWebView);
-        } catch (e) {
-          lastLaunchError = e;
-        }
-        if (!opened) {
-          try {
-            opened = await launcher(
-              targetUri,
-              mode: LaunchMode.inAppBrowserView,
-            );
-          } catch (e) {
-            lastLaunchError = e;
-          }
-        }
-      }
-      if (!opened) {
-        try {
-          opened = await launcher(
-            targetUri,
-            mode: LaunchMode.externalApplication,
-          );
-        } catch (e) {
-          lastLaunchError = e;
-        }
-      }
-      if (!opened) {
-        if (lastLaunchError != null) throw lastLaunchError;
-        throw StateError('无法在浏览器中打开该轻应用，请检查系统默认浏览器设置。');
-      }
       if (!mounted) return;
       final refreshed = await widget.api.get('/api/v2/apps');
       if (mounted) {
         _applySnapshot(refreshed);
         setState(() {
           _activeWorkbenchAppId = id;
-          _activeWorkbenchUrl = displayUrl;
+          _activeWorkbenchUrl = launched.displayUri.toString();
           _workbenchReloadKey++;
         });
       }
@@ -282,37 +233,6 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
         if (mounted) unawaited(_refreshDiagnosticSnapshot());
         rethrow;
       }
-    });
-  }
-
-  Future<void> _deleteApp(Map<String, dynamic> app) async {
-    final id = app['id']?.toString() ?? '';
-    final name = app['name']?.toString() ?? id;
-    if (id.isEmpty || _busy) return;
-    if (!await confirmAction(
-      context,
-      '删除轻应用插件',
-      '确定删除“$name”？将移除 plugins/$id/ 代码目录；plugin-data/$id/ 数据目录会保留。',
-      action: '删除插件',
-      isDestructive: true,
-    )) {
-      return;
-    }
-    if (!mounted) return;
-    await _runBusy('删除失败', () async {
-      final res = await widget.api.send(
-        'DELETE',
-        '/api/v2/apps/${Uri.encodeComponent(id)}',
-      );
-      if (!mounted) return;
-      if (res['apps'] is List) {
-        _applySnapshot(res);
-      } else {
-        setState(
-          () => _apps = _apps.where((a) => a['id']?.toString() != id).toList(),
-        );
-      }
-      setState(() => _notice = '已删除插件“$name”。');
     });
   }
 
@@ -366,18 +286,44 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
     });
   }
 
-  Future<void> _applySheetResult(
-    Future<Map<String, dynamic>?> sheetFuture,
-    String successNotice,
-  ) async {
-    final updated = await sheetFuture;
-    if (!mounted || updated == null) return;
-    if (updated['apps'] is List) {
-      _applySnapshot(updated);
-    } else {
-      await _reload(refresh: false);
-    }
-    if (mounted) setState(() => _notice = successNotice);
+  void _openAppDetailPage(Map<String, dynamic> app) {
+    final name = app['name']?.toString() ?? app['id']?.toString() ?? '轻应用';
+    unawaited(
+      Navigator.of(context).push<void>(
+        buildIslePageRoute<void>(
+          builder: (_) => AppDetailPage(
+            api: widget.api,
+            initialApp: app,
+            members: _members,
+            configuredChannels: _configuredChannels,
+            onLaunch: (target) async {
+              await launchLightIsleApp(
+                api: widget.api,
+                appId: target['id']?.toString() ?? '',
+                urlLauncher: widget.urlLauncher,
+              );
+              await _reload(refresh: false);
+            },
+            onExportData: _exportAppData,
+            onSnapshotUpdated: (res) {
+              if (!mounted) return;
+              if (res['apps'] is List) {
+                _applySnapshot(res);
+              }
+            },
+            onDeleted: (deletedId) {
+              if (!mounted) return;
+              setState(() {
+                _apps = _apps
+                    .where((a) => a['id']?.toString() != deletedId)
+                    .toList();
+                _notice = '已删除插件“$name”。';
+              });
+            },
+          ),
+        ),
+      ),
+    );
   }
 
   Future<String?> _chooseBackupSavePath(String fileName) async {
@@ -424,6 +370,8 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
   @override
   Widget build(BuildContext context) {
     final activeWorkbench = _activeWorkbenchApp;
+    final palette = IslePalette.of(context);
+    final violet = palette['brandViolet'];
     return PopScope(
       canPop: activeWorkbench == null,
       onPopInvokedWithResult: (didPop, _) {
@@ -449,63 +397,55 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
               onPressed: _busy ? null : () => _reload(refresh: _isAdmin),
               icon: const Icon(Icons.refresh_rounded),
             ),
+            IsleHelpButton(
+              title: '家庭轻应用说明',
+              accentColor: violet,
+              items: const [
+                IsleHelpItem(
+                  title: '零冗余按需运行',
+                  body: '官方精选静态模板占用 0 MB 常驻内存；动态 Web 应用支持按需唤醒与闲置自动休眠。',
+                ),
+                IsleHelpItem(
+                  title: '代码与数据解耦',
+                  body: '应用代码与业务数据分目录存放，升级或移除插件不会影响已保存的数据归档。',
+                ),
+              ],
+            ),
           ],
         ),
         body: IsleListView(
+          maxWidth: activeWorkbench != null
+              ? 1320
+              : IsleLayout.workbenchMaxWidth,
           children: [
             if (activeWorkbench != null)
               _buildEmbeddedWorkbench(context, activeWorkbench)
             else if (!_loaded && _busy)
               const IsleLoadingState(label: '正在加载应用中心…')
             else ...[
-              if (_isAdmin && _appStorage != null)
-                _buildStorageLocationsCard(context),
-              if (_isAdmin && _templates.isNotEmpty)
-                _buildOfficialTemplatesCard(context),
-              if (!_isAdmin)
-                const IsleIntroCard(
+              if (!_isAdmin) ...[
+                IsleFocalStage(
                   icon: Icons.apps_rounded,
+                  accent: violet,
                   title: '家庭轻应用工作台',
-                  description: '这里展示家庭管理员为你开启的实用工具与看板，点击即可免密打开，无需额外配置端口或账号。',
-                ),
-              IsleQuickJumpStrip(
-                key: const ValueKey('appsCenterQuickJumpStrip'),
-                items: [
-                  if (_isAdmin) ...[
-                    IsleQuickJumpItem(
-                      icon: Icons.storage_rounded,
-                      label: '管理存储与配额',
-                      tooltip: '查看物理磁盘状态与轻应用可用存储位置',
-                      onTap: () => Navigator.of(context).push<void>(
-                        buildIslePageRoute<void>(
-                          builder: (_) =>
-                              StoragePage(api: widget.api, isAdmin: true),
-                        ),
-                      ),
-                    ),
-                    IsleQuickJumpItem(
-                      icon: Icons.people_outline_rounded,
-                      label: '成员与目录授权',
-                      tooltip: '管理家庭成员账号并配合轻应用授权可见范围',
-                      onTap: () => Navigator.of(context).push<void>(
-                        buildIslePageRoute<void>(
-                          builder: (_) => AccountsPage(api: widget.api),
-                        ),
-                      ),
+                  metrics: [
+                    IsleFocalMetric(
+                      label: '可用应用',
+                      value: '${_apps.length}',
+                      accent: violet,
                     ),
                   ],
-                  IsleQuickJumpItem(
-                    icon: Icons.speed_rounded,
-                    label: '连接测速',
-                    tooltip: '检测轻量应用与 NAS 服务连接的网络质量',
-                    onTap: () => Navigator.of(context).push<void>(
-                      buildIslePageRoute<void>(
-                        builder: (_) => NetworkDiagnosticsPage(api: widget.api),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
+                ),
+                const SizedBox(height: 12),
+              ],
+              if (_isAdmin && _appStorage != null) ...[
+                _buildStorageLocationsCard(context),
+                const SizedBox(height: 12),
+              ],
+              if (_isAdmin && _templates.isNotEmpty) ...[
+                _buildOfficialTemplatesCard(context),
+                const SizedBox(height: 12),
+              ],
               if (_error != null)
                 Notice(
                   _error!,
@@ -518,7 +458,7 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
               if (_loaded && _apps.isEmpty && !_busy)
                 IsleEmptyStateCard(
                   _isAdmin
-                      ? '还没有已安装的轻应用插件。可一键安装上方官方精选轻应用，或在 Mac 端 LightIsle 客户端中添加。'
+                      ? '还没有已安装的轻应用插件。可一键安装上方精选模板，或在 Mac 端添加。'
                       : '管理员暂未向当前账号开放轻应用。',
                   title: '暂无可用轻应用',
                   icon: Icons.widgets_outlined,
@@ -528,10 +468,11 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
                   title: _isAdmin
                       ? '已安装轻应用（${_apps.length}）'
                       : '可用轻应用（${_apps.length}）',
+                  accentColor: violet,
                 ),
                 IsleResponsiveGrid(
                   minItemWidth: 340,
-                  maxColumns: 2,
+                  maxColumns: 3,
                   spacing: 12,
                   runSpacing: 12,
                   children: [

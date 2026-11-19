@@ -7,8 +7,7 @@ extension _PhotosPageAlbumManagement on _PhotosPageState {
     required bool private,
   }) => LayoutBuilder(
     builder: (context, constraints) {
-      // A cover is a small collection tile, not a card that expands to fill
-      // a column. In particular, one album must never become a giant cover.
+      final isDark = Theme.of(context).brightness == Brightness.dark;
       final columns = ((constraints.maxWidth + 12) / 176).floor().clamp(1, 8);
       final available = (constraints.maxWidth - (columns - 1) * 12) / columns;
       final cardWidth = available.clamp(1.0, 168.0);
@@ -25,7 +24,7 @@ extension _PhotosPageAlbumManagement on _PhotosPageState {
               child: Material(
                 color: Colors.transparent,
                 child: InkWell(
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: IsleRadius.brSm,
                   onTap: () => Navigator.pop(
                     sheetContext,
                     '${private ? 'private' : 'shared'}:${album.id}',
@@ -33,8 +32,15 @@ extension _PhotosPageAlbumManagement on _PhotosPageState {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      ClipRRect(
-                        borderRadius: BorderRadius.circular(12),
+                      Container(
+                        decoration: BoxDecoration(
+                          borderRadius: IsleRadius.brSm,
+                          border: Border.all(
+                            color: IsleGlass.rimBorderColor(isDark),
+                            width: 1.0,
+                          ),
+                        ),
+                        clipBehavior: Clip.antiAlias,
                         child: AspectRatio(
                           aspectRatio: 1.22,
                           child: album.coverAssetId > 0
@@ -278,9 +284,13 @@ extension _PhotosPageAlbumManagement on _PhotosPageState {
   }
 
   Future<void> _deleteAlbum(MediaAlbum album) async {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        shape: IsleShapes.card(
+          side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
+        ),
         title: const Text('删除相册？'),
         content: Text('只会删除“${album.name}”及其中的关联。原始照片和视频会保留。'),
         actions: [
@@ -318,9 +328,13 @@ extension _PhotosPageAlbumManagement on _PhotosPageState {
   }
 
   Future<void> _deletePrivateAlbum(MediaAlbum album) async {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        shape: IsleShapes.card(
+          side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
+        ),
         title: const Text('删除私人相册？'),
         content: Text('只会删除“${album.name}”及其中的关联。原始照片、视频和共享相册都会保留。'),
         actions: [
@@ -460,8 +474,6 @@ extension _PhotosPageAlbumManagement on _PhotosPageState {
   }
 
   Future<void> _browseAlbums() async {
-    // Albums are a destination, not a temporary picker floating above the
-    // timeline. Keep a proper back stack and preserve the timeline underneath.
     final value = await Navigator.of(context).push<String>(
       buildIslePageRoute<String>(
         builder: (context) => StatefulBuilder(
@@ -538,37 +550,44 @@ class _AlbumNameDialogState extends State<AlbumNameDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: Text(
-      widget.initialName.isEmpty
-          ? widget.privateAlbum
-                ? '新建私人相册'
-                : '新建相册'
-          : widget.privateAlbum
-          ? '修改私人相册名称'
-          : '修改相册名称',
-    ),
-    content: TextField(
-      controller: _controller,
-      autofocus: true,
-      maxLength: 120,
-      textInputAction: TextInputAction.done,
-      onSubmitted: (_) => _submit(),
-      decoration: InputDecoration(
-        labelText: '相册名称',
-        errorText: _error,
-        helperText: '最多 60 个字符',
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return AlertDialog(
+      shape: IsleShapes.card(
+        side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
       ),
-    ),
-    actions: [
-      TextButton(
-        onPressed: () => Navigator.pop(context),
-        child: const Text('取消'),
+      title: Text(
+        widget.initialName.isEmpty
+            ? widget.privateAlbum
+                  ? '新建私人相册'
+                  : '新建相册'
+            : widget.privateAlbum
+            ? '修改私人相册名称'
+            : '修改相册名称',
       ),
-      FilledButton(
-        onPressed: _submit,
-        child: Text(widget.initialName.isEmpty ? '创建' : '保存'),
+      content: TextField(
+        controller: _controller,
+        autofocus: true,
+        maxLength: 120,
+        textInputAction: TextInputAction.done,
+        onSubmitted: (_) => _submit(),
+        decoration: InputDecoration(
+          labelText: '相册名称',
+          errorText: _error,
+          helperText: '最多 60 个字符',
+          isDense: true,
+        ),
       ),
-    ],
-  );
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          onPressed: _submit,
+          child: Text(widget.initialName.isEmpty ? '创建' : '保存'),
+        ),
+      ],
+    );
+  }
 }

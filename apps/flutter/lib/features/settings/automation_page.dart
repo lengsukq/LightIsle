@@ -1,10 +1,13 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/isle_action_menu.dart';
+import '../../core/isle_gallery_layout.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
+import 'apps_center_sheets.dart' show AppTerminalLogBox;
 
 const String _agentPrompt =
     '你是用户本地使用的外部 AI Agent，请在当前 Mac 上为 LightIsle 创建或修改自动化脚本。先确认 LightIsle 实际 data-dir，不要猜测路径。\n'
@@ -307,41 +310,129 @@ class _AutomationPageState extends State<AutomationPage> {
     }
   }
 
+  Future<void> _showRunOutputDialog(
+    BuildContext context,
+    Map<String, dynamic> run,
+  ) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final deliveries = _deliveryLines(run['deliveries']).toList();
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        shape: IsleShapes.card(
+          side: BorderSide(color: IsleGlass.rimBorderColor(isDark)),
+        ),
+        title: Text(
+          '${_runState(run['state'])} · ${_formatEpoch(run['startedAt'])}',
+        ),
+        content: SizedBox(
+          width: 480,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                if (run['exitCode'] is int && run['exitCode'] >= 0)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text('退出码：${run['exitCode']}'),
+                  ),
+                if (deliveries.isNotEmpty) ...[
+                  ...deliveries,
+                  const SizedBox(height: 8),
+                ],
+                AppTerminalLogBox(
+                  minHeight: 72,
+                  text: (run['output']?.toString().trim().isNotEmpty == true)
+                      ? run['output'].toString()
+                      : '（没有标准输出）',
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          FilledButton.tonal(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('关闭'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final palette = IslePalette.of(context);
+    final terracotta = palette['brandTerracotta'];
+    final sage = palette['brandSage'];
+    final enabledCount = _tasks.where((t) => t['enabled'] == true).length;
+
     return Scaffold(
       appBar: IsleAppBar(
         title: const Text('本机脚本自动化'),
         actions: [
           IconButton(
+            key: const ValueKey('refreshAutomationTasks'),
             tooltip: '刷新脚本目录',
             onPressed: _busy ? null : () => _reload(refresh: true),
             icon: const Icon(Icons.refresh_rounded),
           ),
-        ],
-      ),
-      body: IsleListView(
-        children: [
-          IsleIntroCard(
-            icon: Icons.terminal_rounded,
-            title: '本地外部脚本与 Agent 调度',
-            description: '脚本由你在 Mac 本地通过外部编辑器或 AI Agent 维护。轻屿只负责定时调度、通知和只读日志，不提供在线代码编辑器或依赖安装。',
-            codePill: '任务目录：LightIsle 数据目录 / automation / scripts / <task-id> / task.json',
-            actions: [
-              FilledButton.tonalIcon(
-                key: const ValueKey('copyAutomationAgentPrompt'),
-                onPressed: _copyAgentPrompt,
-                icon: const Icon(Icons.copy_all_rounded, size: 18),
-                label: const Text('复制给本地 Agent 的脚本规范'),
+          IsleHelpButton(
+            title: '本机脚本与安全说明',
+            accentColor: terracotta,
+            items: const [
+              IsleHelpItem(
+                title: '任务目录与文件结构',
+                body:
+                    '每个自动化任务位于 Mac 数据目录 automation/scripts/<task-id>/ 下，由 task.json 定义入口脚本、Cron 表达式与通知事件；退出码 0 视为执行成功。',
               ),
-              OutlinedButton.icon(
-                key: const ValueKey('refreshAutomationTasks'),
-                onPressed: _busy ? null : () => _reload(refresh: true),
-                icon: const Icon(Icons.refresh_rounded, size: 18),
-                label: Text(_busy ? '正在刷新…' : '刷新脚本'),
+              IsleHelpItem(
+                title: '凭据与源码隔离',
+                body:
+                    '客户端仅修改启用开关、Cron 计划与通知渠道，不覆写脚本代码与环境变量；SMTP、Bark、Webhook 等通知密钥仅保存在 Mac 端钥匙串中。',
               ),
             ],
           ),
+        ],
+      ),
+      body: IsleListView(
+        maxWidth: IsleLayout.workbenchMaxWidth,
+        children: [
+          IsleFocalStage(
+            icon: Icons.terminal_rounded,
+            accent: terracotta,
+            title: '本地外部脚本与 Agent 调度',
+            metrics: [
+              IsleFocalMetric(
+                label: '已发现任务',
+                value: '${_tasks.length}',
+                accent: terracotta,
+              ),
+              IsleFocalMetric(
+                label: '已启用',
+                value: '$enabledCount',
+                accent: sage,
+              ),
+              IsleFocalMetric(
+                label: '通知渠道',
+                value: '${_configuredChannels.length}',
+                accent: palette['brandBlue'],
+              ),
+            ],
+            actions: [
+              FilledButton.tonalIcon(
+                key: const ValueKey('copyAutomationAgentPrompt'),
+                style: FilledButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                ),
+                onPressed: _copyAgentPrompt,
+                icon: const Icon(Icons.copy_all_rounded, size: 17),
+                label: const Text('复制 Agent 脚本规范'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
           if (_error != null)
             Notice(_error!, error: true, onRetry: () => _reload(refresh: true)),
           if (_notice != null) Notice(_notice!),
@@ -351,28 +442,27 @@ class _AutomationPageState extends State<AutomationPage> {
             const LinearProgressIndicator(),
           if (_loaded && _tasks.isEmpty && !_busy)
             const IsleEmptyStateCard(
-              '还没有本地自动化脚本。请在本机创建任务文件夹和 task.json，然后点击“刷新脚本”。',
+              '在本机 automation/scripts/ 下创建任务后，点击右上角刷新即可发现。',
               title: '暂无本地脚本任务',
               icon: Icons.auto_mode_rounded,
             ),
           if (_tasks.isNotEmpty) ...[
-            IsleSectionHeader(title: '已发现任务（${_tasks.length}）'),
+            IsleSectionHeader(
+              title: '已发现任务（${_tasks.length}）',
+              accentColor: terracotta,
+            ),
             IsleResponsiveGrid(
               minItemWidth: 340,
               maxColumns: 2,
-              spacing: 10,
-              runSpacing: 10,
+              spacing: 12,
+              runSpacing: 12,
               children: [
-                for (final task in _tasks) _buildTaskCard(context, task),
+                for (final task in _tasks)
+                  _buildTaskCard(context, task, palette),
               ],
             ),
           ],
-          const IsleHelpDisclosure(
-            summary: '安全与邮件模板说明',
-            details:
-                '脚本以运行 LightIsle 的当前 Mac 用户权限执行，具备真实文件访问能力，请只运行你信任的本地脚本。'
-                '邮件模板（builtin / content / custom）由本地 task.json 与 HTML 文件决定，客户端编辑 Cron 或通知渠道时会自动保留原邮件模板设置。',
-          ),
+          const SizedBox(height: 16),
         ],
       ),
     );
@@ -382,6 +472,7 @@ class _AutomationPageState extends State<AutomationPage> {
     BuildContext context,
     Map<String, dynamic> task,
     ColorScheme colors,
+    IslePalette palette,
   ) {
     final id = task['id']?.toString() ?? '';
     final name = task['name']?.toString() ?? id;
@@ -396,15 +487,18 @@ class _AutomationPageState extends State<AutomationPage> {
     final tz = schedule['timezone']?.toString() ?? '未设置时区';
     final lastRun = task['lastRun'];
     final nextRun = task['nextRun'];
+    final terracotta = palette['brandTerracotta'];
+    final sage = palette['brandSage'];
+    final mineral = palette['brandBlue'];
 
     return Row(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         IsleSquircleBadge(
           icon: Icons.terminal_rounded,
-          color: colors.primary,
-          size: 40,
-          iconSize: 20,
+          color: terracotta,
+          size: 38,
+          iconSize: 19,
         ),
         const SizedBox(width: 12),
         Expanded(
@@ -416,31 +510,37 @@ class _AutomationPageState extends State<AutomationPage> {
                   Expanded(
                     child: Text(
                       name,
-                      style: Theme.of(context).textTheme.titleMedium
-                          ?.copyWith(fontWeight: FontWeight.w700),
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
+                      ),
                     ),
                   ),
                   IsleStatusBadge(
                     label: running ? '运行中' : (enabled ? '已启用' : '已暂停'),
                     color: running
-                        ? const Color(0xFF0A84FF)
+                        ? mineral
                         : enabled
-                        ? const Color(0xFF10B981)
-                        : const Color(0xFF64748B),
+                        ? sage
+                        : colors.onSurfaceVariant,
                   ),
                 ],
               ),
-              const SizedBox(height: 4),
+              const SizedBox(height: 3),
               Text(
                 '$id · $entry · $cron ($tz)',
-                style: Theme.of(context).textTheme.bodySmall
-                    ?.copyWith(color: colors.onSurfaceVariant),
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
               ),
               if (nextRun is num && nextRun > 0)
-                Text('下次执行 ${_formatEpoch(nextRun)}（本机时间）'),
+                Text(
+                  '下次执行 ${_formatEpoch(nextRun)}',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
               if (lastRun is Map)
                 Text(
                   '上次结果 ${_runState(lastRun['state'])} · ${_formatEpoch(lastRun['finishedAt'])}',
+                  style: Theme.of(context).textTheme.bodySmall,
                 ),
               if (lastError.isNotEmpty) ...[
                 const SizedBox(height: 6),
@@ -460,42 +560,82 @@ class _AutomationPageState extends State<AutomationPage> {
     );
   }
 
-  Widget _buildTaskActions(Map<String, dynamic> task, ColorScheme colors) {
+  Widget _buildTaskActions(
+    BuildContext context,
+    Map<String, dynamic> task,
+    ColorScheme colors,
+  ) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final id = task['id']?.toString() ?? '';
     final enabled = task['enabled'] == true;
     final running = task['running'] == true;
     final lastError = task['lastError']?.toString() ?? '';
-    return Wrap(
-      spacing: 8,
-      runSpacing: 8,
+    return Row(
       children: [
-        OutlinedButton.icon(
-          onPressed: _busy || lastError.isNotEmpty
-              ? null
-              : () => _toggleTask(task),
-          icon: Icon(
-            enabled ? Icons.pause_rounded : Icons.play_arrow_rounded,
-            size: 16,
+        Expanded(
+          child: Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                ),
+                onPressed: _busy || lastError.isNotEmpty
+                    ? null
+                    : () => _toggleTask(task),
+                icon: Icon(
+                  enabled ? Icons.pause_rounded : Icons.play_arrow_rounded,
+                  size: 16,
+                ),
+                label: Text(enabled ? '关闭' : '启用'),
+              ),
+              OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                ),
+                onPressed: _busy || lastError.isNotEmpty
+                    ? null
+                    : () => _startEdit(task),
+                icon: const Icon(Icons.schedule_rounded, size: 16),
+                label: const Text('Cron 与通知'),
+              ),
+            ],
           ),
-          label: Text(enabled ? '关闭' : '启用'),
         ),
-        OutlinedButton.icon(
-          onPressed: _busy || lastError.isNotEmpty
-              ? null
-              : () => _startEdit(task),
-          icon: const Icon(Icons.schedule_rounded, size: 16),
-          label: const Text('Cron 与通知'),
-        ),
-        OutlinedButton.icon(
-          onPressed: _busy ? null : () => _loadRuns(id),
-          icon: const Icon(Icons.receipt_long_rounded, size: 16),
-          label: const Text('日志'),
-        ),
-        TextButton.icon(
-          onPressed: _busy || running ? null : () => _deleteTask(task),
-          style: TextButton.styleFrom(foregroundColor: colors.error),
-          icon: const Icon(Icons.delete_outline_rounded, size: 16),
-          label: const Text('删除'),
+        PopupMenuButton<String>(
+          tooltip: '更多任务操作',
+          enabled: !_busy,
+          icon: Icon(
+            Icons.more_horiz_rounded,
+            size: 19,
+            color: colors.onSurfaceVariant,
+          ),
+          style: IconButton.styleFrom(visualDensity: VisualDensity.compact),
+          shape: IsleShapes.md(
+            side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1),
+          ),
+          onSelected: (action) {
+            if (action == 'logs') {
+              _loadRuns(id);
+            } else if (action == 'delete') {
+              _deleteTask(task);
+            }
+          },
+          itemBuilder: (_) => [
+            isleActionMenuItem(
+              value: 'logs',
+              icon: Icons.receipt_long_rounded,
+              label: '查看执行日志',
+            ),
+            isleActionMenuItem(
+              value: 'delete',
+              enabled: !running,
+              icon: Icons.delete_outline_rounded,
+              label: '删除任务目录',
+              destructive: true,
+            ),
+          ],
         ),
       ],
     );
@@ -509,42 +649,73 @@ class _AutomationPageState extends State<AutomationPage> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Divider(height: 24),
-        Text(
-          '仅修改任务启停、Cron 和通知事件/渠道；不会改动脚本代码、env.json 或本地邮件模板设置。',
-          style: Theme.of(context).textTheme.bodySmall
-              ?.copyWith(color: colors.onSurfaceVariant),
-        ),
-        const SizedBox(height: 12),
-        Row(
+        const Divider(height: 22),
+        Wrap(
+          spacing: 8,
+          runSpacing: 6,
           children: [
-            Expanded(
-              child: TextField(
-                controller: _cronController,
-                decoration: const InputDecoration(
-                  labelText: '五段 Cron',
-                  hintText: '0 8 * * *',
-                ),
+            for (final (expr, label) in const [
+              ('*/15 * * * *', '每 15 分钟'),
+              ('0 * * * *', '每小时'),
+              ('0 2 * * *', '每天 02:00'),
+            ])
+              ActionChip(
+                visualDensity: VisualDensity.compact,
+                label: Text('$label ($expr)'),
+                onPressed: () => _cronController.text = expr,
               ),
-            ),
-            const SizedBox(width: 12),
-            Expanded(
-              child: TextField(
-                controller: _timezoneController,
-                decoration: const InputDecoration(
-                  labelText: '时区',
-                  hintText: 'Asia/Shanghai',
-                ),
+          ],
+        ),
+        const SizedBox(height: 10),
+        LayoutBuilder(
+          builder: (context, constraints) {
+            final cronField = TextField(
+              controller: _cronController,
+              style: const TextStyle(fontFamily: 'monospace'),
+              decoration: const InputDecoration(
+                labelText: '五段 Cron',
+                hintText: '0 8 * * *',
+                isDense: true,
+              ),
+            );
+            final tzField = TextField(
+              controller: _timezoneController,
+              decoration: const InputDecoration(
+                labelText: '时区',
+                hintText: 'Asia/Shanghai',
+                isDense: true,
+              ),
+            );
+            if (constraints.maxWidth < 380) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [cronField, const SizedBox(height: 8), tzField],
+              );
+            }
+            return Row(
+              children: [
+                Expanded(child: cronField),
+                const SizedBox(width: 10),
+                Expanded(child: tzField),
+              ],
+            );
+          },
+        ),
+        const SizedBox(height: 10),
+        IsleGroupCard(
+          children: [
+            IsleGroupTile(
+              icon: Icons.schedule_rounded,
+              title: '启用此定时任务',
+              onTap: () => setState(() => _editingEnabled = !_editingEnabled),
+              trailing: Switch.adaptive(
+                value: _editingEnabled,
+                onChanged: (v) => setState(() => _editingEnabled = v),
               ),
             ),
           ],
         ),
-        SwitchListTile(
-          contentPadding: EdgeInsets.zero,
-          title: const Text('启用此任务'),
-          value: _editingEnabled,
-          onChanged: (v) => setState(() => _editingEnabled = v),
-        ),
+        const SizedBox(height: 8),
         Text('通知事件', style: Theme.of(context).textTheme.labelLarge),
         const SizedBox(height: 6),
         Wrap(
@@ -553,6 +724,7 @@ class _AutomationPageState extends State<AutomationPage> {
           children: [
             for (final (evId, evLabel) in _eventOptions)
               FilterChip(
+                visualDensity: VisualDensity.compact,
                 label: Text(evLabel),
                 selected: _editingEvents.contains(evId),
                 onSelected: (selected) {
@@ -576,6 +748,7 @@ class _AutomationPageState extends State<AutomationPage> {
           children: [
             for (final (chId, chLabel) in _channelOptions)
               FilterChip(
+                visualDensity: VisualDensity.compact,
                 label: Text(
                   _configuredChannels.contains(chId)
                       ? chLabel
@@ -628,18 +801,21 @@ class _AutomationPageState extends State<AutomationPage> {
     BuildContext context,
     String id,
     ColorScheme colors,
+    IslePalette palette,
   ) {
+    final sage = palette['brandSage'];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Divider(height: 24),
+        const Divider(height: 22),
         Row(
           children: [
             Expanded(
               child: Text(
-                '最近 30 次执行记录',
-                style: Theme.of(context).textTheme.titleSmall
-                    ?.copyWith(fontWeight: FontWeight.w700),
+                '最近执行记录',
+                style: Theme.of(
+                  context,
+                ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w700),
               ),
             ),
             TextButton(
@@ -662,64 +838,71 @@ class _AutomationPageState extends State<AutomationPage> {
           )
         else if (_runs.isEmpty)
           Text(
-            '暂无执行记录；定时触发后会显示退出码和标准输出。',
-            style: Theme.of(context).textTheme.bodySmall
-                ?.copyWith(color: colors.onSurfaceVariant),
+            '暂无执行记录。',
+            style: Theme.of(
+              context,
+            ).textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant),
           )
         else
-          for (final run in _runs)
-            ExpansionTile(
-              tilePadding: EdgeInsets.zero,
-              title: Text(
-                '${_formatEpoch(run['startedAt'])} · ${_runState(run['state'])}'
-                '${run['exitCode'] is int && run['exitCode'] >= 0 ? ' · 退出码 ${run['exitCode']}' : ''}',
-                style: const TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              children: [
-                ..._deliveryLines(run['deliveries']),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.all(10),
-                  decoration: BoxDecoration(
-                    color: Colors.black.withValues(alpha: 0.16),
-                    borderRadius: BorderRadius.circular(10),
+          IsleGroupCard(
+            margin: EdgeInsets.zero,
+            children: [
+              for (final run in _runs)
+                ListTile(
+                  dense: true,
+                  visualDensity: VisualDensity.compact,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 12,
+                    vertical: 1,
                   ),
-                  child: SelectableText(
-                    (run['output']?.toString().trim().isNotEmpty == true)
-                        ? run['output'].toString()
-                        : '（没有标准输出）',
-                    style: const TextStyle(
-                      fontFamily: 'monospace',
-                      fontSize: 12,
+                  onTap: () => _showRunOutputDialog(context, run),
+                  leading: IsleStatusBadge(
+                    label: _runState(run['state']),
+                    color: run['state']?.toString() == 'success'
+                        ? sage
+                        : colors.error,
+                  ),
+                  title: Text(
+                    _formatEpoch(run['startedAt']),
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      fontWeight: FontWeight.w600,
                     ),
                   ),
+                  subtitle: run['exitCode'] is int && run['exitCode'] >= 0
+                      ? Text(
+                          '退出码 ${run['exitCode']}',
+                          style: const TextStyle(fontSize: 11.5),
+                        )
+                      : null,
+                  trailing: const Icon(Icons.help_outline_rounded, size: 17),
                 ),
-              ],
-            ),
+            ],
+          ),
       ],
     );
   }
 
-  Widget _buildTaskCard(BuildContext context, Map<String, dynamic> task) {
+  Widget _buildTaskCard(
+    BuildContext context,
+    Map<String, dynamic> task,
+    IslePalette palette,
+  ) {
     final colors = Theme.of(context).colorScheme;
     final id = task['id']?.toString() ?? '';
     return IsleSurface(
       key: ValueKey('automationTask_$id'),
       margin: EdgeInsets.zero,
-      radius: 18,
-      padding: const EdgeInsets.all(14),
+      radius: IsleRadius.card,
+      padding: const EdgeInsets.all(15),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          _buildTaskHeader(context, task, colors),
-          const SizedBox(height: 12),
-          _buildTaskActions(task, colors),
+          _buildTaskHeader(context, task, colors, palette),
+          const SizedBox(height: 10),
+          _buildTaskActions(context, task, colors),
           if (_editingTaskId == id) _buildTaskInlineEditor(context, id, colors),
           if (_selectedRunsTaskId == id)
-            _buildTaskRunsPanel(context, id, colors),
+            _buildTaskRunsPanel(context, id, colors, palette),
         ],
       ),
     );

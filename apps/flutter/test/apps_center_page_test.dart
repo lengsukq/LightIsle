@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lightisle/core/lightisle_api.dart';
+import 'package:lightisle/features/overview/overview_page.dart';
 import 'package:lightisle/features/settings/apps_center_page.dart';
 import 'package:url_launcher/url_launcher.dart';
 
@@ -144,6 +145,13 @@ class _FakeAppsApi extends LightIsleApi {
         ],
       };
     }
+    if (path == '/api/v2/apps/network-pulse/logs') {
+      return {
+        'id': 'network-pulse',
+        'webOutput': '',
+        'cronRuns': <Map<String, dynamic>>[],
+      };
+    }
     throw StateError('unexpected GET $path');
   }
 
@@ -280,16 +288,25 @@ void main() {
       expect(find.text('仅管理员'), findsOneWidget);
       expect(find.text('定时 */15 * * * *'), findsOneWidget);
 
-      // Open Member Access Sheet and grant access to alice (id: 2)
-      await tester.tap(find.byKey(const ValueKey('accessApp_cpe-monitor')));
+      // Open App Detail Page for cpe-monitor: update member ACL, inspect logs, and export data
+      await tester.tap(find.byKey(const ValueKey('detailApp_cpe-monitor')));
+      await tester.pumpAndSettle();
+      expect(find.byType(AppDetailPage), findsOneWidget);
+      expect(api.calls, contains('GET /api/v2/apps/cpe-monitor/logs'));
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('accessPolicy_selected_members')),
+      );
       await tester.pumpAndSettle();
       await tester.tap(
         find.byKey(const ValueKey('accessPolicy_selected_members')),
       );
       await tester.pumpAndSettle();
+      await tester.ensureVisible(find.byKey(const ValueKey('memberAccess_2')));
+      await tester.pumpAndSettle();
       await tester.tap(find.byKey(const ValueKey('memberAccess_2')));
       await tester.pumpAndSettle();
-      await tester.tap(find.byKey(const ValueKey('saveMemberAccessButton')));
+      await tester.tap(find.byKey(const ValueKey('saveAppDetailButton')));
       await tester.pumpAndSettle();
 
       expect(api.calls, contains('PUT /api/v2/apps/cpe-monitor'));
@@ -303,36 +320,23 @@ void main() {
       );
       expect(api.lastPutBody?.containsKey('web'), isFalse);
       expect(api.lastPutBody?.containsKey('cron'), isFalse);
-      expect(find.text('指定成员'), findsOneWidget);
 
-      // P1-3: Open Lifecycle/Cron Sheet on static app (network-pulse with hasCron: false, enabled: false)
-      // and verify saving config omits the absent 'cron' module from PUT payload
-      await tester.tap(find.byKey(const ValueKey('configApp_network-pulse')));
-      await tester.pumpAndSettle();
-      expect(find.byKey(const ValueKey('cronEnableSwitch')), findsNothing);
-      await tester.tap(find.byKey(const ValueKey('saveLifecycleCronButton')));
-      await tester.pumpAndSettle();
-      expect(api.calls, contains('PUT /api/v2/apps/network-pulse'));
-      expect(api.lastPutBody?.containsKey('web'), isTrue);
-      expect(api.lastPutBody?.containsKey('cron'), isFalse);
-
-      // Open Logs Sheet
-      await tester.tap(find.byKey(const ValueKey('logsApp_cpe-monitor')));
-      await tester.pumpAndSettle();
-      expect(api.calls, contains('GET /api/v2/apps/cpe-monitor/logs'));
+      // Scroll to Logs & Data Export inside AppDetailPage
+      await tester.scrollUntilVisible(
+        find.textContaining('Listening on 127.0.0.1:49152'),
+        220,
+        scrollable: find.byType(Scrollable).first,
+      );
       expect(
         find.textContaining('Listening on 127.0.0.1:49152'),
         findsOneWidget,
       );
-      Navigator.of(tester.element(find.byType(AppsCenterPage))).pop();
-      await tester.pumpAndSettle();
-
-      // P1-2: Export plugin data backup via authenticated LightIsleApi.download (not external browser)
-      await tester.tap(
-        find.byKey(const ValueKey('moreActionsApp_cpe-monitor')),
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('detailExportDataTile')),
+        220,
+        scrollable: find.byType(Scrollable).first,
       );
-      await tester.pumpAndSettle();
-      await tester.tap(find.text('导出应用数据 (.tar.gz)'));
+      await tester.tap(find.byKey(const ValueKey('detailExportDataTile')));
       await tester.pumpAndSettle();
       expect(
         api.calls,
@@ -343,6 +347,32 @@ void main() {
         equals('/tmp/cpe-monitor-data-backup.tar.gz'),
       );
       expect(launchedUris, isEmpty);
+
+      // Return to AppsCenterPage -> updated access badge is visible
+      Navigator.of(tester.element(find.byType(AppDetailPage))).pop();
+      await tester.pumpAndSettle();
+      expect(find.text('指定成员'), findsOneWidget);
+
+      // P1-3: Open AppDetailPage on static app (network-pulse with hasCron: false)
+      // and verify saving config omits the absent 'cron' module from PUT payload
+      await tester.tap(find.byKey(const ValueKey('detailApp_network-pulse')));
+      await tester.pumpAndSettle();
+      expect(find.byKey(const ValueKey('cronEnableSwitch')), findsNothing);
+      await tester.scrollUntilVisible(
+        find.text('启用 Web 界面入口'),
+        200,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.tap(find.text('启用 Web 界面入口'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('saveAppDetailButton')));
+      await tester.pumpAndSettle();
+      expect(api.calls, contains('PUT /api/v2/apps/network-pulse'));
+      expect(api.lastPutBody?.containsKey('web'), isTrue);
+      expect(api.lastPutBody?.containsKey('cron'), isFalse);
+
+      Navigator.of(tester.element(find.byType(AppDetailPage))).pop();
+      await tester.pumpAndSettle();
 
       // Launch App into Workbench Session
       await tester.tap(find.byKey(const ValueKey('launchApp_cpe-monitor')));
@@ -404,9 +434,7 @@ void main() {
       await tester.pumpAndSettle();
 
       expect(find.byKey(const ValueKey('adminMcpControlCard')), findsNothing);
-      expect(find.byKey(const ValueKey('accessApp_cpe-monitor')), findsNothing);
-      expect(find.byKey(const ValueKey('configApp_cpe-monitor')), findsNothing);
-      expect(find.byKey(const ValueKey('logsApp_cpe-monitor')), findsNothing);
+      expect(find.byKey(const ValueKey('detailApp_cpe-monitor')), findsNothing);
       expect(find.text('CPE 流量与设备监控'), findsOneWidget);
 
       await tester.tap(find.byKey(const ValueKey('launchApp_cpe-monitor')));
@@ -449,11 +477,14 @@ void main() {
       expect(find.textContaining('打开应用失败'), findsOneWidget);
 
       // Cancelled directory picker must return silently without dumping to systemTemp.
-      await tester.tap(
-        find.byKey(const ValueKey('moreActionsApp_cpe-monitor')),
-      );
+      await tester.tap(find.byKey(const ValueKey('detailApp_cpe-monitor')));
       await tester.pumpAndSettle();
-      await tester.tap(find.text('导出应用数据 (.tar.gz)'));
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('detailExportDataTile')),
+        220,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.tap(find.byKey(const ValueKey('detailExportDataTile')));
       await tester.pumpAndSettle();
       expect(api.lastDownloadedPath, isNull);
     },
@@ -579,21 +610,25 @@ void main() {
       expect(tester.takeException(), isNull);
       expect(find.text('跟随默认位置'), findsOneWidget);
 
-      // Static + no-cron app filters out process & cron actions in popup menu.
+      // Static + no-cron app detail filters out process & cron actions without overflow.
       await tester.scrollUntilVisible(
-        find.byKey(const ValueKey('moreActionsApp_network-pulse')),
+        find.byKey(const ValueKey('detailApp_network-pulse')),
         150,
         scrollable: find.byType(Scrollable).first,
       );
       await tester.pumpAndSettle();
-      await tester.tap(
-        find.byKey(const ValueKey('moreActionsApp_network-pulse')),
-      );
+      await tester.tap(find.byKey(const ValueKey('detailApp_network-pulse')));
       await tester.pumpAndSettle();
-      expect(find.text('启动 Web 进程'), findsNothing);
-      expect(find.text('立即执行定时任务'), findsNothing);
+      expect(find.text('启动'), findsNothing);
+      expect(find.text('立即采集'), findsNothing);
+      await tester.scrollUntilVisible(
+        find.byKey(const ValueKey('detailExportDataTile')),
+        220,
+        scrollable: find.byType(Scrollable).first,
+      );
       expect(find.text('导出应用数据 (.tar.gz)'), findsOneWidget);
-      await tester.tapAt(const Offset(5, 5));
+      expect(tester.takeException(), isNull);
+      await tester.binding.handlePopRoute();
       await tester.pumpAndSettle();
 
       // Launch workbench at 320px -> zero overflow and system Back exits workbench.
@@ -710,4 +745,68 @@ void main() {
       expect(find.text('待首次激活'), findsOneWidget);
     },
   );
+
+  testWidgets(
+    'OverviewPage launches ready home app directly without pushing AppsCenterPage',
+    (tester) async {
+      final api = _OverviewDirectAppApi();
+      addTearDown(api.close);
+      final launched = <Uri>[];
+      await tester.pumpWidget(
+        MaterialApp(
+          home: Scaffold(
+            body: OverviewPage(
+              api: api,
+              isAdmin: true,
+              appUrlLauncher: (uri, {mode = LaunchMode.platformDefault}) async {
+                launched.add(uri);
+                return true;
+              },
+            ),
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      await tester.ensureVisible(find.text('轻屿网络脉搏'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('轻屿网络脉搏'));
+      await tester.pumpAndSettle();
+
+      expect(api.calls, contains('POST /api/v2/apps/network-pulse/launch'));
+      expect(launched.single.path, '/apps/network-pulse/');
+      expect(find.byType(AppsCenterPage), findsNothing);
+      expect(find.byType(OverviewPage), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+}
+
+class _OverviewDirectAppApi extends _FakeAppsApi {
+  _OverviewDirectAppApi() : super(isAdmin: true);
+
+  @override
+  Future<Map<String, dynamic>> get(
+    String path, {
+    Map<String, String>? query,
+  }) async {
+    if (path == '/api/v2/system') {
+      return {
+        'cpuPercent': 12.0,
+        'memoryUsedBytes': 1024,
+        'memoryTotalBytes': 4096,
+        'disks': <Object>[],
+      };
+    }
+    if (path == '/api/v2/roots') {
+      return {'roots': <Object>[]};
+    }
+    if (path == '/api/v2/tasks' || path == '/api/v2/alerts') {
+      return {'tasks': <Object>[], 'alerts': <Object>[]};
+    }
+    if (path == '/api/v2/computer-files/status') {
+      return {'available': false};
+    }
+    return super.get(path, query: query);
+  }
 }

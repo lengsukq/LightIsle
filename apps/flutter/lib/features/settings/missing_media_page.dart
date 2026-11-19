@@ -2,8 +2,9 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../../core/lightisle_api.dart';
+import '../../core/isle_gallery_layout.dart';
 import '../../core/isle_theme.dart';
+import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 
@@ -329,172 +330,303 @@ class _MissingMediaPageState extends State<MissingMediaPage>
     return names.isEmpty ? '旧资料' : names.join('、');
   }
 
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: const IsleAppBar(title: Text('缺失媒体')),
-    body: IsleListView(
-      children: [
-        IsleIntroCard(
-          icon: Icons.broken_image_outlined,
-          title: '缺失媒体与历史关联恢复',
-          description: widget.isAdmin
-              ? '当前硬盘各目录的缺失媒体。原有收藏、相册关联和观看资料会保留。'
-              : '只显示你在当前硬盘个人目录中的缺失媒体。原有收藏、相册关联和观看资料会保留。',
-        ),
-        if (!_sameRoot) const Notice('硬盘已变化或尚未选择，请返回后选择原硬盘。', error: true),
-        if (_message != null) Notice(_message!),
-        if (_sameRoot)
-          for (final kind in ['photos', 'cinema']) ...[
-            Padding(
-              padding: const EdgeInsets.only(top: 10, bottom: 6),
-              child: Wrap(
-                spacing: 8,
-                runSpacing: 6,
-                alignment: WrapAlignment.spaceBetween,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      IsleSquircleBadge(
-                        icon: kind == 'photos'
-                            ? Icons.photo_library_rounded
-                            : Icons.movie_rounded,
-                        color: kind == 'photos'
-                            ? const Color(0xffec4899)
-                            : const Color(0xfff97316),
-                        size: 28,
-                        iconSize: 15,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        kind == 'photos' ? '照片与视频' : '影视',
-                        style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w700,
-                          fontSize: 14,
-                        ),
-                      ),
-                    ],
-                  ),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 6,
-                    children: [
-                      OutlinedButton(
-                        onPressed: _busy || !_sameRoot
-                            ? null
-                            : () => _recheck(kind),
-                        child: const Text('重新检查'),
-                      ),
-                      TextButton(
-                        onPressed: _groups[kind]!.loading || !_sameRoot
-                            ? null
-                            : () => _load(kind),
-                        child: const Text('刷新'),
-                      ),
-                    ],
-                  ),
-                ],
+  Widget _buildDomainPanel(
+    BuildContext context, {
+    required String kind,
+    required bool isDark,
+    required IslePalette palette,
+  }) {
+    final group = _groups[kind]!;
+    final isPhotos = kind == 'photos';
+    final domainColor = isPhotos
+        ? palette['brandRose']
+        : palette['brandTerracotta'];
+
+    return IsleSurface(
+      padding: const EdgeInsets.all(16),
+      margin: EdgeInsets.zero,
+      radius: IsleRadius.card,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              IsleSquircleBadge(
+                icon: isPhotos
+                    ? Icons.photo_library_rounded
+                    : Icons.movie_rounded,
+                color: domainColor,
+                size: 32,
+                iconSize: 17,
               ),
-            ),
-            if (_groups[kind]!.error != null)
-              Notice(_groups[kind]!.error!, error: true),
-            if (_groups[kind]!.loading) const LinearProgressIndicator(),
-            if (_groups[kind]!.loaded && _groups[kind]!.scan == 'running')
-              const Notice('检查正在进行，当前结果尚不完整；完成后会自动更新。')
-            else if (_groups[kind]!.loaded && _groups[kind]!.scan == 'failed')
-              const Notice('上次检查未完成，结果可能不完整。请检查硬盘连接后重新检查。', error: true)
-            else if (_groups[kind]!.loaded &&
-                _groups[kind]!.scan == 'not_checked')
-              const Notice('尚未完成检查，当前结果可能不完整。')
-            else if (_groups[kind]!.loaded && _groups[kind]!.scan == 'finished')
-              const Notice('最近一次检查已结束；如果只检查了部分目录，其他目录可能尚未核对。'),
-            if (_groups[kind]!.loaded &&
-                _groups[kind]!.items.isEmpty &&
-                _groups[kind]!.error == null)
-              IsleSurface(
-                margin: const EdgeInsets.symmetric(vertical: 4),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 14,
-                  vertical: 12,
-                ),
-                radius: 14,
-                child: Row(
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    IsleSquircleBadge(
-                      icon: Icons.verified_outlined,
-                      color: const Color(0xff10b981),
-                      size: 28,
-                      iconSize: 16,
+                    Text(
+                      isPhotos ? '照片与视频' : '影视',
+                      style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w800,
+                        fontSize: 14.5,
+                      ),
                     ),
-                    const SizedBox(width: 10),
-                    const Expanded(
-                      child: Text(
-                        '当前没有已发现的缺失记录。',
-                        style: TextStyle(fontSize: 13.5),
+                    Text(
+                      group.loaded ? '${group.items.length} 条记录' : '核对中…',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        fontSize: 11.5,
+                        color: palette['secondaryText'],
                       ),
                     ),
                   ],
                 ),
               ),
-            if (_groups[kind]!.items.isNotEmpty)
-              IsleResponsiveGrid(
-                minItemWidth: 320,
-                maxColumns: 2,
-                spacing: 8,
-                runSpacing: 8,
+              OutlinedButton(
+                style: OutlinedButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                ),
+                onPressed: _busy || !_sameRoot ? null : () => _recheck(kind),
+                child: const Text('重新检查'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (group.error != null) Notice(group.error!, error: true),
+          if (group.loading)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: ClipRRect(
+                borderRadius: IsleRadius.brPill,
+                child: const LinearProgressIndicator(minHeight: 3),
+              ),
+            ),
+          if (group.loaded && group.scan == 'running')
+            const Notice('检查正在进行，完成后会自动更新。')
+          else if (group.loaded && group.scan == 'failed')
+            const Notice('上次检查未完成，请检查硬盘连接后重新检查。', error: true)
+          else if (group.loaded && group.scan == 'not_checked')
+            const Notice('尚未完成检查，当前结果可能不完整。')
+          else if (group.loaded && group.scan == 'finished')
+            const Notice('最近一次检查已结束。'),
+          if (group.loaded && group.items.isEmpty && group.error == null)
+            Container(
+              margin: const EdgeInsets.only(top: 4),
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+              decoration: IsleDecorations.recessedWell(
+                context,
+                radius: IsleRadius.md,
+              ),
+              child: Row(
                 children: [
-                  for (final item in _groups[kind]!.items)
-                    IsleSurface(
-                      margin: EdgeInsets.zero,
-                      padding: EdgeInsets.zero,
-                      radius: 14,
-                      child: ListTile(
-                        dense: true,
-                        leading: IsleSquircleBadge(
-                          icon: kind == 'photos'
-                              ? Icons.hide_image_outlined
-                              : Icons.videocam_off_outlined,
-                          color: const Color(0xfff59e0b),
-                          size: 32,
-                          iconSize: 17,
+                  IsleSquircleBadge(
+                    icon: Icons.verified_outlined,
+                    color: palette['brandSage'],
+                    size: 28,
+                    iconSize: 16,
+                  ),
+                  const SizedBox(width: 10),
+                  const Expanded(
+                    child: Text(
+                      '当前没有已发现的缺失记录。',
+                      style: TextStyle(fontSize: 13.5),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          if (group.items.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: IsleGroupCard(
+                margin: EdgeInsets.zero,
+                children: [
+                  for (final item in group.items)
+                    ListTile(
+                      dense: true,
+                      contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14,
+                        vertical: 3,
+                      ),
+                      leading: IsleSquircleBadge(
+                        icon: isPhotos
+                            ? Icons.hide_image_outlined
+                            : Icons.videocam_off_outlined,
+                        color: palette['brandAmber'],
+                        size: 32,
+                        iconSize: 17,
+                      ),
+                      title: Text(
+                        item['path']?.toString() ?? '',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                          fontWeight: FontWeight.w600,
                         ),
-                        title: Text(item['path']?.toString() ?? ''),
-                        subtitle: Text(
-                          '${_reason(item['reason'])} · 保留：${_dataLabel(item['data'])}${item['canManage'] == true ? '' : ' · 当前没有写入权限，请联系管理员'}',
+                      ),
+                      subtitle: Text(
+                        '${_reason(item['reason'])} · 保留：${_dataLabel(item['data'])}${item['canManage'] == true ? '' : ' · 只读'}',
+                      ),
+                      trailing: PopupMenuButton<String>(
+                        tooltip: '处理缺失媒体',
+                        shape: IsleShapes.menu(
+                          side: BorderSide(
+                            color: IsleGlass.rimBorderColor(isDark),
+                            width: 1.0,
+                          ),
                         ),
-                        trailing: PopupMenuButton<String>(
-                          tooltip: '处理缺失媒体',
-                          enabled:
-                              !_busy && _sameRoot && item['canManage'] == true,
-                          onSelected: (value) {
-                            if (value == 'attach') _attach(kind, item);
-                            if (value == 'discard') _discard(kind, item);
-                          },
-                          itemBuilder: (_) => const [
-                            PopupMenuItem(
-                              value: 'attach',
-                              child: Text('关联当前文件'),
-                            ),
-                            PopupMenuItem(
-                              value: 'discard',
-                              child: Text('放弃旧记录'),
-                            ),
-                          ],
-                        ),
+                        enabled:
+                            !_busy && _sameRoot && item['canManage'] == true,
+                        onSelected: (value) {
+                          if (value == 'attach') _attach(kind, item);
+                          if (value == 'discard') _discard(kind, item);
+                        },
+                        itemBuilder: (_) => const [
+                          PopupMenuItem(
+                            value: 'attach',
+                            child: Text('关联当前文件'),
+                          ),
+                          PopupMenuItem(
+                            value: 'discard',
+                            child: Text('放弃旧记录'),
+                          ),
+                        ],
                       ),
                     ),
                 ],
               ),
-            if (_groups[kind]!.cursor.isNotEmpty)
-              TextButton(
-                onPressed: _groups[kind]!.loading
-                    ? null
-                    : () => _load(kind, more: true),
-                child: const Text('加载更多'),
+            ),
+          if (group.cursor.isNotEmpty)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Padding(
+                padding: const EdgeInsets.only(top: 8),
+                child: TextButton(
+                  onPressed: group.loading
+                      ? null
+                      : () => _load(kind, more: true),
+                  child: const Text('加载更多'),
+                ),
               ),
-          ],
-      ],
-    ),
-  );
+            ),
+        ],
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final palette = IslePalette.of(context);
+    final photoCount = _groups['photos']!.items.length;
+    final cinemaCount = _groups['cinema']!.items.length;
+
+    return Scaffold(
+      appBar: IsleAppBar(
+        title: const Text('缺失媒体'),
+        actions: [
+          IconButton(
+            tooltip: '刷新列表',
+            onPressed: !_sameRoot
+                ? null
+                : () {
+                    _load('photos');
+                    _load('cinema');
+                  },
+            icon: const Icon(Icons.refresh_rounded),
+          ),
+          IsleHelpButton(
+            title: '缺失媒体与关联恢复说明',
+            accentColor: palette['brandAmber'],
+            items: const [
+              IsleHelpItem(
+                title: '为什么会产生缺失记录？',
+                body: '当外接盘暂时离线、原文件被重命名或原路径替换为其他文件时，系统会保留原有的收藏、相册关联与播放进度，不擅自丢弃。',
+              ),
+              IsleHelpItem(
+                title: '关联与放弃操作',
+                body: '接回原盘点击「重新检查」可自动恢复原文件关联；也可手动将旧资料关联到同路径新文件，或放弃不再需要的旧记录（不删磁盘文件）。',
+              ),
+            ],
+          ),
+        ],
+      ),
+      body: IsleListView(
+        maxWidth: IsleLayout.workbenchMaxWidth,
+        children: [
+          IsleFocalStage(
+            icon: Icons.broken_image_outlined,
+            accent: palette['brandAmber'],
+            title: '缺失媒体与历史关联恢复',
+            metrics: [
+              IsleFocalMetric(
+                label: '图库缺失',
+                value: _groups['photos']!.loaded ? '$photoCount 项' : '读取中',
+                icon: Icons.photo_library_outlined,
+                color: palette['brandRose'],
+              ),
+              IsleFocalMetric(
+                label: '影视缺失',
+                value: _groups['cinema']!.loaded ? '$cinemaCount 项' : '读取中',
+                icon: Icons.movie_outlined,
+                color: palette['brandTerracotta'],
+              ),
+            ],
+          ),
+          if (!_sameRoot) const Notice('硬盘已变化或尚未选择，请返回后选择原硬盘。', error: true),
+          if (_message != null) Notice(_message!),
+          if (_sameRoot)
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
+                final sideBySide =
+                    constraints.maxWidth >= 880 && textScale <= 1.35;
+                if (sideBySide) {
+                  return Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: _buildDomainPanel(
+                          context,
+                          kind: 'photos',
+                          isDark: isDark,
+                          palette: palette,
+                        ),
+                      ),
+                      const SizedBox(width: 16),
+                      Expanded(
+                        child: _buildDomainPanel(
+                          context,
+                          kind: 'cinema',
+                          isDark: isDark,
+                          palette: palette,
+                        ),
+                      ),
+                    ],
+                  );
+                }
+                return Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _buildDomainPanel(
+                      context,
+                      kind: 'photos',
+                      isDark: isDark,
+                      palette: palette,
+                    ),
+                    const SizedBox(height: 14),
+                    _buildDomainPanel(
+                      context,
+                      kind: 'cinema',
+                      isDark: isDark,
+                      palette: palette,
+                    ),
+                  ],
+                );
+              },
+            ),
+        ],
+      ),
+    );
+  }
 }

@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../core/isle_route.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/login_history_store.dart';
 import '../../core/user_facing_error.dart';
@@ -18,7 +19,7 @@ Future<void> showAccountSwitcherDialog({
   int Function()? pendingUploads,
   ServerLatencyProber? latencyProber,
   LightIsleApi Function(String serverUrl, {String? certificateFingerprint})? apiFactory,
-}) => showDialog<void>(
+}) => showIsleDialog<void>(
   context: context,
   builder: (_) => _AccountSwitcherDialog(
     currentServer: currentServer,
@@ -120,11 +121,13 @@ class _AccountSwitcherDialogState extends State<_AccountSwitcherDialog> {
         );
         if (!mounted || generation != _probeGeneration) return;
         setState(() {
-          _latencies[pair.key] = result;
+          _latencies[probeKey(pair.key)] = result;
         });
       }),
     );
   }
+
+  String probeKey(String k) => k;
 
   Future<void> _removeEntry(LoginHistoryEntry entry) async {
     try {
@@ -250,24 +253,44 @@ class _AccountSwitcherDialogState extends State<_AccountSwitcherDialog> {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final borderColor = IsleGlass.rimBorderColor(isDark);
     final busy = _switchingKey != null;
 
     return AlertDialog(
       scrollable: true,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      titlePadding: const EdgeInsets.fromLTRB(20, 18, 16, 8),
+      contentPadding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+      actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+      shape: IsleShapes.card(
+        side: BorderSide(color: borderColor, width: 1.0),
+      ),
       title: Row(
         children: [
-          const Expanded(child: Text('切换服务器与账号')),
+          Expanded(
+            child: Text(
+              '切换服务器与账号',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
           if (_entries.isNotEmpty)
             TextButton.icon(
               key: const Key('switcherRefreshLatenciesButton'),
+              style: TextButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              ),
               onPressed: busy ? null : () => _probeAllLatencies(),
-              icon: const Icon(Icons.speed_rounded, size: 16),
-              label: const Text('刷新延迟'),
+              icon: const Icon(Icons.speed_rounded, size: 15),
+              label: const Text('刷新延迟', style: TextStyle(fontSize: 12.5)),
             ),
         ],
       ),
       content: SizedBox(
-        width: 480,
+        width: 460,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -275,11 +298,12 @@ class _AccountSwitcherDialogState extends State<_AccountSwitcherDialog> {
             Text(
               '同一台主机可点击路由图标绑定多条地址（如局域网、Tailscale 与公网域名），支持随时开关自动择优或手动选线直连。',
               style: theme.textTheme.bodySmall?.copyWith(
+                fontSize: 12.5,
                 color: colors.onSurfaceVariant,
-                height: 1.45,
+                height: 1.4,
               ),
             ),
-            const SizedBox(height: 12),
+            const SizedBox(height: 10),
             if (_error != null) ...[
               Notice(_error!, error: true),
               const SizedBox(height: 8),
@@ -287,16 +311,38 @@ class _AccountSwitcherDialogState extends State<_AccountSwitcherDialog> {
             if (_loading)
               const IsleLoadingState(
                 compact: true,
-                padding: EdgeInsets.symmetric(vertical: 16),
+                padding: EdgeInsets.symmetric(vertical: 14),
                 label: '正在读取保存的主机与账号…',
               )
             else if (_entries.isEmpty)
               const Notice('当前还没有保存其他历史登录账号。登录成功后会自动记录在此列表中。')
             else
-              for (var i = 0; i < _entries.length; i++) ...[
-                if (i > 0) const SizedBox(height: 8),
-                _buildSwitcherTile(context, _entries[i]),
-              ],
+              Container(
+                decoration: ShapeDecoration(
+                  shape: IsleShapes.md(
+                    side: BorderSide(color: borderColor, width: 1.0),
+                  ),
+                  color: isDark
+                      ? Colors.white.withValues(alpha: 0.03)
+                      : colors.surfaceContainerHighest.withValues(alpha: 0.28),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (var i = 0; i < _entries.length; i++) ...[
+                      if (i > 0)
+                        Divider(
+                          height: 1,
+                          thickness: 1,
+                          indent: 52,
+                          color: borderColor,
+                        ),
+                      _buildSwitcherTile(context, _entries[i]),
+                    ],
+                  ],
+                ),
+              ),
           ],
         ),
       ),
@@ -309,7 +355,7 @@ class _AccountSwitcherDialogState extends State<_AccountSwitcherDialog> {
                   Navigator.of(context).pop();
                   await widget.onUseNewAccount();
                 },
-          icon: const Icon(Icons.person_add_alt_1_rounded, size: 18),
+          icon: const Icon(Icons.person_add_alt_1_rounded, size: 17),
           label: const Text('登录其他新账号…'),
         ),
         TextButton(
@@ -337,23 +383,10 @@ class _AccountSwitcherDialogState extends State<_AccountSwitcherDialog> {
 
     return Container(
       key: Key('switcherHistoryItem_${entry.key}'),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-      decoration: ShapeDecoration(
-        shape: IsleShapes.squircle(
-          14,
-          side: BorderSide(
-            color: isCurrent
-                ? colors.primary.withValues(alpha: 0.55)
-                : IsleGlass.hairlineBorder(isDark),
-            width: isCurrent ? 1.2 : 0.8,
-          ),
-        ),
-        color: isCurrent
-            ? colors.primary.withValues(alpha: isDark ? 0.16 : 0.08)
-            : (isDark
-                  ? Colors.white.withValues(alpha: 0.04)
-                  : colors.surfaceContainerHighest.withValues(alpha: 0.35)),
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
+      color: isCurrent
+          ? colors.primary.withValues(alpha: isDark ? 0.14 : 0.07)
+          : Colors.transparent,
       child: Row(
         children: [
           IsleSquircleBadge(
@@ -361,23 +394,24 @@ class _AccountSwitcherDialogState extends State<_AccountSwitcherDialog> {
                 ? Icons.admin_panel_settings_rounded
                 : Icons.person_rounded,
             color: colors.primary,
-            size: 36,
-            iconSize: 18,
+            size: 32,
+            iconSize: 16.5,
           ),
-          const SizedBox(width: 10),
+          const SizedBox(width: 9),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
                 Wrap(
-                  spacing: 6,
-                  runSpacing: 4,
+                  spacing: 5,
+                  runSpacing: 3,
                   crossAxisAlignment: WrapCrossAlignment.center,
                   children: [
                     Text(
                       entry.username,
-                      style: theme.textTheme.titleSmall?.copyWith(
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontSize: 13.5,
                         fontWeight: FontWeight.w700,
                       ),
                     ),
@@ -416,29 +450,30 @@ class _AccountSwitcherDialogState extends State<_AccountSwitcherDialog> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 3),
                 Text(
                   shownUrl,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: theme.textTheme.bodySmall?.copyWith(
+                    fontSize: 12,
                     color: colors.onSurfaceVariant,
                   ),
                 ),
               ],
             ),
           ),
-          const SizedBox(width: 6),
+          const SizedBox(width: 4),
           IconButton(
             key: Key('switcherEndpointsButton_${entry.key}'),
             tooltip: '多地址管理、自动择优开关与手动选线',
             visualDensity: VisualDensity.compact,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+            constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
             padding: EdgeInsets.zero,
             onPressed: busy ? null : () => _openEndpointsManager(entry),
             icon: Icon(
               Icons.alt_route_rounded,
-              size: 18,
+              size: 17,
               color: count > 1 ? colors.primary : colors.onSurfaceVariant,
             ),
           ),
@@ -453,17 +488,17 @@ class _AccountSwitcherDialogState extends State<_AccountSwitcherDialog> {
               onPressed: busy ? null : () => _switchTo(entry),
             ),
           ],
-          const SizedBox(width: 4),
+          const SizedBox(width: 2),
           IconButton(
             key: Key('switchAccountRemove_${entry.key}'),
             tooltip: '移除此历史记录',
             visualDensity: VisualDensity.compact,
-            constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+            constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
             padding: EdgeInsets.zero,
             onPressed: busy ? null : () => _removeEntry(entry),
             icon: Icon(
               Icons.delete_outline_rounded,
-              size: 18,
+              size: 17,
               color: colors.onSurfaceVariant,
             ),
           ),
@@ -483,7 +518,7 @@ Future<LoginHistoryEntry?> showHostEndpointsDialog({
   String? activeConnectedUrl,
   Future<void> Function(LoginHistoryEntry updated, HostEndpoint chosen)?
   onManualConnect,
-}) => showDialog<LoginHistoryEntry>(
+}) => showIsleDialog<LoginHistoryEntry>(
   context: context,
   builder: (_) => _HostEndpointsDialog(
     entry: entry,
@@ -663,6 +698,8 @@ class _HostEndpointsDialogState extends State<_HostEndpointsDialog> {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context), colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final borderColor = IsleGlass.rimBorderColor(isDark);
     final busy = _saving || _connectingUrl != null;
     final normalizedNew = LoginHistoryEntry.normalizeUserInputServer(_newUrlCtrl.text);
     final activeNorm = widget.activeConnectedUrl == null
@@ -672,19 +709,37 @@ class _HostEndpointsDialogState extends State<_HostEndpointsDialog> {
     return AlertDialog(
       key: const Key('hostEndpointsDialog'),
       scrollable: true,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      titlePadding: const EdgeInsets.fromLTRB(20, 18, 16, 8),
+      contentPadding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+      actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+      shape: IsleShapes.card(
+        side: BorderSide(color: borderColor, width: 1.0),
+      ),
       title: Row(
         children: [
-          Expanded(child: Text('主机多地址 · ${widget.entry.username}')),
+          Expanded(
+            child: Text(
+              '主机多地址 · ${widget.entry.username}',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
           TextButton.icon(
             key: const Key('probeHostEndpointsButton'),
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            ),
             onPressed: busy ? null : _probeAll,
-            icon: const Icon(Icons.speed_rounded, size: 16),
-            label: const Text('全部测速'),
+            icon: const Icon(Icons.speed_rounded, size: 15),
+            label: const Text('全部测速', style: TextStyle(fontSize: 12.5)),
           ),
         ],
       ),
       content: SizedBox(
-        width: 480,
+        width: 460,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -700,26 +755,37 @@ class _HostEndpointsDialogState extends State<_HostEndpointsDialog> {
                 prefixIcon: Icon(Icons.computer_rounded, size: 18),
               ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             SwitchListTile.adaptive(
               key: const Key('hostAutoSelectSwitch'),
-              contentPadding: const EdgeInsets.symmetric(horizontal: 4),
+              dense: true,
+              contentPadding: const EdgeInsets.symmetric(horizontal: 2),
               value: _autoSelect,
               onChanged: busy ? null : (v) => setState(() => _autoSelect = v),
-              title: const Text('默认自动择优连接', style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700)),
+              title: const Text(
+                '默认自动择优连接',
+                style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w700),
+              ),
               subtitle: Text(
                 _autoSelect
                     ? '仅在登录、启动恢复或切换时测速，按「局域网、Tailscale、公网域名」优先选最快可用地址；连接建立后保持稳定，不在传输中途切线。'
                     : '已关闭：仅固定连接默认主地址，不会自动探测或跳到其他备用地址。',
-                style: theme.textTheme.bodySmall?.copyWith(color: colors.onSurfaceVariant, height: 1.4),
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontSize: 12,
+                  color: colors.onSurfaceVariant,
+                  height: 1.38,
+                ),
               ),
             ),
-            const Divider(height: 18),
+            Divider(height: 16, thickness: 1, color: borderColor),
             Text(
               '已绑定线路（${_endpoints.length}/${LoginHistoryEntry.maxEndpointsPerHost}）',
-              style: theme.textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700),
+              style: theme.textTheme.labelMedium?.copyWith(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+              ),
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             for (var i = 0; i < _endpoints.length; i++) ...[
               if (i > 0) const SizedBox(height: 6),
               HostEndpointTile(
@@ -735,9 +801,15 @@ class _HostEndpointsDialogState extends State<_HostEndpointsDialog> {
                 onRemove: () => setState(() => _endpoints.removeAt(i)),
               ),
             ],
-            const Divider(height: 22),
-            Text('添加备用地址（如 Tailscale IP 或公网穿透域名）', style: theme.textTheme.labelLarge?.copyWith(fontWeight: FontWeight.w700)),
-            const SizedBox(height: 8),
+            Divider(height: 18, thickness: 1, color: borderColor),
+            Text(
+              '添加备用地址（如 Tailscale IP 或公网穿透域名）',
+              style: theme.textTheme.labelMedium?.copyWith(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+            const SizedBox(height: 6),
             TextField(
               key: const Key('newHostEndpointUrlField'),
               controller: _newUrlCtrl,
@@ -760,7 +832,11 @@ class _HostEndpointsDialogState extends State<_HostEndpointsDialog> {
                     key: const Key('newHostEndpointLabelField'),
                     controller: _newLabelCtrl,
                     enabled: !busy,
-                    decoration: const InputDecoration(labelText: '线路标签（选填）', hintText: '如：家里局域网 / 公网隧道', isDense: true),
+                    decoration: const InputDecoration(
+                      labelText: '线路标签（选填）',
+                      hintText: '如：家里局域网 / 公网隧道',
+                      isDense: true,
+                    ),
                   ),
                 ),
                 const SizedBox(width: 8),
@@ -779,16 +855,29 @@ class _HostEndpointsDialogState extends State<_HostEndpointsDialog> {
                 controller: _newPinCtrl,
                 enabled: !busy,
                 autocorrect: false,
-                decoration: const InputDecoration(labelText: '该地址专属 SHA-256 证书指纹（自签名 HTTPS 必填，公信证书留空）', isDense: true),
+                decoration: const InputDecoration(
+                  labelText: '该地址专属 SHA-256 证书指纹（自签名 HTTPS 必填，公信证书留空）',
+                  isDense: true,
+                ),
               ),
             ],
-            if (_error != null) ...[const SizedBox(height: 10), Notice(_error!, error: true)],
+            if (_error != null) ...[
+              const SizedBox(height: 10),
+              Notice(_error!, error: true),
+            ],
           ],
         ),
       ),
       actions: [
-        TextButton(onPressed: busy ? null : () => Navigator.of(context).pop(), child: const Text('取消')),
-        FilledButton(key: const Key('saveHostEndpointsButton'), onPressed: busy ? null : _saveAndClose, child: Text(_saving ? '保存中…' : '保存设置')),
+        TextButton(
+          onPressed: busy ? null : () => Navigator.of(context).pop(),
+          child: const Text('取消'),
+        ),
+        FilledButton(
+          key: const Key('saveHostEndpointsButton'),
+          onPressed: busy ? null : _saveAndClose,
+          child: Text(_saving ? '保存中…' : '保存设置'),
+        ),
       ],
     );
   }

@@ -355,11 +355,11 @@ void main() {
   });
 
   test(
-    'Flutter surfaces and colors are the same nativeMac semantic tokens',
+    'Flutter surfaces and colors resolve to Warm Editorial Gallery semantic tokens',
     () {
       for (final dark in [false, true]) {
         final palette = IslePalette(dark);
-        final native = dark ? IsleTokens.nativeDark : IsleTokens.nativeLight;
+        final gallery = dark ? IsleGalleryColors.dark : IsleGalleryColors.light;
         for (final key in [
           'canvasTop',
           'canvasBottom',
@@ -372,12 +372,12 @@ void main() {
         ]) {
           expect(
             palette[key],
-            native[key],
-            reason: 'nativeMac: $key, dark=$dark',
+            gallery[key],
+            reason: 'IsleGalleryColors: $key, dark=$dark',
           );
         }
         final theme = buildIsleTheme(dark ? Brightness.dark : Brightness.light);
-        expect(theme.colorScheme.surface, native['cardTop']);
+        expect(theme.colorScheme.surface, gallery['cardTop']);
       }
       expect(IsleTokens.cardRadius, 20);
       expect(IsleTokens.heroRadius, 24);

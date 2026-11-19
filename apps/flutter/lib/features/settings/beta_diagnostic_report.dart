@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:path_provider/path_provider.dart';
 
+import '../../core/isle_route.dart';
 import '../../core/lightisle_api.dart';
 import '../files/file_export_service.dart';
 
@@ -13,7 +14,7 @@ Future<void> showBetaDiagnosticReport(
 ) async {
   final report = await api.betaDiagnosticReport();
   if (!context.mounted) return;
-  final save = await showDialog<bool>(
+  final save = await showIsleDialog<bool>(
     context: context,
     builder: (dialog) {
       var copied = false;

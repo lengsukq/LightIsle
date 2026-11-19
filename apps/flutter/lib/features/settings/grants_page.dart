@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 
-import '../../core/lightisle_api.dart';
-import '../../core/widgets.dart';
+import '../../core/isle_gallery_layout.dart';
 import '../../core/isle_theme.dart';
+import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
+import '../../core/widgets.dart';
 import '../files/file_destination_dialog.dart';
 
 class GrantsPage extends StatefulWidget {
@@ -24,6 +25,7 @@ class _GrantsPageState extends State<GrantsPage> {
   String? _rootLoadError;
   bool _write = false, _busy = false;
   String? _error;
+
   String get _endpoint {
     final userPath = '/users/${widget.user['id']}/file-grants';
     final root = _grantRoot;
@@ -74,8 +76,6 @@ class _GrantsPageState extends State<GrantsPage> {
       return;
     }
     if (next?.identity == _grantRoot?.identity) return;
-    // Changing the shared client is safe only while this page owns the
-    // foreground route. Do not send an in-flight old-root ACL to a new root.
     widget.api.selectRoot(next);
     _path.clear();
     setState(() {
@@ -103,6 +103,43 @@ class _GrantsPageState extends State<GrantsPage> {
     );
     if (!mounted || selection == null || !_rootIsCurrent) return;
     setState(() => _path.text = selection.path);
+  }
+
+  Future<void> _promptManualPath() async {
+    if (_busy) return;
+    final temp = TextEditingController(text: _path.text);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final submitted = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        shape: IsleShapes.card(
+          side: BorderSide(color: IsleGlass.rimBorderColor(isDark)),
+        ),
+        title: const Text('输入相对目录路径'),
+        content: TextField(
+          controller: temp,
+          autofocus: true,
+          decoration: const InputDecoration(
+            isDense: true,
+            labelText: '相对目录路径',
+            hintText: '如：照片/旅行，或填 . 代表整盘根目录',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(temp.text.trim()),
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
+    temp.dispose();
+    if (submitted == null || !mounted) return;
+    setState(() => _path.text = submitted);
   }
 
   @override
@@ -190,223 +227,196 @@ class _GrantsPageState extends State<GrantsPage> {
     if (mounted && _error == null) await _load();
   }
 
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: IsleAppBar(title: Text('${widget.user['username']} · 目录授权')),
-    body: IsleListView(
-      children: [
-        if (_rootLoadError != null)
-          Notice(_rootLoadError!, error: true, onRetry: _loadRoots),
-        if (_error != null) Notice(_error!, error: true, onRetry: _load),
-        if (_busy) const LinearProgressIndicator(),
-        IsleSurface(
-          padding: const EdgeInsets.all(18),
-          margin: const EdgeInsets.only(bottom: 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
+  Widget _buildConfigCard(BuildContext context, IslePalette palette) {
+    final amber = palette['brandAmber'];
+    return IsleSurface(
+      tint: amber,
+      radius: IsleRadius.hero,
+      padding: const EdgeInsets.all(18),
+      margin: EdgeInsets.zero,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
-              Row(
-                children: [
-                  IsleSquircleBadge(
-                    icon: Icons.folder_shared_rounded,
-                    color: IslePalette.of(context)['brandIndigo'],
-                    size: 36,
-                    iconSize: 19,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '配置共享目录访问权',
-                          style: Theme.of(context).textTheme.titleSmall
-                              ?.copyWith(fontWeight: FontWeight.w700),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          '为 ${widget.user['username']} 授权指定硬盘上的文件夹读写或只读权限',
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant,
-                              ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+              IsleSquircleBadge(
+                icon: Icons.folder_shared_rounded,
+                color: amber,
+                size: 36,
+                iconSize: 18,
               ),
-              const SizedBox(height: 14),
-              if (_rootsReady) ...[
-                DropdownButtonFormField<String>(
-                  key: ValueKey(
-                    'grant-root-${_grantRoot?.identity ?? 'default'}',
-                  ),
-                  isExpanded: true,
-                  initialValue: _grantRoot?.identity ?? '',
-                  decoration: const InputDecoration(
-                    labelText: '选择要授权的硬盘',
-                    prefixIcon: Icon(Icons.storage_rounded),
-                  ),
-                  items: [
-                    const DropdownMenuItem(
-                      value: '',
-                      child: Text(
-                        '默认共享目录',
-                        overflow: TextOverflow.ellipsis,
-                        maxLines: 1,
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '新增目录授权',
+                      style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w800,
                       ),
                     ),
-                    for (final root in _availableRoots)
-                      DropdownMenuItem(
-                        value: root.identity,
-                        child: Text(
-                          root.name,
-                          overflow: TextOverflow.ellipsis,
-                          maxLines: 1,
-                        ),
+                    Text(
+                      '当前授权范围：${_grantRoot?.name ?? "默认共享目录"}',
+                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                        fontSize: 12,
+                        color: Theme.of(context).colorScheme.onSurfaceVariant,
                       ),
-                    if (_grantRoot != null &&
-                        !_availableRoots.any(
-                          (r) => r.identity == _grantRoot!.identity,
-                        ))
-                      DropdownMenuItem(
-                        value: _grantRoot!.identity,
-                        enabled: false,
-                        child: Text(
-                          '${_grantRoot!.name}（当前不可用）',
-                          overflow: TextOverflow.ellipsis,
-                          maxLines: 1,
-                        ),
-                      ),
+                    ),
                   ],
-                  onChanged: _busy
-                      ? null
-                      : (value) {
-                          if (value == null) return;
-                          final next = _availableRoots
-                              .where((r) => r.identity == value)
-                              .firstOrNull;
-                          if (value.isEmpty || next != null) {
-                            _chooseGrantRoot(next);
-                          }
-                        },
-                ),
-                const SizedBox(height: 12),
-              ],
-              Wrap(
-                spacing: 10,
-                runSpacing: 8,
-                crossAxisAlignment: WrapCrossAlignment.center,
-                children: [
-                  OutlinedButton.icon(
-                    onPressed: _busy ? null : _browseGrantFolder,
-                    icon: const Icon(Icons.folder_open_rounded, size: 18),
-                    label: const Text('浏览并选择文件夹'),
-                  ),
-                  IsleCodePill(
-                    _path.text.trim().isEmpty
-                        ? '尚未选择文件夹'
-                        : '已选择：${_path.text.trim() == '.' ? '根目录（所有文件）' : _path.text.trim()}',
-                    icon: Icons.subdirectory_arrow_right_rounded,
-                  ),
-                ],
-              ),
-              const SizedBox(height: 12),
-              IsleDisclosureCard(
-                margin: EdgeInsets.zero,
-                title: const Text('高级：手动输入共享目录路径'),
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '只有了解 NAS 相对路径时才需要使用',
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant,
-                              ),
-                        ),
-                        const SizedBox(height: 8),
-                        TextField(
-                          controller: _path,
-                          enabled: !_busy,
-                          onChanged: (_) => setState(() {}),
-                          decoration: const InputDecoration(
-                            labelText: '相对目录路径',
-                            hintText: '照片/旅行 或 .',
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              SwitchListTile(
-                contentPadding: EdgeInsets.zero,
-                title: const Text('允许写入'),
-                subtitle: const Text('可上传、整理和删除原始文件'),
-                value: _write,
-                onChanged: _busy ? null : (v) => setState(() => _write = v),
-              ),
-              const SizedBox(height: 6),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: FilledButton.icon(
-                  onPressed: _busy ? null : () => _save(),
-                  icon: const Icon(Icons.check_rounded, size: 18),
-                  label: const Text('保存授权'),
                 ),
               ),
             ],
           ),
+          const SizedBox(height: 16),
+          if (_rootsReady) ...[
+            DropdownButtonFormField<String>(
+              key: ValueKey('grant-root-${_grantRoot?.identity ?? 'default'}'),
+              isExpanded: true,
+              initialValue: _grantRoot?.identity ?? '',
+              decoration: const InputDecoration(
+                labelText: '目标硬盘',
+                prefixIcon: Icon(Icons.storage_rounded),
+              ),
+              items: [
+                const DropdownMenuItem(
+                  value: '',
+                  child: Text(
+                    '默认共享目录',
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                  ),
+                ),
+                for (final root in _availableRoots)
+                  DropdownMenuItem(
+                    value: root.identity,
+                    child: Text(
+                      root.name,
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                    ),
+                  ),
+                if (_grantRoot != null &&
+                    !_availableRoots.any(
+                      (r) => r.identity == _grantRoot!.identity,
+                    ))
+                  DropdownMenuItem(
+                    value: _grantRoot!.identity,
+                    enabled: false,
+                    child: Text(
+                      '${_grantRoot!.name}（当前不可用）',
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                    ),
+                  ),
+              ],
+              onChanged: _busy
+                  ? null
+                  : (value) {
+                      if (value == null) return;
+                      final next = _availableRoots
+                          .where((r) => r.identity == value)
+                          .firstOrNull;
+                      if (value.isEmpty || next != null) {
+                        _chooseGrantRoot(next);
+                      }
+                    },
+            ),
+            const SizedBox(height: 12),
+          ],
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              OutlinedButton.icon(
+                onPressed: _busy ? null : _browseGrantFolder,
+                icon: const Icon(Icons.folder_open_rounded, size: 18),
+                label: const Text('浏览并选择文件夹'),
+              ),
+              TextButton.icon(
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                ),
+                onPressed: _busy ? null : _promptManualPath,
+                icon: const Icon(Icons.edit_outlined, size: 16),
+                label: const Text('手动输入路径'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          IsleCodePill(
+            _path.text.trim().isEmpty
+                ? '尚未选择文件夹'
+                : '已选择：${_path.text.trim() == '.' ? '根目录（所有文件）' : _path.text.trim()}',
+            icon: Icons.subdirectory_arrow_right_rounded,
+          ),
+          const SizedBox(height: 6),
+          SwitchListTile(
+            contentPadding: EdgeInsets.zero,
+            title: const Text('允许写入'),
+            value: _write,
+            onChanged: _busy ? null : (v) => setState(() => _write = v),
+          ),
+          const SizedBox(height: 4),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: FilledButton.icon(
+              onPressed: _busy ? null : () => _save(),
+              icon: const Icon(Icons.check_rounded, size: 18),
+              label: const Text('保存授权'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildGrantsColumn(BuildContext context, IslePalette palette) {
+    final mineral = palette['brandBlue'];
+    final sage = palette['brandSage'];
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        IsleSectionHeader(
+          title: '已生效授权（${_grants.length}）',
+          accentColor: mineral,
         ),
-        IsleSectionHeader(title: '已生效授权（${_grants.length}）'),
         if (_grants.isNotEmpty)
-          IsleResponsiveGrid(
-            minItemWidth: 320,
-            maxColumns: 2,
-            spacing: 10,
-            runSpacing: 10,
+          IsleGroupCard(
+            margin: EdgeInsets.zero,
             children: [
               for (final g in _grants)
-                IsleSurface(
-                  radius: 16,
-                  margin: EdgeInsets.zero,
-                  padding: EdgeInsets.zero,
-                  child: ListTile(
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 2,
+                ListTile(
+                  dense: true,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 14,
+                    vertical: 3,
+                  ),
+                  leading: IsleSquircleBadge(
+                    icon: g['canWrite'] == true
+                        ? Icons.edit_note_rounded
+                        : Icons.visibility_outlined,
+                    color: g['canWrite'] == true ? sage : mineral,
+                    size: 32,
+                    iconSize: 17,
+                  ),
+                  title: Text(
+                    g['path']?.toString() ?? '',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                      fontWeight: FontWeight.w600,
                     ),
-                    leading: IsleSquircleBadge(
-                      icon: g['canWrite'] == true
-                          ? Icons.edit_note_rounded
-                          : Icons.visibility_outlined,
-                      color: IslePalette.of(context)['brandIndigo'],
-                      size: 36,
-                      iconSize: 19,
-                    ),
-                    title: Text(
-                      g['path']?.toString() ?? '',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    subtitle: Text(g['canWrite'] == true ? '读写' : '只读'),
-                    trailing: IconButton(
-                      tooltip: '撤销授权',
-                      onPressed: _busy
-                          ? null
-                          : () => _save(remove: g['path'].toString()),
-                      icon: const Icon(Icons.remove_circle_outline),
-                    ),
+                  ),
+                  subtitle: Text(g['canWrite'] == true ? '读写' : '只读'),
+                  trailing: IconButton(
+                    visualDensity: VisualDensity.compact,
+                    tooltip: '撤销授权',
+                    onPressed: _busy
+                        ? null
+                        : () => _save(remove: g['path'].toString()),
+                    icon: const Icon(Icons.remove_circle_outline, size: 19),
                   ),
                 ),
             ],
@@ -416,15 +426,49 @@ class _GrantsPageState extends State<GrantsPage> {
             '尚未创建目录授权。',
             icon: Icons.folder_off_outlined,
           ),
-        IsleHelpDisclosure(
-          summary: '当前授权范围：${_grantRoot?.name ?? '默认共享目录'}',
-          details:
-              '当前硬盘：${_grantRoot?.name ?? '默认共享目录'}。'
-              '${_grantRoot == null ? '' : '物理根代际：${_grantRoot?.generation}。'}'
-              '切换存储位置后请重新进入本页。为成员选择可访问的文件夹，并决定是否允许写入。'
-              '授权会影响文件、图库与影视访问。',
-        ),
       ],
-    ),
-  );
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = IslePalette.of(context);
+    return Scaffold(
+      appBar: IsleAppBar(
+        title: Text('${widget.user['username']} · 目录授权'),
+        actions: [
+          IsleHelpButton(
+            title: '目录授权边界说明',
+            accentColor: palette['brandAmber'],
+            items: const [
+              IsleHelpItem(
+                title: '路径继承与整盘授权',
+                body: '授权某个文件夹后，该成员即可访问其中的子目录；填入 . 代表授权当前所选硬盘的整个共享根目录。',
+              ),
+              IsleHelpItem(
+                title: '成员私人空间隔离',
+                body: '每位成员已分配的个人专属存储空间默认受系统隔离保护，无需通过公共目录授权单独开放。',
+              ),
+            ],
+          ),
+        ],
+      ),
+      body: IsleListView(
+        maxWidth: IsleLayout.workbenchMaxWidth,
+        children: [
+          if (_rootLoadError != null)
+            Notice(_rootLoadError!, error: true, onRetry: _loadRoots),
+          if (_error != null) Notice(_error!, error: true, onRetry: _load),
+          if (_busy) const LinearProgressIndicator(),
+          IsleWorkbenchSplit(
+            breakpoint: 860,
+            primaryFlex: 6,
+            secondaryFlex: 6,
+            primary: _buildConfigCard(context, palette),
+            secondary: _buildGrantsColumn(context, palette),
+          ),
+        ],
+      ),
+    );
+  }
 }

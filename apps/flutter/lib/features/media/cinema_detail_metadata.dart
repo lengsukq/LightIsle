@@ -100,9 +100,13 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
         _metaMatch.tmdbMatching) {
       return;
     }
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
+        shape: IsleShapes.card(
+          side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
+        ),
         title: const Text('确认匹配影视资料？'),
         content: Text(
           '将“${candidate.title}”的 TMDB 简介、评分和海报资料匹配到“${_film.title}”。手动设置的影片名称会保留。',
@@ -209,9 +213,13 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
 
   Future<void> _matchDouban(DoubanCandidate candidate) async {
     if (!widget.isAdmin || _metaMatch.isAnyBusy) return;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
+        shape: IsleShapes.card(
+          side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
+        ),
         title: const Text('确认匹配豆瓣资料？'),
         content: Text(
           '将“${candidate.title}”的豆瓣资料匹配到“${_film.title}”。手动设置的影片名称会保留。',
@@ -265,12 +273,18 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
     if (!widget.isAdmin) return const SizedBox.shrink();
     final busy = _metaMatch.isAnyBusy;
     final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
     return IsleSurface(
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('影视资料', style: theme.textTheme.titleMedium),
+          Text(
+            '影视资料',
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
           const SizedBox(height: 6),
           Text(
             '资料来源可在本地 NFO 和 TMDB 之间手动选择。不会自动联网查询。',
@@ -278,7 +292,7 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
               color: theme.colorScheme.onSurfaceVariant,
             ),
           ),
-          const SizedBox(height: 22),
+          const SizedBox(height: 16),
           _buildPlaybackQuickActions(busy: busy),
           if (_metaMatch.message != null) ...[
             const SizedBox(height: 8),
@@ -291,11 +305,11 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
             ),
           ],
           const SizedBox(height: 14),
-          const Divider(height: 1),
+          Divider(height: 1, color: IsleGlass.rimBorderColor(isDark)),
           const SizedBox(height: 14),
           _buildTmdbSearchSection(theme, busy: busy),
           const SizedBox(height: 14),
-          const Divider(height: 1),
+          Divider(height: 1, color: IsleGlass.rimBorderColor(isDark)),
           const SizedBox(height: 14),
           _buildDoubanSearchSection(theme, busy: busy),
         ],
@@ -310,31 +324,41 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
         Align(
           alignment: AlignmentDirectional.centerStart,
           child: Wrap(
-            spacing: 10,
+            spacing: 8,
             runSpacing: 8,
             children: <Widget>[
               OutlinedButton.icon(
+                style: OutlinedButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                ),
                 onPressed: () =>
                     unawaited(_markWatched(completed: !_film.completed)),
                 icon: Icon(
                   _film.completed
                       ? Icons.visibility_off_outlined
                       : Icons.check_circle_outline,
+                  size: 17,
                 ),
                 label: Text(_film.completed ? '标记未看' : '标记已看'),
               ),
               if (_film.position > 5 && !_film.completed)
                 OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
                   onPressed: () => unawaited(_restartFromBeginning()),
-                  icon: const Icon(Icons.replay_rounded),
+                  icon: const Icon(Icons.replay_rounded, size: 17),
                   label: const Text('从头播放'),
                 ),
               if (_film.isSeries)
                 OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
                   onPressed: _playback.closing || _playlistState.nextEpisodeBusy
                       ? null
                       : () => unawaited(_goToNextEpisode()),
-                  icon: const Icon(Icons.skip_next_rounded),
+                  icon: const Icon(Icons.skip_next_rounded, size: 17),
                   label: Text(
                     _playlistState.nextEpisodeBusy ? '查找下一集…' : '下一集',
                   ),
@@ -344,23 +368,28 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
         ),
         if (_film.isSeries)
           SwitchListTile.adaptive(
+            dense: true,
             title: const Text('播完自动下一集'),
             subtitle: const Text('默认关闭；先保存本集进度，再开始下一集。'),
             value: _playlistState.autoPlayNext,
             onChanged: _setAutoplayNext,
             contentPadding: EdgeInsets.zero,
           ),
+        const SizedBox(height: 4),
         Align(
           alignment: AlignmentDirectional.centerStart,
           child: OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+            ),
             onPressed: busy ? null : _importLocalNfo,
             icon: _metaMatch.busy
                 ? const SizedBox(
-                    width: 18,
-                    height: 18,
+                    width: 15,
+                    height: 15,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                : const Icon(Icons.description_outlined),
+                : const Icon(Icons.description_outlined, size: 17),
             label: const Text('导入本地 NFO 资料'),
           ),
         ),
@@ -372,7 +401,12 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text('TMDB 在线匹配（自愿联网）', style: theme.textTheme.titleSmall),
+        Text(
+          'TMDB 在线匹配（自愿联网）',
+          style: theme.textTheme.titleSmall?.copyWith(
+            fontWeight: FontWeight.w600,
+          ),
+        ),
         const SizedBox(height: 6),
         Text(
           '只有点击“搜索 TMDB”或确认匹配时，令牌和请求才会发送到当前 LightIsle 服务器，由服务器联系 TMDB。令牌仅保存在当前页面内存，不写入 LightIsle 数据库；关闭详情页会清除令牌。',
@@ -397,8 +431,8 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
           decoration: const InputDecoration(
             labelText: 'TMDB API Read Access Token（可选）',
             hintText: '留空将默认使用 Mac 端已配置的 Token',
-            border: OutlineInputBorder(),
-            prefixIcon: Icon(Icons.key_outlined),
+            isDense: true,
+            prefixIcon: Icon(Icons.key_outlined, size: 18),
           ),
         ),
         const SizedBox(height: 10),
@@ -408,14 +442,15 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
           busy: busy,
           onSubmitted: () => unawaited(_searchTmdb()),
           button: FilledButton.icon(
+            style: FilledButton.styleFrom(visualDensity: VisualDensity.compact),
             onPressed: busy ? null : _searchTmdb,
             icon: _metaMatch.tmdbSearching
                 ? const SizedBox(
-                    width: 18,
-                    height: 18,
+                    width: 15,
+                    height: 15,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                : const Icon(Icons.travel_explore_outlined),
+                : const Icon(Icons.travel_explore_outlined, size: 17),
             label: Text(_metaMatch.tmdbSearching ? '搜索中…' : '搜索 TMDB'),
           ),
         ),
@@ -431,7 +466,7 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
           ),
         ],
         if (_metaMatch.tmdbCandidates.isNotEmpty) ...[
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           for (final candidate in _metaMatch.tmdbCandidates)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
@@ -446,7 +481,12 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text('豆瓣快捷匹配（免凭据）', style: theme.textTheme.titleSmall),
+        Text(
+          '豆瓣快捷匹配（免凭据）',
+          style: theme.textTheme.titleSmall?.copyWith(
+            fontWeight: FontWeight.w600,
+          ),
+        ),
         const SizedBox(height: 6),
         Text(
           '无需 TMDB 令牌，直接使用豆瓣公共条目快捷匹配封面海报与基本信息。',
@@ -461,14 +501,15 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
           busy: busy,
           onSubmitted: () => unawaited(_searchDouban()),
           button: FilledButton.tonalIcon(
+            style: FilledButton.styleFrom(visualDensity: VisualDensity.compact),
             onPressed: busy ? null : _searchDouban,
             icon: _metaMatch.doubanSearching
                 ? const SizedBox(
-                    width: 18,
-                    height: 18,
+                    width: 15,
+                    height: 15,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
-                : const Icon(Icons.movie_filter_outlined),
+                : const Icon(Icons.movie_filter_outlined, size: 17),
             label: Text(_metaMatch.doubanSearching ? '搜索中…' : '搜索豆瓣（免凭据）'),
           ),
         ),
@@ -484,7 +525,7 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
           ),
         ],
         if (_metaMatch.doubanCandidates.isNotEmpty) ...[
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           for (final candidate in _metaMatch.doubanCandidates)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
@@ -512,8 +553,8 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
           onSubmitted: (_) => onSubmitted(),
           decoration: InputDecoration(
             labelText: labelText,
-            border: const OutlineInputBorder(),
-            prefixIcon: Icon(prefixIcon),
+            isDense: true,
+            prefixIcon: Icon(prefixIcon, size: 18),
             counterText: '',
           ),
         );
@@ -524,11 +565,11 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
           );
         }
         return Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
+          crossAxisAlignment: CrossAxisAlignment.center,
           children: [
             Expanded(child: field),
             const SizedBox(width: 10),
-            Padding(padding: const EdgeInsets.only(top: 4), child: button),
+            button,
           ],
         );
       },
@@ -537,12 +578,18 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
 
   Widget _doubanCandidateCard(DoubanCandidate candidate, bool busy) {
     final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerLow,
-        border: Border.all(color: theme.colorScheme.outlineVariant),
-        borderRadius: BorderRadius.circular(14),
+        color: isDark
+            ? Colors.white.withValues(alpha: 0.04)
+            : theme.colorScheme.surface,
+        border: Border.all(
+          color: IsleGlass.rimBorderColor(isDark),
+          width: 1.0,
+        ),
+        borderRadius: IsleRadius.brMd,
       ),
       child: Row(
         children: [
@@ -580,12 +627,18 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
 
   Widget _tmdbCandidateCard(TMDBCandidate candidate, bool busy) {
     final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: theme.colorScheme.surfaceContainerLow,
-        border: Border.all(color: theme.colorScheme.outlineVariant),
-        borderRadius: BorderRadius.circular(16),
+        color: isDark
+            ? Colors.white.withValues(alpha: 0.04)
+            : theme.colorScheme.surface,
+        border: Border.all(
+          color: IsleGlass.rimBorderColor(isDark),
+          width: 1.0,
+        ),
+        borderRadius: IsleRadius.brMd,
       ),
       child: LayoutBuilder(
         builder: (context, constraints) {
@@ -594,7 +647,9 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
             children: [
               Text(
                 '${candidate.title}${candidate.year.isEmpty ? '' : ' (${candidate.year})'}',
-                style: theme.textTheme.titleSmall,
+                style: theme.textTheme.titleSmall?.copyWith(
+                  fontWeight: FontWeight.w600,
+                ),
               ),
               const SizedBox(height: 4),
               Text(
@@ -614,8 +669,11 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
             ],
           );
           final matchButton = OutlinedButton.icon(
+            style: OutlinedButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+            ),
             onPressed: busy ? null : () => _matchTmdb(candidate),
-            icon: const Icon(Icons.check_circle_outline),
+            icon: const Icon(Icons.check_circle_outline, size: 17),
             label: const Text('选择匹配'),
           );
           if (constraints.maxWidth < 440) {
@@ -671,38 +729,36 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
       if (_film.mime.isNotEmpty)
         (Icons.insert_drive_file_outlined, '媒体类型', _film.mime),
     ];
-    return Wrap(
-      spacing: 16,
-      runSpacing: 12,
+    return IsleGroupCard(
+      margin: EdgeInsets.zero,
       children: [
         for (final row in rows)
-          SizedBox(
-            width: 230,
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
             child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Icon(
                   row.$1,
-                  size: 18,
+                  size: 16,
                   color: Theme.of(context).colorScheme.onSurfaceVariant,
                 ),
-                const SizedBox(width: 9),
+                const SizedBox(width: 8),
+                SizedBox(
+                  width: 72,
+                  child: Text(
+                    row.$2,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
                 Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        row.$2,
-                        style: Theme.of(context).textTheme.labelMedium
-                            ?.copyWith(
-                              color: Theme.of(context)
-                                  .colorScheme
-                                  .onSurfaceVariant,
-                            ),
-                      ),
-                      const SizedBox(height: 2),
-                      Text(row.$3),
-                    ],
+                  child: Text(
+                    row.$3,
+                    textAlign: TextAlign.right,
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
                 ),
               ],

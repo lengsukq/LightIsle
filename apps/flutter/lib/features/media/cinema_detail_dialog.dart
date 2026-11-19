@@ -27,6 +27,7 @@ import 'dlna_cast.dart';
 import 'media_models.dart';
 import 'media_ui.dart';
 import 'offline_video_store.dart';
+import 'shared_video_player_controls.dart';
 
 part 'cinema_detail_session_actions.dart';
 part 'cinema_detail_player_state.dart';
@@ -143,8 +144,6 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    // Entering native PiP must not pause the underlying video. An exit event
-    // restores the ordinary background pause / save-progress behavior.
     if (CinemaPipLifecyclePolicy.shouldPauseOnLifecycle(
       state,
       pipRequested: _pip.requested,
@@ -156,9 +155,6 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     }
   }
 
-  /// Switches the quality tier. Lower tiers force a transcode session even
-  /// for directly playable sources; 原画 tears a session down when the film
-  /// can play directly, keeping the resume point.
   static const _qualityTiers = <(String, String, int)>[
     ('1080', '1080P', 1080),
     ('720', '720P', 720),
@@ -178,8 +174,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     try {
       await _playback.controller?.pause();
     } catch (_) {
-      // Still try to persist the last known position if the native player
-      // cannot pause cleanly.
+      // Still try to persist the last known position.
     }
     final saved = await _queueProgressSave(force: true);
     if (!mounted) return;
@@ -252,38 +247,34 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     required bool resume,
   }) {
     final scheme = Theme.of(context).colorScheme;
+    final radius = compact ? BorderRadius.zero : IsleRadius.brCard;
     return ClipRRect(
-      borderRadius: BorderRadius.circular(compact ? 0 : 24),
+      borderRadius: radius,
       child: BackdropFilter(
         enabled: !(compact || IsleLayout.opaqueNavigation(context)),
         filter: ui.ImageFilter.blur(sigmaX: 24, sigmaY: 24),
         child: Container(
           constraints: BoxConstraints(
-            maxWidth: 1040,
+            maxWidth: 960,
             maxHeight: MediaQuery.sizeOf(context).height * (compact ? 1 : .94),
           ),
           decoration: BoxDecoration(
-            color: scheme.surface.withValues(alpha: isDark ? 0.88 : 0.94),
-            borderRadius: BorderRadius.circular(compact ? 0 : 24),
-            border: Border.all(
-              color: isDark
-                  ? Colors.white.withValues(alpha: 0.16)
-                  : scheme.outlineVariant.withValues(alpha: 0.45),
-              width: 0.85,
-            ),
-            boxShadow: [
-              BoxShadow(
-                color: Colors.black.withValues(alpha: isDark ? 0.45 : 0.15),
-                blurRadius: 36,
-                offset: const Offset(0, 12),
-              ),
-            ],
+            color: scheme.surface.withValues(alpha: isDark ? 0.90 : 0.96),
+            borderRadius: radius,
+            border: compact
+                ? null
+                : Border.all(
+                    color: IsleGlass.rimBorderColor(isDark),
+                    width: 1.0,
+                  ),
+            boxShadow: compact ? null : IsleShadows.floating(isDark),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             mainAxisSize: MainAxisSize.min,
             children: [
               _buildDetailHeader(),
+              Divider(height: 1, color: IsleGlass.rimBorderColor(isDark)),
               Flexible(child: _buildDialogScrollBody(context, resume: resume)),
             ],
           ),
@@ -323,7 +314,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     final playbackMessage = _playback.playbackMessage;
     return SingleChildScrollView(
       physics: const AlwaysScrollableScrollPhysics(),
-      padding: const EdgeInsets.fromLTRB(18, 4, 18, 18),
+      padding: const EdgeInsets.fromLTRB(18, 8, 18, 18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         mainAxisSize: MainAxisSize.min,
@@ -336,7 +327,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
           ],
           if (resume && _film.position > 5)
             Padding(
-              padding: const EdgeInsets.only(top: 10),
+              padding: const EdgeInsets.only(top: 6),
               child: Text(
                 '上次观看至 ${_timeLabel(Duration(seconds: _film.position.round()))}。',
                 style: theme.textTheme.bodyMedium?.copyWith(
@@ -357,7 +348,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
             constraints: const BoxConstraints(minHeight: 180),
             decoration: BoxDecoration(
               color: Colors.black,
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: IsleRadius.brSm,
             ),
             clipBehavior: Clip.antiAlias,
             child: _player(context),
@@ -378,16 +369,23 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                 ),
               ),
             ),
-          const SizedBox(height: 18),
+          const SizedBox(height: 16),
           Text(
             _film.canAttemptPlayback ? '播放进度' : '媒体信息',
-            style: theme.textTheme.titleMedium,
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
           ),
-          const SizedBox(height: 12),
+          const SizedBox(height: 10),
           _metadata(context),
           if (_film.overview.isNotEmpty) ...[
-            const SizedBox(height: 18),
-            Text('简介', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 16),
+            Text(
+              '简介',
+              style: theme.textTheme.titleSmall?.copyWith(
+                fontWeight: FontWeight.w700,
+              ),
+            ),
             const SizedBox(height: 6),
             Text(_film.overview),
           ],
@@ -401,7 +399,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
             ),
           ],
           if (widget.isAdmin) ...[
-            const SizedBox(height: 18),
+            const SizedBox(height: 16),
             _metadataMatchingPanel(context),
           ],
         ],
@@ -496,13 +494,22 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                     child: RepaintBoundary(
                       child: IgnorePointer(
                         ignoring: !showChrome,
-                        child: AnimatedOpacity(
-                          opacity: showChrome ? 1.0 : 0.0,
+                        child: AnimatedSlide(
+                          offset: showChrome
+                              ? Offset.zero
+                              : const Offset(0, 0.10),
                           duration: IsleMotion.reducedMotion(context)
                               ? Duration.zero
                               : IsleMotion.quick,
-                          curve: IsleMotion.curve,
-                          child: _buildBottomTransportDeck(context),
+                          curve: IsleMotion.silk,
+                          child: AnimatedOpacity(
+                            opacity: showChrome ? 1.0 : 0.0,
+                            duration: IsleMotion.reducedMotion(context)
+                                ? Duration.zero
+                                : IsleMotion.quick,
+                            curve: IsleMotion.silk,
+                            child: _buildBottomTransportDeck(context),
+                          ),
                         ),
                       ),
                     ),
@@ -529,40 +536,48 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
         (_playback.playbackMessage != null && videoReady) ||
         _playback.progressSaveMessage != null ||
         _subtitles.message != null;
+    final topDuration = IsleMotion.reducedMotion(context)
+        ? Duration.zero
+        : IsleMotion.quick;
 
     return IgnorePointer(
       ignoring: !showChrome,
-      child: AnimatedOpacity(
-        opacity: showChrome ? 1.0 : 0.0,
-        duration: const Duration(milliseconds: 220),
-        curve: Curves.easeOutCubic,
-        child: DecoratedBox(
-          decoration: const BoxDecoration(
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: [
-                Color(0xD8000000),
-                Color(0x78000000),
-                Colors.transparent,
-              ],
-              stops: [0.0, 0.62, 1.0],
+      child: AnimatedSlide(
+        offset: showChrome ? Offset.zero : const Offset(0, -0.08),
+        duration: topDuration,
+        curve: IsleMotion.silk,
+        child: AnimatedOpacity(
+          opacity: showChrome ? 1.0 : 0.0,
+          duration: topDuration,
+          curve: IsleMotion.silk,
+          child: DecoratedBox(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [
+                  Color(0xD8000000),
+                  Color(0x78000000),
+                  Colors.transparent,
+                ],
+                stops: [0.0, 0.62, 1.0],
+              ),
             ),
-          ),
-          child: SafeArea(
-            bottom: false,
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _buildDetailHeader(
-                  darkOverlay: true,
-                  reserveMacTrafficLights: !_chrome.windowFullscreen,
-                  trailingActions: _buildPlayerHeaderTrailingActions(),
-                ),
-                if (hasBanner)
-                  _buildPlayerOverlayBanners(videoReady: videoReady),
-              ],
+            child: SafeArea(
+              bottom: false,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _buildDetailHeader(
+                    darkOverlay: true,
+                    reserveMacTrafficLights: !_chrome.windowFullscreen,
+                    trailingActions: _buildPlayerHeaderTrailingActions(),
+                  ),
+                  if (hasBanner)
+                    _buildPlayerOverlayBanners(videoReady: videoReady),
+                ],
+              ),
             ),
           ),
         ),

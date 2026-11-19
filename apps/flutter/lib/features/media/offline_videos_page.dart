@@ -2,11 +2,13 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../core/isle_gallery_layout.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/widgets.dart';
 import 'local_video_page.dart';
 import 'media_ui.dart';
+import 'offline_photos_page.dart';
 import 'offline_video_store.dart';
 
 class OfflineVideosPage extends StatefulWidget {
@@ -37,6 +39,18 @@ class _OfflineVideosPageState extends State<OfflineVideosPage> {
   void initState() {
     super.initState();
     unawaited(_refresh());
+  }
+
+  void _switchToPhotos() {
+    if (widget.accountName.isEmpty) return;
+    Navigator.of(context).pushReplacement(
+      buildIslePageRoute<void>(
+        builder: (_) => OfflinePhotosPage(
+          api: widget.api,
+          accountId: widget.accountName,
+        ),
+      ),
+    );
   }
 
   Future<void> _maintain(String action) async {
@@ -149,85 +163,149 @@ class _OfflineVideosPageState extends State<OfflineVideosPage> {
   String _formatBytes(int bytes) =>
       '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
 
+  Widget _buildVideoTile(OfflineVideo item, Color accent) {
+    return ListTile(
+      dense: true,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 3),
+      leading: IsleSquircleBadge(
+        icon: Icons.offline_pin_outlined,
+        color: accent,
+        size: 32,
+        iconSize: 17,
+      ),
+      title: Text(
+        item.title,
+        maxLines: 2,
+        overflow: TextOverflow.ellipsis,
+        style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600),
+      ),
+      subtitle: Text(
+        _formatBytes(item.size),
+        style: const TextStyle(fontSize: 12),
+      ),
+      enabled: _busy == null,
+      onTap: () => unawaited(_play(item)),
+      trailing: IconButton(
+        tooltip: '删除离线副本',
+        visualDensity: VisualDensity.compact,
+        onPressed: _busy == null ? () => _remove(item) : null,
+        icon: const Icon(Icons.delete_outline_rounded, size: 19),
+      ),
+    );
+  }
+
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: IsleAppBar(
-      title: const Text('离线影片'),
-      actions: [
-        PopupMenuButton<String>(
-          tooltip: '离线存储管理',
-          enabled: !_loading && _busy == null,
-          onSelected: (action) => unawaited(_maintain(action)),
-          itemBuilder: (_) => const [
-            PopupMenuItem(value: 'cleanup', child: Text('清理未关联的旧缓存')),
-            PopupMenuItem(value: 'clear', child: Text('清空当前离线影片库')),
-          ],
-        ),
-        IconButton(
-          tooltip: '刷新离线库',
-          onPressed: _loading ? null : _refresh,
-          icon: const Icon(Icons.refresh_rounded),
-        ),
-      ],
-    ),
-    body: SafeArea(
-      child: _loading
-          ? const Center(child: CircularProgressIndicator())
-          : IsleListView(
-              children: [
-                if (_error != null)
-                  Notice(_error!, error: true, onRetry: _refresh),
-                if (_items.isEmpty)
-                  MediaEmptyState(
-                    icon: Icons.offline_pin_outlined,
-                    title: '还没有离线影片',
-                    message: '在影院详情选择“保存到离线库”，即可在断网时播放。',
-                  )
-                else
-                  IsleResponsiveGrid(
-                    minItemWidth: 320,
-                    maxColumns: 2,
-                    spacing: 10,
-                    runSpacing: 10,
-                    children: [
-                      for (final item in _items)
-                        IsleSurface(
-                          radius: 16,
-                          margin: EdgeInsets.zero,
-                          padding: EdgeInsets.zero,
-                          child: ListTile(
-                            leading: const IsleSquircleBadge(
-                              icon: Icons.offline_pin_outlined,
-                              color: Color(0xfff97316),
-                              size: 34,
-                              iconSize: 18,
-                            ),
-                            title: Text(
-                              item.title,
-                              maxLines: 2,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w600,
+  Widget build(BuildContext context) {
+    final palette = IslePalette.of(context);
+    final terracotta = palette['brandTerracotta'];
+    final totalBytes = _items.fold<int>(0, (sum, item) => sum + item.size);
+
+    return Scaffold(
+      appBar: IsleAppBar(
+        title: const Text('离线影片'),
+        actions: [
+          PopupMenuButton<String>(
+            tooltip: '离线存储管理',
+            enabled: !_loading && _busy == null,
+            onSelected: (action) => unawaited(_maintain(action)),
+            itemBuilder: (_) => const [
+              PopupMenuItem(value: 'cleanup', child: Text('清理未关联的旧缓存')),
+              PopupMenuItem(value: 'clear', child: Text('清空当前离线影片库')),
+            ],
+          ),
+          IconButton(
+            tooltip: '刷新离线库',
+            onPressed: _loading ? null : _refresh,
+            icon: const Icon(Icons.refresh_rounded),
+          ),
+          IsleHelpButton(
+            title: '离线影片库说明',
+            accentColor: terracotta,
+            body:
+                '离线影片按当前账号与存储源隔离保存在本机沙盒，支持旅途无网播放；删除或清空本机副本绝不会修改或删除 NAS 上的源视频。',
+          ),
+        ],
+      ),
+      body: SafeArea(
+        child: IsleListView(
+          maxWidth: IsleLayout.workbenchMaxWidth,
+          children: [
+            OfflineMediaSegmentBar(
+              isPhotos: false,
+              onSwitchTab: widget.accountName.isEmpty ? null : _switchToPhotos,
+            ),
+            if (_loading)
+              const IsleLoadingState(compact: true, label: '正在读取离线影片…')
+            else ...[
+              IsleFocalStage(
+                icon: Icons.offline_pin_rounded,
+                accent: terracotta,
+                title: '离线影片库',
+                metrics: [
+                  IsleFocalMetric(
+                    label: '离线影片',
+                    value: '${_items.length}',
+                    accent: terracotta,
+                  ),
+                  IsleFocalMetric(
+                    label: '本机占用',
+                    value: _formatBytes(totalBytes),
+                    accent: palette['brandAmber'],
+                  ),
+                ],
+              ),
+              const SizedBox(height: 10),
+              if (_error != null)
+                Notice(_error!, error: true, onRetry: _refresh),
+              if (_items.isEmpty)
+                const MediaEmptyState(
+                  icon: Icons.offline_pin_outlined,
+                  title: '还没有离线影片',
+                  message: '在影院详情选择“保存到离线库”，即可在断网时播放。',
+                )
+              else ...[
+                IsleSectionHeader(
+                  title: '已保存影片（${_items.length}）',
+                  accentColor: terracotta,
+                ),
+                IsleAdaptiveBuilder(
+                  builder: (context, tier, width) {
+                    final textScale =
+                        MediaQuery.textScalerOf(context).scale(14) / 14;
+                    if (tier == IsleViewportTier.expanded &&
+                        _items.length > 1 &&
+                        textScale <= 1.35) {
+                      final cardWidth = (width - 12) / 2;
+                      return Wrap(
+                        spacing: 12,
+                        runSpacing: 10,
+                        children: [
+                          for (final item in _items)
+                            SizedBox(
+                              width: cardWidth,
+                              child: IsleSurface(
+                                margin: EdgeInsets.zero,
+                                padding: EdgeInsets.zero,
+                                child: _buildVideoTile(item, terracotta),
                               ),
                             ),
-                            subtitle: Text(
-                              '${_formatBytes(item.size)} · 已保存在本设备',
-                            ),
-                            enabled: _busy == null,
-                            onTap: () => unawaited(_play(item)),
-                            trailing: IconButton(
-                              tooltip: '删除离线副本',
-                              onPressed: _busy == null
-                                  ? () => _remove(item)
-                                  : null,
-                              icon: const Icon(Icons.delete_outline_rounded),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
+                        ],
+                      );
+                    }
+                    return IsleGroupCard(
+                      margin: EdgeInsets.zero,
+                      children: [
+                        for (final item in _items)
+                          _buildVideoTile(item, terracotta),
+                      ],
+                    );
+                  },
+                ),
               ],
-            ),
-    ),
-  );
+            ],
+          ],
+        ),
+      ),
+    );
+  }
 }

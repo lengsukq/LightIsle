@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../../core/isle_route.dart';
 import '../../core/nas_discovery.dart';
 import '../../core/widgets.dart';
 
@@ -39,7 +40,7 @@ class _NasDiscoveryPickerState extends State<NasDiscoveryPicker> {
       };
 
   Future<void> _openPicker() async {
-    final selected = await showDialog<NasDiscoveryServer>(
+    final selected = await showIsleDialog<NasDiscoveryServer>(
       context: context,
       builder: (_) => _NasDiscoveryDialog(service: _service),
     );
@@ -56,14 +57,17 @@ class _NasDiscoveryPickerState extends State<NasDiscoveryPicker> {
   @override
   Widget build(BuildContext context) {
     if (!_supportsDiscovery) return const SizedBox.shrink();
-    return Align(
-      alignment: Alignment.centerLeft,
-      child: OutlinedButton.icon(
-        key: const Key('nasDiscoveryButton'),
-        onPressed: widget.enabled ? _openPicker : null,
-        icon: const Icon(Icons.wifi_find_rounded),
-        label: const Text('自动查找我的 NAS'),
+    return TextButton.icon(
+      key: const Key('nasDiscoveryButton'),
+      style: TextButton.styleFrom(
+        visualDensity: VisualDensity.compact,
+        minimumSize: const Size(0, 28),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
       ),
+      onPressed: widget.enabled ? _openPicker : null,
+      icon: const Icon(Icons.wifi_find_rounded, size: 15),
+      label: const Text('自动查找我的 NAS', style: TextStyle(fontSize: 12)),
     );
   }
 }
@@ -129,132 +133,162 @@ class _NasDiscoveryDialogState extends State<_NasDiscoveryDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    scrollable: true,
-    title: const Text('查找附近的 LightIsle'),
-    content: SizedBox(
-      width: 420,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          const Text(
-            '请确认手机和 Mac 接入同一个家庭网络（Mac 可以使用网线），并在 Mac 开启其他设备访问。点选设备即可填入地址，不会自动登录。',
-          ),
-          const SizedBox(height: 14),
-          if (_searching) ...[
-            const IsleLoadingState(
-              compact: true,
-              padding: EdgeInsets.symmetric(vertical: 14),
-              label: '正在搜索当前局域网…',
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final borderColor = IsleGlass.rimBorderColor(isDark);
+
+    return AlertDialog(
+      scrollable: true,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      titlePadding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
+      contentPadding: const EdgeInsets.fromLTRB(20, 4, 20, 12),
+      actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+      shape: IsleShapes.card(
+        side: BorderSide(color: borderColor, width: 1.0),
+      ),
+      title: Text(
+        '附近的 LightIsle',
+        style: theme.textTheme.titleMedium?.copyWith(
+          fontWeight: FontWeight.w700,
+        ),
+      ),
+      content: SizedBox(
+        width: 380,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              '点选同一局域网下的设备即可自动填入连接地址。',
+              style: theme.textTheme.bodySmall?.copyWith(
+                fontSize: 12.5,
+                color: colors.onSurfaceVariant,
+              ),
             ),
-          ] else if (_error != null) ...[
-            Text(_error!),
-            const SizedBox(height: 8),
-            TextButton.icon(
-              onPressed: _search,
-              icon: const Icon(Icons.refresh_rounded),
-              label: const Text('重新搜索'),
-            ),
-          ] else if (_servers.isEmpty) ...[
-            const Text('没有找到 LightIsle。请检查 Mac 是否正在运行、是否允许其他设备连接；也可以手动输入地址。'),
-            const SizedBox(height: 8),
-            TextButton.icon(
-              onPressed: _search,
-              icon: const Icon(Icons.refresh_rounded),
-              label: const Text('重新搜索'),
-            ),
-          ] else ...[
-            const Text('请选择要连接的设备。首次使用加密连接时，需要核对 Mac 上的连接验证信息。'),
-            const SizedBox(height: 8),
-            Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                for (var index = 0; index < _servers.length; index++) ...[
-                  if (index > 0) const Divider(height: 1),
-                  Builder(
-                    builder: (context) {
-                      final isHttps = _servers[index].address.startsWith(
-                        'https://',
-                      );
-                      final tintColor = isHttps
-                          ? const Color(0xff10b981)
-                          : const Color(0xfff59e0b);
-                      final isDark =
-                          Theme.of(context).brightness == Brightness.dark;
-                      return ListTile(
-                        key: Key('nasDiscoveryResult_$index'),
-                        contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 4,
-                          vertical: 2,
+            const SizedBox(height: 12),
+            if (_searching) ...[
+              const IsleLoadingState(
+                compact: true,
+                padding: EdgeInsets.symmetric(vertical: 14),
+                label: '正在搜索当前局域网…',
+              ),
+            ] else if (_error != null) ...[
+              Text(_error!, style: const TextStyle(fontSize: 13)),
+              const SizedBox(height: 6),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: _search,
+                  icon: const Icon(Icons.refresh_rounded, size: 17),
+                  label: const Text('重新搜索'),
+                ),
+              ),
+            ] else if (_servers.isEmpty) ...[
+              const Text(
+                '未发现设备，请确认 Mac 端正在运行且位于同一局域网。',
+                style: TextStyle(fontSize: 13),
+              ),
+              const SizedBox(height: 6),
+              Align(
+                alignment: Alignment.centerLeft,
+                child: TextButton.icon(
+                  onPressed: _search,
+                  icon: const Icon(Icons.refresh_rounded, size: 17),
+                  label: const Text('重新搜索'),
+                ),
+              ),
+            ] else ...[
+              Container(
+                decoration: ShapeDecoration(
+                  shape: IsleShapes.md(
+                    side: BorderSide(color: borderColor, width: 1.0),
+                  ),
+                  color: isDark
+                      ? Colors.white.withValues(alpha: 0.03)
+                      : colors.surfaceContainerHighest.withValues(alpha: 0.28),
+                ),
+                clipBehavior: Clip.antiAlias,
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    for (var index = 0; index < _servers.length; index++) ...[
+                      if (index > 0)
+                        Divider(
+                          height: 1,
+                          thickness: 0.7,
+                          indent: 48,
+                          color: borderColor,
                         ),
-                        leading: Container(
-                          width: 34,
-                          height: 34,
-                          decoration: ShapeDecoration(
-                            color: tintColor.withValues(
-                              alpha: isDark ? 0.22 : 0.12,
+                      Builder(
+                        builder: (context) {
+                          final isHttps = _servers[index].address.startsWith(
+                            'https://',
+                          );
+                          final tintColor = isHttps
+                              ? const Color(0xff10b981)
+                              : const Color(0xfff59e0b);
+                          return ListTile(
+                            key: Key('nasDiscoveryResult_$index'),
+                            dense: true,
+                            visualDensity: VisualDensity.compact,
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 2,
                             ),
-                            shape: IsleShapes.squircle(10),
-                          ),
-                          child: Icon(
-                            Icons.dns_rounded,
-                            color: tintColor,
-                            size: 18,
-                          ),
-                        ),
-                        title: Text(
-                          _servers[index].name,
-                          style: const TextStyle(
-                            fontWeight: FontWeight.w600,
-                            fontSize: 14,
-                          ),
-                        ),
-                        subtitle: Text(
-                          _servers[index].address,
-                          style: const TextStyle(fontSize: 12.5),
-                        ),
-                        trailing: Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 8,
-                            vertical: 3,
-                          ),
-                          decoration: ShapeDecoration(
-                            color:
-                                (isHttps
-                                        ? const Color(0xff10b981)
-                                        : Theme.of(context).colorScheme.error)
-                                    .withValues(alpha: isDark ? 0.20 : 0.10),
-                            shape: IsleShapes.squircle(8),
-                          ),
-                          child: Text(
-                            isHttps ? '加密' : '未加密',
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w600,
+                            leading: Container(
+                              width: 30,
+                              height: 30,
+                              decoration: ShapeDecoration(
+                                color: tintColor.withValues(
+                                  alpha: isDark ? 0.20 : 0.11,
+                                ),
+                                shape: IsleShapes.squircle(8),
+                              ),
+                              child: Icon(
+                                Icons.dns_rounded,
+                                color: tintColor,
+                                size: 16.5,
+                              ),
+                            ),
+                            title: Text(
+                              _servers[index].name,
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                                fontSize: 13.5,
+                              ),
+                            ),
+                            subtitle: Text(
+                              _servers[index].address,
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                            trailing: IsleBadgePill(
+                              label: isHttps ? 'HTTPS' : 'HTTP',
                               color: isHttps
                                   ? const Color(0xff10b981)
-                                  : Theme.of(context).colorScheme.error,
+                                  : colors.onSurfaceVariant,
                             ),
-                          ),
-                        ),
-                        onTap: () => Navigator.of(context).pop(_servers[index]),
-                      );
-                    },
-                  ),
-                ],
-              ],
-            ),
+                            onTap: () =>
+                                Navigator.of(context).pop(_servers[index]),
+                          );
+                        },
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
           ],
-        ],
+        ),
       ),
-    ),
-    actions: [
-      TextButton(
-        key: const Key('nasDiscoveryCancel'),
-        onPressed: () => Navigator.of(context).pop(),
-        child: Text(_searching ? '取消搜索' : '关闭'),
-      ),
-    ],
-  );
+      actions: [
+        TextButton(
+          key: const Key('nasDiscoveryCancel'),
+          onPressed: () => Navigator.of(context).pop(),
+          child: Text(_searching ? '取消搜索' : '关闭'),
+        ),
+      ],
+    );
+  }
 }

@@ -101,6 +101,7 @@ extension _FilesPageItemTiles on _FilesPageState {
   ) async {
     final overlay = Overlay.maybeOf(context)?.context.findRenderObject();
     if (overlay is! RenderBox) return;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final selected = await showMenu<String>(
       context: context,
       position: RelativeRect.fromRect(
@@ -108,7 +109,9 @@ extension _FilesPageItemTiles on _FilesPageState {
         Offset.zero & overlay.size,
       ),
       constraints: const BoxConstraints(minWidth: 205, maxWidth: 260),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      shape: IsleShapes.md(
+        side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
+      ),
       items: _buildFileActionMenuItems(item, writable),
     );
     if (selected != null && mounted) {
@@ -116,110 +119,111 @@ extension _FilesPageItemTiles on _FilesPageState {
     }
   }
 
-  Widget _fileActionsMenu(FileEntry item, bool writable) =>
-      PopupMenuButton<String>(
-        tooltip: '文件操作',
-        position: PopupMenuPosition.under,
-        constraints: const BoxConstraints(minWidth: 205, maxWidth: 260),
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-        onSelected: (value) => _dispatchFileAction(item, value),
-        itemBuilder: (context) => _buildFileActionMenuItems(item, writable),
-      );
+  Widget _fileActionsMenu(FileEntry item, bool writable) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    return PopupMenuButton<String>(
+      tooltip: '文件操作',
+      position: PopupMenuPosition.under,
+      constraints: const BoxConstraints(minWidth: 205, maxWidth: 260),
+      shape: IsleShapes.md(
+        side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
+      ),
+      onSelected: (value) => _dispatchFileAction(item, value),
+      itemBuilder: (context) => _buildFileActionMenuItems(item, writable),
+    );
+  }
 
-  Widget _trashTile(
-    BuildContext context,
-    TrashEntry item,
-    bool compact,
-  ) => Column(
-    children: [
-      ListTile(
-        minTileHeight: 72,
-        contentPadding: EdgeInsets.symmetric(
-          horizontal: compact ? 12 : 20,
-          vertical: 2,
-        ),
-        leading: Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(11),
-            gradient: const LinearGradient(
-              colors: [Color(0xfff87171), Color(0xffdc2626)],
-              begin: Alignment.topLeft,
-              end: Alignment.bottomRight,
+  Widget _trashTile(BuildContext context, TrashEntry item, bool compact) {
+    final colors = Theme.of(context).colorScheme;
+    return Column(
+      children: [
+        ListTile(
+          dense: true,
+          minTileHeight: 54,
+          contentPadding: EdgeInsets.symmetric(
+            horizontal: compact ? 10 : 16,
+            vertical: 2,
+          ),
+          leading: Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(9),
+              color: colors.error.withValues(alpha: 0.12),
             ),
-            boxShadow: [
-              BoxShadow(
-                color: const Color(0xffdc2626).withValues(alpha: 0.25),
-                blurRadius: 6,
-                offset: const Offset(0, 2),
+            child: Icon(
+              Icons.delete_outline_rounded,
+              color: colors.error,
+              size: 18,
+            ),
+          ),
+          title: Text(
+            item.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600),
+          ),
+          subtitle: Text(
+            '原路径：${item.originalPath}${item.deletedAt == null ? '' : ' · ${_formatDate(item.deletedAt!)}'}',
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontSize: 11.5),
+          ),
+          trailing: Wrap(
+            spacing: 2,
+            children: [
+              IconButton(
+                tooltip: '恢复',
+                visualDensity: VisualDensity.compact,
+                onPressed: () => _restoreTrash(item),
+                icon: const Icon(Icons.restore, size: 19),
               ),
+              if (widget.isAdmin || item.originalPath.startsWith('Users/'))
+                IconButton(
+                  tooltip: '永久删除',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: () => _purgeTrash(item),
+                  color: colors.error,
+                  icon: const Icon(Icons.delete_forever_outlined, size: 19),
+                ),
             ],
           ),
-          child: const Icon(
-            Icons.delete_outline_rounded,
-            color: Colors.white,
-            size: 20,
-          ),
         ),
-        title: Text(
-          item.name,
-          softWrap: true,
-          style: const TextStyle(fontWeight: FontWeight.w600),
-        ),
-        subtitle: Text(
-          '原路径：${item.originalPath}\n${item.deletedAt == null ? '' : _formatDate(item.deletedAt!)}',
-          softWrap: true,
-        ),
-        isThreeLine: true,
-        trailing: Wrap(
-          spacing: 4,
-          children: [
-            IconButton(
-              tooltip: '恢复',
-              onPressed: () => _restoreTrash(item),
-              icon: const Icon(Icons.restore),
-            ),
-            if (widget.isAdmin || item.originalPath.startsWith('Users/'))
-              IconButton(
-                tooltip: '永久删除',
-                onPressed: () => _purgeTrash(item),
-                color: Theme.of(context).colorScheme.error,
-                icon: const Icon(Icons.delete_forever_outlined),
-              ),
-          ],
-        ),
-      ),
-      const Divider(height: 1, indent: 16, endIndent: 16),
-    ],
-  );
+        const Divider(height: 1, indent: 56, endIndent: 14),
+      ],
+    );
+  }
 
-  Widget _downloadNotice(BuildContext context) => Padding(
-    padding: const EdgeInsets.only(top: 8),
-    child: Material(
-      color: Theme.of(context).colorScheme.tertiaryContainer,
-      borderRadius: BorderRadius.circular(12),
-      child: Padding(
-        padding: const EdgeInsets.all(12),
+  Widget _downloadNotice(BuildContext context) {
+    final palette = IslePalette.of(context);
+    final sage = palette['brandSage'];
+    return Padding(
+      padding: const EdgeInsets.only(top: 8),
+      child: IsleSurface(
+        margin: EdgeInsets.zero,
+        tint: sage,
+        radius: IsleRadius.md,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Icon(Icons.download_done_outlined),
-            const SizedBox(width: 10),
+            Icon(Icons.download_done_outlined, size: 19, color: sage),
+            const SizedBox(width: 8),
             Expanded(child: SelectableText(_transfers.downloadMessage!)),
             if (_transfers.downloadMessage!.startsWith('已下载到：'))
               IconButton(
                 tooltip: '复制下载路径',
+                visualDensity: VisualDensity.compact,
                 onPressed: () => _copyPathToClipboard(
                   _transfers.downloadMessage!.substring('已下载到：'.length),
                 ),
-                icon: const Icon(Icons.copy),
+                icon: const Icon(Icons.copy, size: 18),
               ),
           ],
         ),
       ),
-    ),
-  );
+    );
+  }
 
   Widget _emptyState(
     BuildContext context,
@@ -228,44 +232,34 @@ extension _FilesPageItemTiles on _FilesPageState {
     bool showCreateActions = false,
   }) {
     final colors = Theme.of(context).colorScheme;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final palette = IslePalette.of(context);
+    final accent = palette['brandAmber'];
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 40),
+      padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 30),
       child: Column(
         children: [
-          Container(
-            width: 58,
-            height: 58,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: colors.primary.withValues(alpha: isDark ? 0.16 : 0.08),
-              border: Border.all(
-                color: colors.primary.withValues(alpha: isDark ? 0.25 : 0.18),
-                width: 0.75,
-              ),
-            ),
-            child: Icon(icon, size: 26, color: colors.primary),
-          ),
-          const SizedBox(height: 14),
+          IsleSquircleBadge(icon: icon, color: accent, size: 46, iconSize: 22),
+          const SizedBox(height: 12),
           Text(
             text,
             textAlign: TextAlign.center,
             style: TextStyle(
-              fontSize: 14,
+              fontSize: 13.5,
               color: colors.onSurfaceVariant,
-              height: 1.45,
+              height: 1.4,
             ),
           ),
           if (showCreateActions) ...[
-            const SizedBox(height: 16),
+            const SizedBox(height: 14),
             Wrap(
               alignment: WrapAlignment.center,
-              spacing: 10,
+              spacing: 8,
               runSpacing: 8,
               children: [
                 IslePillButton(
                   label: '上传文件到此目录',
                   icon: Icons.add_rounded,
+                  compact: true,
                   variant: IslePillVariant.primary,
                   onPressed: _dir.loading || _transfers.uploadBusy
                       ? null
@@ -274,6 +268,7 @@ extension _FilesPageItemTiles on _FilesPageState {
                 IslePillButton(
                   label: '在此新建文件夹',
                   icon: Icons.create_new_folder_outlined,
+                  compact: true,
                   onPressed: _dir.loading ? null : _createFolder,
                 ),
               ],

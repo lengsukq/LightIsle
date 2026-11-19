@@ -216,7 +216,7 @@ extension _FilesPageBrowserOperations on _FilesPageState {
   Future<String?> _askFolderName() async {
     final controller = TextEditingController();
     String? validation;
-    final result = await showDialog<String>(
+    final result = await showIsleDialog<String>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (dialogContext, setDialogState) {
@@ -265,7 +265,7 @@ extension _FilesPageBrowserOperations on _FilesPageState {
 
   Future<void> _operate(FileEntry item, String action) async {
     if (action == 'move' && !_canWriteItem(item)) return;
-    final selection = await showDialog<FileDestinationSelection>(
+    final selection = await showIsleDialog<FileDestinationSelection>(
       context: context,
       builder: (_) => FileDestinationDialog(
         api: widget.api,
@@ -306,7 +306,7 @@ extension _FilesPageBrowserOperations on _FilesPageState {
 
   Future<void> _rename(FileEntry item) async {
     if (!_canWriteItem(item)) return;
-    final name = await showDialog<String>(
+    final name = await showIsleDialog<String>(
       context: context,
       builder: (_) =>
           _RenameFileDialog(initialName: item.name, isFolder: item.isFolder),

@@ -30,6 +30,7 @@ class AboutChapterContainer extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    final palette = IslePalette(isDark);
 
     return LayoutBuilder(
       builder: (context, constraints) {
@@ -38,13 +39,11 @@ class AboutChapterContainer extends StatelessWidget {
 
         return Container(
           decoration: BoxDecoration(
-            color: isDark ? const Color(0xFF101827) : Colors.white,
-            borderRadius: BorderRadius.circular(24),
+            color: palette['cardTop'],
+            borderRadius: IsleRadius.brHero,
             border: Border.all(
-              color: isDark
-                  ? Colors.white.withValues(alpha: 0.10)
-                  : const Color(0xFF0F172A).withValues(alpha: 0.07),
-              width: 0.9,
+              color: IsleGlass.rimBorderColor(isDark),
+              width: 1.0,
             ),
             boxShadow: IsleShadows.card(isDark),
           ),
@@ -154,12 +153,11 @@ class AboutStageFloatingNode extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = IslePalette(isDark);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
       decoration: BoxDecoration(
-        color: isDark
-            ? const Color(0xFF0F172A).withValues(alpha: 0.92)
-            : Colors.white.withValues(alpha: 0.95),
+        color: palette['cardTop'].withValues(alpha: isDark ? 0.92 : 0.96),
         borderRadius: BorderRadius.circular(13),
         border: Border.all(
           color: accent.withValues(alpha: 0.30 + pulse * 0.35),
@@ -198,7 +196,7 @@ class AboutStageFloatingNode extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 12.5,
                     fontWeight: FontWeight.w700,
-                    color: isDark ? Colors.white : const Color(0xFF0F172A),
+                    color: palette['textPrimary'],
                   ),
                 ),
                 const SizedBox(height: 1),
@@ -208,9 +206,7 @@ class AboutStageFloatingNode extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontSize: 11,
-                    color: isDark
-                        ? const Color(0xFF94A3B8)
-                        : const Color(0xFF475569),
+                    color: palette['secondaryText'],
                   ),
                 ),
               ],
@@ -242,15 +238,14 @@ class AboutDriftingMemoryPill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = IslePalette(isDark);
     final dy = math.sin(offsetPhase * math.pi * 2) * 2.5;
     return Transform.translate(
       offset: Offset(0, dy),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
         decoration: BoxDecoration(
-          color: isDark
-              ? const Color(0xFF1E293B).withValues(alpha: 0.88)
-              : Colors.white.withValues(alpha: 0.94),
+          color: palette['cardTop'].withValues(alpha: isDark ? 0.90 : 0.95),
           borderRadius: BorderRadius.circular(12),
           border: Border.all(color: color.withValues(alpha: 0.32), width: 0.8),
         ),
@@ -278,7 +273,7 @@ class AboutDriftingMemoryPill extends StatelessWidget {
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w700,
-                      color: isDark ? Colors.white : const Color(0xFF0F172A),
+                      color: palette['textPrimary'],
                     ),
                   ),
                   Text(
@@ -287,9 +282,7 @@ class AboutDriftingMemoryPill extends StatelessWidget {
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
                       fontSize: 11,
-                      color: isDark
-                          ? const Color(0xFF94A3B8)
-                          : const Color(0xFF64748B),
+                      color: palette['secondaryText'],
                     ),
                   ),
                 ],
@@ -330,9 +323,9 @@ class AboutMiniCinemaPosterCard extends StatelessWidget {
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
           colors: [
-            accent.withValues(alpha: 0.26),
-            const Color(0xFF151C2C).withValues(alpha: 0.95),
-            const Color(0xFF0C101A).withValues(alpha: 0.98),
+            accent.withValues(alpha: 0.28),
+            const Color(0xFF1F1D19).withValues(alpha: 0.95),
+            const Color(0xFF131210).withValues(alpha: 0.98),
           ],
         ),
         border: Border.all(
@@ -353,7 +346,7 @@ class AboutMiniCinemaPosterCard extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFE50914),
+                  color: const Color(0xFFC25934),
                   borderRadius: BorderRadius.circular(5),
                 ),
                 child: Text(
@@ -371,7 +364,7 @@ class AboutMiniCinemaPosterCard extends StatelessWidget {
                 style: const TextStyle(
                   fontSize: 11,
                   fontWeight: FontWeight.w700,
-                  color: Color(0xFFFBBF24),
+                  color: Color(0xFFEAB057),
                 ),
               ),
             ],
@@ -384,7 +377,7 @@ class AboutMiniCinemaPosterCard extends StatelessWidget {
             style: const TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w800,
-              color: Colors.white,
+              color: Color(0xFFF5F2EC),
             ),
           ),
           const SizedBox(height: 2),
@@ -395,7 +388,7 @@ class AboutMiniCinemaPosterCard extends StatelessWidget {
             style: const TextStyle(
               fontSize: 11,
               fontWeight: FontWeight.w600,
-              color: Color(0xFF94A3B8),
+              color: Color(0xFFA8A198),
             ),
           ),
           const SizedBox(height: 8),
@@ -406,7 +399,7 @@ class AboutMiniCinemaPosterCard extends StatelessWidget {
               minHeight: 3.5,
               backgroundColor: Colors.white.withValues(alpha: 0.16),
               valueColor: const AlwaysStoppedAnimation<Color>(
-                Color(0xFFE50914),
+                Color(0xFFE07A5F),
               ),
             ),
           ),
@@ -431,21 +424,21 @@ class AboutDeviceCornerChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
+    final palette = IslePalette(isDark);
+    final cyan = palette['brandCyan'];
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       decoration: BoxDecoration(
-        color: isDark
-            ? const Color(0xFF0F172A).withValues(alpha: 0.90)
-            : Colors.white.withValues(alpha: 0.94),
+        color: palette['cardTop'].withValues(alpha: isDark ? 0.90 : 0.95),
         borderRadius: BorderRadius.circular(11),
         border: Border.all(
-          color: const Color(0xFF06B6D4).withValues(alpha: 0.34),
+          color: cyan.withValues(alpha: 0.34),
         ),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 16, color: const Color(0xFF06B6D4)),
+          Icon(icon, size: 16, color: cyan),
           const SizedBox(width: 7),
           Flexible(
             child: Column(
@@ -459,7 +452,7 @@ class AboutDeviceCornerChip extends StatelessWidget {
                   style: TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w700,
-                    color: isDark ? Colors.white : const Color(0xFF0F172A),
+                    color: palette['textPrimary'],
                   ),
                 ),
                 Text(
@@ -468,9 +461,7 @@ class AboutDeviceCornerChip extends StatelessWidget {
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
                     fontSize: 10.5,
-                    color: isDark
-                        ? const Color(0xFF94A3B8)
-                        : const Color(0xFF64748B),
+                    color: palette['secondaryText'],
                   ),
                 ),
               ],
@@ -512,22 +503,20 @@ class AboutAnimatedFeatureSpecCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final palette = IslePalette(isDark);
     return AnimatedContainer(
       duration: const Duration(milliseconds: 360),
       curve: Curves.easeOutCubic,
       decoration: BoxDecoration(
-        color: isDark
-            ? const Color(0xFF151F32)
-                  .withValues(alpha: highlighted ? 0.98 : 0.78)
-            : (highlighted ? const Color(0xFFF8FAFC) : Colors.white),
+        color: highlighted
+            ? palette['cardItemTop']
+            : palette['cardTop'].withValues(alpha: isDark ? 0.85 : 1.0),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(
           color: highlighted
-              ? badgeColor.withValues(alpha: isDark ? 0.55 : 0.40)
-              : (isDark
-                    ? Colors.white.withValues(alpha: 0.09)
-                    : const Color(0xFF0F172A).withValues(alpha: 0.08)),
-          width: highlighted ? 1.2 : 0.8,
+              ? badgeColor.withValues(alpha: isDark ? 0.52 : 0.38)
+              : IsleGlass.rimBorderColor(isDark),
+          width: highlighted ? 1.2 : 0.85,
         ),
       ),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
@@ -615,9 +604,7 @@ class AboutAnimatedFeatureSpecCard extends StatelessWidget {
                     vertical: 3,
                   ),
                   decoration: BoxDecoration(
-                    color: isDark
-                        ? Colors.white.withValues(alpha: 0.06)
-                        : const Color(0xFFF1F5F9),
+                    color: palette['cardItemBottom'],
                     borderRadius: BorderRadius.circular(6),
                   ),
                   child: Text(
@@ -666,7 +653,7 @@ class AboutCinemaAudioSpectrumPill extends StatelessWidget {
                       ),
               decoration: BoxDecoration(
                 color: i.isEven
-                    ? const Color(0xFFE50914)
+                    ? const Color(0xFFE07A5F)
                     : Colors.white.withValues(alpha: 0.65),
                 borderRadius: BorderRadius.circular(2),
               ),
@@ -680,7 +667,7 @@ class AboutCinemaAudioSpectrumPill extends StatelessWidget {
               fontFamily: 'monospace',
               fontSize: 10,
               fontWeight: FontWeight.w700,
-              color: Color(0xFFCBD5E1),
+              color: Color(0xFFD6D0C6),
             ),
           ),
         ],
@@ -711,7 +698,7 @@ class AboutCinemaPlayerScrubberBar extends StatelessWidget {
               const Icon(
                 Icons.play_arrow_rounded,
                 size: 16,
-                color: Color(0xFFE50914),
+                color: Color(0xFFE07A5F),
               ),
               const SizedBox(width: 5),
               const Text(
@@ -719,7 +706,7 @@ class AboutCinemaPlayerScrubberBar extends StatelessWidget {
                 style: TextStyle(
                   fontSize: 11.5,
                   fontWeight: FontWeight.w700,
-                  color: Colors.white,
+                  color: Color(0xFFF5F2EC),
                 ),
               ),
               const SizedBox(width: 8),
@@ -731,7 +718,7 @@ class AboutCinemaPlayerScrubberBar extends StatelessWidget {
                     minHeight: 4.5,
                     backgroundColor: Colors.white.withValues(alpha: 0.16),
                     valueColor: const AlwaysStoppedAnimation<Color>(
-                      Color(0xFFE50914),
+                      Color(0xFFE07A5F),
                     ),
                   ),
                 ),
@@ -744,7 +731,7 @@ class AboutCinemaPlayerScrubberBar extends StatelessWidget {
                     fontFamily: 'monospace',
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
-                    color: Color(0xFFCBD5E1),
+                    color: Color(0xFFD6D0C6),
                   ),
                 ),
               ],

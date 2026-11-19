@@ -13,6 +13,7 @@ import 'media_models.dart';
 import 'media_ui.dart';
 import 'photo_viewer_quality.dart';
 import 'photo_zoom_surface.dart';
+import 'shared_video_player_controls.dart';
 import 'subtitle_import.dart';
 
 /// Computes a safe RGBA decode cap (`<= 4096px`) for full-screen viewers so
@@ -362,6 +363,7 @@ class PhotoMediaVideoState extends State<PhotoMediaVideo>
   bool _preparing = false;
   int _generation = 0;
   double _speed = 1.0;
+  double _volume = 1.0;
   bool _muted = false;
   bool _wasPlaying = false;
   bool _completionNotified = false;
@@ -455,7 +457,7 @@ class PhotoMediaVideoState extends State<PhotoMediaVideo>
       }
       player.addListener(_playerChanged);
       await player.setPlaybackSpeed(_speed);
-      await player.setVolume(_muted ? 0 : 1);
+      await player.setVolume(_muted ? 0 : _volume);
       if (widget.autoPlay) {
         await player.play();
       }
@@ -500,11 +502,28 @@ class PhotoMediaVideoState extends State<PhotoMediaVideo>
 
   Future<void> _toggleMute() async {
     final nextMuted = !_muted;
-    setState(() => _muted = nextMuted);
+    final nextVolume = !nextMuted && _volume == 0 ? 1.0 : _volume;
+    setState(() {
+      _muted = nextMuted;
+      _volume = nextVolume;
+    });
     final player = _player;
     if (player == null || !player.value.isInitialized) return;
     try {
-      await player.setVolume(nextMuted ? 0 : 1);
+      await player.setVolume(nextMuted ? 0 : nextVolume);
+    } catch (_) {}
+  }
+
+  Future<void> _setVolume(double value) async {
+    final clamped = value.clamp(0.0, 1.0).toDouble();
+    setState(() {
+      _volume = clamped;
+      _muted = clamped == 0;
+    });
+    final player = _player;
+    if (player == null || !player.value.isInitialized) return;
+    try {
+      await player.setVolume(clamped);
     } catch (_) {}
   }
 
@@ -619,27 +638,9 @@ class PhotoMediaVideoState extends State<PhotoMediaVideo>
                             bottom: 12,
                             left: 16,
                             right: 16,
-                            child: IgnorePointer(
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  color: Colors.black.withValues(alpha: 0.68),
-                                  borderRadius: BorderRadius.circular(8),
-                                ),
-                                child: Padding(
-                                  padding: const EdgeInsets.symmetric(
-                                    horizontal: 12,
-                                    vertical: 7,
-                                  ),
-                                  child: Text(
-                                    matches.first.text,
-                                    textAlign: TextAlign.center,
-                                    style: const TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 16,
-                                      height: 1.25,
-                                    ),
-                                  ),
-                                ),
+                            child: Center(
+                              child: SharedVideoSubtitleOverlay(
+                                text: matches.first.text,
                               ),
                             ),
                           );
@@ -651,119 +652,74 @@ class PhotoMediaVideoState extends State<PhotoMediaVideo>
             ),
           ),
           if (!widget.liveMode)
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: IsleGlassBackdrop(
-                  blur: 20,
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 6,
+            SharedVideoTransportDeck(
+              controller: player,
+              wrapInSafeArea: false,
+              seekBar: SharedVideoProgressBar(controller: player),
+              playing: player.value.isPlaying,
+              onTogglePlay: () async {
+                if (player.value.isPlaying) {
+                  await player.pause();
+                } else {
+                  await player.play();
+                }
+                if (mounted) setState(() {});
+              },
+              onSeekBackward: () => unawaited(_seekSeconds(-10)),
+              onSeekForward: () => unawaited(_seekSeconds(10)),
+              muted: _muted,
+              volume: _muted ? 0 : _volume,
+              onToggleMute: () => unawaited(_toggleMute()),
+              onVolumeChanged: (value) => unawaited(_setVolume(value)),
+              rightClusterItems: [
+                SharedPlayerMenuPill<String>(
+                  icon: Icons.subtitles_outlined,
+                  label: _localSubtitleName == null ? '字幕' : '本机字幕',
+                  tooltip: '字幕选择与加载',
+                  active: _localSubtitleName != null,
+                  onSelected: (action) {
+                    if (action == 'load') {
+                      unawaited(_importSubtitle());
+                    } else if (action == 'off') {
+                      setState(() {
+                        _localCues = const [];
+                        _localSubtitleName = null;
+                        _subtitleError = null;
+                      });
+                    }
+                  },
+                  items: [
+                    buildSharedPlayerPopupChoice<String>(
+                      value: 'off',
+                      label: '关闭字幕',
+                      selected: _localSubtitleName == null,
                     ),
-                    decoration: BoxDecoration(
-                      color: const Color(0xBD10141D),
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(
-                        color: const Color(0x29FFFFFF),
-                        width: 0.8,
+                    const PopupMenuItem<String>(
+                      value: 'load',
+                      height: 36,
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.folder_open_rounded,
+                            size: 15,
+                            color: Colors.white70,
+                          ),
+                          SizedBox(width: 8),
+                          Text(
+                            '加载本机字幕 SRT / ASS / VTT',
+                            style: TextStyle(color: Colors.white, fontSize: 13),
+                          ),
+                        ],
                       ),
                     ),
-                    child: Wrap(
-                      alignment: WrapAlignment.center,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      spacing: 8,
-                      runSpacing: 8,
-                      children: [
-                        IconButton(
-                          tooltip: player.value.isPlaying ? '暂停视频' : '播放视频',
-                          color: Colors.white,
-                          onPressed: () async {
-                            if (player.value.isPlaying) {
-                              await player.pause();
-                            } else {
-                              await player.play();
-                            }
-                            if (mounted) setState(() {});
-                          },
-                          icon: Icon(
-                            player.value.isPlaying
-                                ? Icons.pause_rounded
-                                : Icons.play_arrow_rounded,
-                          ),
-                        ),
-                        IconButton(
-                          tooltip: '快退 10 秒',
-                          color: Colors.white,
-                          onPressed: () => _seekSeconds(-10),
-                          icon: const Icon(Icons.replay_10),
-                        ),
-                        SizedBox(
-                          width: 150,
-                          child: VideoProgressIndicator(
-                            player,
-                            allowScrubbing: true,
-                            colors: const VideoProgressColors(
-                              playedColor: Color(0xFFE50914),
-                              bufferedColor: Colors.white54,
-                              backgroundColor: Colors.white24,
-                            ),
-                          ),
-                        ),
-                        IconButton(
-                          tooltip: '快进 10 秒',
-                          color: Colors.white,
-                          onPressed: () => _seekSeconds(10),
-                          icon: const Icon(Icons.forward_10),
-                        ),
-                        IconButton(
-                          tooltip: _muted ? '取消静音' : '静音',
-                          color: Colors.white,
-                          onPressed: _toggleMute,
-                          icon: Icon(
-                            _muted
-                                ? Icons.volume_off_rounded
-                                : Icons.volume_up_rounded,
-                          ),
-                        ),
-                        MediaPlaybackSpeedPicker(
-                          value: _speed,
-                          onChanged: (value) => unawaited(_setSpeed(value)),
-                        ),
-                        PopupMenuButton<String>(
-                          tooltip: '字幕选择与加载',
-                          icon: const Icon(
-                            Icons.closed_caption_rounded,
-                            color: Colors.white,
-                          ),
-                          onSelected: (action) {
-                            if (action == 'load') {
-                              unawaited(_importSubtitle());
-                            } else if (action == 'off') {
-                              setState(() {
-                                _localCues = const [];
-                                _localSubtitleName = null;
-                                _subtitleError = null;
-                              });
-                            }
-                          },
-                          itemBuilder: (_) => [
-                            const PopupMenuItem(
-                              value: 'off',
-                              child: Text('关闭字幕'),
-                            ),
-                            const PopupMenuItem(
-                              value: 'load',
-                              child: Text('加载本机字幕 SRT / ASS / VTT'),
-                            ),
-                          ],
-                        ),
-                      ],
-                    ),
-                  ),
+                  ],
                 ),
-              ),
+                SharedPlayerSpeedMenuPill(
+                  value: _speed,
+                  onSelected: (value) => unawaited(_setSpeed(value)),
+                ),
+              ],
             ),
           if (!widget.liveMode && _localSubtitleName != null)
             Text(

@@ -1,12 +1,7 @@
 part of 'cinema_detail_dialog.dart';
 
 extension _CinemaDetailPlayerView on _CinemaDetailDialogState {
-  String _timeLabel(Duration value) {
-    final hours = value.inHours;
-    final minutes = value.inMinutes.remainder(60).toString().padLeft(2, '0');
-    final seconds = value.inSeconds.remainder(60).toString().padLeft(2, '0');
-    return hours > 0 ? '$hours:$minutes:$seconds' : '$minutes:$seconds';
-  }
+  String _timeLabel(Duration value) => SharedVideoPlayerStyle.formatClock(value);
 
   SubtitleCue? get _activeCue {
     final position = _playback.controller?.value.position;
@@ -751,31 +746,10 @@ extension _CinemaDetailPlayerView on _CinemaDetailDialogState {
       left: 24,
       right: 24,
       bottom: elevateAboveDock ? 98 : 32,
-      child: IgnorePointer(
-        child: Center(
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-            decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: .76),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Text(
-              cue.text,
-              textAlign: TextAlign.center,
-              style: TextStyle(
-                color: Colors.white,
-                fontSize: _subtitles.fontSize,
-                height: 1.3,
-                shadows: const [
-                  Shadow(
-                    color: Colors.black,
-                    blurRadius: 4,
-                    offset: Offset(0, 1),
-                  ),
-                ],
-              ),
-            ),
-          ),
+      child: Center(
+        child: SharedVideoSubtitleOverlay(
+          text: cue.text,
+          fontSize: _subtitles.fontSize,
         ),
       ),
     );

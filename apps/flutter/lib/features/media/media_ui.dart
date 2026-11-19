@@ -43,9 +43,11 @@ class MediaPlaybackSpeedPicker extends StatelessWidget {
     message: '播放倍速',
     child: DropdownButton<double>(
       value: value,
-      dropdownColor: const Color(0xff202124),
-      style: Theme.of(context).textTheme.bodyMedium
-          ?.copyWith(color: Colors.white),
+      isDense: true,
+      dropdownColor: const Color(0xff1c1b1a),
+      style: Theme.of(
+        context,
+      ).textTheme.bodyMedium?.copyWith(fontSize: 13, color: Colors.white),
       iconEnabledColor: Colors.white,
       iconDisabledColor: Colors.white54,
       underline: const SizedBox.shrink(),
@@ -90,19 +92,21 @@ String formatMediaSeconds(num seconds) {
 
 String formatMediaDate(int unixSeconds) {
   if (unixSeconds <= 0) return '拍摄时间未知';
-  final value = DateTime.fromMillisecondsSinceEpoch(unixSeconds * 1000)
-      .toLocal();
+  final value = DateTime.fromMillisecondsSinceEpoch(
+    unixSeconds * 1000,
+  ).toLocal();
   return '${value.year}年${value.month}月${value.day}日';
 }
 
 String formatMediaMonth(int unixSeconds) {
   if (unixSeconds <= 0) return '日期未知';
-  final value = DateTime.fromMillisecondsSinceEpoch(unixSeconds * 1000)
-      .toLocal();
+  final value = DateTime.fromMillisecondsSinceEpoch(
+    unixSeconds * 1000,
+  ).toLocal();
   return '${value.year}年${value.month}月';
 }
 
-/// iOS capsule pill filter chip shared by the photo and cinema libraries.
+/// Crisp capsule pill filter chip shared by the photo and cinema libraries.
 class MediaFilterChip extends StatelessWidget {
   const MediaFilterChip({
     super.key,
@@ -124,6 +128,7 @@ class MediaFilterChip extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final dark = theme.brightness == Brightness.dark;
+    final palette = IslePalette(dark);
     final maxLabelWidth = (MediaQuery.sizeOf(context).width * .58)
         .clamp(160.0, 300.0)
         .toDouble();
@@ -131,7 +136,7 @@ class MediaFilterChip extends StatelessWidget {
         ? null
         : Icon(
             icon,
-            size: 16,
+            size: 15,
             color: selected ? scheme.primary : scheme.onSurfaceVariant,
           );
     final labelWidget = Tooltip(
@@ -141,24 +146,27 @@ class MediaFilterChip extends StatelessWidget {
         child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
       ),
     );
-    final selectedBg = scheme.primary.withValues(alpha: dark ? .22 : .13);
+    final selectedBg = scheme.primary.withValues(alpha: dark ? .22 : .12);
     final bg = dark
-        ? Colors.white.withValues(alpha: 0.07)
-        : scheme.surface.withValues(alpha: 0.85);
+        ? Colors.white.withValues(alpha: 0.06)
+        : palette['cardTop'].withValues(alpha: 0.95);
     const chipShape = StadiumBorder();
     final chipSide = BorderSide(
       color: selected
-          ? scheme.primary.withValues(alpha: dark ? .45 : .32)
+          ? scheme.primary.withValues(alpha: dark ? .50 : .36)
           : IsleGlass.rimBorderColor(dark),
-      width: selected ? 1.0 : 0.75,
+      width: 1.0,
     );
     final textStyle = TextStyle(
+      fontSize: 12.5,
       color: selected ? scheme.primary : scheme.onSurface,
       fontWeight: selected ? FontWeight.w700 : FontWeight.w500,
       letterSpacing: -0.1,
     );
     if (onDeleted != null) {
       return InputChip(
+        visualDensity: VisualDensity.compact,
+        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
         showCheckmark: false,
         avatar: avatarWidget,
         label: labelWidget,
@@ -175,6 +183,8 @@ class MediaFilterChip extends StatelessWidget {
       );
     }
     return ChoiceChip(
+      visualDensity: VisualDensity.compact,
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
       showCheckmark: false,
       avatar: avatarWidget,
       label: labelWidget,
@@ -211,7 +221,7 @@ class MediaStatusBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final inset = IsleLayout.pageInset(MediaQuery.sizeOf(context).width);
     return Padding(
-      padding: EdgeInsets.fromLTRB(inset, 0, inset, 10),
+      padding: EdgeInsets.fromLTRB(inset, 0, inset, 8),
       child: Notice(
         message,
         icon: icon,
@@ -244,10 +254,10 @@ class MediaEmptyState extends StatelessWidget {
     final dense = viewport.width < 420 && viewport.height < 700;
     return Padding(
       padding: EdgeInsets.fromLTRB(
+        dense ? 12 : 16,
+        dense ? 8 : 14,
+        dense ? 12 : 16,
         dense ? 12 : 18,
-        dense ? 8 : 16,
-        dense ? 12 : 18,
-        dense ? 14 : 20,
       ),
       child: IsleEmptyStateCard(
         message,

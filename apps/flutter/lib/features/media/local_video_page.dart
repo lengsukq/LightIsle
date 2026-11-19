@@ -6,9 +6,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 
-import 'media_ui.dart';
 import '../../core/widgets.dart';
 import 'android_pip_session.dart';
+import 'shared_video_player_controls.dart';
 
 /// Plays a file the user selected on this device. No NAS session, temporary
 /// media token or external network player is involved.
@@ -36,6 +36,8 @@ class _LocalVideoPageState extends State<LocalVideoPage>
   String? _error;
   bool _loading = true;
   double _speed = 1;
+  double _volume = 1;
+  bool _muted = false;
   bool _playing = false;
   late final AndroidPipSession _pip;
 
@@ -161,6 +163,9 @@ class _LocalVideoPageState extends State<LocalVideoPage>
       if (_speed != 1) {
         await controller.setPlaybackSpeed(_speed);
       }
+      if (_muted || _volume < 0.999) {
+        await controller.setVolume(_muted ? 0 : _volume);
+      }
       controller.addListener(_updated);
       setState(() {
         _loading = false;
@@ -222,20 +227,47 @@ class _LocalVideoPageState extends State<LocalVideoPage>
     await player.seekTo(Duration(milliseconds: value));
   }
 
+  Future<void> _toggleMute() async {
+    final nextMuted = !_muted;
+    final nextVolume = !nextMuted && _volume == 0 ? 1.0 : _volume;
+    setState(() {
+      _muted = nextMuted;
+      _volume = nextVolume;
+    });
+    final player = _controller;
+    if (player?.value.isInitialized != true) return;
+    await player!.setVolume(nextMuted ? 0 : nextVolume);
+  }
+
+  Future<void> _setVolume(double value) async {
+    final clamped = value.clamp(0.0, 1.0).toDouble();
+    setState(() {
+      _volume = clamped;
+      _muted = clamped == 0;
+    });
+    final player = _controller;
+    if (player?.value.isInitialized != true) return;
+    await player!.setVolume(clamped);
+  }
+
   Future<void> _showPlaylistSheet() async {
     _discoverPlaylist();
     await showModalBottomSheet<void>(
       context: context,
-      backgroundColor: const Color(0xF2121620),
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+      backgroundColor: const Color(0xF5121620),
+      shape: RoundedRectangleBorder(
+        borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+        side: BorderSide(
+          color: Colors.white.withValues(alpha: 0.14),
+          width: 1.0,
+        ),
       ),
       builder: (sheetContext) {
         return StatefulBuilder(
           builder: (context, setSheetState) {
             return SafeArea(
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -244,6 +276,7 @@ class _LocalVideoPageState extends State<LocalVideoPage>
                       children: [
                         const Icon(
                           Icons.playlist_play_rounded,
+                          size: 20,
                           color: Colors.white,
                         ),
                         const SizedBox(width: 8),
@@ -252,13 +285,17 @@ class _LocalVideoPageState extends State<LocalVideoPage>
                             '同目录播放列表（${_playlist.length}）',
                             style: const TextStyle(
                               color: Colors.white,
-                              fontSize: 16,
+                              fontSize: 15,
                               fontWeight: FontWeight.w700,
                             ),
                           ),
                         ),
                         FilterChip(
-                          label: const Text('自动连播'),
+                          visualDensity: VisualDensity.compact,
+                          label: const Text(
+                            '自动连播',
+                            style: TextStyle(fontSize: 12),
+                          ),
                           selected: _autoPlayNext,
                           onSelected: (value) {
                             setState(() => _autoPlayNext = value);
@@ -269,58 +306,77 @@ class _LocalVideoPageState extends State<LocalVideoPage>
                     ),
                     const SizedBox(height: 10),
                     Flexible(
-                      child: ListView.builder(
-                        shrinkWrap: true,
-                        itemCount: _playlist.length,
-                        itemBuilder: (context, index) {
-                          final itemPath = _playlist[index];
-                          final active = itemPath == _currentPath;
-                          final fileName = itemPath
-                              .split(Platform.pathSeparator)
-                              .last;
-                          return ListTile(
-                            dense: true,
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
-                            tileColor: active
-                                ? const Color(0xFFE50914).withValues(alpha: 0.2)
-                                : null,
-                            leading: Icon(
-                              active
-                                  ? Icons.equalizer_rounded
-                                  : Icons.play_circle_outline_rounded,
-                              color: active
-                                  ? const Color(0xFFFF6B72)
-                                  : Colors.white70,
-                            ),
-                            title: Text(
-                              fileName,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: TextStyle(
-                                color: Colors.white,
-                                fontWeight: active
-                                    ? FontWeight.w700
-                                    : FontWeight.w500,
+                      child: Container(
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.04),
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(
+                            color: Colors.white.withValues(alpha: 0.10),
+                            width: 1.0,
+                          ),
+                        ),
+                        clipBehavior: Clip.antiAlias,
+                        child: ListView.separated(
+                          shrinkWrap: true,
+                          itemCount: _playlist.length,
+                          separatorBuilder: (_, _) => Divider(
+                            height: 1,
+                            thickness: 1,
+                            indent: 44,
+                            color: Colors.white.withValues(alpha: 0.08),
+                          ),
+                          itemBuilder: (context, index) {
+                            final itemPath = _playlist[index];
+                            final active = itemPath == _currentPath;
+                            final fileName = itemPath
+                                .split(Platform.pathSeparator)
+                                .last;
+                            return ListTile(
+                              dense: true,
+                              visualDensity: VisualDensity.compact,
+                              tileColor: active
+                                  ? const Color(
+                                      0xFFE50914,
+                                    ).withValues(alpha: 0.18)
+                                  : null,
+                              leading: Icon(
+                                active
+                                    ? Icons.equalizer_rounded
+                                    : Icons.play_circle_outline_rounded,
+                                size: 18,
+                                color: active
+                                    ? const Color(0xFFFF6B72)
+                                    : Colors.white70,
                               ),
-                            ),
-                            trailing: active
-                                ? const Text(
-                                    '正在播放',
-                                    style: TextStyle(
-                                      color: Color(0xFFFF6B72),
-                                      fontSize: 12,
-                                      fontWeight: FontWeight.w700,
-                                    ),
-                                  )
-                                : null,
-                            onTap: () {
-                              Navigator.pop(sheetContext);
-                              unawaited(_switchToPath(itemPath));
-                            },
-                          );
-                        },
+                              title: Text(
+                                fileName,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: TextStyle(
+                                  fontSize: 13.5,
+                                  color: Colors.white,
+                                  fontWeight: active
+                                      ? FontWeight.w700
+                                      : FontWeight.w500,
+                                ),
+                              ),
+                              trailing: active
+                                  ? const Text(
+                                      '正在播放',
+                                      style: TextStyle(
+                                        color: Color(0xFFFF6B72),
+                                        fontSize: 11.5,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                    )
+                                  : null,
+                              onTap: () {
+                                Navigator.pop(sheetContext);
+                                unawaited(_switchToPath(itemPath));
+                              },
+                            );
+                          },
+                        ),
                       ),
                     ),
                   ],
@@ -398,156 +454,87 @@ class _LocalVideoPageState extends State<LocalVideoPage>
                         ),
                       ),
                     ),
-                    RepaintBoundary(
-                      child: VideoProgressIndicator(
-                        player,
-                        allowScrubbing: true,
-                        padding: const EdgeInsets.symmetric(horizontal: 20),
-                        colors: const VideoProgressColors(
-                          playedColor: Color(0xFFE50914),
-                          bufferedColor: Colors.white54,
-                          backgroundColor: Colors.white24,
-                        ),
+                    SharedVideoTransportDeck(
+                      controller: player,
+                      wrapInSafeArea: false,
+                      seekBar: SharedVideoProgressBar(controller: player),
+                      playing: _playing,
+                      showPrevNext: _playlist.length > 1,
+                      onPrev: prev == null
+                          ? null
+                          : () => unawaited(_switchToPath(prev)),
+                      onNext: next == null
+                          ? null
+                          : () => unawaited(_switchToPath(next)),
+                      onTogglePlay: () => unawaited(
+                        _playing ? player.pause() : player.play(),
                       ),
-                    ),
-                    RepaintBoundary(
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 8, 16, 14),
-                        child: ClipRRect(
-                          borderRadius: BorderRadius.circular(16),
-                          child: IsleGlassBackdrop(
-                            blur: 20,
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                horizontal: 14,
-                                vertical: 6,
-                              ),
-                              decoration: BoxDecoration(
-                                color: const Color(0xBD10141D),
-                                borderRadius: BorderRadius.circular(16),
-                                border: Border.all(
-                                  color: const Color(0x29FFFFFF),
-                                  width: 0.8,
-                                ),
-                              ),
-                              child: Wrap(
-                                alignment: WrapAlignment.spaceEvenly,
-                                crossAxisAlignment: WrapCrossAlignment.center,
-                                children: [
-                                  if (_playlist.length > 1)
-                                    IconButton(
-                                      tooltip: '上一部',
-                                      onPressed: prev == null
-                                          ? null
-                                          : () =>
-                                                unawaited(_switchToPath(prev)),
-                                      color: Colors.white,
-                                      disabledColor: Colors.white38,
-                                      icon: const Icon(Icons.skip_previous),
-                                    ),
-                                  IconButton(
-                                    tooltip: '快退 10 秒',
-                                    onPressed: () => unawaited(_seek(-10)),
-                                    color: Colors.white,
-                                    icon: const Icon(Icons.replay_10),
-                                  ),
-                                  if (defaultTargetPlatform ==
-                                          TargetPlatform.iOS ||
-                                      defaultTargetPlatform ==
-                                          TargetPlatform.macOS)
-                                    TextButton.icon(
-                                      style: TextButton.styleFrom(
-                                        foregroundColor: Colors.white,
-                                      ),
-                                      onPressed: _openSystemPlayer,
-                                      icon: const Icon(
-                                        Icons.picture_in_picture_alt_rounded,
-                                      ),
-                                      label: const Text(
-                                        '系统播放器 / 画中画 / AirPlay',
-                                      ),
-                                    ),
-                                  if (defaultTargetPlatform ==
-                                          TargetPlatform.android &&
-                                      _pip.supported)
-                                    TextButton.icon(
-                                      style: TextButton.styleFrom(
-                                        foregroundColor: Colors.white,
-                                      ),
-                                      onPressed: _enterPiP,
-                                      icon: const Icon(
-                                        Icons.picture_in_picture_alt_rounded,
-                                      ),
-                                      label: const Text('画中画'),
-                                    ),
-                                  IconButton(
-                                    tooltip: _playing ? '暂停' : '播放',
-                                    color: Colors.white,
-                                    onPressed: () => unawaited(
-                                      _playing ? player.pause() : player.play(),
-                                    ),
-                                    icon: Icon(
-                                      _playing ? Icons.pause : Icons.play_arrow,
-                                    ),
-                                  ),
-                                  IconButton(
-                                    tooltip: '快进 10 秒',
-                                    onPressed: () => unawaited(_seek(10)),
-                                    color: Colors.white,
-                                    icon: const Icon(Icons.forward_10),
-                                  ),
-                                  if (_playlist.length > 1)
-                                    IconButton(
-                                      tooltip: '下一部',
-                                      onPressed: next == null
-                                          ? null
-                                          : () =>
-                                                unawaited(_switchToPath(next)),
-                                      color: Colors.white,
-                                      disabledColor: Colors.white38,
-                                      icon: const Icon(Icons.skip_next),
-                                    ),
-                                  TextButton.icon(
-                                    style: TextButton.styleFrom(
-                                      foregroundColor: Colors.white,
-                                    ),
-                                    onPressed: _showPlaylistSheet,
-                                    icon: const Icon(
-                                      Icons.playlist_play_rounded,
-                                      size: 18,
-                                    ),
-                                    label: Text(
-                                      _playlist.length > 1
-                                          ? '播放列表 ${_currentIndex + 1}/${_playlist.length}'
-                                          : '播放列表',
-                                    ),
-                                  ),
-                                  MediaPlaybackSpeedPicker(
-                                    value: _speed,
-                                    onChanged: (value) async {
-                                      try {
-                                        await player.setPlaybackSpeed(value);
-                                        if (mounted) {
-                                          setState(() => _speed = value);
-                                        }
-                                      } catch (_) {
-                                        if (context.mounted) {
-                                          ScaffoldMessenger.of(context)
-                                              .showSnackBar(
-                                                const SnackBar(
-                                                  content: Text('当前格式不支持此倍速'),
-                                                ),
-                                              );
-                                        }
-                                      }
-                                    },
-                                  ),
-                                ],
-                              ),
+                      onSeekBackward: () => unawaited(_seek(-10)),
+                      onSeekForward: () => unawaited(_seek(10)),
+                      muted: _muted,
+                      volume: _muted ? 0 : _volume,
+                      onToggleMute: () => unawaited(_toggleMute()),
+                      onVolumeChanged: (value) => unawaited(_setVolume(value)),
+                      rightClusterItems: [
+                        if (defaultTargetPlatform == TargetPlatform.iOS ||
+                            defaultTargetPlatform == TargetPlatform.macOS)
+                          TextButton.icon(
+                            style: TextButton.styleFrom(
+                              foregroundColor: Colors.white,
+                            ),
+                            onPressed: _openSystemPlayer,
+                            icon: const Icon(
+                              Icons.picture_in_picture_alt_rounded,
+                            ),
+                            label: const Text('系统播放器 / 画中画 / AirPlay'),
+                          ),
+                        if (defaultTargetPlatform == TargetPlatform.android &&
+                            _pip.supported)
+                          IconButton(
+                            tooltip: '画中画',
+                            style:
+                                SharedVideoPlayerStyle.compactTransportIconStyle(),
+                            onPressed: _enterPiP,
+                            icon: const Icon(
+                              Icons.picture_in_picture_alt_rounded,
+                              size: 19,
                             ),
                           ),
+                        TextButton.icon(
+                          style: TextButton.styleFrom(
+                            foregroundColor: Colors.white,
+                          ),
+                          onPressed: _showPlaylistSheet,
+                          icon: const Icon(
+                            Icons.playlist_play_rounded,
+                            size: 18,
+                          ),
+                          label: Text(
+                            _playlist.length > 1
+                                ? '播放列表 ${_currentIndex + 1}/${_playlist.length}'
+                                : '播放列表',
+                          ),
                         ),
-                      ),
+                        SharedPlayerSpeedMenuPill(
+                          value: _speed,
+                          onSelected: (value) async {
+                            try {
+                              await player.setPlaybackSpeed(value);
+                              if (mounted) {
+                                setState(() => _speed = value);
+                              }
+                            } catch (_) {
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text('当前格式不支持此倍速'),
+                                  ),
+                                );
+                              }
+                            }
+                          },
+                        ),
+                      ],
                     ),
                   ],
                 ),

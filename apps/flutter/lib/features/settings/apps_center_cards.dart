@@ -6,13 +6,15 @@ extension _AppsCenterCards on _AppsCenterPageState {
     Map<String, dynamic> app,
   ) {
     final theme = Theme.of(context), colors = theme.colorScheme;
+    final palette = IslePalette.of(context);
     final draft = AppConfigDraft.fromApp(app);
     final (runtimeLabel, runtimeColor) = appRuntimeBadge(app, draft.webMode);
     final urlText = _activeWorkbenchUrl ?? '';
     return IsleSurface(
       key: ValueKey('embeddedAppWorkbench_$_workbenchReloadKey'),
-      radius: IsleRadius.card,
-      padding: EdgeInsets.all(_workbenchFullscreen ? 12 : 16),
+      radius: IsleRadius.hero,
+      margin: EdgeInsets.zero,
+      padding: EdgeInsets.all(_workbenchFullscreen ? 14 : 18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -43,7 +45,7 @@ extension _AppsCenterCards on _AppsCenterPageState {
                   Text(
                     draft.name,
                     style: theme.textTheme.titleMedium?.copyWith(
-                      fontWeight: FontWeight.w700,
+                      fontWeight: FontWeight.w800,
                     ),
                   ),
                   if (_isAdmin) ...[
@@ -53,7 +55,7 @@ extension _AppsCenterCards on _AppsCenterPageState {
                           ? '其他盘 · ${app['locationName'] ?? '外置盘'}'
                           : '内置盘 · ${app['locationName'] ?? 'Mac 内置盘'}',
                       color: app['locationKind'] == 'external'
-                          ? const Color(0xFF0D9488)
+                          ? palette['brandSage']
                           : colors.primary,
                     ),
                   ],
@@ -92,13 +94,15 @@ extension _AppsCenterCards on _AppsCenterPageState {
               ),
             ],
           ),
-          const Divider(height: 24),
-          Container(
-            padding: const EdgeInsets.all(20),
-            decoration: BoxDecoration(
-              color: colors.surfaceContainerHighest.withValues(alpha: 0.45),
-              borderRadius: BorderRadius.circular(12),
+          Divider(
+            height: 20,
+            color: IsleGlass.rimBorderColor(
+              theme.brightness == Brightness.dark,
             ),
+          ),
+          Container(
+            padding: const EdgeInsets.all(14),
+            decoration: IsleDecorations.recessedWell(context, radius: 12),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
@@ -115,13 +119,6 @@ extension _AppsCenterCards on _AppsCenterPageState {
                     fontFamily: 'monospace',
                   ),
                 ),
-                const SizedBox(height: 8),
-                Text(
-                  '已通过一次性 Launch Ticket 完成免二次登录鉴权并唤起浏览器会话窗口（凭据仅兑换为受保护的 HttpOnly 会话 Cookie，不驻留于地址栏）。若窗口已关闭或被遮挡，可点击上方「🔄 重新打开窗口」或「↗ 外部浏览器打开」。',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: colors.onSurfaceVariant,
-                  ),
-                ),
               ],
             ),
           ),
@@ -132,21 +129,30 @@ extension _AppsCenterCards on _AppsCenterPageState {
 
   Widget _buildOfficialTemplatesCard(BuildContext context) {
     final theme = Theme.of(context), colors = theme.colorScheme;
+    final palette = IslePalette.of(context);
+    final violet = palette['brandViolet'];
     return IsleSurface(
-      radius: IsleRadius.card,
-      padding: const EdgeInsets.all(16),
+      radius: IsleRadius.hero,
+      tint: violet,
+      margin: EdgeInsets.zero,
+      padding: const EdgeInsets.all(18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(Icons.auto_awesome_rounded, size: 20, color: colors.primary),
-              const SizedBox(width: 8),
+              IsleSquircleBadge(
+                icon: Icons.auto_awesome_rounded,
+                color: violet,
+                size: 36,
+                iconSize: 18,
+              ),
+              const SizedBox(width: 12),
               Expanded(
                 child: Text(
                   '官方精选家庭轻应用模板（0 MB 静态即装即用）',
                   style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
               ),
@@ -154,7 +160,7 @@ extension _AppsCenterCards on _AppsCenterPageState {
           ),
           if (_appStorage != null &&
               objectList(_appStorage?['locations']).length > 1) ...[
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             KeyedSubtree(
               key: ValueKey('location_$_selectedInstallLocationId'),
               child: DropdownButtonFormField<String>(
@@ -163,7 +169,6 @@ extension _AppsCenterCards on _AppsCenterPageState {
                 isExpanded: true,
                 decoration: const InputDecoration(
                   labelText: '模板安装目标位置',
-                  border: OutlineInputBorder(),
                   isDense: true,
                 ),
                 items: [
@@ -195,20 +200,25 @@ extension _AppsCenterCards on _AppsCenterPageState {
               ),
             ),
           ],
-          const SizedBox(height: 10),
-          Wrap(
+          const SizedBox(height: 14),
+          IsleResponsiveGrid(
+            minItemWidth: 240,
+            maxColumns: 4,
             spacing: 10,
             runSpacing: 10,
             children: [
               for (final tpl in _templates)
                 Container(
-                  width: 245,
-                  padding: const EdgeInsets.all(12),
+                  padding: const EdgeInsets.all(14),
                   decoration: BoxDecoration(
-                    color: colors.surfaceContainerHighest.withValues(
-                      alpha: 0.36,
+                    color: palette['cardTop'],
+                    borderRadius: IsleRadius.brMd,
+                    border: Border.all(
+                      color: IsleGlass.rimBorderColor(
+                        theme.brightness == Brightness.dark,
+                      ),
+                      width: 1.0,
                     ),
-                    borderRadius: BorderRadius.circular(12),
                   ),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -216,19 +226,19 @@ extension _AppsCenterCards on _AppsCenterPageState {
                       Text(
                         tpl['name']?.toString() ?? '',
                         style: theme.textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w700,
+                          fontWeight: FontWeight.w800,
                         ),
                       ),
                       const SizedBox(height: 4),
                       Text(
                         tpl['description']?.toString() ?? '',
-                        maxLines: 2,
+                        maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: theme.textTheme.bodySmall?.copyWith(
                           color: colors.onSurfaceVariant,
                         ),
                       ),
-                      const SizedBox(height: 8),
+                      const SizedBox(height: 10),
                       FilledButton.tonal(
                         onPressed: _busy || tpl['installed'] == true
                             ? null
@@ -247,10 +257,12 @@ extension _AppsCenterCards on _AppsCenterPageState {
 
   Widget _buildAppCard(BuildContext context, Map<String, dynamic> app) {
     final theme = Theme.of(context), colors = theme.colorScheme;
+    final palette = IslePalette.of(context);
     final draft = AppConfigDraft.fromApp(app);
     final id = draft.id, name = draft.name;
-    final description = app['description']?.toString().trim() ?? '家庭轻应用';
+    final description = app['description']?.toString().trim() ?? '';
     final category = app['category']?.toString();
+    final catColor = appCategoryColor(category, colors);
     final isWaking = _wakingAppId == id;
     final webMap = app['web'] is Map ? app['web'] as Map : const {};
     final lastError =
@@ -276,8 +288,9 @@ extension _AppsCenterCards on _AppsCenterPageState {
     return IsleSurface(
       key: ValueKey('appCard_$id'),
       margin: EdgeInsets.zero,
+      tint: catColor,
       radius: IsleRadius.card,
-      padding: const EdgeInsets.all(15),
+      padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -286,9 +299,9 @@ extension _AppsCenterCards on _AppsCenterPageState {
             children: [
               IsleSquircleBadge(
                 icon: appCategoryIcon(category),
-                color: appCategoryColor(category, colors),
-                size: 40,
-                iconSize: 20,
+                color: catColor,
+                size: 38,
+                iconSize: 19,
               ),
               const SizedBox(width: 12),
               Expanded(
@@ -301,24 +314,28 @@ extension _AppsCenterCards on _AppsCenterPageState {
                           child: Text(
                             name,
                             style: theme.textTheme.titleMedium?.copyWith(
-                              fontWeight: FontWeight.w700,
+                              fontWeight: FontWeight.w800,
                             ),
                           ),
                         ),
                         const SizedBox(width: 8),
                         IsleStatusBadge(
                           label: appCategoryLabel(category),
-                          color: colors.primary,
+                          color: catColor,
                         ),
                       ],
                     ),
-                    const SizedBox(height: 4),
-                    Text(
-                      description,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: colors.onSurfaceVariant,
+                    if (description.isNotEmpty) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        description,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colors.onSurfaceVariant,
+                        ),
                       ),
-                    ),
+                    ],
                   ],
                 ),
               ),
@@ -336,28 +353,28 @@ extension _AppsCenterCards on _AppsCenterPageState {
                       ? '其他盘 · ${app['locationName'] ?? '外置盘'}'
                       : '内置盘 · ${app['locationName'] ?? 'Mac 内置盘'}',
                   color: app['locationKind'] == 'external'
-                      ? const Color(0xFF0D9488)
+                      ? palette['brandSage']
                       : colors.primary,
                 ),
                 if (app['pendingActivation'] == true)
-                  const IsleStatusBadge(
+                  IsleStatusBadge(
                     label: '待首次激活',
-                    color: Color(0xFFD97706),
+                    color: palette['brandAmber'],
                   ),
                 IsleStatusBadge(
                   label: accessLabel,
-                  color: const Color(0xFF6366F1),
+                  color: palette['brandViolet'],
                 ),
                 if (cronSummary != null)
                   IsleStatusBadge(
                     label: cronSummary,
-                    color: const Color(0xFF0EA5E9),
+                    color: palette['brandBlue'],
                   ),
               ],
             ),
             if (diag != null) ...[
               const SizedBox(height: 8),
-              _buildDiagnosticBox(theme, colors, diag),
+              AppDiagnosticBanner(diag: diag),
             ] else if (lastError.isNotEmpty) ...[
               const SizedBox(height: 6),
               Text(
@@ -370,11 +387,19 @@ extension _AppsCenterCards on _AppsCenterPageState {
               ),
             ],
           ],
-          const SizedBox(height: 12),
+          const SizedBox(height: 14),
           Wrap(
             spacing: 8,
             runSpacing: 8,
             children: [
+              if (_isAdmin && app['pendingActivation'] == true)
+                FilledButton.icon(
+                  onPressed: _busy
+                      ? null
+                      : () => _performAction(app, 'activate'),
+                  icon: const Icon(Icons.verified_outlined, size: 16),
+                  label: const Text('确认激活'),
+                ),
               FilledButton.icon(
                 key: ValueKey('launchApp_$id'),
                 onPressed: isWaking ? null : () => _launchApp(app),
@@ -386,204 +411,15 @@ extension _AppsCenterCards on _AppsCenterPageState {
                 ),
                 label: Text(isWaking ? '正在唤醒…' : '立即打开'),
               ),
-              if (_isAdmin) ...[
+              if (_isAdmin)
                 OutlinedButton.icon(
-                  key: ValueKey('accessApp_$id'),
-                  onPressed: _busy
-                      ? null
-                      : () => _applySheetResult(
-                          showAppMemberAccessSheet(
-                            context: context,
-                            api: widget.api,
-                            app: app,
-                            members: _members,
-                          ),
-                          '已更新“$name”的成员访问权限。',
-                        ),
-                  icon: const Icon(Icons.group_outlined, size: 16),
-                  label: const Text('成员权限'),
-                ),
-                OutlinedButton.icon(
-                  key: ValueKey('configApp_$id'),
-                  onPressed: _busy
-                      ? null
-                      : () => _applySheetResult(
-                          showAppLifecycleCronSheet(
-                            context: context,
-                            api: widget.api,
-                            app: app,
-                            configuredChannels: _configuredChannels,
-                          ),
-                          '已保存“$name”的运行与定时设置。',
-                        ),
+                  key: ValueKey('detailApp_$id'),
+                  onPressed: _busy ? null : () => _openAppDetailPage(app),
                   icon: const Icon(Icons.tune_rounded, size: 16),
-                  label: const Text('运行与定时设置'),
+                  label: const Text('详情与设置'),
                 ),
-                OutlinedButton.icon(
-                  key: ValueKey('logsApp_$id'),
-                  onPressed: () => showAppLogsSheet(
-                    context: context,
-                    api: widget.api,
-                    app: app,
-                  ),
-                  icon: const Icon(Icons.receipt_long_rounded, size: 16),
-                  label: const Text('运行日志'),
-                ),
-                PopupMenuButton<String>(
-                  key: ValueKey('moreActionsApp_$id'),
-                  tooltip: '更多操作',
-                  onSelected: (act) {
-                    if (act == 'delete') {
-                      _deleteApp(app);
-                    } else if (act == 'export_data') {
-                      _exportAppData(app);
-                    } else {
-                      _performAction(app, act);
-                    }
-                  },
-                  itemBuilder: (_) => [
-                    if (draft.hasWeb && draft.webMode != 'static') ...[
-                      const PopupMenuItem(
-                        value: 'start',
-                        child: Text('启动 Web 进程'),
-                      ),
-                      const PopupMenuItem(
-                        value: 'stop',
-                        child: Text('休眠 / 停止进程'),
-                      ),
-                      const PopupMenuItem(
-                        value: 'restart',
-                        child: Text('重启 Web 进程'),
-                      ),
-                    ],
-                    if (draft.hasCron)
-                      const PopupMenuItem(
-                        value: 'run_cron',
-                        child: Text('立即执行定时任务'),
-                      ),
-                    const PopupMenuItem(
-                      value: 'export_data',
-                      child: Text('导出应用数据 (.tar.gz)'),
-                    ),
-                    const PopupMenuDivider(),
-                    const PopupMenuItem(value: 'delete', child: Text('删除插件')),
-                  ],
-                ),
-              ],
             ],
           ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildDiagnosticBox(
-    ThemeData theme,
-    ColorScheme colors,
-    Map<String, dynamic> diag,
-  ) {
-    final summary = diag['summary']?.toString().trim() ?? '插件启动或配置异常';
-    final reason = diag['reason']?.toString().trim() ?? '';
-    final logExcerpt = diag['logExcerpt']?.toString().trim() ?? '';
-    final dataSafe = diag['dataSafe']?.toString().trim() ?? '';
-    final checks = (diag['checks'] is List)
-        ? (diag['checks'] as List)
-              .map((e) => e.toString().trim())
-              .where((e) => e.isNotEmpty)
-              .toList()
-        : const <String>[];
-    final solutions = (diag['solutions'] is List)
-        ? (diag['solutions'] as List)
-              .map((e) => e.toString().trim())
-              .where((e) => e.isNotEmpty)
-              .toList()
-        : const <String>[];
-
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(11),
-      decoration: BoxDecoration(
-        color: colors.errorContainer.withValues(alpha: 0.35),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: colors.error.withValues(alpha: 0.28)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              Icon(Icons.warning_amber_rounded, size: 16, color: colors.error),
-              const SizedBox(width: 6),
-              Expanded(
-                child: Text(
-                  summary,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    color: colors.error,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          if (reason.isNotEmpty) ...[
-            const SizedBox(height: 5),
-            Text(
-              '原因：$reason',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: colors.onSurface,
-                height: 1.4,
-              ),
-            ),
-          ],
-          if (logExcerpt.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                color: colors.surfaceContainerHighest.withValues(alpha: 0.7),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: SelectableText(
-                logExcerpt,
-                style: const TextStyle(
-                  fontFamily: 'Menlo',
-                  fontSize: 11,
-                  height: 1.38,
-                ),
-              ),
-            ),
-          ],
-          if (checks.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Text(
-              '排查：${checks.first}',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: colors.onSurfaceVariant,
-                height: 1.4,
-              ),
-            ),
-          ],
-          if (solutions.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Text(
-              '解决：${solutions.first}',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: colors.onSurface,
-                fontWeight: FontWeight.w600,
-                height: 1.4,
-              ),
-            ),
-          ],
-          if (dataSafe.isNotEmpty) ...[
-            const SizedBox(height: 4),
-            Text(
-              dataSafe,
-              style: theme.textTheme.labelSmall?.copyWith(
-                color: colors.onSurfaceVariant,
-              ),
-            ),
-          ],
         ],
       ),
     );

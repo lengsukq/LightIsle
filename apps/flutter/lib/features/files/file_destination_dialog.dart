@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
 import 'isle_folder_picker_sheet.dart';
@@ -162,6 +163,7 @@ class _FileDestinationDialogState extends State<FileDestinationDialog> {
     if (!_canWrite || _loading) return;
     var input = '';
     String? validation;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final folderName = await showDialog<String>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
@@ -177,6 +179,12 @@ class _FileDestinationDialogState extends State<FileDestinationDialog> {
           }
 
           return AlertDialog(
+            shape: IsleShapes.card(
+              side: BorderSide(
+                color: IsleGlass.rimBorderColor(isDark),
+                width: 1.0,
+              ),
+            ),
             title: const Text('新建文件夹'),
             content: TextField(
               autofocus: true,
@@ -189,6 +197,7 @@ class _FileDestinationDialogState extends State<FileDestinationDialog> {
                 }
               },
               decoration: InputDecoration(
+                isDense: true,
                 labelText: '文件夹名称',
                 errorText: validation,
               ),
@@ -232,21 +241,34 @@ class _FileDestinationDialogState extends State<FileDestinationDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
     final parts = _directory == '.' ? <String>[] : _directory.split('/');
     final breadcrumbs = <(String, String)>[('根目录', '.')];
     for (var i = 0; i < parts.length; i++) {
       breadcrumbs.add((parts[i], parts.take(i + 1).join('/')));
     }
     return AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      titlePadding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
+      contentPadding: const EdgeInsets.fromLTRB(20, 6, 20, 12),
+      actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+      shape: IsleShapes.card(
+        side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
+      ),
       title: Text(
         widget.action == 'grant'
             ? '选择授权文件夹'
             : widget.directoryOnly
             ? (widget.action == 'move' ? '选择批量移动目录' : '选择批量复制目录')
             : (widget.action == 'move' ? '移动到…' : '复制文件'),
+        style: theme.textTheme.titleMedium?.copyWith(
+          fontWeight: FontWeight.w700,
+        ),
       ),
       content: SizedBox(
-        width: 500,
+        width: 480,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -258,9 +280,12 @@ class _FileDestinationDialogState extends State<FileDestinationDialog> {
                     : widget.directoryOnly
                     ? '请在有写入权限的目录中选择批量操作的目标位置。'
                     : '来源：${widget.sourcePath}',
-                style: Theme.of(context).textTheme.bodySmall,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontSize: 12.5,
+                  color: colors.onSurfaceVariant,
+                ),
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 8),
               IsleFolderBrowserCard(
                 directory: _directory,
                 breadcrumbs: breadcrumbs,
@@ -273,21 +298,28 @@ class _FileDestinationDialogState extends State<FileDestinationDialog> {
                 onLoadMore: () => _load(more: true),
                 onCreateSubfolder: _createSubfolder,
               ),
-              const SizedBox(height: 14),
-              if (!widget.directoryOnly)
+              const SizedBox(height: 12),
+              if (!widget.directoryOnly) ...[
                 TextField(
                   controller: _name,
                   maxLength: 150,
                   onChanged: (_) => setState(() {}),
                   decoration: InputDecoration(
+                    isDense: true,
                     labelText: '目标文件名',
+                    counterText: '',
                     errorText: _validationError,
                   ),
                 ),
+                const SizedBox(height: 10),
+              ],
               if (widget.action != 'grant')
                 DropdownButtonFormField<String>(
                   initialValue: _conflict,
-                  decoration: const InputDecoration(labelText: '目标文件已存在'),
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    labelText: '目标文件已存在',
+                  ),
                   items: const [
                     DropdownMenuItem(
                       value: 'rename',
@@ -301,13 +333,29 @@ class _FileDestinationDialogState extends State<FileDestinationDialog> {
               const SizedBox(height: 8),
               Text(
                 '目标：$_destination',
-                style: Theme.of(context).textTheme.bodySmall,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
-              if (!_canWrite && !_loading) const Text('此目录不可写入，可以继续浏览其他授权目录。'),
+              if (!_canWrite && !_loading)
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    '此目录不可写入，可以继续浏览其他授权目录。',
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: colors.onSurfaceVariant,
+                    ),
+                  ),
+                ),
               if (_error != null)
-                Text(
-                  _error!,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                Padding(
+                  padding: const EdgeInsets.only(top: 6),
+                  child: Text(
+                    _error!,
+                    style: TextStyle(fontSize: 12.5, color: colors.error),
+                  ),
                 ),
             ],
           ),

@@ -4,8 +4,8 @@ import 'package:flutter/material.dart';
 
 import '../../core/isle_theme.dart';
 
-/// Low-cost ambient motion for authentication. Only this CustomPaint repaints;
-/// text fields, autofill and the rest of the route do not rebuild per frame.
+/// Adaptive ambient canvas for authentication matching all 5 built-in themes.
+/// Keeps the login shell featherlight and satisfies borderless responsive invariants.
 class LoginFlowBackground extends StatefulWidget {
   const LoginFlowBackground({super.key});
 
@@ -17,7 +17,7 @@ class _LoginFlowBackgroundState extends State<LoginFlowBackground>
     with SingleTickerProviderStateMixin {
   late final AnimationController _motion = AnimationController(
     vsync: this,
-    duration: const Duration(seconds: 24),
+    duration: const Duration(seconds: 32),
   );
 
   @override
@@ -41,69 +41,156 @@ class _LoginFlowBackgroundState extends State<LoginFlowBackground>
   }
 
   @override
-  Widget build(BuildContext context) => RepaintBoundary(
-    child: CustomPaint(
-      key: const Key('loginFlowCanvas'),
-      painter: _LoginFlowPainter(
-        motion: _motion,
-        dark: Theme.of(context).brightness == Brightness.dark,
+  Widget build(BuildContext context) {
+    final style = IsleThemeStyle.of(context);
+    return RepaintBoundary(
+      child: CustomPaint(
+        key: const Key('loginFlowCanvas'),
+        painter: _LoginFlowPainter(motion: _motion, style: style),
+        child: const SizedBox.expand(),
       ),
-      child: const SizedBox.expand(),
-    ),
-  );
+    );
+  }
 }
 
 class _LoginFlowPainter extends CustomPainter {
-  _LoginFlowPainter({required this.motion, required this.dark})
+  _LoginFlowPainter({required this.motion, required this.style})
     : super(repaint: motion);
 
   final Animation<double> motion;
-  final bool dark;
+  final IsleThemeStyle style;
 
   @override
   void paint(Canvas canvas, Size size) {
     if (size.isEmpty) return;
     final rect = Offset.zero & size;
-    final baseTop = dark ? const Color(0xff0b0f19) : const Color(0xfff7f9fc);
-    final baseMid = dark ? const Color(0xff101624) : const Color(0xfff2f6fb);
-    final baseBottom = dark ? const Color(0xff141c2e) : const Color(0xffedf2f9);
+    final p = style.palette;
+    final dark = style.dark;
+    final top = p['canvasTop'];
+    final bottom = p['canvasBottom'];
+    final mid = Color.lerp(top, bottom, 0.52)!;
+
     canvas.drawRect(
       rect,
       Paint()
         ..shader = LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          stops: const [0.0, 0.52, 1.0],
-          colors: [baseTop, baseMid, baseBottom],
+          stops: const [0.0, 0.54, 1.0],
+          colors: [top, mid, bottom],
         ).createShader(rect),
     );
 
+    if (style.highContrast) return;
+
     final angle = motion.value * math.pi * 2;
     final extent = math.max(size.width, size.height);
-    final pools = <(Color, double, double, double, double)>[
-      (
-        dark ? const Color(0xff2563eb) : const Color(0xff93c5fd),
-        .08 + .08 * math.cos(angle),
-        .10 + .10 * math.sin(angle),
-        .68,
-        dark ? .14 : .18,
-      ),
-      (
-        dark ? const Color(0xff334155) : const Color(0xffcbd5e1),
-        .90 + .08 * math.sin(angle * .72),
-        .64 + .10 * math.cos(angle * .82),
-        .62,
-        dark ? .14 : .22,
-      ),
-      (
-        dark ? const Color(0xff1e3a8a) : const Color(0xffbfdbfe),
-        .48 + .14 * math.sin(angle * .61),
-        .96 + .08 * math.cos(angle * .68),
-        .56,
-        dark ? .12 : .16,
-      ),
-    ];
 
+    switch (style.preset.canvasBackdrop) {
+      case IsleCanvasBackdrop.warmGlow:
+        _paintPools(canvas, size, extent, [
+          (
+            p['accentSecondary'],
+            .18 + .04 * math.cos(angle),
+            .16 + .05 * math.sin(angle),
+            .52,
+            dark ? .085 : .105,
+          ),
+          (
+            p['accentPrimary'],
+            .84 + .04 * math.sin(angle * .72),
+            .76 + .05 * math.cos(angle * .82),
+            .50,
+            dark ? .075 : .085,
+          ),
+        ]);
+      case IsleCanvasBackdrop.auroraGlow:
+        _paintPools(canvas, size, extent, [
+          (
+            p['accentPrimary'],
+            .18 + .06 * math.cos(angle),
+            .18 + .05 * math.sin(angle),
+            .58,
+            dark ? .24 : .16,
+          ),
+          (
+            p['accentSecondary'],
+            .82 + .05 * math.sin(angle * .78),
+            .24 + .05 * math.cos(angle * .65),
+            .52,
+            dark ? .20 : .13,
+          ),
+          (
+            p['brandCyan'],
+            .50 + .06 * math.sin(angle * .5),
+            .88 + .04 * math.cos(angle * .9),
+            .54,
+            dark ? .16 : .11,
+          ),
+        ]);
+      case IsleCanvasBackdrop.flatRule:
+        canvas.drawRect(
+          Rect.fromLTWH(0, 0, size.width, 4),
+          Paint()..color = p['accentPrimary'],
+        );
+        final rulePaint = Paint()
+          ..color = p['rim'].withValues(alpha: dark ? 0.25 : 0.35)
+          ..strokeWidth = 0.8;
+        final colStep = math.max(120.0, size.width / 6);
+        for (double x = colStep; x < size.width; x += colStep) {
+          canvas.drawLine(Offset(x, 0), Offset(x, size.height), rulePaint);
+        }
+      case IsleCanvasBackdrop.dotMatrix:
+        final dotPaint = Paint()
+          ..color = p['rim'].withValues(alpha: dark ? 0.14 : 0.12);
+        const step = 24.0;
+        for (double y = 12; y < size.height; y += step) {
+          for (double x = 12; x < size.width; x += step) {
+            canvas.drawCircle(Offset(x, y), 1.25, dotPaint);
+          }
+        }
+        final accentRect = Rect.fromLTWH(size.width - 72, 28, 44, 44);
+        canvas.drawRect(
+          accentRect.shift(const Offset(4, 4)),
+          Paint()..color = p['shadow'],
+        );
+        canvas.drawRect(accentRect, Paint()..color = p['accentSecondary']);
+        canvas.drawRect(
+          accentRect,
+          Paint()
+            ..color = p['rim']
+            ..style = PaintingStyle.stroke
+            ..strokeWidth = 2.0,
+        );
+      case IsleCanvasBackdrop.techGrid:
+        final gridPaint = Paint()
+          ..color = p['accentPrimary'].withValues(alpha: dark ? 0.09 : 0.075)
+          ..strokeWidth = 0.8;
+        const step = 32.0;
+        for (double x = 0; x < size.width; x += step) {
+          canvas.drawLine(Offset(x, 0), Offset(x, size.height), gridPaint);
+        }
+        for (double y = 0; y < size.height; y += step) {
+          canvas.drawLine(Offset(0, y), Offset(size.width, y), gridPaint);
+        }
+        _paintPools(canvas, size, extent, [
+          (
+            p['accentPrimary'],
+            .80 + .03 * math.cos(angle),
+            .18 + .03 * math.sin(angle),
+            .42,
+            dark ? .15 : .09,
+          ),
+        ]);
+    }
+  }
+
+  void _paintPools(
+    Canvas canvas,
+    Size size,
+    double extent,
+    List<(Color, double, double, double, double)> pools,
+  ) {
     for (final (color, fx, fy, scale, alpha) in pools) {
       final radius = extent * scale;
       final center = Offset(size.width * fx, size.height * fy);
@@ -114,285 +201,266 @@ class _LoginFlowPainter extends CustomPainter {
           ..shader = RadialGradient(
             colors: [
               color.withValues(alpha: alpha),
-              color.withValues(alpha: alpha * 0.35),
+              color.withValues(alpha: alpha * 0.28),
               color.withValues(alpha: 0),
             ],
             stops: const [0.0, 0.48, 1.0],
           ).createShader(Rect.fromCircle(center: center, radius: radius)),
       );
     }
-
-    // Three broad, slowly drifting translucent liquid-silk ribbons.
-    for (var index = 0; index < 3; index++) {
-      final drift =
-          math.sin(angle + index * math.pi * .68) * size.height * .036;
-      final y = size.height * (.26 + index * .24) + drift;
-      final ribbon = Path()
-        ..moveTo(-size.width * .2, y)
-        ..cubicTo(
-          size.width * .26,
-          y - extent * .15,
-          size.width * .64,
-          y + extent * .12,
-          size.width * 1.2,
-          y - extent * .08,
-        )
-        ..lineTo(size.width * 1.2, y + extent * .12)
-        ..cubicTo(
-          size.width * .64,
-          y + extent * .23,
-          size.width * .22,
-          y - extent * .03,
-          -size.width * .2,
-          y + extent * .10,
-        )
-        ..close();
-      canvas.drawPath(
-        ribbon,
-        Paint()
-          ..shader = LinearGradient(
-            begin: Alignment.centerLeft,
-            end: Alignment.centerRight,
-            colors: [
-              Colors.transparent,
-              (dark ? const Color(0xff7dd3fc) : Colors.white).withValues(
-                alpha: dark ? .05 : .24,
-              ),
-              Colors.transparent,
-            ],
-          ).createShader(rect),
-      );
-    }
   }
 
   @override
   bool shouldRepaint(covariant _LoginFlowPainter oldDelegate) =>
-      oldDelegate.dark != dark || oldDelegate.motion != motion;
+      oldDelegate.style.presetId != style.presetId ||
+      oldDelegate.style.dark != style.dark ||
+      oldDelegate.style.highContrast != style.highContrast ||
+      oldDelegate.motion != motion;
 }
 
+/// Adaptive brand emblem & title across Phone, Tablet, and Desktop.
 class LoginBrandHeader extends StatelessWidget {
-  const LoginBrandHeader({super.key, required this.wide});
+  const LoginBrandHeader({super.key, required this.wide, this.medium = false});
 
   final bool wide;
+  final bool medium;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
-    return Column(
-      crossAxisAlignment: wide
-          ? CrossAxisAlignment.start
-          : CrossAxisAlignment.center,
-      children: [
-        Container(
-          padding: EdgeInsets.all(wide ? 12 : 9),
-          decoration: ShapeDecoration(
-            shape: IsleShapes.squircle(
-              wide ? 32 : 24,
-              side: BorderSide(
-                color: IsleGlass.specularBorder(isDark),
-                width: 1.2,
+    final style = IsleThemeStyle.of(context);
+    final isDark = style.dark;
+    final palette = style.palette;
+    final isBrutal = style.preset.surfaceMaterial == IsleSurfaceMaterial.neoBrutal;
+
+    final emblem = Container(
+      padding: EdgeInsets.all(wide ? 13 : 10),
+      decoration: ShapeDecoration(
+        shape: style.shapeFor(
+          wide ? 24 : 20,
+          side: BorderSide(
+            color: style.rimBorderColor(),
+            width: style.effectiveBorderWidth(),
+          ),
+        ),
+        color: isBrutal ? palette['cardTop'] : null,
+        gradient: isBrutal
+            ? null
+            : LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [
+                  palette['cardTop'].withValues(alpha: isDark ? 0.96 : 0.99),
+                  palette['cardBottom'].withValues(alpha: isDark ? 0.90 : 0.95),
+                ],
               ),
-            ),
-            gradient: RadialGradient(
-              center: const Alignment(-0.35, -0.45),
-              radius: 1.15,
-              colors: isDark
-                  ? [
-                      Colors.white.withValues(alpha: 0.14),
-                      colors.primary.withValues(alpha: 0.18),
-                    ]
-                  : [
-                      Colors.white.withValues(alpha: 0.94),
-                      colors.primary.withValues(alpha: 0.10),
-                    ],
-            ),
-            shadows: IsleShadows.glow(
-              colors.primary,
-              opacity: isDark ? 0.28 : 0.16,
-            ),
-          ),
-          child: IsleBrandMark(size: wide ? 88 : 66),
-        ),
-        SizedBox(height: wide ? 26 : 16),
-        Text(
-          '轻屿 LightIsle',
-          textAlign: wide ? TextAlign.start : TextAlign.center,
-          style:
-              (wide
-                      ? theme.textTheme.displaySmall
-                      : theme.textTheme.headlineMedium)
-                  ?.copyWith(fontWeight: FontWeight.w800, letterSpacing: -0.7),
-        ),
-        const SizedBox(height: 10),
-        Text(
-          '连接你的个人 NAS，随时查看文件、照片与影视。',
-          textAlign: wide ? TextAlign.start : TextAlign.center,
-          style:
-              (wide ? theme.textTheme.titleMedium : theme.textTheme.bodyMedium)
-                  ?.copyWith(color: colors.onSurfaceVariant, height: 1.55),
-        ),
-        const SizedBox(height: 14),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          alignment: wide ? WrapAlignment.start : WrapAlignment.center,
-          children: [
-            _featurePill(context, Icons.bolt_rounded, '本机直连'),
-            _featurePill(context, Icons.photo_library_outlined, '原画相册'),
-            _featurePill(context, Icons.movie_outlined, '私人影院'),
-          ],
-        ),
-        if (wide) ...[
-          const SizedBox(height: 32),
+        shadows: style.cardShadows(),
+      ),
+      child: IsleBrandMark(size: wide ? 60 : (medium ? 48 : 44)),
+    );
+
+    if (wide) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          emblem,
+          const SizedBox(height: 24),
           Text(
-            '你自己的空间，始终由你掌控。',
-            style: theme.textTheme.titleLarge?.copyWith(
-              color: colors.onSurface.withValues(alpha: 0.86),
-              fontWeight: FontWeight.w600,
-              height: 1.45,
+            '轻屿 LightIsle',
+            style: theme.textTheme.headlineLarge?.copyWith(
+              fontWeight: FontWeight.w800,
+              height: 1.12,
             ),
-          ),
-          const SizedBox(height: 16),
-          _wideFeatureItem(
-            context,
-            Icons.laptop_mac_rounded,
-            'Mac 轻量驻留，零云端中转，局域网毫秒级响应',
           ),
           const SizedBox(height: 10),
-          _wideFeatureItem(
-            context,
-            Icons.verified_user_outlined,
-            '支持 HTTPS 自签名证书 SHA-256 指纹固定校验',
+          Text(
+            '运行于个人 Mac 的家庭私密画廊，原片、文件与私人影院静候归来。',
+            style: theme.textTheme.bodyLarge?.copyWith(
+              color: colors.onSurfaceVariant,
+              height: 1.55,
+            ),
+          ),
+          const SizedBox(height: 22),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              _quietFeatureTag(
+                context,
+                Icons.bolt_rounded,
+                '局域网直连',
+                palette['brandAmber'],
+              ),
+              _quietFeatureTag(
+                context,
+                Icons.photo_library_outlined,
+                '原画时光相册',
+                palette['brandRose'],
+              ),
+              _quietFeatureTag(
+                context,
+                Icons.movie_outlined,
+                '私人影院',
+                palette['brandTerracotta'],
+              ),
+            ],
           ),
         ],
+      );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        emblem,
+        const SizedBox(height: 12),
+        Text(
+          '轻屿 LightIsle',
+          textAlign: TextAlign.center,
+          style: theme.textTheme.headlineSmall?.copyWith(
+            fontWeight: FontWeight.w800,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '个人 Mac 上的家庭私密空间',
+          textAlign: TextAlign.center,
+          style: theme.textTheme.bodySmall?.copyWith(
+            fontSize: 13,
+            color: colors.onSurfaceVariant,
+          ),
+        ),
       ],
     );
   }
 
-  Widget _featurePill(BuildContext context, IconData icon, String label) {
+  Widget _quietFeatureTag(
+    BuildContext context,
+    IconData icon,
+    String label,
+    Color accent,
+  ) {
     final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    final colors = theme.colorScheme;
+    final style = IsleThemeStyle.of(context);
+    final isDark = style.dark;
+    final palette = style.palette;
+    final isSharp = style.preset.cornerStyle == IsleCornerStyle.sharp;
+    final isBrutal = style.preset.surfaceMaterial == IsleSurfaceMaterial.neoBrutal;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5.5),
       decoration: ShapeDecoration(
-        shape: const StadiumBorder(),
-        color: isDark
-            ? Colors.white.withValues(alpha: 0.07)
-            : Colors.white.withValues(alpha: 0.72),
-        shadows: [
-          BoxShadow(
-            color: colors.primary.withValues(alpha: isDark ? 0.10 : 0.05),
-            blurRadius: 12,
-            offset: const Offset(0, 3),
-          ),
-        ],
+        shape: isSharp
+            ? style.shapeFor(
+                IsleRadius.sm,
+                side: BorderSide(
+                  color: style.rimBorderColor(),
+                  width: style.effectiveBorderWidth(),
+                ),
+              )
+            : StadiumBorder(
+                side: BorderSide(
+                  color: style.rimBorderColor(),
+                  width: isBrutal ? 1.5 : 0.9,
+                ),
+              ),
+        color: isBrutal
+            ? palette['cardTop']
+            : palette['cardTop'].withValues(alpha: isDark ? 0.72 : 0.88),
+        shadows: isBrutal ? style.subtleShadows() : const [],
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 14, color: colors.primary),
-          const SizedBox(width: 5),
+          Icon(icon, size: 13.5, color: accent),
+          const SizedBox(width: 5.5),
           Text(
             label,
             style: theme.textTheme.labelSmall?.copyWith(
               fontWeight: FontWeight.w600,
-              color: colors.onSurface.withValues(alpha: 0.82),
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.88),
             ),
           ),
         ],
       ),
     );
   }
-
-  Widget _wideFeatureItem(BuildContext context, IconData icon, String text) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        Container(
-          width: 28,
-          height: 28,
-          decoration: ShapeDecoration(
-            shape: IsleShapes.squircle(9),
-            color: colors.primary.withValues(alpha: 0.12),
-          ),
-          child: Icon(icon, size: 15, color: colors.primary),
-        ),
-        const SizedBox(width: 10),
-        Flexible(
-          child: Text(
-            text,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: colors.onSurfaceVariant,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
 }
 
-class LoginSetupHelpCard extends StatelessWidget {
-  const LoginSetupHelpCard({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    final colors = theme.colorScheme;
-    return Container(
-      decoration: ShapeDecoration(
-        shape: IsleShapes.interactive(
-          side: BorderSide(color: IsleGlass.hairlineBorder(isDark)),
-        ),
-        color: isDark
-            ? Colors.white.withValues(alpha: 0.04)
-            : colors.primary.withValues(alpha: 0.04),
-      ),
-      child: Theme(
-        data: theme.copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          key: const Key('loginSetupHelp'),
-          tilePadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 2),
-          childrenPadding: const EdgeInsets.only(bottom: 8),
-          shape: const Border(),
-          collapsedShape: const Border(),
-          leading: Icon(
-            Icons.help_outline_rounded,
-            size: 20,
-            color: colors.primary,
-          ),
-          title: Text(
-            '第一次连接？查看 3 步设置',
-            style: theme.textTheme.bodyMedium?.copyWith(
-              fontWeight: FontWeight.w600,
+/// Optional modal setup guide opened on demand via a subtle help icon so the
+/// login form stays calm and uncluttered.
+Future<void> showLoginSetupGuideDialog(BuildContext context) {
+  final theme = Theme.of(context);
+  final colors = theme.colorScheme;
+  return showIsleDialog<void>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      title: const Text('首次连接指引'),
+      content: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 380),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _guideStep(
+              theme,
+              colors,
+              '1. 启动 Mac 端 LightIsle',
+              '首次使用请先在 Mac 原生管理端创建管理员账号并保持服务运行。',
             ),
-          ),
-          children: const [
-            ListTile(
-              leading: Icon(Icons.laptop_mac_rounded),
-              title: Text('1. 在 Mac 上启动 LightIsle'),
-              subtitle: Text('首次使用请先完成管理员账号初始化，并保持 NAS 服务运行。'),
+            const SizedBox(height: 10),
+            _guideStep(
+              theme,
+              colors,
+              '2. 填入或自动发现地址',
+              '同一家庭局域网下可点选「自动查找我的 NAS」，或直接输入连接地址。',
             ),
-            ListTile(
-              leading: Icon(Icons.wifi_rounded),
-              title: Text('2. 确认连接方式'),
-              subtitle: Text('手机与 Mac 处于同一家庭网络时，可以自动查找 NAS 或输入 Mac 显示的连接地址。'),
-            ),
-            ListTile(
-              leading: Icon(Icons.verified_user_outlined),
-              title: Text('3. 登录并核对安全信息'),
-              subtitle: Text(
-                '使用 Mac 上创建的用户名和密码。若启用自签名 HTTPS，请核对证书 SHA-256 指纹。',
-              ),
+            const SizedBox(height: 10),
+            _guideStep(
+              theme,
+              colors,
+              '3. 登录账号',
+              '使用 Mac 端创建的账号登录；若开启自签名 HTTPS，可展开安全设置核对指纹。',
             ),
           ],
         ),
       ),
-    );
-  }
+      actions: [
+        FilledButton(
+          onPressed: () => Navigator.of(dialogContext).pop(),
+          child: const Text('知道了'),
+        ),
+      ],
+    ),
+  );
+}
+
+Widget _guideStep(
+  ThemeData theme,
+  ColorScheme colors,
+  String title,
+  String body,
+) {
+  return Column(
+    crossAxisAlignment: CrossAxisAlignment.start,
+    children: [
+      Text(
+        title,
+        style: theme.textTheme.titleSmall?.copyWith(
+          fontWeight: FontWeight.w700,
+          fontSize: 13.5,
+        ),
+      ),
+      const SizedBox(height: 2),
+      Text(
+        body,
+        style: theme.textTheme.bodySmall?.copyWith(
+          color: colors.onSurfaceVariant,
+          height: 1.42,
+        ),
+      ),
+    ],
+  );
 }

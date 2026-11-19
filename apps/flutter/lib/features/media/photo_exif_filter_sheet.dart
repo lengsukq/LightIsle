@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../../core/isle_theme.dart';
+
 typedef PhotoExifFilterSelection = ({
   String camera,
   String location,
@@ -25,29 +27,43 @@ Future<PhotoExifFilterSelection?> showPhotoExifFilterSheet(
   var yr = yearFilter;
   var fromSec = takenFromFilter;
   var toSec = takenToFilter;
+  final isDark = Theme.of(context).brightness == Brightness.dark;
 
   final applied = await showModalBottomSheet<bool>(
     context: context,
     isScrollControlled: true,
     useSafeArea: true,
+    showDragHandle: true,
+    shape: IsleShapes.sheet(
+      side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
+    ),
     builder: (sheetContext) => StatefulBuilder(
       builder: (context, setSheetState) => SafeArea(
         child: ConstrainedBox(
           constraints: BoxConstraints(
+            maxWidth: 520,
             maxHeight: MediaQuery.sizeOf(sheetContext).height * 0.85,
           ),
           child: SingleChildScrollView(
-            padding: const EdgeInsets.fromLTRB(20, 16, 20, 20),
+            padding: const EdgeInsets.fromLTRB(20, 6, 20, 18),
             child: Column(
               mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text('多维筛选', style: Theme.of(context).textTheme.titleMedium),
+                Text(
+                  '多维筛选',
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
                 const SizedBox(height: 12),
-                if (facetCameras.isNotEmpty)
+                if (facetCameras.isNotEmpty) ...[
                   DropdownButtonFormField<String>(
                     initialValue: cam,
-                    decoration: const InputDecoration(labelText: '相机型号'),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      labelText: '相机型号',
+                    ),
                     items: [
                       const DropdownMenuItem(value: '', child: Text('全部相机')),
                       for (final model in facetCameras)
@@ -55,10 +71,14 @@ Future<PhotoExifFilterSelection?> showPhotoExifFilterSheet(
                     ],
                     onChanged: (v) => setSheetState(() => cam = v ?? ''),
                   ),
-                const SizedBox(height: 12),
+                  const SizedBox(height: 10),
+                ],
                 DropdownButtonFormField<String>(
                   initialValue: loc,
-                  decoration: const InputDecoration(labelText: '地理位置'),
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    labelText: '地理位置',
+                  ),
                   items: const [
                     DropdownMenuItem(value: '', child: Text('全部位置')),
                     DropdownMenuItem(value: '1', child: Text('含定位')),
@@ -67,10 +87,13 @@ Future<PhotoExifFilterSelection?> showPhotoExifFilterSheet(
                   onChanged: (v) => setSheetState(() => loc = v ?? ''),
                 ),
                 if (facetYears.isNotEmpty) ...[
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 10),
                   DropdownButtonFormField<int>(
                     initialValue: yr,
-                    decoration: const InputDecoration(labelText: '拍摄年份'),
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      labelText: '拍摄年份',
+                    ),
                     items: [
                       const DropdownMenuItem(value: 0, child: Text('全部年份')),
                       for (final y in facetYears)
@@ -85,8 +108,11 @@ Future<PhotoExifFilterSelection?> showPhotoExifFilterSheet(
                     }),
                   ),
                 ],
-                const SizedBox(height: 12),
+                const SizedBox(height: 10),
                 OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
                   onPressed: () async {
                     final now = DateTime.now();
                     final picked = await showDateRangePicker(
@@ -127,12 +153,14 @@ Future<PhotoExifFilterSelection?> showPhotoExifFilterSheet(
                       });
                     }
                   },
-                  icon: const Icon(Icons.date_range_rounded, size: 18),
+                  icon: const Icon(Icons.date_range_rounded, size: 17),
                   label: Text(
-                    fromSec > 0 && toSec > 0 ? '已选自定义日期区间（点击重选）' : '按自定义日期区间筛选',
+                    fromSec > 0 && toSec > 0
+                        ? '已选自定义日期区间（点击重选）'
+                        : '按自定义日期区间筛选',
                   ),
                 ),
-                const SizedBox(height: 16),
+                const SizedBox(height: 14),
                 Row(
                   mainAxisAlignment: MainAxisAlignment.end,
                   children: [

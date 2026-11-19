@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../../core/isle_quick_jump.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/login_history_store.dart';
@@ -11,18 +10,17 @@ import '../../core/widgets.dart';
 import '../auth/login_history_section.dart';
 import '../files/desktop_backup_engine.dart';
 import '../files/downloads_page.dart';
-import '../files/duplicate_files_page.dart';
 import '../files/file_shares_page.dart';
 import '../media/cinema_decode_preference.dart';
 import '../media/offline_photo_store.dart';
 import '../media/offline_video_store.dart';
-import '../media/photo_similar_cleanup_sheet.dart';
 import 'about_page.dart';
 import 'account_security_page.dart';
 import 'accounts_page.dart';
 import 'admin_activity_page.dart';
 import 'admin_diagnostics_page.dart';
 import 'admin_smb_page.dart';
+import 'appearance_page.dart';
 import 'apps_center_page.dart';
 import 'automation_page.dart';
 import 'beta_diagnostic_report.dart';
@@ -36,6 +34,7 @@ import 'storage_page.dart';
 import 'upload_maintenance_page.dart';
 
 export 'about_page.dart';
+export 'appearance_page.dart';
 export 'accounts_page.dart';
 export 'admin_smb_page.dart';
 export 'apps_center_page.dart';
@@ -83,32 +82,33 @@ class SettingsPage extends StatelessWidget {
   Widget _entry(
     BuildContext context, {
     required IconData icon,
+    required Color color,
     required String title,
-    required String subtitle,
     required VoidCallback onTap,
   }) => IsleGroupTile(
     icon: icon,
-    iconBgColor: Theme.of(context).colorScheme.primary,
+    iconBgColor: color,
     title: title,
-    subtitle: subtitle,
     onTap: onTap,
   );
 
   Widget _section(
     BuildContext context, {
     required String title,
+    required Color accentColor,
     required int index,
     required List<Widget> entries,
   }) => IsleAnimatedEntrance(
-    delay: Duration(milliseconds: 35 * index),
+    delay: Duration(milliseconds: 30 * index),
     child: Padding(
-      padding: const EdgeInsets.only(bottom: 2),
+      padding: const EdgeInsets.only(bottom: 4),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           IsleSectionHeader(
             title: title,
-            padding: const EdgeInsets.fromLTRB(6, 12, 6, 6),
+            accentColor: accentColor,
+            padding: const EdgeInsets.fromLTRB(4, 12, 4, 7),
           ),
           IsleGroupCard(margin: EdgeInsets.zero, children: entries),
         ],
@@ -117,12 +117,16 @@ class SettingsPage extends StatelessWidget {
   );
 
   void _showConnection(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     showDialog<void>(
       context: context,
       builder: (dialogContext) => AlertDialog(
+        shape: IsleShapes.card(
+          side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
+        ),
         title: const Text('连接详情'),
         content: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 440),
+          constraints: const BoxConstraints(maxWidth: 420),
           child: SingleChildScrollView(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -134,10 +138,8 @@ class SettingsPage extends StatelessWidget {
                 ),
                 const SizedBox(height: 6),
                 SelectableText(api.uri('/').origin),
-                const SizedBox(height: 16),
-                const Text('登录状态保存在系统安全存储中，不保存密码。'),
-                const SizedBox(height: 8),
-                const Text('退出登录会清除本机的登录会话，NAS 服务不会停止。'),
+                const SizedBox(height: 12),
+                const Text('退出登录仅清除本机会话，不会停止 Mac 端服务。'),
               ],
             ),
           ),
@@ -169,28 +171,136 @@ class SettingsPage extends StatelessWidget {
     );
   }
 
-  Widget _identityCard(BuildContext context, bool isAdmin) {
+  Widget _identityCard(
+    BuildContext context,
+    bool isAdmin, {
+    bool verticalCard = false,
+  }) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final badgeColor = colors.primary;
+    final palette = IslePalette.of(context);
+    final badgeColor = isAdmin
+        ? palette['brandViolet']
+        : palette['brandBlue'];
+
+    final avatar = IsleSquircleBadge(
+      icon: isAdmin
+          ? Icons.admin_panel_settings_rounded
+          : Icons.person_rounded,
+      color: badgeColor,
+      size: verticalCard ? 46 : 40,
+      iconSize: verticalCard ? 22 : 19,
+    );
+
+    final connectionPill = IslePillButton(
+      label: '连接详情',
+      icon: Icons.lan_outlined,
+      variant: IslePillVariant.tonal,
+      compact: true,
+      onPressed: () => _showConnection(context),
+    );
+
+    final switchAccountPill = IslePillButton(
+      key: const Key('settingsSwitchAccountButton'),
+      label: '切换账号',
+      icon: Icons.swap_horiz_rounded,
+      variant: IslePillVariant.tonal,
+      compact: true,
+      onPressed: () => _openAccountSwitcher(context),
+    );
+
+    final logoutPill = IslePillButton(
+      label: '退出登录 / 切换服务器',
+      icon: Icons.logout_rounded,
+      variant: IslePillVariant.danger,
+      compact: true,
+      onPressed: () => _confirmLogout(context),
+    );
+
+    if (verticalCard) {
+      return IsleSurface(
+        radius: IsleRadius.hero,
+        tint: badgeColor,
+        margin: EdgeInsets.zero,
+        padding: const EdgeInsets.all(18),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                avatar,
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        identity['username']?.toString() ?? '当前账号',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontWeight: FontWeight.w800,
+                          fontSize: 17,
+                          letterSpacing: -0.3,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      IsleStatusBadge(
+                        label: isAdmin ? '家庭管理员' : '家庭成员',
+                        color: badgeColor,
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              decoration: IsleDecorations.recessedWell(context, radius: 10),
+              child: Row(
+                children: [
+                  Icon(
+                    Icons.dns_outlined,
+                    size: 15,
+                    color: palette['brandSage'],
+                  ),
+                  const SizedBox(width: 7),
+                  Expanded(
+                    child: Text(
+                      api.uri('/').origin,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        fontFamily: 'monospace',
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 14),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [connectionPill, switchAccountPill, logoutPill],
+            ),
+          ],
+        ),
+      );
+    }
 
     return IsleSurface(
-      radius: IsleRadius.card,
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      radius: IsleRadius.hero,
+      tint: badgeColor,
+      margin: EdgeInsets.zero,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
       child: LayoutBuilder(
         builder: (context, constraints) {
           final narrow =
               constraints.maxWidth < 560 ||
               MediaQuery.textScalerOf(context).scale(14) > 17;
-
-          final avatar = IsleSquircleBadge(
-            icon: isAdmin
-                ? Icons.admin_panel_settings_rounded
-                : Icons.person_rounded,
-            color: badgeColor,
-            size: 40,
-            iconSize: 20,
-          );
 
           final profileInfo = Expanded(
             child: Column(
@@ -207,9 +317,9 @@ class SettingsPage extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                        fontSize: 15.5,
-                        letterSpacing: -0.2,
+                        fontWeight: FontWeight.w800,
+                        fontSize: 16,
+                        letterSpacing: -0.25,
                       ),
                     ),
                     IsleStatusBadge(
@@ -220,49 +330,25 @@ class SettingsPage extends StatelessWidget {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  isAdmin ? '家庭管理员 · 可管理成员与存储' : '家庭成员 · 仅管理自己的内容',
+                  api.uri('/').origin,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: theme.textTheme.bodySmall?.copyWith(
+                    fontFamily: 'monospace',
                     color: colors.onSurfaceVariant,
-                    fontSize: 12,
+                    fontSize: 11.5,
                   ),
                 ),
               ],
             ),
           );
 
-          final connectionPill = IslePillButton(
-            label: '连接详情',
-            icon: Icons.lan_outlined,
-            variant: IslePillVariant.tonal,
-            compact: true,
-            onPressed: () => _showConnection(context),
-          );
-
-          final switchAccountPill = IslePillButton(
-            key: const Key('settingsSwitchAccountButton'),
-            label: '切换账号',
-            icon: Icons.swap_horiz_rounded,
-            variant: IslePillVariant.tonal,
-            compact: true,
-            onPressed: () => _openAccountSwitcher(context),
-          );
-
-          final logoutPill = IslePillButton(
-            label: '退出登录 / 切换服务器',
-            icon: Icons.logout_rounded,
-            variant: IslePillVariant.danger,
-            compact: true,
-            onPressed: () => _confirmLogout(context),
-          );
-
           if (narrow) {
             return Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Row(children: [avatar, const SizedBox(width: 10), profileInfo]),
-                const SizedBox(height: 8),
+                Row(children: [avatar, const SizedBox(width: 12), profileInfo]),
+                const SizedBox(height: 10),
                 Wrap(
                   alignment: WrapAlignment.end,
                   spacing: 8,
@@ -308,9 +394,13 @@ class SettingsPage extends StatelessWidget {
   Future<void> _confirmLogout(BuildContext context) async {
     final userId = identity['id'];
     final canClear = userId is int && userId > 0;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final choice = await showDialog<String>(
       context: context,
       builder: (dialogContext) => AlertDialog(
+        shape: IsleShapes.card(
+          side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
+        ),
         title: const Text('退出登录'),
         content: Text(
           '下次连接需要重新输入密码。'
@@ -358,59 +448,51 @@ class SettingsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isAdmin = identity['role'] == 'admin';
+    final palette = IslePalette.of(context);
     return LayoutBuilder(
       builder: (context, constraints) {
         final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
-        final isWide = constraints.maxWidth >= 600 && textScale <= 1.35;
+        final isDesktop = constraints.maxWidth >= 980 && textScale <= 1.35;
+        final isTablet =
+            !isDesktop && constraints.maxWidth >= 600 && textScale <= 1.35;
+
         return IsleListView(
-          maxWidth: isWide ? 1080 : IsleLayout.settingsWidth,
+          maxWidth: isDesktop || isTablet
+              ? IsleLayout.workbenchMaxWidth
+              : IsleLayout.settingsWidth,
           children: [
             IslePageHeader(
+              accentColor: palette['brandViolet'],
               title: '设置',
-              hideSubtitleOnCompact: true,
-              subtitle: isAdmin ? '家庭管理、存储权限与服务维护' : '个人空间、连接与账号安全',
-            ),
-            _identityCard(context, isAdmin),
-            const SizedBox(height: 8),
-            IsleQuickJumpStrip(
-              key: const ValueKey('settingsQuickJumpStrip'),
-              items: [
-                IsleQuickJumpItem(
-                  icon: Icons.file_copy_outlined,
-                  label: '重复大文件扫描',
-                  tooltip: '扫描并清理重复大文件释放空间',
-                  onTap: () => _go(context, DuplicateFilesPage(api: api)),
-                ),
-                IsleQuickJumpItem(
-                  icon: Icons.photo_library_outlined,
-                  label: '相似照片去重',
-                  tooltip: '整理相似或连拍照片并移入回收站',
-                  onTap: () => _go(context, PhotoSimilarCleanupPage(api: api)),
-                ),
-                IsleQuickJumpItem(
-                  icon: Icons.network_check_rounded,
-                  label: '网络测速',
-                  tooltip: '测试当前设备到 NAS 的延迟与传输速度',
-                  onTap: () => _go(context, NetworkDiagnosticsPage(api: api)),
-                ),
-                if (isAdmin)
-                  IsleQuickJumpItem(
-                    icon: Icons.notifications_outlined,
-                    label: '任务与告警历史',
-                    tooltip: '查看最近存储告警与后台任务历史',
-                    onTap: () => _go(
-                      context,
-                      AdminActivityPage(api: api, kind: AdminActivity.alerts),
-                    ),
-                  ),
-              ],
             ),
             const SizedBox(height: 6),
-            _buildResponsiveSectionsLayout(
-              context,
-              isAdmin: isAdmin,
-              isWide: isWide,
-            ),
+            if (isDesktop) ...[
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  SizedBox(
+                    width: 296,
+                    child: _identityCard(context, isAdmin, verticalCard: true),
+                  ),
+                  const SizedBox(width: 18),
+                  Expanded(
+                    child: _buildResponsiveSectionsLayout(
+                      context,
+                      isAdmin: isAdmin,
+                      isWide: true,
+                    ),
+                  ),
+                ],
+              ),
+            ] else ...[
+              _identityCard(context, isAdmin),
+              const SizedBox(height: 6),
+              _buildResponsiveSectionsLayout(
+                context,
+                isAdmin: isAdmin,
+                isWide: isTablet,
+              ),
+            ],
             const SizedBox(height: 20),
             _buildVersionFooter(context),
             const SizedBox(height: 16),
@@ -428,6 +510,7 @@ class SettingsPage extends StatelessWidget {
     final primarySpaceSection = isAdmin
         ? _buildFamilyAndStorageSection(context)
         : _buildMySpaceSection(context);
+    final appearanceSection = _buildAppearanceSection(context);
     final filesSection = _buildFilesAndConnectionSection(
       context,
       isAdmin: isAdmin,
@@ -460,6 +543,8 @@ class SettingsPage extends StatelessWidget {
               children: [
                 primarySpaceSection,
                 const SizedBox(height: 6),
+                appearanceSection,
+                const SizedBox(height: 6),
                 securitySection,
                 if (troubleshootingSection != null) ...[
                   const SizedBox(height: 6),
@@ -483,6 +568,7 @@ class SettingsPage extends StatelessWidget {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         primarySpaceSection,
+        appearanceSection,
         filesSection,
         securitySection,
         if (troubleshootingSection != null) ...[
@@ -495,17 +581,65 @@ class SettingsPage extends StatelessWidget {
     );
   }
 
+  Widget _buildAppearanceSection(BuildContext context) {
+    final palette = IslePalette.of(context);
+    final style = IsleThemeStyle.of(context);
+    final accent = palette['accentSecondary'];
+    return IsleAnimatedEntrance(
+      delay: const Duration(milliseconds: 20),
+      child: Padding(
+        padding: const EdgeInsets.only(bottom: 4),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            IsleSectionHeader(
+              title: '外观与显示',
+              accentColor: accent,
+              padding: const EdgeInsets.fromLTRB(4, 12, 4, 7),
+            ),
+            IsleGroupCard(
+              margin: EdgeInsets.zero,
+              children: [
+                IsleGroupTile(
+                  key: const Key('settingsAppearanceTile'),
+                  icon: Icons.palette_outlined,
+                  iconBgColor: accent,
+                  title: '外观与主题',
+                  trailing: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      IsleBadgePill(
+                        label: style.preset.displayName,
+                        color: palette['accentPrimary'],
+                      ),
+                      const SizedBox(width: 4),
+                      const Icon(Icons.chevron_right_rounded, size: 18),
+                    ],
+                  ),
+                  onTap: () => _go(context, const AppearancePage()),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _buildFamilyAndStorageSection(BuildContext context) {
+    final palette = IslePalette.of(context);
+    final amber = palette['brandAmber'];
     return _section(
       context,
       title: '家庭与存储',
+      accentColor: amber,
       index: 0,
       entries: [
         _entry(
           context,
           icon: Icons.people_alt_rounded,
+          color: palette['brandBlue'],
           title: '账号与目录授权',
-          subtitle: '成员、目录与读写权限',
           onTap: () => _go(
             context,
             AccountsPage(
@@ -517,22 +651,22 @@ class SettingsPage extends StatelessWidget {
         _entry(
           context,
           icon: Icons.storage_rounded,
+          color: amber,
           title: '存储与成员配额',
-          subtitle: '逐盘配置空间与容量',
           onTap: () => _go(context, StoragePage(api: api, isAdmin: true)),
         ),
         _entry(
           context,
           icon: Icons.folder_shared_rounded,
+          color: palette['brandSage'],
           title: 'Mac 文件共享 (SMB)',
-          subtitle: '局域网广播、共享目录与访客权限',
           onTap: () => _go(context, AdminSmbPage(api: api)),
         ),
         _entry(
           context,
           icon: Icons.notifications_active_outlined,
+          color: palette['brandTerracotta'],
           title: '存储与任务通知',
-          subtitle: '磁盘、备份与后台任务',
           onTap: () => _go(
             context,
             AdminActivityPage(api: api, kind: AdminActivity.alerts),
@@ -543,16 +677,19 @@ class SettingsPage extends StatelessWidget {
   }
 
   Widget _buildMySpaceSection(BuildContext context) {
+    final palette = IslePalette.of(context);
+    final amber = palette['brandAmber'];
     return _section(
       context,
       title: '我的空间',
+      accentColor: amber,
       index: 0,
       entries: [
         _entry(
           context,
           icon: Icons.storage_rounded,
+          color: amber,
           title: '我的存储空间',
-          subtitle: '查看各硬盘额度及已计用量',
           onTap: () => _go(context, StoragePage(api: api, isAdmin: false)),
         ),
       ],
@@ -563,6 +700,8 @@ class SettingsPage extends StatelessWidget {
     BuildContext context, {
     required bool isAdmin,
   }) {
+    final palette = IslePalette.of(context);
+    final mineral = palette['brandBlue'];
     final backupEntry = buildPlatformBackupSettingsEntry(
       context,
       api: api,
@@ -572,49 +711,50 @@ class SettingsPage extends StatelessWidget {
     return _section(
       context,
       title: '文件与连接',
+      accentColor: mineral,
       index: 1,
       entries: [
         ?backupEntry,
         _entry(
           context,
           icon: Icons.apps_rounded,
+          color: palette['brandViolet'],
           title: '应用中心',
-          subtitle: isAdmin ? '按需轻应用、存储位置与成员权限分配' : '打开管理员授权给你的家庭轻应用与工具',
           onTap: () => _go(context, AppsCenterPage(api: api, isAdmin: isAdmin)),
         ),
         _entry(
           context,
           icon: Icons.speed_rounded,
+          color: mineral,
           title: '连接测速',
-          subtitle: '延迟、上下行速度与 NAS 连接稳定性',
           onTap: () => _go(context, NetworkDiagnosticsPage(api: api)),
         ),
         _entry(
           context,
           icon: Icons.downloading_rounded,
+          color: palette['brandAmber'],
           title: '下载中心',
-          subtitle: '离线下载、进度和任务',
           onTap: () => _go(context, DownloadsPage(api: api)),
         ),
         _entry(
           context,
           icon: Icons.smart_display_rounded,
+          color: palette['brandTerracotta'],
           title: '影视播放与本地解码',
-          subtitle: '设置原画直传硬解优先或服务器转码兼容',
           onTap: () => unawaited(showCinemaDecodeSettingsDialog(context)),
         ),
         _entry(
           context,
           icon: Icons.link_rounded,
+          color: palette['brandRose'],
           title: '我的文件分享',
-          subtitle: '查看及撤销分享链接',
           onTap: () => _go(context, FileSharesPage(api: api)),
         ),
         _entry(
           context,
           icon: Icons.cleaning_services_rounded,
+          color: palette['brandSage'],
           title: '缓存与本地存储管理',
-          subtitle: '查看缩略图、海报、地图瓦片与离线副本占用并按项清理',
           onTap: () => _go(
             context,
             CacheManagementPage(
@@ -629,8 +769,8 @@ class SettingsPage extends StatelessWidget {
         _entry(
           context,
           icon: Icons.folder_shared_rounded,
+          color: mineral,
           title: 'WebDAV 访问',
-          subtitle: '通过独立密码连接设备',
           onTap: () => _go(
             context,
             DavPage(api: api, accountId: identity['id']?.toString()),
@@ -644,24 +784,27 @@ class SettingsPage extends StatelessWidget {
     BuildContext context, {
     required bool isAdmin,
   }) {
+    final palette = IslePalette.of(context);
+    final sage = palette['brandSage'];
     return _section(
       context,
       title: '账号与安全',
+      accentColor: sage,
       index: 2,
       entries: [
         _entry(
           context,
           icon: Icons.folder_off_outlined,
+          color: palette['brandRose'],
           title: isAdmin ? '缺失媒体与资料' : '我的缺失媒体',
-          subtitle: '检查找不到的照片、影视及保留的资料',
           onTap: () =>
               _go(context, MissingMediaPage(api: api, isAdmin: isAdmin)),
         ),
         _entry(
           context,
           icon: Icons.security_rounded,
+          color: sage,
           title: '密码与登录会话',
-          subtitle: '改密、管理已登录设备',
           onTap: () => _go(
             context,
             AccountSecurityPage(
@@ -676,8 +819,8 @@ class SettingsPage extends StatelessWidget {
           _entry(
             context,
             icon: Icons.terminal_rounded,
+            color: palette['brandTerracotta'],
             title: '本机脚本自动化',
-            subtitle: '定时调度本地脚本、通知渠道与执行日志',
             onTap: () => _go(context, AutomationPage(api: api)),
           ),
       ],
@@ -685,90 +828,83 @@ class SettingsPage extends StatelessWidget {
   }
 
   Widget _buildAboutAndDataSection(BuildContext context) {
+    final palette = IslePalette.of(context);
+    final plum = palette['brandViolet'];
     return IsleAnimatedEntrance(
-      delay: const Duration(milliseconds: 105),
+      delay: const Duration(milliseconds: 90),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          const IsleSectionHeader(
-            title: '关于与数据说明',
-            padding: EdgeInsets.fromLTRB(6, 12, 6, 6),
+          IsleSectionHeader(
+            title: '关于',
+            accentColor: plum,
+            padding: const EdgeInsets.fromLTRB(4, 12, 4, 7),
           ),
           IsleGroupCard(
             margin: EdgeInsets.zero,
             children: [
               IsleGroupTile(
                 icon: Icons.auto_awesome_rounded,
-                iconBgColor: const Color(0xFF5856D6),
+                iconBgColor: plum,
                 title: '关于轻屿 LightIsle',
-                subtitle: 'GitHub 源码仓库、非商业许可与开发信息',
-                trailing: _buildGithubBadgeTrailing(),
+                trailing: _buildGithubBadgeTrailing(palette),
                 onTap: () => _go(context, const AboutPage()),
               ),
               IsleGroupTile(
                 icon: Icons.bug_report_outlined,
-                iconBgColor: const Color(0xff6366f1),
+                iconBgColor: palette['brandBlue'],
                 title: 'Beta 故障报告',
-                subtitle: '预览并手动导出本机记录',
                 onTap: () => showBetaDiagnosticReport(context, api),
               ),
             ],
-          ),
-          const SizedBox(height: 8),
-          const IsleHelpDisclosure(
-            summary: '关于 LightIsle 客户端与数据',
-            details:
-                'Mac 原生管理端负责运行 NAS、存储权限和配置恢复。'
-                '关闭这个客户端不会停止 NAS；原始文件需要通过 Time Machine 或其他工具备份。',
           ),
         ],
       ),
     );
   }
 
-  Widget _buildGithubBadgeTrailing() {
+  Widget _buildGithubBadgeTrailing(IslePalette palette) {
+    final sage = palette['brandSage'];
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
           decoration: BoxDecoration(
-            color: const Color(0xFF238636).withValues(alpha: 0.15),
+            color: sage.withValues(alpha: 0.14),
             borderRadius: BorderRadius.circular(999),
-            border: Border.all(
-              color: const Color(0xFF238636).withValues(alpha: 0.4),
-              width: 0.7,
-            ),
+            border: Border.all(color: sage.withValues(alpha: 0.35), width: 0.8),
           ),
-          child: const Row(
+          child: Row(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.code_rounded, size: 11, color: Color(0xFF238636)),
-              SizedBox(width: 3),
+              Icon(Icons.code_rounded, size: 11, color: sage),
+              const SizedBox(width: 3),
               Text(
                 'GitHub',
                 style: TextStyle(
                   fontSize: 10.5,
                   fontWeight: FontWeight.w700,
-                  color: Color(0xFF238636),
+                  color: sage,
                 ),
               ),
             ],
           ),
         ),
         const SizedBox(width: 4),
-        const Icon(Icons.chevron_right_rounded, size: 20),
+        const Icon(Icons.chevron_right_rounded, size: 18),
       ],
     );
   }
 
   Widget _buildVersionFooter(BuildContext context) {
     return Text(
-      '轻屿 LightIsle · Flutter 开发预览 0.1.0',
+      '轻屿 LightIsle · 0.1.0',
       textAlign: TextAlign.center,
       style: Theme.of(context).textTheme.bodySmall?.copyWith(
-        color: Theme.of(context).colorScheme.onSurfaceVariant
-            .withValues(alpha: 0.7),
+        color: Theme.of(
+          context,
+        ).colorScheme.onSurfaceVariant.withValues(alpha: 0.68),
       ),
     );
   }

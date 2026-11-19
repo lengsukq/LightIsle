@@ -13,9 +13,6 @@ typedef CinemaSeriesSnapshot = ({
   List<CinemaFilm> episodes,
 });
 
-/// A real series destination with season/episode navigation aligned with
-/// Netflix series detail views. Selecting an episode opens the player on top,
-/// allowing Back to return to the same season.
 class CinemaSeriesOverview extends StatefulWidget {
   const CinemaSeriesOverview({
     super.key,
@@ -98,6 +95,7 @@ class _CinemaSeriesOverviewState extends State<CinemaSeriesOverview> {
 
   @override
   Widget build(BuildContext context) {
+    final cinemaTheme = buildIsleCinemaTheme(Theme.of(context));
     final seasons = _episodes.map((film) => film.season).toSet().toList()
       ..sort();
     final visibleSeasons = _selectedSeason == 0
@@ -106,152 +104,185 @@ class _CinemaSeriesOverviewState extends State<CinemaSeriesOverview> {
     final resumeTarget = resolveSeriesResumeEpisode(_series, _episodes);
     final ctaTarget =
         resumeTarget ?? (_episodes.isNotEmpty ? _episodes.first : null);
-    final theme = Theme.of(context);
-    final scheme = theme.colorScheme;
-    return Scaffold(
-      appBar: IsleAppBar(title: Text(_series.name)),
-      body: SafeArea(
-        child: Center(
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 900),
-            child: ListView(
-              key: const ValueKey('cinemaSeriesEpisodes'),
-              padding: const EdgeInsets.fromLTRB(16, 18, 16, 40),
-              children: [
-                Row(
-                  children: [
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 3,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFE50914).withValues(alpha: 0.14),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        'LIGHTISLE 剧集',
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: const Color(0xFFE50914),
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0.6,
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 10),
-                    Expanded(
-                      child: Text(
-                        '共 ${_episodes.length} 集 · 已看 ${_series.watchedCount} 集',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodyMedium?.copyWith(
-                          color: scheme.onSurfaceVariant,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 8),
-                Text(
-                  _series.name,
-                  style: theme.textTheme.headlineMedium?.copyWith(
-                    fontWeight: FontWeight.w800,
+
+    return Theme(
+      data: cinemaTheme,
+      child: Builder(
+        builder: (cinemaContext) {
+          final theme = Theme.of(cinemaContext);
+          final scheme = theme.colorScheme;
+          final style = IsleThemeStyle.of(cinemaContext);
+          final palette = style.palette;
+          final accent = palette['brandTerracotta'];
+          final pageInset = IsleLayout.pageInset(
+            MediaQuery.sizeOf(cinemaContext).width,
+          );
+          return Scaffold(
+            backgroundColor: Colors.transparent,
+            appBar: IsleAppBar(title: Text(_series.name)),
+            body: SafeArea(
+              child: Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(
+                    maxWidth: IsleLayout.workbenchMaxWidth,
                   ),
-                ),
-                if (_series.overview.isNotEmpty) ...[
-                  const SizedBox(height: 12),
-                  Text(_series.overview, style: theme.textTheme.bodyMedium),
-                ],
-                if (ctaTarget != null) ...[
-                  const SizedBox(height: 16),
-                  Wrap(
-                    spacing: 10,
-                    runSpacing: 8,
+                  child: ListView(
+                    key: const ValueKey('cinemaSeriesEpisodes'),
+                    padding: EdgeInsets.fromLTRB(pageInset, 16, pageInset, 36),
                     children: [
-                      FilledButton.icon(
-                        key: const ValueKey('cinemaSeriesPlayCta'),
-                        style: FilledButton.styleFrom(
-                          backgroundColor: const Color(0xFFE50914),
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 20,
-                            vertical: 12,
+                      IsleSurface(
+                        radius: IsleRadius.hero,
+                        tint: accent,
+                        padding: const EdgeInsets.all(20),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                IsleBadgePill(
+                                  label: 'LIGHTISLE 剧集',
+                                  color: accent,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    '共 ${_episodes.length} 集 · 已看 ${_series.watchedCount} 集',
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: theme.textTheme.bodySmall?.copyWith(
+                                      color: scheme.onSurfaceVariant,
+                                      fontWeight: FontWeight.w600,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 10),
+                            Text(
+                              _series.name,
+                              style: theme.textTheme.headlineSmall?.copyWith(
+                                fontWeight: FontWeight.w800,
+                              ),
+                            ),
+                            if (_series.overview.isNotEmpty) ...[
+                              const SizedBox(height: 8),
+                              Text(
+                                _series.overview,
+                                style: theme.textTheme.bodyMedium?.copyWith(
+                                  color: scheme.onSurfaceVariant,
+                                  height: 1.5,
+                                ),
+                              ),
+                            ],
+                            if (ctaTarget != null) ...[
+                              const SizedBox(height: 14),
+                              Wrap(
+                                spacing: 10,
+                                runSpacing: 8,
+                                children: [
+                                  FilledButton.icon(
+                                    key: const ValueKey('cinemaSeriesPlayCta'),
+                                    style: FilledButton.styleFrom(
+                                      padding: const EdgeInsets.symmetric(
+                                        horizontal: 18,
+                                        vertical: 10,
+                                      ),
+                                    ),
+                                    onPressed: () =>
+                                        unawaited(_playEpisode(ctaTarget)),
+                                    icon: Icon(
+                                      ctaTarget.canResume
+                                          ? Icons.play_circle_filled_rounded
+                                          : Icons.play_arrow_rounded,
+                                      size: 18,
+                                    ),
+                                    label: Text(
+                                      ctaTarget.canResume
+                                          ? formatCinemaResumeCtaLabel(
+                                              ctaTarget,
+                                            )
+                                          : '播放 ${formatCinemaSeasonEpisodeCode(ctaTarget).isEmpty ? '第 ${ctaTarget.episode} 集' : formatCinemaSeasonEpisodeCode(ctaTarget)}',
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ],
+                        ),
+                      ),
+                      if (seasons.length > 1) ...[
+                        const SizedBox(height: 14),
+                        Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: [
+                            ChoiceChip(
+                              visualDensity: VisualDensity.compact,
+                              side: BorderSide(
+                                color: style.rimBorderColor(),
+                                width: style.effectiveBorderWidth(),
+                              ),
+                              label: const Text('全部季'),
+                              selected: _selectedSeason == 0,
+                              onSelected: (_) =>
+                                  setState(() => _selectedSeason = 0),
+                            ),
+                            for (final season in seasons)
+                              ChoiceChip(
+                                visualDensity: VisualDensity.compact,
+                                side: BorderSide(
+                                  color: style.rimBorderColor(),
+                                  width: style.effectiveBorderWidth(),
+                                ),
+                                label: Text('S$season'),
+                                selected: _selectedSeason == season,
+                                onSelected: (_) =>
+                                    setState(() => _selectedSeason = season),
+                              ),
+                          ],
+                        ),
+                      ],
+                      const SizedBox(height: 14),
+                      if (_episodes.isEmpty)
+                        MediaEmptyState(
+                          icon: Icons.live_tv_outlined,
+                          title: '还没有可播放的分集',
+                          message: widget.error ?? '请确认影片已加入媒体库并完成扫描。',
+                        ),
+                      for (final season in visibleSeasons) ...[
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(2, 12, 2, 8),
+                          child: Text(
+                            '第 $season 季',
+                            style: theme.textTheme.titleSmall?.copyWith(
+                              fontWeight: FontWeight.w800,
+                            ),
                           ),
                         ),
-                        onPressed: () => unawaited(_playEpisode(ctaTarget)),
-                        icon: Icon(
-                          ctaTarget.canResume
-                              ? Icons.play_circle_filled_rounded
-                              : Icons.play_arrow_rounded,
+                        IsleResponsiveGrid(
+                          minItemWidth: 300,
+                          maxColumns: 3,
+                          spacing: 10,
+                          runSpacing: 10,
+                          children: [
+                            for (final film in _episodes.where(
+                              (item) => item.season == season,
+                            ))
+                              _buildEpisodeCard(
+                                cinemaContext,
+                                film: film,
+                                isResumeTarget: resumeTarget?.id == film.id,
+                              ),
+                          ],
                         ),
-                        label: Text(
-                          ctaTarget.canResume
-                              ? formatCinemaResumeCtaLabel(ctaTarget)
-                              : '播放 ${formatCinemaSeasonEpisodeCode(ctaTarget).isEmpty ? '第 ${ctaTarget.episode} 集' : formatCinemaSeasonEpisodeCode(ctaTarget)}',
-                        ),
-                      ),
+                      ],
                     ],
                   ),
-                ],
-                if (seasons.length > 1) ...[
-                  const SizedBox(height: 16),
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      ChoiceChip(
-                        label: const Text('全部季'),
-                        selected: _selectedSeason == 0,
-                        onSelected: (_) => setState(() => _selectedSeason = 0),
-                      ),
-                      for (final season in seasons)
-                        ChoiceChip(
-                          label: Text('S$season'),
-                          selected: _selectedSeason == season,
-                          onSelected: (_) =>
-                              setState(() => _selectedSeason = season),
-                        ),
-                    ],
-                  ),
-                ],
-                const SizedBox(height: 20),
-                if (_episodes.isEmpty)
-                  MediaEmptyState(
-                    icon: Icons.live_tv_outlined,
-                    title: '还没有可播放的分集',
-                    message: widget.error ?? '请确认影片已加入媒体库并完成扫描。',
-                  ),
-                for (final season in visibleSeasons) ...[
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(2, 10, 2, 6),
-                    child: Text(
-                      '第 $season 季',
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ),
-                  IsleResponsiveGrid(
-                    minItemWidth: 320,
-                    maxColumns: 2,
-                    spacing: 10,
-                    runSpacing: 8,
-                    children: [
-                      for (final film in _episodes.where(
-                        (item) => item.season == season,
-                      ))
-                        _buildEpisodeCard(
-                          context,
-                          film: film,
-                          isResumeTarget: resumeTarget?.id == film.id,
-                        ),
-                    ],
-                  ),
-                ],
-              ],
+                ),
+              ),
             ),
-          ),
-        ),
+          );
+        },
       ),
     );
   }
@@ -263,6 +294,10 @@ class _CinemaSeriesOverviewState extends State<CinemaSeriesOverview> {
   }) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final style = IsleThemeStyle.of(context);
+    final palette = style.palette;
+    final accent = palette['brandTerracotta'];
+    final doneColor = palette['success'];
     final remaining = film.canResume ? formatCinemaRemainingText(film) : '';
     final subtitleText = film.canResume
         ? '已看 ${formatMediaSeconds(film.position)}${remaining.isEmpty ? '' : ' · 剩余 $remaining'}'
@@ -275,9 +310,9 @@ class _CinemaSeriesOverviewState extends State<CinemaSeriesOverview> {
       key: isResumeTarget ? const ValueKey('cinemaSeriesResumeEpisode') : null,
       decoration: isResumeTarget
           ? BoxDecoration(
-              borderRadius: BorderRadius.circular(15),
+              borderRadius: style.borderRadiusFor(IsleRadius.md + 1),
               border: Border.all(
-                color: const Color(0xFFE50914).withValues(alpha: 0.72),
+                color: accent.withValues(alpha: 0.78),
                 width: 1.5,
               ),
             )
@@ -285,33 +320,38 @@ class _CinemaSeriesOverviewState extends State<CinemaSeriesOverview> {
       child: IsleSurface(
         margin: EdgeInsets.zero,
         padding: EdgeInsets.zero,
-        radius: 14,
+        radius: IsleRadius.md,
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
               key: ValueKey('cinemaEpisode_${film.id}'),
               dense: true,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 3,
+              ),
               leading: Container(
-                width: 34,
-                height: 34,
+                width: 32,
+                height: 32,
                 alignment: Alignment.center,
                 decoration: BoxDecoration(
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: style.borderRadiusFor(IsleRadius.sm),
                   color: film.completed
-                      ? const Color(0xFF15803D).withValues(alpha: 0.16)
+                      ? doneColor.withValues(alpha: 0.16)
                       : isResumeTarget
-                      ? const Color(0xFFE50914).withValues(alpha: 0.14)
+                      ? accent.withValues(alpha: 0.18)
                       : scheme.primaryContainer,
                 ),
                 child: Text(
                   '${film.episode}',
                   style: TextStyle(
-                    fontWeight: FontWeight.w700,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w800,
                     color: film.completed
-                        ? const Color(0xFF15803D)
+                        ? doneColor
                         : isResumeTarget
-                        ? const Color(0xFFE50914)
+                        ? accent
                         : scheme.onPrimaryContainer,
                   ),
                 ),
@@ -323,27 +363,16 @@ class _CinemaSeriesOverviewState extends State<CinemaSeriesOverview> {
                       film.title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontWeight: FontWeight.w600),
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
                   ),
                   if (isResumeTarget) ...[
                     const SizedBox(width: 6),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 6,
-                        vertical: 2,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFE50914).withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(6),
-                      ),
-                      child: Text(
-                        film.canResume ? '上次看到' : '下一集',
-                        style: theme.textTheme.labelSmall?.copyWith(
-                          color: const Color(0xFFE50914),
-                          fontWeight: FontWeight.w700,
-                        ),
-                      ),
+                    IsleBadgePill(
+                      label: film.canResume ? '上次看到' : '下一集',
+                      color: accent,
                     ),
                   ],
                 ],
@@ -352,12 +381,16 @@ class _CinemaSeriesOverviewState extends State<CinemaSeriesOverview> {
                 subtitleText,
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                ),
               ),
               trailing: Icon(
                 film.completed
                     ? Icons.check_circle_outline_rounded
                     : Icons.play_circle_outline_rounded,
-                color: isResumeTarget ? const Color(0xFFE50914) : null,
+                size: 20,
+                color: isResumeTarget ? accent : null,
               ),
               onTap: () => unawaited(_playEpisode(film)),
             ),
@@ -367,8 +400,8 @@ class _CinemaSeriesOverviewState extends State<CinemaSeriesOverview> {
                     .clamp(0.0, 1.0)
                     .toDouble(),
                 minHeight: 3,
-                backgroundColor: Colors.black12,
-                color: const Color(0xFFE50914),
+                backgroundColor: scheme.surfaceContainerHighest,
+                color: accent,
               ),
           ],
         ),

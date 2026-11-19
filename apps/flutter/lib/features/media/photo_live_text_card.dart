@@ -146,14 +146,27 @@ class _PhotoLiveTextCardState extends State<PhotoLiveTextCard> {
     }
     if (!hasScene && !hasFaces && !hasOcr) return const SizedBox.shrink();
 
-    final colors = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final chipSide = BorderSide(
+      color: IsleGlass.rimBorderColor(isDark),
+      width: 1.0,
+    );
+    final chipBg =
+        isDark ? Colors.white.withValues(alpha: 0.05) : colors.surface;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const SizedBox(height: 16),
-        const Divider(height: 1),
+        const SizedBox(height: 14),
+        Divider(height: 1, color: IsleGlass.rimBorderColor(isDark)),
         const SizedBox(height: 12),
-        Text('智能识图与图中文字', style: Theme.of(context).textTheme.titleSmall),
+        Text(
+          '智能识图与图中文字',
+          style: theme.textTheme.titleSmall?.copyWith(
+            fontWeight: FontWeight.w700,
+          ),
+        ),
         if (hasScene) ...[
           const SizedBox(height: 8),
           Wrap(
@@ -164,9 +177,12 @@ class _PhotoLiveTextCardState extends State<PhotoLiveTextCard> {
                 widget.onSelectSceneLabel != null
                     ? ActionChip(
                         visualDensity: VisualDensity.compact,
+                        side: chipSide,
+                        backgroundColor: chipBg,
+                        shape: const StadiumBorder(),
                         avatar: const Icon(
                           Icons.auto_awesome_outlined,
-                          size: 15,
+                          size: 14,
                         ),
                         tooltip: '按场景「$label」搜索照片',
                         label: Text(label),
@@ -174,9 +190,12 @@ class _PhotoLiveTextCardState extends State<PhotoLiveTextCard> {
                       )
                     : Chip(
                         visualDensity: VisualDensity.compact,
+                        side: chipSide,
+                        backgroundColor: chipBg,
+                        shape: const StadiumBorder(),
                         avatar: const Icon(
                           Icons.auto_awesome_outlined,
-                          size: 15,
+                          size: 14,
                         ),
                         label: Text(label),
                       ),
@@ -193,6 +212,9 @@ class _PhotoLiveTextCardState extends State<PhotoLiveTextCard> {
                 (widget.onSelectPerson != null && face.personId > 0)
                     ? ActionChip(
                         visualDensity: VisualDensity.compact,
+                        side: chipSide,
+                        backgroundColor: chipBg,
+                        shape: const StadiumBorder(),
                         avatar: _buildFaceAvatar(face),
                         tooltip: '查看「${face.displayLabel}」的照片',
                         label: Text(face.displayLabel),
@@ -203,6 +225,9 @@ class _PhotoLiveTextCardState extends State<PhotoLiveTextCard> {
                       )
                     : Chip(
                         visualDensity: VisualDensity.compact,
+                        side: chipSide,
+                        backgroundColor: chipBg,
+                        shape: const StadiumBorder(),
                         avatar: _buildFaceAvatar(face),
                         label: Text(face.displayLabel),
                       ),
@@ -214,9 +239,14 @@ class _PhotoLiveTextCardState extends State<PhotoLiveTextCard> {
           Container(
             padding: const EdgeInsets.all(12),
             decoration: BoxDecoration(
-              color: colors.surfaceContainerLow,
-              borderRadius: IsleRadius.brItem,
-              border: Border.all(color: colors.outlineVariant),
+              color: isDark
+                  ? Colors.white.withValues(alpha: 0.04)
+                  : colors.surface,
+              borderRadius: IsleRadius.brMd,
+              border: Border.all(
+                color: IsleGlass.rimBorderColor(isDark),
+                width: 1.0,
+              ),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -239,7 +269,9 @@ class _PhotoLiveTextCardState extends State<PhotoLiveTextCard> {
                         Flexible(
                           child: Text(
                             '实况文本（离线 OCR）',
-                            style: Theme.of(context).textTheme.labelLarge,
+                            style: theme.textTheme.labelLarge?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
                           ),
                         ),
                       ],
@@ -261,7 +293,7 @@ class _PhotoLiveTextCardState extends State<PhotoLiveTextCard> {
                   child: SingleChildScrollView(
                     child: SelectableText(
                       detail.ocrText,
-                      style: Theme.of(context).textTheme.bodySmall,
+                      style: theme.textTheme.bodySmall,
                     ),
                   ),
                 ),

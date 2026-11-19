@@ -316,6 +316,80 @@ void main() {
   );
 
   testWidgets(
+    'showIsleDialog animates spring-lift entrance and settles cleanly under reduced motion',
+    (tester) async {
+      late BuildContext hostContext;
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: buildIsleTheme(Brightness.light),
+          home: Scaffold(
+            body: Builder(
+              builder: (context) {
+                hostContext = context;
+                return const Text('dialog-host');
+              },
+            ),
+          ),
+        ),
+      );
+
+      unawaited(
+        showIsleDialog<void>(
+          context: hostContext,
+          builder: (ctx) => AlertDialog(
+            title: const Text('画廊模态弹窗'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(ctx).pop(),
+                child: const Text('好的'),
+              ),
+            ],
+          ),
+        ),
+      );
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 90));
+      expect(find.text('画廊模态弹窗'), findsOneWidget);
+      await tester.pumpAndSettle();
+      expect(tester.binding.hasScheduledFrame, isFalse);
+
+      await tester.tap(find.text('好的'));
+      await tester.pumpAndSettle();
+      expect(find.text('画廊模态弹窗'), findsNothing);
+      expect(tester.binding.hasScheduledFrame, isFalse);
+
+      await tester.pumpWidget(
+        MediaQuery(
+          data: const MediaQueryData(disableAnimations: true),
+          child: MaterialApp(
+            theme: buildIsleTheme(Brightness.light),
+            home: Scaffold(
+              body: Builder(
+                builder: (context) {
+                  hostContext = context;
+                  return const Text('dialog-host-reduced');
+                },
+              ),
+            ),
+          ),
+        ),
+      );
+
+      unawaited(
+        showIsleDialog<void>(
+          context: hostContext,
+          builder: (ctx) => const AlertDialog(title: Text('无动画弹窗')),
+        ),
+      );
+      await tester.pump();
+      expect(find.text('无动画弹窗'), findsOneWidget);
+      await tester.pumpAndSettle();
+      expect(tester.binding.hasScheduledFrame, isFalse);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
     'PhotosPage SWR renders cached items immediately without loading flash',
     (tester) async {
       IsleDataCache.instance.clearMemory();

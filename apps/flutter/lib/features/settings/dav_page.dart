@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/isle_gallery_layout.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
@@ -40,8 +41,6 @@ int _timestamp(Object? value) => switch (value) {
   _ => 0,
 };
 
-/// Self-service WebDAV passwords. The endpoint never accepts the web session
-/// cookie, so these credentials are the only way a DAV client can connect.
 class DavPage extends StatefulWidget {
   const DavPage({super.key, required this.api, this.accountId});
 
@@ -76,7 +75,7 @@ class _DavPageState extends State<DavPage> {
       '协议：${isHttps ? 'WebDAV (HTTPS)' : 'WebDAV (HTTP)'}',
       '地址：${parsed.host}',
       '端口：$port',
-      '路径：${parsed.path}',
+      '路径：$parsed.path',
       '完整 URL：$parsed',
       '用户名：（当前轻屿登录用户名）',
       '密码：（使用下方生成的 WebDAV 独立访问密码）',
@@ -166,9 +165,9 @@ class _DavPageState extends State<DavPage> {
   Future<void> _loadMounts() async {
     try {
       final response = await widget.api.get('/api/v2/roots');
-      final roots = objectList(response['roots'])
-          .map(LightIsleRoot.fromJson)
-          .toList();
+      final roots = objectList(
+        response['roots'],
+      ).map(LightIsleRoot.fromJson).toList();
       if (mounted) {
         setState(() {
           _roots = roots;
@@ -247,15 +246,11 @@ class _DavPageState extends State<DavPage> {
     if (password != null &&
         (credential.revision.isEmpty ||
             DavLocalPasswordVault.revision(password) != credential.revision)) {
-      // Another device may have replaced the secret, or the older NAS does
-      // not advertise a revision. Never display a possibly invalid password.
       password = null;
       if (scope != null) {
         try {
           await _vault.remove(scope, credential.id);
-        } catch (_) {
-          // Suppress cleanup failures; the stale value is not shown.
-        }
+        } catch (_) {}
       }
     }
     if (!mounted) return;
@@ -348,27 +343,24 @@ class _DavPageState extends State<DavPage> {
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: Theme.of(dialogContext)
-                    .colorScheme
-                    .surfaceContainerHighest,
-                borderRadius: BorderRadius.circular(10),
+              decoration: IsleDecorations.recessedWell(
+                dialogContext,
+                radius: 10,
               ),
               child: SelectableText(
                 password,
                 style: const TextStyle(fontFamily: 'monospace', fontSize: 14),
               ),
             ),
-            const SizedBox(height: 10),
-            const Text('连接时请选择上方列出的硬盘地址。', style: TextStyle(fontSize: 12)),
           ],
         ),
         actions: [
           TextButton.icon(
             onPressed: () {
               Clipboard.setData(ClipboardData(text: password));
-              ScaffoldMessenger.of(dialogContext)
-                  .showSnackBar(const SnackBar(content: Text('密码已复制到剪贴板')));
+              ScaffoldMessenger.of(
+                dialogContext,
+              ).showSnackBar(const SnackBar(content: Text('密码已复制到剪贴板')));
             },
             icon: const Icon(Icons.copy_rounded, size: 16),
             label: const Text('复制密码'),
@@ -383,115 +375,176 @@ class _DavPageState extends State<DavPage> {
   }
 
   String _formatDate(int unix) => unix > 0
-      ? DateTime.fromMillisecondsSinceEpoch(unix * 1000)
-            .toLocal()
-            .toString()
-            .split(' ')
-            .first
-      : '从未';
+      ? DateTime.fromMillisecondsSinceEpoch(
+          unix * 1000,
+        ).toLocal().toString().split(' ').first
+      : '未使用';
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: IsleAppBar(title: const Text('WebDAV 访问')),
-    body: IsleListView(
+  Widget build(BuildContext context) {
+    final palette = IslePalette.of(context);
+    final mineral = palette['brandBlue'];
+    final violet = palette['brandViolet'];
+    final sage = palette['brandSage'];
+
+    final mountsColumn = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        const IsleIntroCard(
-          icon: Icons.cloud_sync_rounded,
-          title: 'WebDAV 远程磁盘挂载',
-          description: '用独立访问密码连接 Finder、Windows 资源管理器或 Infuse 播放器。',
+        IsleSectionHeader(
+          title: '已授权挂载地址（${_roots.length}）',
+          accentColor: mineral,
         ),
-        IsleGroupCard(
-          children: [
-            for (final root in _roots)
-              IsleGroupTile(
-                icon: Icons.link_rounded,
-                iconBgColor: const Color(0xff0ea5e9),
-                title: root.name,
-                subtitle: root.online ? _mountUrl(root) : '离线 · 请接回原盘',
-                trailing: root.online
-                    ? TextButton.icon(
-                        onPressed: () {
+        if (!_loading && _mountError == null && _roots.isEmpty)
+          const Notice('当前账号还没有可挂载的硬盘。')
+        else if (_roots.isNotEmpty)
+          IsleGroupCard(
+            margin: EdgeInsets.zero,
+            children: [
+              for (final root in _roots)
+                IsleGroupTile(
+                  icon: Icons.link_rounded,
+                  iconBgColor: root.online
+                      ? mineral
+                      : palette['brandAmber'],
+                  title: root.name,
+                  subtitle: root.online ? _mountUrl(root) : '离线 · 请接回原盘',
+                  trailing: root.online
+                      ? TextButton.icon(
+                          style: TextButton.styleFrom(
+                            visualDensity: VisualDensity.compact,
+                          ),
+                          onPressed: () {
+                            Clipboard.setData(
+                              ClipboardData(text: _buildTvClientGuide(root)),
+                            );
+                            ScaffoldMessenger.of(context).showSnackBar(
+                              const SnackBar(
+                                content: Text('已复制 Infuse / VidHub 大屏接入参数'),
+                              ),
+                            );
+                          },
+                          icon: const Icon(Icons.tv_rounded, size: 15),
+                          label: const Text('Infuse 参数'),
+                        )
+                      : null,
+                  onTap: root.online
+                      ? () {
                           Clipboard.setData(
-                            ClipboardData(text: _buildTvClientGuide(root)),
+                            ClipboardData(text: _mountUrl(root)),
                           );
                           ScaffoldMessenger.of(context).showSnackBar(
-                            const SnackBar(
-                              content: Text('已复制 Infuse / VidHub 大屏接入参数'),
-                            ),
+                            const SnackBar(content: Text('已复制 WebDAV 连接地址')),
                           );
-                        },
-                        icon: const Icon(Icons.tv_rounded, size: 15),
-                        label: const Text('Infuse 参数'),
-                      )
-                    : null,
-                onTap: root.online
-                    ? () {
-                        Clipboard.setData(ClipboardData(text: _mountUrl(root)));
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          const SnackBar(content: Text('已复制 WebDAV 连接地址')),
-                        );
-                      }
-                    : null,
-              ),
-            IsleGroupTile(
-              icon: Icons.add_circle_outline_rounded,
-              iconBgColor: const Color(0xff10b981),
-              title: _busy ? '处理中…' : '生成新密码',
-              subtitle: '新密码可保存在当前设备的系统安全存储中',
-              onTap: _busy ? null : () => unawaited(_create()),
-            ),
-          ],
+                        }
+                      : null,
+                ),
+            ],
+          ),
+      ],
+    );
+
+    final credentialsColumn = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        IsleSectionHeader(
+          title: '访问密码（${_credentials.length}）',
+          accentColor: violet,
+          helpTitle: '独立访问密码机制',
+          helpBody: 'NAS 服务端仅保存密码哈希摘要，不存储明文；在本机生成的密码会加密保存在当前设备安全存储中方便随时复制，换设备后若遗忘可一键重新生成。',
         ),
-        const SizedBox(height: 8),
-        if (_error != null) Notice(_error!, error: true, onRetry: _load),
-        if (_mountError != null)
-          Notice(_mountError!, error: true, onRetry: _load),
-        if (!_loading && _mountError == null && _roots.isEmpty)
-          const Notice('当前账号还没有可挂载的硬盘。'),
-        if (_localVaultNotice != null) Notice(_localVaultNotice!),
         if (_loading)
           const IsleLoadingState(compact: true, label: '正在加载 WebDAV 配置…')
         else if (_credentials.isEmpty)
           const IsleEmptyStateCard(
-            '还没有 WebDAV 密码，生成一个即可连接。',
+            '点击上方「生成新密码」即可为访达或 Infuse 创建独立密码。',
             icon: Icons.vpn_key_outlined,
           )
-        else ...[
-          IsleSectionHeader(title: '已生成的访问密码（${_credentials.length}）'),
-          IsleResponsiveGrid(
-            minItemWidth: 300,
-            maxColumns: 3,
-            spacing: 10,
-            runSpacing: 10,
+        else
+          IsleGroupCard(
+            margin: EdgeInsets.zero,
             children: [
               for (final credential in _credentials)
-                IsleSurface(
-                  radius: 16,
-                  margin: EdgeInsets.zero,
-                  padding: EdgeInsets.zero,
-                  child: IsleGroupTile(
-                    icon: Icons.key_rounded,
-                    iconBgColor: const Color(0xff6366f1),
-                    title: credential.label,
-                    subtitle:
-                        '创建于 ${_formatDate(credential.createdAt)} · 最近使用 ${_formatDate(credential.lastUsedAt)} · 点按查看或管理',
-                    onTap: _busy ? null : () => unawaited(_manage(credential)),
-                  ),
+                IsleGroupTile(
+                  icon: Icons.key_rounded,
+                  iconBgColor: violet,
+                  title: credential.label,
+                  subtitle: '最近使用：${_formatDate(credential.lastUsedAt)}',
+                  onTap: _busy ? null : () => unawaited(_manage(credential)),
                 ),
             ],
           ),
-        ],
-        const SizedBox(height: 8),
-        const IsleHelpDisclosure(
-          summary: 'WebDAV 权限与安全说明',
-          details:
-              'WebDAV 密码与网页登录密码相互独立；撤销后新请求无法使用旧密码，已开始的传输可能继续到结束。'
-              '本设备新保存的密码可反复查看。旧密码和其他设备创建的密码无法反查，可确认后重新生成。'
-              '每个地址对应一块已授权的硬盘。硬盘重新绑定后，请刷新并复制新地址。删除的文件会进入轻屿回收站。',
-        ),
       ],
-    ),
-  );
+    );
+
+    return Scaffold(
+      appBar: IsleAppBar(
+        title: const Text('WebDAV 访问'),
+        actions: [
+          IconButton(
+            tooltip: '刷新 WebDAV 状态',
+            onPressed: _loading || _busy ? null : _load,
+            icon: const Icon(Icons.refresh_rounded),
+          ),
+          IsleHelpButton(
+            title: 'WebDAV 挂载指南',
+            accentColor: mineral,
+            items: const [
+              IsleHelpItem(
+                title: 'macOS 访达与 iOS 文件 App',
+                body: '复制挂载地址后，在 macOS 访达按 ⌘K（前往 → 连接服务器）或 iPhone「文件 → 连接服务器」粘贴地址，输入当前用户名与生成的独立访问密码即可。',
+              ),
+              IsleHelpItem(
+                title: 'Apple TV / Infuse / VidHub',
+                body: '点击对应硬盘右侧的「Infuse 参数」即可复制协议、端口与完整路径，在电视端新增 WebDAV 源直接刮削原画播放。',
+              ),
+            ],
+          ),
+        ],
+      ),
+      body: IsleListView(
+        maxWidth: IsleLayout.workbenchMaxWidth,
+        children: [
+          IsleFocalStage(
+            icon: Icons.cloud_sync_rounded,
+            accent: mineral,
+            title: 'WebDAV 挂载与大屏播放',
+            metrics: [
+              IsleFocalMetric(
+                label: '在线盘位',
+                value: '${_roots.where((r) => r.online).length}',
+                accent: sage,
+              ),
+              IsleFocalMetric(
+                label: '独立密码',
+                value: '${_credentials.length}',
+                accent: violet,
+              ),
+            ],
+            actions: [
+              FilledButton.icon(
+                onPressed: _busy ? null : () => unawaited(_create()),
+                icon: const Icon(Icons.add_rounded, size: 17),
+                label: Text(_busy ? '处理中…' : '生成新密码'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          if (_error != null) Notice(_error!, error: true, onRetry: _load),
+          if (_mountError != null)
+            Notice(_mountError!, error: true, onRetry: _load),
+          if (_localVaultNotice != null) Notice(_localVaultNotice!),
+          IsleWorkbenchSplit(
+            breakpoint: 860,
+            primaryFlex: 6,
+            secondaryFlex: 6,
+            primary: mountsColumn,
+            secondary: credentialsColumn,
+          ),
+          const SizedBox(height: 16),
+        ],
+      ),
+    );
+  }
 }
 
 class _DavLabelDialog extends StatefulWidget {

@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/personal_storage_routing.dart';
 import '../../core/user_facing_error.dart';
+import '../../core/widgets.dart';
 import 'desktop_backup_engine.dart';
 import 'desktop_backup_models.dart';
 import 'file_name_validation.dart';
@@ -272,6 +273,7 @@ class _DesktopBackupTaskDialogState extends State<_DesktopBackupTaskDialog> {
     if (root == null || !_canWrite || _loadingFolder) return;
     var input = '';
     String? validation;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final folderName = await showDialog<String>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
@@ -287,6 +289,12 @@ class _DesktopBackupTaskDialogState extends State<_DesktopBackupTaskDialog> {
           }
 
           return AlertDialog(
+            shape: IsleShapes.card(
+              side: BorderSide(
+                color: IsleGlass.rimBorderColor(isDark),
+                width: 1.0,
+              ),
+            ),
             title: const Text('新建 NAS 目标子文件夹'),
             content: TextField(
               autofocus: true,
@@ -297,6 +305,7 @@ class _DesktopBackupTaskDialogState extends State<_DesktopBackupTaskDialog> {
               },
               onSubmitted: (_) => submit(),
               decoration: InputDecoration(
+                isDense: true,
                 labelText: '文件夹名称',
                 errorText: validation,
               ),
@@ -389,6 +398,9 @@ class _DesktopBackupTaskDialogState extends State<_DesktopBackupTaskDialog> {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
     final parts = _directory == '.' ? <String>[] : _directory.split('/');
     final breadcrumbs = <(String, String)>[('根目录', '.')];
     for (var i = 0; i < parts.length; i++) {
@@ -396,14 +408,23 @@ class _DesktopBackupTaskDialogState extends State<_DesktopBackupTaskDialog> {
     }
 
     return AlertDialog(
-      title: Text(widget.existing == null ? '新建本机文件夹备份' : '编辑备份任务'),
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      titlePadding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
+      contentPadding: const EdgeInsets.fromLTRB(20, 6, 20, 12),
+      actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+      shape: IsleShapes.card(
+        side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
+      ),
+      title: Text(
+        widget.existing == null ? '新建本机文件夹备份' : '编辑备份任务',
+        style: theme.textTheme.titleMedium?.copyWith(
+          fontWeight: FontWeight.w700,
+        ),
+      ),
       content: SizedBox(
-        width: 540,
+        width: 520,
         child: _initializing
-            ? const Padding(
-                padding: EdgeInsets.symmetric(vertical: 36),
-                child: Center(child: CircularProgressIndicator()),
-              )
+            ? const IsleLoadingState(compact: true, label: '正在读取存储位置…')
             : SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -411,8 +432,11 @@ class _DesktopBackupTaskDialogState extends State<_DesktopBackupTaskDialog> {
                   children: [
                     OutlinedButton.icon(
                       key: const ValueKey('pickLocalBackupFolderButton'),
+                      style: OutlinedButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                      ),
                       onPressed: _pickLocalFolder,
-                      icon: const Icon(Icons.folder_open_rounded),
+                      icon: const Icon(Icons.folder_open_rounded, size: 17),
                       label: Text(
                         _localPath.isEmpty ? '选择本机源文件夹…' : '重新选择本机源文件夹',
                       ),
@@ -421,25 +445,30 @@ class _DesktopBackupTaskDialogState extends State<_DesktopBackupTaskDialog> {
                       const SizedBox(height: 6),
                       SelectableText(
                         '本机来源：$_localPath',
-                        style: Theme.of(context).textTheme.bodySmall,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontSize: 12,
+                          color: colors.onSurfaceVariant,
+                        ),
                       ),
                     ],
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 10),
                     TextField(
                       controller: _labelController,
                       maxLength: 60,
                       onChanged: (_) => setState(() {}),
                       decoration: const InputDecoration(
+                        isDense: true,
                         labelText: '备份任务名称',
                         hintText: '例如：工作文档 / 桌面项目',
                         counterText: '',
                       ),
                     ),
                     if (widget.isAdmin && _onlineRoots.length > 1) ...[
-                      const SizedBox(height: 12),
+                      const SizedBox(height: 10),
                       DropdownButtonFormField<String>(
                         initialValue: _selectedRoot?.id,
                         decoration: const InputDecoration(
+                          isDense: true,
                           labelText: '目标 NAS 存储硬盘',
                         ),
                         items: [
@@ -466,12 +495,15 @@ class _DesktopBackupTaskDialogState extends State<_DesktopBackupTaskDialog> {
                         },
                       ),
                     ],
-                    const SizedBox(height: 12),
+                    const SizedBox(height: 10),
                     Text(
                       'NAS 目标位置（仅单向新增与更新，绝不删除 NAS 已有文件）',
-                      style: Theme.of(context).textTheme.labelMedium,
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                      ),
                     ),
-                    const SizedBox(height: 8),
+                    const SizedBox(height: 6),
                     IsleFolderBrowserCard(
                       directory: _directory,
                       breadcrumbs: breadcrumbs,
@@ -487,7 +519,10 @@ class _DesktopBackupTaskDialogState extends State<_DesktopBackupTaskDialog> {
                       SwitchListTile.adaptive(
                         contentPadding: EdgeInsets.zero,
                         dense: true,
-                        title: Text('在当前目录下自动归入「$_localFolderBasename」子文件夹'),
+                        title: Text(
+                          '在当前目录下自动归入「$_localFolderBasename」子文件夹',
+                          style: const TextStyle(fontSize: 13),
+                        ),
                         value: _appendFolderName,
                         onChanged: (v) => setState(() => _appendFolderName = v),
                       ),
@@ -495,14 +530,19 @@ class _DesktopBackupTaskDialogState extends State<_DesktopBackupTaskDialog> {
                       padding: const EdgeInsets.only(top: 4, bottom: 8),
                       child: Text(
                         '最终写入路径：/${_effectiveRemoteBasePath == '.' ? '' : _effectiveRemoteBasePath}',
-                        style: Theme.of(context).textTheme.bodySmall
-                            ?.copyWith(fontWeight: FontWeight.w600),
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
                       ),
                     ),
                     DropdownButtonFormField<DesktopConflictPolicy>(
                       initialValue: _conflictPolicy,
                       isExpanded: true,
-                      decoration: const InputDecoration(labelText: '同名文件修改策略'),
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        labelText: '同名文件修改策略',
+                      ),
                       items: [
                         for (final policy in DesktopConflictPolicy.values)
                           DropdownMenuItem<DesktopConflictPolicy>(
@@ -520,7 +560,10 @@ class _DesktopBackupTaskDialogState extends State<_DesktopBackupTaskDialog> {
                     SwitchListTile.adaptive(
                       contentPadding: EdgeInsets.zero,
                       dense: true,
-                      title: const Text('忽略以 . 开头的隐藏文件与系统缓存'),
+                      title: const Text(
+                        '忽略以 . 开头的隐藏文件与系统缓存',
+                        style: TextStyle(fontSize: 13),
+                      ),
                       value: _ignoreHidden,
                       onChanged: (v) => setState(() => _ignoreHidden = v),
                     ),
@@ -529,9 +572,7 @@ class _DesktopBackupTaskDialogState extends State<_DesktopBackupTaskDialog> {
                         padding: const EdgeInsets.only(top: 6),
                         child: Text(
                           _error!,
-                          style: TextStyle(
-                            color: Theme.of(context).colorScheme.error,
-                          ),
+                          style: TextStyle(fontSize: 12.5, color: colors.error),
                         ),
                       ),
                   ],

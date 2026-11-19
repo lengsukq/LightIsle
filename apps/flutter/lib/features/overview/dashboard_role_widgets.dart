@@ -5,9 +5,7 @@ import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 
-/// Navigational shortcuts and the primary File Manager entry point on the
-/// Dashboard (since File Management is now housed inside the Dashboard
-/// launchpad rather than occupying a top-level bottom navigation tab).
+/// Curated multi-pigment studio launchpad with crisp single-line tiles.
 class DashboardQuickLinks extends StatelessWidget {
   const DashboardQuickLinks({
     super.key,
@@ -34,42 +32,33 @@ class DashboardQuickLinks extends StatelessWidget {
   Widget build(BuildContext context) => LayoutBuilder(
     builder: (context, constraints) {
       final theme = Theme.of(context);
+      final palette = IslePalette.of(context);
       final bigText = MediaQuery.textScalerOf(context).scale(14) > 19;
       final width = constraints.maxWidth;
-      final columns = bigText
-          ? (width >= 640 ? 2 : 1)
-          : width >= 680
-          ? 4
-          : width >= 300
-          ? 2
-          : 1;
-      final gap = width < IsleLayout.compactPageWidth ? 8.0 : 10.0;
-      final cardWidth = (width - (columns - 1) * gap) / columns;
-      final compactCard = cardWidth < 210;
-      final accentColor = theme.colorScheme.primary;
-      final links = <(String, VoidCallback, IconData, String, String, bool)>[
+
+      final links = <(String, VoidCallback, IconData, String, Color, bool)>[
         (
           'dashboardFilesEntry',
           onOpenFiles ?? () => onNavigate(-1),
-          Icons.folder_outlined,
+          Icons.folder_rounded,
           '文件管理',
-          '浏览、上传与整理 NAS 目录',
+          palette['brandAmber'],
           true,
         ),
         (
           'dashboardPhotosEntry',
           () => onNavigate(1),
-          Icons.photo_library_outlined,
+          Icons.photo_library_rounded,
           '时光相册',
-          '回忆故事流与文件夹相册',
+          palette['brandRose'],
           false,
         ),
         (
           'dashboardCinemaEntry',
           () => onNavigate(2),
-          Icons.movie_outlined,
+          Icons.movie_rounded,
           '私人影院',
-          '海报墙、热播走廊与续播',
+          palette['brandTerracotta'],
           false,
         ),
         if (!admin && onOpenDownloads != null)
@@ -78,16 +67,16 @@ class DashboardQuickLinks extends StatelessWidget {
             onOpenDownloads!,
             Icons.downloading_rounded,
             '下载中心',
-            '查看离线下载与任务进度',
+            palette['brandSage'],
             false,
           ),
         if (onOpenComputerFiles != null)
           (
             'dashboardComputerFilesEntry',
             onOpenComputerFiles!,
-            Icons.computer_outlined,
+            Icons.laptop_mac_rounded,
             '电脑文件',
-            admin ? '浏览 Mac 已开放的只读目录与授权' : '访问管理员已授权的电脑文件夹',
+            palette['brandBlue'],
             false,
           ),
         if (onOpenAppsCenter != null)
@@ -96,7 +85,7 @@ class DashboardQuickLinks extends StatelessWidget {
             onOpenAppsCenter!,
             Icons.apps_rounded,
             '应用中心',
-            admin ? '按需轻应用、存储位置与成员权限' : '打开管理员授权的家庭轻应用',
+            palette['brandViolet'],
             false,
           ),
         if (onOpenShares != null)
@@ -105,7 +94,7 @@ class DashboardQuickLinks extends StatelessWidget {
             onOpenShares!,
             Icons.ios_share_rounded,
             '我的分享',
-            '管理已创建的公开分享链接',
+            palette['brandIndigo'],
             false,
           )
         else if (onQuickUpload != null)
@@ -114,36 +103,35 @@ class DashboardQuickLinks extends StatelessWidget {
             onQuickUpload!,
             Icons.cloud_upload_outlined,
             '快速上传',
-            '直接选择文件或照片入队',
+            palette['brandSage'],
             false,
           ),
       ];
+
+      final columns = bigText
+          ? (width >= 640 ? 2 : 1)
+          : width >= 680
+          ? 3
+          : width >= 300
+          ? 2
+          : 1;
+      final gap = width < IsleLayout.compactPageWidth ? 8.0 : 10.0;
+      final cardWidth = (width - (columns - 1) * gap) / columns;
+      final compactCard = cardWidth < 200;
+
       return Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           IsleSectionHeader(
-            title: admin ? '快捷工作台与文件入口' : '个人空间与文件管理',
-            action: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                if (onOpenAppsCenter != null)
-                  ActionChip(
-                    key: const ValueKey('dashboardAppsChip'),
-                    avatar: const Icon(Icons.apps_rounded, size: 15),
-                    label: const Text('应用中心'),
-                    visualDensity: VisualDensity.compact,
-                    onPressed: onOpenAppsCenter,
-                  ),
-                if (onQuickUpload != null) ...[
-                  if (onOpenAppsCenter != null) const SizedBox(width: 6),
-                  TextButton.icon(
+            title: '快捷入口',
+            accentColor: palette['brandAmber'],
+            action: onQuickUpload != null
+                ? TextButton.icon(
                     onPressed: onQuickUpload,
                     icon: const Icon(Icons.upload_file_rounded, size: 16),
                     label: const Text('快速上传'),
-                  ),
-                ],
-              ],
-            ),
+                  )
+                : null,
           ),
           Wrap(
             spacing: gap,
@@ -153,99 +141,46 @@ class DashboardQuickLinks extends StatelessWidget {
                 Builder(
                   builder: (context) {
                     final item = links[i];
+                    final isHero = item.$6;
+                    final tone = item.$5;
                     return SizedBox(
                       width: cardWidth,
                       child: IsleAnimatedEntrance(
-                        delay: Duration(milliseconds: 28 * i),
+                        delay: Duration(milliseconds: 20 * i),
                         child: IsleSurface(
                           key: ValueKey(item.$1),
-                          radius: compactCard
-                              ? IsleRadius.item
-                              : IsleRadius.card,
+                          tint: isHero ? tone : null,
+                          radius: IsleRadius.item,
                           padding: EdgeInsets.symmetric(
-                            horizontal: compactCard ? 10 : 14,
-                            vertical: compactCard ? 10 : 13,
+                            horizontal: compactCard ? 11 : 13,
+                            vertical: compactCard ? 10 : 11,
                           ),
                           onTap: item.$2,
                           child: Row(
                             children: [
                               IsleSquircleBadge(
                                 icon: item.$3,
-                                color: accentColor,
-                                size: compactCard ? 34 : 40,
-                                iconSize: compactCard ? 18 : 20,
+                                color: tone,
+                                size: compactCard ? 32 : 34,
+                                iconSize: compactCard ? 16.5 : 17.5,
                               ),
-                              SizedBox(width: compactCard ? 9 : 12),
+                              SizedBox(width: compactCard ? 9 : 11),
                               Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      children: [
-                                        Flexible(
-                                          child: Text(
-                                            item.$4,
-                                            maxLines: 1,
-                                            overflow: TextOverflow.ellipsis,
-                                            style: theme.textTheme.titleSmall
-                                                ?.copyWith(
-                                                  fontSize: compactCard
-                                                      ? 13.5
-                                                      : 14,
-                                                  fontWeight: FontWeight.w700,
-                                                  letterSpacing: -0.2,
-                                                ),
-                                          ),
-                                        ),
-                                        if (item.$6 && !compactCard) ...[
-                                          const SizedBox(width: 6),
-                                          Container(
-                                            padding: const EdgeInsets.symmetric(
-                                              horizontal: 6,
-                                              vertical: 1.5,
-                                            ),
-                                            decoration: ShapeDecoration(
-                                              color: theme
-                                                  .colorScheme
-                                                  .surfaceContainerHighest
-                                                  .withValues(alpha: 0.65),
-                                              shape: IsleShapes.squircle(6),
-                                            ),
-                                            child: Text(
-                                              '主入口',
-                                              style: theme.textTheme.labelSmall
-                                                  ?.copyWith(
-                                                    fontSize: 10,
-                                                    fontWeight: FontWeight.w600,
-                                                    color: theme
-                                                        .colorScheme
-                                                        .onSurfaceVariant,
-                                                  ),
-                                            ),
-                                          ),
-                                        ],
-                                      ],
-                                    ),
-                                    const SizedBox(height: 2),
-                                    Text(
-                                      item.$5,
-                                      maxLines: 1,
-                                      overflow: TextOverflow.ellipsis,
-                                      style: theme.textTheme.bodySmall
-                                          ?.copyWith(
-                                            fontSize: compactCard ? 11 : 12,
-                                            color: theme
-                                                .colorScheme
-                                                .onSurfaceVariant,
-                                          ),
-                                    ),
-                                  ],
+                                child: Text(
+                                  item.$4,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: theme.textTheme.titleSmall?.copyWith(
+                                    fontSize: compactCard ? 13.5 : 14,
+                                    fontWeight: FontWeight.w700,
+                                    letterSpacing: -0.15,
+                                  ),
                                 ),
                               ),
                               if (!compactCard)
                                 Icon(
                                   Icons.chevron_right_rounded,
-                                  size: 18,
+                                  size: 16,
                                   color: theme.colorScheme.onSurfaceVariant
                                       .withValues(alpha: 0.45),
                                 ),
@@ -264,7 +199,7 @@ class DashboardQuickLinks extends StatelessWidget {
   );
 }
 
-/// Per-disk quota data is an application ledger, not measured physical usage.
+/// Per-disk quota ledger card styled as a warm physical drive allocation bay.
 class MemberStorageSummary extends StatelessWidget {
   const MemberStorageSummary({super.key, required this.storage});
 
@@ -273,54 +208,56 @@ class MemberStorageSummary extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final palette = IslePalette.of(context);
     final quotas = objectList(storage['rootQuotas']);
     final count = objectList(storage['locations']).length;
     final complete = storage['usageComplete'] == true;
     return IsleSurface(
       radius: IsleRadius.card,
+      tint: palette['brandAmber'],
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(
-                Icons.storage_rounded,
-                size: 20,
-                color: theme.colorScheme.primary,
+              IsleSquircleBadge(
+                icon: Icons.storage_rounded,
+                color: palette['brandAmber'],
+                size: 32,
+                iconSize: 17,
               ),
-              const SizedBox(width: 9),
+              const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   '我的存储空间',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
+                  style: theme.textTheme.titleSmall?.copyWith(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w800,
                   ),
                 ),
               ),
-              Text(
-                '$count 个目录',
-                style: theme.textTheme.labelMedium?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
+              IsleStatusBadge(
+                label: '$count 个目录',
+                color: palette['brandAmber'],
               ),
             ],
           ),
           if (quotas.isEmpty)
             Padding(
-              padding: const EdgeInsets.only(top: 12),
+              padding: const EdgeInsets.only(top: 10),
               child: Text(
                 '尚未分配独立硬盘额度，可在设置中查看分类存储位置。',
                 style: theme.textTheme.bodySmall,
               ),
             )
           else ...[
-            const SizedBox(height: 14),
+            const SizedBox(height: 12),
             IsleResponsiveGrid(
               minItemWidth: 280,
               maxColumns: 2,
-              spacing: 14,
-              runSpacing: 14,
+              spacing: 12,
+              runSpacing: 12,
               children: [
                 for (var i = 0; i < quotas.length; i++)
                   Builder(
@@ -343,123 +280,131 @@ class MemberStorageSummary extends StatelessWidget {
                                 .toDouble()
                           : null;
                       final quotaColor = progress == null
-                          ? const Color(0xff0071e3)
+                          ? palette['brandBlue']
                           : progress >= 0.92
-                          ? const Color(0xffef4444)
+                          ? palette['error']
                           : progress >= 0.8
-                          ? const Color(0xfff59e0b)
-                          : const Color(0xff0071e3);
+                          ? palette['warning']
+                          : palette['brandSage'];
                       final remaining = bound != null && bound > 0
                           ? (bound - accounted - reserved)
                                 .clamp(0.0, bound)
                                 .toDouble()
                           : 0.0;
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  label,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: theme.textTheme.bodyMedium?.copyWith(
+                      return Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: IsleDecorations.recessedWell(context),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: Text(
+                                    label,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: theme.textTheme.bodyMedium?.copyWith(
+                                      fontSize: 13.5,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                                Text(
+                                  '${formatBytes(accounted)} / '
+                                  '${bound == null ? '不限额' : formatBytes(bound)}',
+                                  style: theme.textTheme.labelSmall?.copyWith(
                                     fontWeight: FontWeight.w600,
                                   ),
                                 ),
-                              ),
-                              Text(
-                                '${formatBytes(accounted)} / '
-                                '${bound == null ? '不限额' : formatBytes(bound)}',
-                                style: theme.textTheme.labelSmall,
-                              ),
-                              if (progress != null) ...[
-                                const SizedBox(width: 8),
-                                IsleDonutGauge(
-                                  fraction: progress,
-                                  color: quotaColor,
-                                  size: 28,
-                                  strokeWidth: 3.5,
-                                  centerText: '${(progress * 100).round()}%',
-                                  centerStyle: theme.textTheme.labelSmall
-                                      ?.copyWith(
-                                        fontSize: 8.5,
-                                        fontWeight: FontWeight.w700,
-                                        fontFeatures: const [
-                                          FontFeature.tabularFigures(),
-                                        ],
-                                      ),
-                                  semanticsLabel:
-                                      '$label 配额已用 ${(progress * 100).round()}%',
-                                ),
+                                if (progress != null) ...[
+                                  const SizedBox(width: 8),
+                                  IsleDonutGauge(
+                                    fraction: progress,
+                                    color: quotaColor,
+                                    size: 28,
+                                    strokeWidth: 3.2,
+                                    centerText: '${(progress * 100).round()}%',
+                                    centerStyle: theme.textTheme.labelSmall
+                                        ?.copyWith(
+                                          fontSize: 8.5,
+                                          fontWeight: FontWeight.w800,
+                                          fontFeatures: const [
+                                            FontFeature.tabularFigures(),
+                                          ],
+                                        ),
+                                    semanticsLabel:
+                                        '$label 配额已用 ${(progress * 100).round()}%',
+                                  ),
+                                ],
                               ],
+                            ),
+                            if (progress != null) ...[
+                              const SizedBox(height: 7),
+                              IsleSegmentedBar(
+                                height: 6.5,
+                                legendGap: 5,
+                                legendSpacing: 10,
+                                legendRunSpacing: 2,
+                                segments: [
+                                  if (accounted > 0)
+                                    IsleChartSegment(
+                                      label: '已入账',
+                                      value: accounted.toDouble(),
+                                      color: quotaColor,
+                                      detail: formatBytes(accounted),
+                                    ),
+                                  if (reserved > 0)
+                                    IsleChartSegment(
+                                      label: '上传预占',
+                                      value: reserved.toDouble(),
+                                      color: palette['warning'],
+                                      detail: formatBytes(reserved),
+                                    ),
+                                  IsleChartSegment(
+                                    label: '剩余额度',
+                                    value: remaining,
+                                    color: theme
+                                        .colorScheme
+                                        .surfaceContainerHighest,
+                                    detail: formatBytes(remaining),
+                                  ),
+                                ],
+                              ),
+                            ] else if (accounted > 0 || reserved > 0) ...[
+                              const SizedBox(height: 7),
+                              IsleSegmentedBar(
+                                height: 6,
+                                legendGap: 5,
+                                legendSpacing: 10,
+                                legendRunSpacing: 2,
+                                segments: [
+                                  if (accounted > 0)
+                                    IsleChartSegment(
+                                      label: '已入账',
+                                      value: accounted.toDouble(),
+                                      color: quotaColor,
+                                      detail: formatBytes(accounted),
+                                    ),
+                                  if (reserved > 0)
+                                    IsleChartSegment(
+                                      label: '上传预占',
+                                      value: reserved.toDouble(),
+                                      color: palette['warning'],
+                                      detail: formatBytes(reserved),
+                                    ),
+                                ],
+                              ),
                             ],
-                          ),
-                          if (progress != null) ...[
-                            const SizedBox(height: 6),
-                            IsleSegmentedBar(
-                              height: 7,
-                              legendGap: 5,
-                              legendSpacing: 10,
-                              legendRunSpacing: 2,
-                              segments: [
-                                if (accounted > 0)
-                                  IsleChartSegment(
-                                    label: '已入账',
-                                    value: accounted.toDouble(),
-                                    color: quotaColor,
-                                    detail: formatBytes(accounted),
-                                  ),
-                                if (reserved > 0)
-                                  IsleChartSegment(
-                                    label: '上传预占',
-                                    value: reserved.toDouble(),
-                                    color: const Color(0xfff59e0b),
-                                    detail: formatBytes(reserved),
-                                  ),
-                                IsleChartSegment(
-                                  label: '剩余额度',
-                                  value: remaining,
-                                  color:
-                                      theme.colorScheme.surfaceContainerHighest,
-                                  detail: formatBytes(remaining),
-                                ),
-                              ],
-                            ),
-                          ] else if (accounted > 0 || reserved > 0) ...[
-                            const SizedBox(height: 6),
-                            IsleSegmentedBar(
-                              height: 6,
-                              legendGap: 5,
-                              legendSpacing: 10,
-                              legendRunSpacing: 2,
-                              segments: [
-                                if (accounted > 0)
-                                  IsleChartSegment(
-                                    label: '已入账',
-                                    value: accounted.toDouble(),
-                                    color: quotaColor,
-                                    detail: formatBytes(accounted),
-                                  ),
-                                if (reserved > 0)
-                                  IsleChartSegment(
-                                    label: '上传预占',
-                                    value: reserved.toDouble(),
-                                    color: const Color(0xfff59e0b),
-                                    detail: formatBytes(reserved),
-                                  ),
-                              ],
-                            ),
+                            if (reserved > 0) ...[
+                              const SizedBox(height: 3),
+                              Text(
+                                '上传预占 ${formatBytes(reserved)}',
+                                style: theme.textTheme.bodySmall,
+                              ),
+                            ],
                           ],
-                          if (reserved > 0) ...[
-                            const SizedBox(height: 4),
-                            Text(
-                              '上传预占 ${formatBytes(reserved)}',
-                              style: theme.textTheme.bodySmall,
-                            ),
-                          ],
-                        ],
+                        ),
                       );
                     },
                   ),
@@ -467,10 +412,11 @@ class MemberStorageSummary extends StatelessWidget {
             ),
           ],
           if (!complete) ...[
-            const SizedBox(height: 10),
+            const SizedBox(height: 8),
             Text(
               '仅为已入账用量，部分渠道未统计，不等于硬盘实际占用。',
               style: theme.textTheme.bodySmall?.copyWith(
+                fontSize: 11.5,
                 color: theme.colorScheme.onSurfaceVariant,
               ),
             ),
@@ -536,20 +482,21 @@ class _TaskTileState extends State<TaskTile> {
   @override
   Widget build(BuildContext context) {
     final task = widget.task;
+    final palette = IslePalette.of(context);
     final isRunning = task['running'] == true;
     final hasError = (task['lastError']?.toString() ?? '').isNotEmpty;
     final statusColor = isRunning
-        ? const Color(0xff2563eb)
+        ? palette['brandAmber']
         : hasError
-        ? const Color(0xffef4444)
-        : const Color(0xff10b981);
+        ? palette['error']
+        : palette['brandSage'];
 
     return IsleSurface(
       padding: EdgeInsets.zero,
       radius: IsleRadius.item,
       margin: EdgeInsets.zero,
       child: Padding(
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 11),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
@@ -561,7 +508,7 @@ class _TaskTileState extends State<TaskTile> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: Theme.of(context).textTheme.titleSmall
-                        ?.copyWith(fontWeight: FontWeight.w700),
+                        ?.copyWith(fontSize: 13.5, fontWeight: FontWeight.w700),
                   ),
                 ),
                 IsleStatusBadge(label: taskStatus(task), color: statusColor),
@@ -574,6 +521,7 @@ class _TaskTileState extends State<TaskTile> {
                   child: Text(
                     '已处理 ${task['processed'] ?? task['progress'] ?? 0} 项${((task['bytes'] as num?) ?? 0) > 0 ? ' · ${formatBytes(task['bytes'] as num?)}' : ''}',
                     style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      fontSize: 12,
                       color: Theme.of(context).colorScheme.onSurfaceVariant,
                     ),
                   ),
@@ -582,7 +530,7 @@ class _TaskTileState extends State<TaskTile> {
                   TextButton.icon(
                     style: TextButton.styleFrom(
                       visualDensity: VisualDensity.compact,
-                      minimumSize: const Size(40, 30),
+                      minimumSize: const Size(40, 28),
                       padding: const EdgeInsets.symmetric(
                         horizontal: 8,
                         vertical: 2,
@@ -602,19 +550,19 @@ class _TaskTileState extends State<TaskTile> {
             ),
             if (isRunning)
               const Padding(
-                padding: EdgeInsets.symmetric(vertical: 6),
+                padding: EdgeInsets.symmetric(vertical: 5),
                 child: ClipRRect(
                   borderRadius: BorderRadius.all(Radius.circular(6)),
                   child: LinearProgressIndicator(minHeight: 4),
                 ),
               ),
             if (hasError) ...[
-              const SizedBox(height: 4),
+              const SizedBox(height: 3),
               Text(
                 '原因：${task['lastError']}',
                 style: TextStyle(
                   color: Theme.of(context).colorScheme.error,
-                  fontSize: 12.5,
+                  fontSize: 12,
                 ),
               ),
             ],

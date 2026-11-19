@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../core/isle_action_menu.dart';
+import '../../core/isle_gallery_layout.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
@@ -99,7 +101,6 @@ class _DownloadsPageState extends State<DownloadsPage>
           throw const FormatException('下载任务内容无效');
         }
       } on LightIsleApiException catch (error) {
-        // Older servers cannot list history when aria2 is unavailable.
         if (status['available'] == true ||
             error.code != 'download_unavailable') {
           rethrow;
@@ -108,7 +109,7 @@ class _DownloadsPageState extends State<DownloadsPage>
       if (!mounted || generation != _generation) return;
       setState(() {
         _tasks = tasks;
-        _available = status['available'] == true;
+        _available = status['available'] != false;
         _networkAllowed = status['networkAllowed'] != false;
         _reason = status['reason']?.toString() ?? '';
         _loaded = true;
@@ -145,7 +146,6 @@ class _DownloadsPageState extends State<DownloadsPage>
     } finally {
       if (mounted && generation == _generation) {
         setState(() => _busy = '');
-        // Keep a failed action's feedback while refreshing actual task state.
         final actionError = _error;
         await _load();
         if (mounted && identical(widget.api, api) && actionError != null) {
@@ -198,6 +198,72 @@ class _DownloadsPageState extends State<DownloadsPage>
     });
   }
 
+  Future<void> _showPublishedFilesDialog(
+    BuildContext context,
+    Map<String, dynamic> task,
+    List<Map<String, dynamic>> published,
+    int totalCount,
+  ) {
+    final colors = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final borderColor = IsleGlass.rimBorderColor(isDark);
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        shape: IsleShapes.card(side: BorderSide(color: borderColor)),
+        title: Text('文件处理记录（$totalCount 项）'),
+        content: SizedBox(
+          width: 440,
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxHeight: 360),
+            child: ListView(
+              shrinkWrap: true,
+              children: [
+                for (var i = 0; i < published.length; i++) ...[
+                  if (i > 0) Divider(height: 1, color: borderColor),
+                  ListTile(
+                    dense: true,
+                    visualDensity: VisualDensity.compact,
+                    contentPadding: EdgeInsets.zero,
+                    title: Text(
+                      published[i]['target']?.toString() ?? '',
+                      style: const TextStyle(fontSize: 12.5),
+                    ),
+                    subtitle: Text(
+                      published[i]['status'] == 'published'
+                          ? '已保存'
+                          : published[i]['status'] == 'recovery_required'
+                          ? '需要核对'
+                          : '等待核对',
+                      style: const TextStyle(fontSize: 11.5),
+                    ),
+                  ),
+                ],
+                if (task['publishedFilesTruncated'] == true)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Text(
+                      '这里只显示前 ${published.length} 项，其余处理记录仍由服务端保留。',
+                      style: TextStyle(
+                        fontSize: 11.5,
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          FilledButton.tonal(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('知道了'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   void dispose() {
     ++_generation;
@@ -207,82 +273,185 @@ class _DownloadsPageState extends State<DownloadsPage>
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: IsleAppBar(
-      title: const Text('下载中心'),
-      actions: [
-        IconButton(
-          tooltip: '刷新下载任务',
-          onPressed: _loading || _busy.isNotEmpty ? null : _load,
-          icon: const Icon(Icons.refresh_rounded),
-        ),
-      ],
-    ),
-    body: IsleListView(
-      children: [
-        IsleIntroCard(
-          icon: Icons.download_for_offline_rounded,
-          title: 'NAS 远程下载队列',
-          description: '让 Mac 保存下载链接中的文件，手机离开后任务仍会继续。',
-          actions: [
-            if (_loaded && _available && _networkAllowed)
-              FilledButton.icon(
-                onPressed: _busy.isEmpty ? _create : null,
-                icon: const Icon(Icons.add_rounded, size: 18),
-                label: Text(_busy == 'create' ? '正在创建…' : '新建下载'),
+  Widget build(BuildContext context) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final palette = IslePalette(isDark);
+    final borderColor = IsleGlass.rimBorderColor(isDark);
+    final accent = palette['brandAmber'];
+    final activeCount = _tasks
+        .where(
+          (t) => const ['queued', 'running', 'paused'].contains(t['status']),
+        )
+        .length;
+    final completedCount = _tasks
+        .where((t) => t['status'] == 'completed')
+        .length;
+
+    return Scaffold(
+      appBar: IsleAppBar(
+        title: const Text('下载中心'),
+        actions: [
+          IconButton(
+            tooltip: '刷新下载任务',
+            onPressed: _loading || _busy.isNotEmpty ? null : _load,
+            icon: const Icon(Icons.refresh_rounded, size: 20),
+          ),
+          IsleHelpButton(
+            title: '远程下载说明',
+            accentColor: accent,
+            items: const [
+              IsleHelpItem(
+                title: 'Mac 后台持续下载',
+                body: '下载任务由家里的 Mac 直接拉取并写入目标共享目录，离开此页面或关闭手机客户端不会中断下载。',
               ),
-          ],
-        ),
-        if (_error != null) Notice(_error!, error: true, onRetry: _load),
-        if (_loading && !_loaded)
-          const Center(child: CircularProgressIndicator()),
-        if (_loaded && !_available)
-          Notice(
-            _reason == 'aria2_not_installed'
-                ? 'Mac 尚未安装下载组件 aria2，暂时不能新建下载。已有记录可查看；已下载的任务仍可重试保存文件。'
-                : 'Mac 的下载服务暂时不可用。已有记录可查看；已下载的任务仍可重试保存文件。',
-          ),
-        if (_loaded && !_networkAllowed)
-          const Notice('新建或继续网络下载需要管理员权限，已有任务和已下载的文件仍可管理。'),
-        if (_loaded && _tasks.isEmpty && _available && _networkAllowed)
-          const IsleEmptyStateCard(
-            '还没有下载任务。添加一个下载链接即可开始。',
-            icon: Icons.download_done_rounded,
-          ),
-        if (_tasks.isNotEmpty) ...[
-          IsleSectionHeader(title: '任务记录（${_tasks.length}）'),
-          IsleResponsiveGrid(
-            minItemWidth: 300,
-            maxColumns: 3,
-            spacing: 10,
-            runSpacing: 10,
-            children: [for (final task in _tasks) _taskCard(context, task)],
+              IsleHelpItem(
+                title: '同名文件安全保护',
+                body: '下载完成后归档写入目标目录时若遇到同名不一致文件，将暂停覆盖并提示在 Mac 端核对，确保已有文件安全。',
+              ),
+            ],
           ),
         ],
-      ],
-    ),
-  );
+      ),
+      body: IsleListView(
+        maxWidth: IsleLayout.workbenchMaxWidth,
+        children: [
+          IsleFocalStage(
+            icon: Icons.download_for_offline_rounded,
+            accent: accent,
+            title: '远程下载队列',
+            metrics: [
+              IsleFocalMetric(
+                label: '进行中',
+                value: '$activeCount',
+                accent: accent,
+              ),
+              IsleFocalMetric(
+                label: '已完成',
+                value: '$completedCount',
+                accent: palette['brandSage'],
+              ),
+              IsleFocalMetric(
+                label: '引擎状态',
+                value: !_loaded ? '检测中' : (_available ? '就绪' : '不可用'),
+                accent: _available
+                    ? palette['brandBlue']
+                    : Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ],
+            actions: [
+              if (_loaded && _available && _networkAllowed)
+                FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  onPressed: _busy.isEmpty ? _create : null,
+                  icon: const Icon(Icons.add_rounded, size: 17),
+                  label: Text(_busy == 'create' ? '正在创建…' : '新建下载'),
+                ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          if (_error != null) Notice(_error!, error: true, onRetry: _load),
+          if (_loading && !_loaded)
+            const IsleLoadingState(compact: true, label: '正在读取下载任务…'),
+          if (_loaded && !_available)
+            Notice(
+              _reason == 'aria2_not_installed'
+                  ? 'Mac 尚未安装下载组件 aria2，暂时不能新建下载。已有记录可查看；已下载的任务仍可重试保存文件。'
+                  : 'Mac 的下载服务暂时不可用。已有记录可查看；已下载的任务仍可重试保存文件。',
+            ),
+          if (_loaded && !_networkAllowed)
+            const Notice('新建或继续网络下载需要管理员权限，已有任务和已下载的文件仍可管理。'),
+          if (_loaded && _tasks.isEmpty && _available && _networkAllowed)
+            const IsleEmptyStateCard(
+              '还没有下载任务。添加一个下载链接即可开始。',
+              icon: Icons.download_done_rounded,
+            ),
+          if (_tasks.isNotEmpty) ...[
+            IsleSectionHeader(
+              title: '任务记录（${_tasks.length}）',
+              accentColor: accent,
+            ),
+            IsleAdaptiveBuilder(
+              builder: (context, tier, width) {
+                final textScale =
+                    MediaQuery.textScalerOf(context).scale(14) / 14;
+                if (tier == IsleViewportTier.expanded &&
+                    _tasks.length > 1 &&
+                    textScale <= 1.35) {
+                  final cardWidth = (width - 12) / 2;
+                  return Wrap(
+                    spacing: 12,
+                    runSpacing: 12,
+                    children: [
+                      for (final task in _tasks)
+                        SizedBox(
+                          width: cardWidth,
+                          child: IsleSurface(
+                            margin: EdgeInsets.zero,
+                            padding: EdgeInsets.zero,
+                            child: _taskRow(context, task, palette),
+                          ),
+                        ),
+                    ],
+                  );
+                }
+                return IsleSurface(
+                  margin: EdgeInsets.zero,
+                  padding: EdgeInsets.zero,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (var i = 0; i < _tasks.length; i++) ...[
+                        if (i > 0)
+                          Divider(
+                            height: 1,
+                            thickness: 1,
+                            indent: 52,
+                            color: borderColor,
+                          ),
+                        _taskRow(context, _tasks[i], palette),
+                      ],
+                    ],
+                  ),
+                );
+              },
+            ),
+          ],
+          const SizedBox(height: 20),
+        ],
+      ),
+    );
+  }
 
-  Widget _taskCard(BuildContext context, Map<String, dynamic> task) {
+  Widget _taskRow(
+    BuildContext context,
+    Map<String, dynamic> task,
+    IslePalette palette,
+  ) {
     final status = task['status'] as String;
     final total = _number(task['totalBytes']),
         done = _number(task['completedBytes']);
     final published = objectList(task['publishedFiles']);
+    final publishedCount = _number(task['publishedFilesTotal']) > 0
+        ? _number(task['publishedFilesTotal'])
+        : published.length;
     final active = const ['queued', 'running', 'paused'].contains(status);
     final canAct = _busy.isEmpty;
-    final colors = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
 
     final statusColor = switch (status) {
-      'completed' => const Color(0xff10b981),
+      'completed' => palette['brandSage'],
       'running' => colors.primary,
-      'paused' => const Color(0xfff59e0b),
+      'paused' => palette['brandAmber'],
       'failed' => colors.error,
       _ => colors.onSurfaceVariant,
     };
 
-    return IsleSurface(
-      margin: EdgeInsets.zero,
-      padding: const EdgeInsets.all(16),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 12, 14, 11),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -294,19 +463,34 @@ class _DownloadsPageState extends State<DownloadsPage>
                     ? Icons.download_done_rounded
                     : Icons.downloading_rounded,
                 color: statusColor,
-                size: 34,
-                iconSize: 18,
+                size: 32,
+                iconSize: 16.5,
               ),
               const SizedBox(width: 10),
               Expanded(
-                child: Text(
-                  task['filename']?.toString().isNotEmpty == true
-                      ? task['filename'].toString()
-                      : task['url']?.toString() ?? '下载任务',
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.titleSmall
-                      ?.copyWith(fontWeight: FontWeight.w700),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      task['filename']?.toString().isNotEmpty == true
+                          ? task['filename'].toString()
+                          : task['url']?.toString() ?? '下载任务',
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodyMedium?.copyWith(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${status == 'running' && task['phase'] == 'publishing' ? '正在保存' : _statusLabel(status)} · 保存到 ${task['destination'] == '.' ? '共享根目录' : task['destination']}',
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                  ],
                 ),
               ),
               const SizedBox(width: 8),
@@ -318,134 +502,171 @@ class _DownloadsPageState extends State<DownloadsPage>
               ),
             ],
           ),
-          const SizedBox(height: 6),
-          Text(
-            '${status == 'running' && task['phase'] == 'publishing' ? '正在保存' : _statusLabel(status)} · 保存到 ${task['destination'] == '.' ? '共享根目录' : task['destination']}',
-            style: TextStyle(fontSize: 13, color: colors.onSurfaceVariant),
-          ),
           if (total > 0) ...[
-            const SizedBox(height: 10),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(999),
-              child: LinearProgressIndicator(
-                value: (done / total).clamp(0.0, 1.0),
-                minHeight: 6,
-                semanticsLabel: '下载进度',
-                backgroundColor: colors.outlineVariant.withValues(alpha: 0.25),
+            const SizedBox(height: 8),
+            Padding(
+              padding: const EdgeInsets.only(left: 42),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(999),
+                    child: LinearProgressIndicator(
+                      value: (done / total).clamp(0.0, 1.0),
+                      minHeight: 5,
+                      semanticsLabel: '下载进度',
+                      backgroundColor: colors.outlineVariant.withValues(
+                        alpha: 0.35,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '${formatBytes(done)} / ${formatBytes(total)}',
+                    style: TextStyle(
+                      fontSize: 11.5,
+                      color: colors.onSurfaceVariant,
+                      fontFeatures: const [FontFeature.tabularFigures()],
+                    ),
+                  ),
+                ],
               ),
-            ),
-            const SizedBox(height: 6),
-            Text(
-              '${formatBytes(done)} / ${formatBytes(total)}',
-              style: TextStyle(fontSize: 12, color: colors.onSurfaceVariant),
             ),
           ],
           if (task['partialPublish'] == true)
             const Padding(
-              padding: EdgeInsets.only(top: 6),
+              padding: EdgeInsets.only(top: 6, left: 42),
               child: Text(
                 '部分文件已保存，任务尚未全部完成。重试会核对已有文件。',
-                style: TextStyle(fontSize: 12.5),
+                style: TextStyle(fontSize: 12),
               ),
             ),
           if (task['recoveryRequired'] == true)
             Padding(
-              padding: const EdgeInsets.only(top: 6),
+              padding: const EdgeInsets.only(top: 6, left: 42),
               child: Text(
                 '已有文件与任务记录不一致，请先在 Mac 核对文件；不会自动覆盖。',
-                style: TextStyle(fontSize: 12.5, color: colors.error),
+                style: TextStyle(fontSize: 12, color: colors.error),
               ),
-            ),
-          if (published.isNotEmpty)
-            ExpansionTile(
-              tilePadding: EdgeInsets.zero,
-              shape: const RoundedRectangleBorder(
-                borderRadius: BorderRadius.all(Radius.circular(12)),
-              ),
-              collapsedShape: const RoundedRectangleBorder(
-                borderRadius: BorderRadius.all(Radius.circular(12)),
-              ),
-              title: Text(
-                '文件处理记录（${_number(task['publishedFilesTotal']) > 0 ? _number(task['publishedFilesTotal']) : published.length} 项）',
-                style: const TextStyle(
-                  fontSize: 13.5,
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              children: [
-                for (final item in published)
-                  ListTile(
-                    dense: true,
-                    title: Text(item['target']?.toString() ?? ''),
-                    subtitle: Text(
-                      item['status'] == 'published'
-                          ? '已保存'
-                          : item['status'] == 'recovery_required'
-                          ? '需要核对'
-                          : '等待核对',
-                    ),
-                  ),
-                if (task['publishedFilesTruncated'] == true)
-                  Padding(
-                    padding: const EdgeInsets.all(12),
-                    child: Text(
-                      '这里只显示前 ${published.length} 项，其余处理记录仍由服务端保留。',
-                      style: TextStyle(
-                        fontSize: 12,
-                        color: colors.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-              ],
             ),
           if (task['error']?.toString().isNotEmpty == true)
             Padding(
-              padding: const EdgeInsets.only(top: 8),
+              padding: const EdgeInsets.only(top: 6, left: 42),
               child: Text(
                 userFacingError(task['error'].toString()),
-                style: TextStyle(color: colors.error, fontSize: 13),
+                style: TextStyle(color: colors.error, fontSize: 12.5),
               ),
             ),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 4,
-            children: [
-              if (task['phase'] != 'publishing' &&
-                  (status == 'queued' || status == 'running'))
-                TextButton(
-                  onPressed: canAct && _available
-                      ? () => _action(task, 'pause')
-                      : null,
-                  child: const Text('暂停'),
-                ),
-              if (status == 'paused')
-                TextButton(
-                  onPressed: canAct && _available && _networkAllowed
-                      ? () => _action(task, 'resume')
-                      : null,
-                  child: const Text('继续'),
-                ),
-              if (status == 'failed' || status == 'cancelled')
-                TextButton(
-                  onPressed:
-                      canAct &&
-                          ((_available && _networkAllowed) ||
-                              task['phase'] == 'publishing')
-                      ? () => _action(task, 'retry')
-                      : null,
-                  child: const Text('重试'),
-                ),
-              if (active)
-                TextButton(
-                  onPressed: canAct ? () => _action(task, 'cancel') : null,
-                  child: const Text('取消下载'),
-                ),
-              TextButton(
-                onPressed: canAct ? () => _action(task, 'delete') : null,
-                child: const Text('删除记录'),
-              ),
-            ],
+          const SizedBox(height: 4),
+          Padding(
+            padding: const EdgeInsets.only(left: 36),
+            child: Row(
+              children: [
+                if (task['phase'] != 'publishing' &&
+                    (status == 'queued' || status == 'running'))
+                  TextButton(
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      minimumSize: const Size(0, 28),
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                    onPressed: canAct && _available
+                        ? () => _action(task, 'pause')
+                        : null,
+                    child: const Text('暂停', style: TextStyle(fontSize: 12.5)),
+                  ),
+                if (status == 'paused')
+                  TextButton(
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      minimumSize: const Size(0, 28),
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                    onPressed: canAct && _available && _networkAllowed
+                        ? () => _action(task, 'resume')
+                        : null,
+                    child: const Text('继续', style: TextStyle(fontSize: 12.5)),
+                  ),
+                if (status == 'failed' || status == 'cancelled')
+                  TextButton(
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      minimumSize: const Size(0, 28),
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                    onPressed:
+                        canAct &&
+                            ((_available && _networkAllowed) ||
+                                task['phase'] == 'publishing')
+                        ? () => _action(task, 'retry')
+                        : null,
+                    child: const Text('重试', style: TextStyle(fontSize: 12.5)),
+                  ),
+                if (!active)
+                  TextButton(
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      minimumSize: const Size(0, 28),
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                    onPressed: canAct ? () => _action(task, 'delete') : null,
+                    child: const Text('删除记录', style: TextStyle(fontSize: 12.5)),
+                  ),
+                if (published.isNotEmpty)
+                  TextButton.icon(
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                      minimumSize: const Size(0, 28),
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                    onPressed: () => _showPublishedFilesDialog(
+                      context,
+                      task,
+                      published,
+                      publishedCount,
+                    ),
+                    icon: const Icon(Icons.help_outline_rounded, size: 14.5),
+                    label: Text(
+                      '文件处理记录（$publishedCount 项）',
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                  ),
+                const Spacer(),
+                if (active)
+                  PopupMenuButton<String>(
+                    tooltip: '更多操作',
+                    enabled: canAct,
+                    icon: Icon(
+                      Icons.more_horiz_rounded,
+                      size: 18,
+                      color: colors.onSurfaceVariant,
+                    ),
+                    style: IconButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    shape: IsleShapes.md(
+                      side: BorderSide(
+                        color: IsleGlass.rimBorderColor(isDark),
+                        width: 1.0,
+                      ),
+                    ),
+                    onSelected: (act) => _action(task, act),
+                    itemBuilder: (_) => [
+                      isleActionMenuItem(
+                        value: 'cancel',
+                        icon: Icons.cancel_outlined,
+                        label: '取消下载',
+                      ),
+                      isleActionMenuItem(
+                        value: 'delete',
+                        icon: Icons.delete_outline_rounded,
+                        label: '删除记录',
+                        destructive: true,
+                      ),
+                    ],
+                  ),
+              ],
+            ),
           ),
         ],
       ),
@@ -522,68 +743,107 @@ class _NewDownloadDialogState extends State<_NewDownloadDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => AlertDialog(
-    title: const Text('新建下载'),
-    content: SizedBox(
-      width: 480,
-      child: SingleChildScrollView(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            TextField(
-              controller: _url,
-              keyboardType: TextInputType.url,
-              autocorrect: false,
-              enableSuggestions: false,
-              decoration: const InputDecoration(
-                labelText: '下载链接',
-                hintText: 'https://… 或 magnet:?…',
-              ),
-            ),
-            const SizedBox(height: 16),
-            Text('保存到：${_destination == '.' ? '共享根目录' : _destination}'),
-            TextButton.icon(
-              onPressed: () async {
-                final selection = await showDialog<String>(
-                  context: context,
-                  builder: (_) => _DownloadFolderDialog(api: widget.api),
-                );
-                if (selection != null && mounted) {
-                  setState(() => _destination = selection);
-                }
-              },
-              icon: const Icon(Icons.folder_open_rounded),
-              label: const Text('选择文件夹'),
-            ),
-            const SizedBox(height: 8),
-            TextField(
-              controller: _limit,
-              keyboardType: const TextInputType.numberWithOptions(
-                decimal: true,
-              ),
-              decoration: const InputDecoration(
-                labelText: '大小上限（GiB，可选）',
-                helperText: '留空使用服务端上限，最大 1024 GiB',
-              ),
-            ),
-            if (_error != null)
-              Text(
-                _error!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-              ),
-          ],
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    return AlertDialog(
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      titlePadding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
+      contentPadding: const EdgeInsets.fromLTRB(20, 6, 20, 12),
+      actionsPadding: const EdgeInsets.fromLTRB(16, 0, 16, 14),
+      shape: IsleShapes.card(
+        side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
+      ),
+      title: Text(
+        '新建下载',
+        style: theme.textTheme.titleMedium?.copyWith(
+          fontWeight: FontWeight.w700,
         ),
       ),
-    ),
-    actions: [
-      TextButton(
-        onPressed: () => Navigator.pop(context),
-        child: const Text('取消'),
+      content: SizedBox(
+        width: 460,
+        child: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              TextField(
+                controller: _url,
+                keyboardType: TextInputType.url,
+                autocorrect: false,
+                enableSuggestions: false,
+                decoration: const InputDecoration(
+                  isDense: true,
+                  labelText: '下载链接',
+                  hintText: 'https://… 或 magnet:?…',
+                ),
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
+                  Expanded(
+                    child: Text(
+                      '保存到：${_destination == '.' ? '共享根目录' : _destination}',
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ),
+                  TextButton.icon(
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                    ),
+                    onPressed: () async {
+                      final selection = await showDialog<String>(
+                        context: context,
+                        builder: (_) => _DownloadFolderDialog(api: widget.api),
+                      );
+                      if (selection != null && mounted) {
+                        setState(() => _destination = selection);
+                      }
+                    },
+                    icon: const Icon(Icons.folder_open_rounded, size: 17),
+                    label: const Text('选择文件夹'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _limit,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: const InputDecoration(
+                  isDense: true,
+                  labelText: '大小上限（GiB，可选）',
+                  helperText: '留空使用服务端上限，最大 1024 GiB',
+                ),
+              ),
+              if (_error != null)
+                Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: Text(
+                    _error!,
+                    style: TextStyle(fontSize: 12.5, color: colors.error),
+                  ),
+                ),
+            ],
+          ),
+        ),
       ),
-      FilledButton(onPressed: _submit, child: const Text('开始下载')),
-    ],
-  );
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('取消'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('开始下载')),
+      ],
+    );
+  }
 }
 
 class _DownloadFolderDialog extends StatefulWidget {
@@ -638,91 +898,152 @@ class _DownloadFolderDialogState extends State<_DownloadFolderDialog> {
   }
 
   @override
-  Widget build(BuildContext context) => Dialog(
-    child: ConstrainedBox(
-      constraints: BoxConstraints(
-        maxWidth: 500,
-        maxHeight: MediaQuery.sizeOf(context).height * .8,
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final palette = IslePalette(isDark);
+    final borderColor = IsleGlass.rimBorderColor(isDark);
+
+    return Dialog(
+      shape: IsleShapes.card(
+        side: BorderSide(color: borderColor, width: 1.0),
       ),
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          children: [
-            Text('选择保存位置', style: Theme.of(context).textTheme.titleLarge),
-            Text(
-              _path == '.' ? '共享根目录' : _path,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-            ),
-            if (_path != '.')
-              Align(
-                alignment: AlignmentDirectional.centerStart,
-                child: TextButton.icon(
-                  onPressed: _loading
-                      ? null
-                      : () => _load(
-                          path: _path.contains('/')
-                              ? _path.substring(0, _path.lastIndexOf('/'))
-                              : '.',
-                        ),
-                  icon: const Icon(Icons.arrow_upward_rounded),
-                  label: const Text('上一级'),
-                ),
-              ),
-            if (_error != null)
-              Text(
-                _error!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-              ),
-            if (_loading) const LinearProgressIndicator(),
-            Expanded(
-              child: ListView(
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+          maxWidth: 460,
+          maxHeight: MediaQuery.sizeOf(context).height * .76,
+        ),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(18, 16, 18, 14),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Row(
                 children: [
-                  for (final folder in _folders)
-                    ListTile(
-                      leading: const Icon(Icons.folder_outlined),
-                      title: Text(folder['name']?.toString() ?? ''),
-                      onTap: _loading
+                  Expanded(
+                    child: Text(
+                      '选择保存位置',
+                      style: theme.textTheme.titleMedium?.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                  if (_path != '.')
+                    TextButton.icon(
+                      style: TextButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                      ),
+                      onPressed: _loading
                           ? null
                           : () => _load(
-                              path:
-                                  folder['path']?.toString() ??
-                                  (_path == '.'
-                                      ? '${folder['name']}'
-                                      : '$_path/${folder['name']}'),
+                              path: _path.contains('/')
+                                  ? _path.substring(0, _path.lastIndexOf('/'))
+                                  : '.',
                             ),
-                    ),
-                  if (_cursor.isNotEmpty)
-                    TextButton(
-                      onPressed: _loading ? null : () => _load(more: true),
-                      child: const Text('加载更多文件夹'),
-                    ),
-                  if (!_loading && _error == null && _folders.isEmpty)
-                    const Padding(
-                      padding: EdgeInsets.all(16),
-                      child: Text('没有子文件夹'),
+                      icon: const Icon(Icons.arrow_upward_rounded, size: 16),
+                      label: const Text('上一级'),
                     ),
                 ],
               ),
-            ),
-            Wrap(
-              spacing: 12,
-              children: [
-                TextButton(
-                  onPressed: () => Navigator.pop(context),
-                  child: const Text('取消'),
+              const SizedBox(height: 2),
+              Text(
+                _path == '.' ? '共享根目录' : _path,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: colors.onSurfaceVariant,
                 ),
-                FilledButton(
-                  onPressed: !_loading && _error == null && _writable
-                      ? () => Navigator.pop(context, _path)
-                      : null,
-                  child: const Text('保存到这里'),
+              ),
+              const SizedBox(height: 8),
+              if (_error != null)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 6),
+                  child: Text(
+                    _error!,
+                    style: TextStyle(fontSize: 12.5, color: colors.error),
+                  ),
                 ),
-              ],
-            ),
-          ],
+              if (_loading) const LinearProgressIndicator(minHeight: 2),
+              Expanded(
+                child: Container(
+                  decoration: IsleDecorations.recessedWell(context, radius: 12),
+                  clipBehavior: Clip.antiAlias,
+                  child: ListView(
+                    children: [
+                      for (var i = 0; i < _folders.length; i++) ...[
+                        if (i > 0)
+                          Divider(
+                            height: 1,
+                            thickness: 1,
+                            indent: 44,
+                            color: borderColor,
+                          ),
+                        ListTile(
+                          dense: true,
+                          visualDensity: VisualDensity.compact,
+                          leading: Icon(
+                            Icons.folder_rounded,
+                            size: 18,
+                            color: palette['brandAmber'],
+                          ),
+                          title: Text(
+                            _folders[i]['name']?.toString() ?? '',
+                            style: const TextStyle(fontSize: 13.5),
+                          ),
+                          onTap: _loading
+                              ? null
+                              : () => _load(
+                                  path:
+                                      _folders[i]['path']?.toString() ??
+                                      (_path == '.'
+                                          ? '${_folders[i]['name']}'
+                                          : '$_path/${_folders[i]['name']}'),
+                                ),
+                        ),
+                      ],
+                      if (_cursor.isNotEmpty)
+                        TextButton(
+                          onPressed: _loading ? null : () => _load(more: true),
+                          child: const Text('加载更多文件夹'),
+                        ),
+                      if (!_loading && _error == null && _folders.isEmpty)
+                        Padding(
+                          padding: const EdgeInsets.all(16),
+                          child: Text(
+                            '没有子文件夹',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              color: colors.onSurfaceVariant,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 10),
+              Wrap(
+                alignment: WrapAlignment.end,
+                spacing: 8,
+                children: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(context),
+                    child: const Text('取消'),
+                  ),
+                  FilledButton(
+                    onPressed: !_loading && _error == null && _writable
+                        ? () => Navigator.pop(context, _path)
+                        : null,
+                    child: const Text('保存到这里'),
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }

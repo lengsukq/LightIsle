@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
 import '../../core/authenticated_media_image.dart';
+import '../../core/isle_style.dart';
 import '../../core/lightisle_api.dart';
 import 'media_models.dart';
 
@@ -58,16 +59,18 @@ class CinemaDetailHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
     final isMacOS =
         defaultTargetPlatform == TargetPlatform.macOS ||
-        Theme.of(context).platform == TargetPlatform.macOS;
+        theme.platform == TargetPlatform.macOS;
     final macTrafficLightInset = reserveMacTrafficLights && isMacOS
         ? 78.0
         : 0.0;
     final fgColor = darkOverlay ? Colors.white : null;
     final subColor = darkOverlay
         ? const Color(0xBFFFFFFF)
-        : Theme.of(context).colorScheme.onSurfaceVariant;
+        : theme.colorScheme.onSurfaceVariant;
     final buttonStyle = darkOverlay
         ? IconButton.styleFrom(
             foregroundColor: Colors.white,
@@ -78,26 +81,33 @@ class CinemaDetailHeader extends StatelessWidget {
         : null;
 
     return Padding(
-      padding: EdgeInsets.fromLTRB(20 + macTrafficLightInset, 14, 20, 10),
+      padding: EdgeInsets.fromLTRB(18 + macTrafficLightInset, 12, 16, 10),
       child: Row(
         children: [
           Hero(
             tag: 'cinema_poster_${film.id}',
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(8),
-              child: SizedBox(
-                width: 38,
-                height: 54,
-                child: AuthenticatedMediaImage(
-                  api: api,
-                  path: '/api/v2/cinema/${film.id}/poster',
-                  maxBytes: 2 * 1024 * 1024,
-                  fit: BoxFit.cover,
+            child: Container(
+              width: 36,
+              height: 52,
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(7),
+                border: Border.all(
+                  color: darkOverlay
+                      ? Colors.white24
+                      : IsleGlass.rimBorderColor(isDark),
+                  width: 1.0,
                 ),
+              ),
+              clipBehavior: Clip.antiAlias,
+              child: AuthenticatedMediaImage(
+                api: api,
+                path: '/api/v2/cinema/${film.id}/poster',
+                maxBytes: 2 * 1024 * 1024,
+                fit: BoxFit.cover,
               ),
             ),
           ),
-          const SizedBox(width: 14),
+          const SizedBox(width: 12),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -107,28 +117,31 @@ class CinemaDetailHeader extends StatelessWidget {
                   film.title,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.titleLarge?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: -0.3,
-                    color: fgColor,
-                    shadows: darkOverlay
-                        ? const [
-                            Shadow(
-                              color: Color(0x99000000),
-                              blurRadius: 8,
-                              offset: Offset(0, 1),
-                            ),
-                          ]
-                        : null,
-                  ),
+                  style:
+                      (darkOverlay
+                              ? theme.textTheme.titleLarge
+                              : theme.textTheme.titleMedium)
+                          ?.copyWith(
+                            fontWeight: FontWeight.w700,
+                            letterSpacing: -0.3,
+                            color: fgColor,
+                            shadows: darkOverlay
+                                ? const [
+                                    Shadow(
+                                      color: Color(0x99000000),
+                                      blurRadius: 8,
+                                      offset: Offset(0, 1),
+                                    ),
+                                  ]
+                                : null,
+                          ),
                 ),
-                const SizedBox(height: 3),
+                const SizedBox(height: 2),
                 Text(
                   _subtitleText,
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
-                  style: Theme.of(context).textTheme.bodySmall
-                      ?.copyWith(color: subColor),
+                  style: theme.textTheme.bodySmall?.copyWith(color: subColor),
                 ),
               ],
             ),
@@ -138,15 +151,17 @@ class CinemaDetailHeader extends StatelessWidget {
             const SizedBox(width: 4),
             darkOverlay
                 ? IconButton(
+                    visualDensity: VisualDensity.compact,
                     tooltip: '修改展示名称',
                     style: buttonStyle,
                     onPressed: canRename ? onRename : null,
-                    icon: const Icon(Icons.edit_outlined, size: 20),
+                    icon: const Icon(Icons.edit_outlined, size: 19),
                   )
                 : IconButton.filledTonal(
+                    visualDensity: VisualDensity.compact,
                     tooltip: '修改展示名称',
                     onPressed: canRename ? onRename : null,
-                    icon: const Icon(Icons.edit_outlined),
+                    icon: const Icon(Icons.edit_outlined, size: 18),
                   ),
           ],
           const SizedBox(width: 4),
@@ -155,6 +170,14 @@ class CinemaDetailHeader extends StatelessWidget {
             enabled: mediaActionsEnabled,
             iconColor: fgColor,
             style: buttonStyle,
+            shape: IsleShapes.menu(
+              side: BorderSide(
+                color: darkOverlay
+                    ? Colors.white24
+                    : IsleGlass.rimBorderColor(isDark),
+                width: 1.0,
+              ),
+            ),
             onSelected: onMediaAction,
             itemBuilder: (context) => [
               PopupMenuItem(

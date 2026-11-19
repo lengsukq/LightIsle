@@ -29,7 +29,6 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
 
   Future<void> _showAssetDetails(PhotoAsset asset) async {
     void jumpToScene(String label) {
-      // Close the detail modal AND the fullscreen viewer if present.
       Navigator.of(context).popUntil((route) => route.isFirst);
       if (!mounted) return;
       _scope.searchTimer?.cancel();
@@ -74,21 +73,57 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
       onSelectPerson: jumpToPerson,
     );
     final wide = MediaQuery.sizeOf(context).width >= 800;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     if (wide) {
+      final reduced = IsleMotion.reducedMotion(context);
       await showGeneralDialog<void>(
         context: context,
         barrierDismissible: true,
         barrierLabel: '关闭照片信息',
-        barrierColor: Colors.black45,
+        barrierColor: const Color(0x66141210),
+        transitionDuration: reduced ? Duration.zero : IsleMotion.modalEnter,
+        transitionBuilder: (dialogContext, animation, _, dialogChild) {
+          if (IsleMotion.reducedMotion(dialogContext)) {
+            return dialogChild;
+          }
+          return AnimatedBuilder(
+            animation: animation,
+            child: dialogChild,
+            builder: (context, drawerChild) {
+              final isReverse = animation.status == AnimationStatus.reverse;
+              final t = animation.value.clamp(0.0, 1.0);
+              final progress = isReverse
+                  ? IsleMotion.exitCurve.transform(t)
+                  : IsleMotion.gentleSpring.transform(t);
+              final dx = (1.0 - progress) * (isReverse ? 28.0 : 48.0);
+              return Opacity(
+                opacity: t,
+                child: Transform.translate(
+                  offset: Offset(dx, 0),
+                  child: drawerChild,
+                ),
+              );
+            },
+          );
+        },
         pageBuilder: (dialogContext, _, _) => Align(
           alignment: Alignment.centerRight,
           child: SafeArea(
-            child: Material(
-              color: Theme.of(dialogContext).colorScheme.surface,
-              elevation: 12,
-              child: SizedBox(
-                width: 400,
-                height: double.infinity,
+            child: Container(
+              width: 392,
+              height: double.infinity,
+              decoration: BoxDecoration(
+                color: Theme.of(dialogContext).colorScheme.surface,
+                border: Border(
+                  left: BorderSide(
+                    color: IsleGlass.rimBorderColor(isDark),
+                    width: 1.0,
+                  ),
+                ),
+                boxShadow: IsleShadows.floating(isDark),
+              ),
+              child: Material(
+                type: MaterialType.transparency,
                 child: details(),
               ),
             ),
@@ -101,6 +136,9 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
         isScrollControlled: true,
         useSafeArea: true,
         showDragHandle: true,
+        shape: IsleShapes.sheet(
+          side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
+        ),
         builder: (_) =>
             FractionallySizedBox(heightFactor: 0.78, child: details()),
       );
@@ -113,28 +151,15 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
         final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
         final sideBySide = constraints.maxWidth >= 600 && textScale < 1.6;
         final inlineActions = constraints.maxWidth >= 570 && textScale < 1.4;
-        final inset = constraints.maxWidth >= 600 ? 28.0 : 16.0;
+        final inset = constraints.maxWidth >= 600 ? 24.0 : 14.0;
         final theme = Theme.of(context);
-        final scheme = theme.colorScheme;
 
-        final heading = Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Text(
-              '我的相册',
-              style: theme.textTheme.titleLarge?.copyWith(
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            const SizedBox(height: 3),
-            Text(
-              '按主题整理照片，也可以与家人分享',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: scheme.onSurfaceVariant,
-              ),
-            ),
-          ],
+        final heading = Text(
+          '我的相册',
+          style: theme.textTheme.titleLarge?.copyWith(
+            fontWeight: FontWeight.w800,
+            letterSpacing: -0.35,
+          ),
         );
         final actions = Wrap(
           spacing: 8,
@@ -145,10 +170,10 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
                 visualDensity: VisualDensity.compact,
                 padding: const EdgeInsets.symmetric(
                   horizontal: 12,
-                  vertical: 9,
+                  vertical: 7,
                 ),
               ),
-              icon: const Icon(Icons.add_rounded, size: 18),
+              icon: const Icon(Icons.add_rounded, size: 17),
               label: const Text('文件夹相册'),
               onPressed: _catalog.busy
                   ? null
@@ -175,10 +200,12 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
 
         return Center(
           child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 1000),
+            constraints: const BoxConstraints(
+              maxWidth: IsleLayout.workbenchMaxWidth,
+            ),
             child: ListView(
               key: const ValueKey('photoAlbumOverviewList'),
-              padding: EdgeInsets.fromLTRB(inset, 16, inset, 36),
+              padding: EdgeInsets.fromLTRB(inset, 16, inset, 28),
               children: [
                 if (inlineActions)
                   Row(
@@ -196,22 +223,22 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
                   )
                 else ...[
                   heading,
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 10),
                   actions,
                 ],
                 if (_feed.actionIsError && _feed.actionMessage != null) ...[
-                  const SizedBox(height: 12),
+                  const SizedBox(height: 10),
                   MediaStatusBanner(
                     message: _feed.actionMessage!,
                     isError: true,
                   ),
                 ],
-                const SizedBox(height: 22),
+                const SizedBox(height: 14),
                 _folderAlbumOverviewSection(pageContext, refreshPage),
                 if (_catalog.privateAlbums.isNotEmpty ||
                     _catalog.privateFailure != null ||
                     _catalog.sharedAlbums.isNotEmpty) ...[
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 12),
                   if (sideBySide &&
                       (_catalog.privateAlbums.isNotEmpty ||
                           _catalog.privateFailure != null) &&
@@ -226,7 +253,7 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
                             private: true,
                           ),
                         ),
-                        const SizedBox(width: 16),
+                        const SizedBox(width: 12),
                         Expanded(
                           child: _albumOverviewSection(
                             pageContext,
@@ -247,7 +274,7 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
                     if ((_catalog.privateAlbums.isNotEmpty ||
                             _catalog.privateFailure != null) &&
                         _catalog.sharedAlbums.isNotEmpty)
-                      const SizedBox(height: 16),
+                      const SizedBox(height: 12),
                     if (_catalog.sharedAlbums.isNotEmpty)
                       _albumOverviewSection(
                         pageContext,
@@ -256,7 +283,7 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
                       ),
                   ],
                 ],
-                const SizedBox(height: 16),
+                const SizedBox(height: 12),
                 _collectionsQuickGrid(pageContext),
               ],
             ),
@@ -270,15 +297,16 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
     BuildContext pageContext,
     StateSetter refreshPage,
   ) {
-    final scheme = Theme.of(pageContext).colorScheme;
-    return Container(
+    final isDark = Theme.of(pageContext).brightness == Brightness.dark;
+    final palette = IslePalette(isDark);
+    final borderColor = IsleGlass.rimBorderColor(isDark);
+    final rose = palette['brandRose'];
+    final amber = palette['brandAmber'];
+    return IsleSurface(
       key: const ValueKey('folderAlbumSection'),
+      tint: rose,
+      margin: EdgeInsets.zero,
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerLow.withValues(alpha: .55),
-        border: Border.all(color: scheme.outlineVariant.withValues(alpha: .5)),
-        borderRadius: BorderRadius.circular(16),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -287,12 +315,14 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
               Expanded(
                 child: _albumSectionHeading(
                   pageContext,
-                  '照片目录中的相册',
+                  '文件夹相册',
                   _catalog.folderAlbums.length,
-                  '对应个人照片目录下的真实文件夹，支持家庭受控软链接共享',
                 ),
               ),
               TextButton.icon(
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                ),
                 onPressed: () async {
                   final root = widget.api.selectedRoot?.identity;
                   final album = await Navigator.of(pageContext)
@@ -313,36 +343,39 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
                     }
                   }
                 },
-                icon: const Icon(Icons.folder_open_rounded, size: 17),
+                icon: const Icon(Icons.folder_open_rounded, size: 16),
                 label: const Text('管理与共享'),
               ),
             ],
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
           if (_catalog.folderAlbums.isEmpty)
             _emptyAlbumSection(
               pageContext,
               Icons.folder_special_outlined,
-              '照片目录中还没有文件夹相册',
-              '点击右上角“文件夹相册”或“管理与共享”直接创建并分享给家人',
+              '暂无文件夹相册',
             )
           else
             Wrap(
-              spacing: 12,
-              runSpacing: 12,
+              spacing: 8,
+              runSpacing: 8,
               children: [
                 for (final item in _catalog.folderAlbums)
                   ActionChip(
+                    visualDensity: VisualDensity.compact,
+                    side: BorderSide(color: borderColor, width: 1.0),
                     avatar: Icon(
                       item['shared'] == true
                           ? Icons.folder_shared_outlined
-                          : Icons.folder_outlined,
-                      size: 18,
+                          : Icons.folder_rounded,
+                      size: 16,
+                      color: item['shared'] == true ? rose : amber,
                     ),
                     label: Text(
                       item['shared'] == true
                           ? '${item['name']} (@${item['ownerUsername']})'
                           : '${item['name']}',
+                      style: const TextStyle(fontSize: 12.5),
                     ),
                     onPressed: () {
                       final path = item['path']?.toString() ?? '';
@@ -362,63 +395,137 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
   }
 
   Widget _collectionsQuickGrid(BuildContext pageContext) {
-    final scheme = Theme.of(pageContext).colorScheme;
+    final theme = Theme.of(pageContext);
+    final isDark = theme.brightness == Brightness.dark;
+    final palette = IslePalette(isDark);
+    final borderColor = IsleGlass.rimBorderColor(isDark);
     final items =
-        <({String label, String subtitle, IconData icon, String route})>[
+        <({
+          String label,
+          IconData icon,
+          Color accent,
+          String route,
+        })>[
           (
             label: '我的收藏',
-            subtitle: '仅自己可见的星标照片',
             icon: Icons.star_rounded,
+            accent: palette['brandAmber'],
             route: 'collection:personalFavorites',
           ),
           (
             label: '共享收藏',
-            subtitle: '家庭共同喜爱的精选',
             icon: Icons.favorite_rounded,
+            accent: palette['brandRose'],
             route: 'collection:sharedFavorites',
           ),
           (
             label: '那年今天',
-            subtitle: '重温往年今日的回忆',
             icon: Icons.auto_awesome_rounded,
+            accent: palette['brandViolet'],
             route: 'collection:onThisDay',
           ),
           (
             label: '足迹地图',
-            subtitle: '按地理位置回溯照片',
             icon: Icons.map_rounded,
+            accent: palette['brandSage'],
             route: 'collection:map',
           ),
         ];
-    return Container(
+    return IsleSurface(
       key: const ValueKey('collectionsQuickGrid'),
+      margin: EdgeInsets.zero,
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerLow.withValues(alpha: .55),
-        border: Border.all(color: scheme.outlineVariant.withValues(alpha: .5)),
-        borderRadius: BorderRadius.circular(16),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Text(
-            '智能合集与探索',
-            style: Theme.of(pageContext).textTheme.titleMedium
-                ?.copyWith(fontWeight: FontWeight.w700),
+            '智能合集',
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontSize: 14.5,
+              fontWeight: FontWeight.w800,
+            ),
           ),
           const SizedBox(height: 12),
-          Wrap(
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              for (final item in items)
-                ActionChip(
-                  avatar: Icon(item.icon, size: 18),
-                  label: Text(item.label),
-                  tooltip: item.subtitle,
-                  onPressed: () => Navigator.pop(pageContext, item.route),
-                ),
-            ],
+          LayoutBuilder(
+            builder: (context, constraints) {
+              final textScale =
+                  MediaQuery.textScalerOf(context).scale(14) / 14;
+              if (constraints.maxWidth < 460 || textScale > 1.5) {
+                return Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: [
+                    for (final item in items)
+                      ActionChip(
+                        visualDensity: VisualDensity.compact,
+                        side: BorderSide(color: borderColor, width: 1.0),
+                        avatar: Icon(item.icon, size: 16, color: item.accent),
+                        label: Text(
+                          item.label,
+                          style: const TextStyle(fontSize: 12.5),
+                        ),
+                        onPressed: () =>
+                            Navigator.pop(pageContext, item.route),
+                      ),
+                  ],
+                );
+              }
+              final cols = constraints.maxWidth >= 820 ? 4 : 2;
+              final w = (constraints.maxWidth - (cols - 1) * 10) / cols;
+              return Wrap(
+                spacing: 10,
+                runSpacing: 10,
+                children: [
+                  for (final item in items)
+                    SizedBox(
+                      width: w,
+                      child: Material(
+                        color: Colors.transparent,
+                        child: InkWell(
+                          borderRadius: IsleRadius.brMd,
+                          onTap: () => Navigator.pop(pageContext, item.route),
+                          child: Ink(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 11,
+                            ),
+                            decoration: BoxDecoration(
+                              borderRadius: IsleRadius.brMd,
+                              color: palette['cardItemBottom'],
+                              border: Border.all(
+                                color: borderColor,
+                                width: 1.0,
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                IsleSquircleBadge(
+                                  icon: item.icon,
+                                  color: item.accent,
+                                  size: 30,
+                                  iconSize: 15.5,
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Text(
+                                    item.label,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: theme.textTheme.titleSmall?.copyWith(
+                                      fontSize: 13.5,
+                                      fontWeight: FontWeight.w700,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                ],
+              );
+            },
           ),
         ],
       ),
@@ -430,17 +537,12 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
     StateSetter refreshPage, {
     required bool private,
   }) {
-    final scheme = Theme.of(pageContext).colorScheme;
     final albums = private ? _catalog.privateAlbums : _catalog.sharedAlbums;
     final privateFailure = _catalog.privateFailure;
-    return Container(
+    return IsleSurface(
       key: ValueKey(private ? 'privateAlbumSection' : 'sharedAlbumSection'),
+      margin: EdgeInsets.zero,
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerLow.withValues(alpha: .55),
-        border: Border.all(color: scheme.outlineVariant.withValues(alpha: .5)),
-        borderRadius: BorderRadius.circular(16),
-      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -448,9 +550,8 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
             pageContext,
             private ? '旧版私人相册' : '旧版共享相册',
             albums.length,
-            private ? '仅自己可见' : '家庭成员共享',
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 10),
           if (private && privateFailure != null)
             MediaStatusBanner(
               message: '私人相册暂时无法读取：${mediaErrorLabel(privateFailure)}',
@@ -471,12 +572,7 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
               private
                   ? Icons.lock_outline_rounded
                   : Icons.people_outline_rounded,
-              private ? '没有旧版私人相册' : '没有旧版共享相册',
-              private
-                  ? '新建相册使用真实文件夹'
-                  : widget.isAdmin
-                  ? '现有共享相册会继续保留'
-                  : '家庭共享相册将显示在这里',
+              private ? '暂无私人相册' : '暂无共享相册',
             )
           else
             _albumCards(pageContext, albums, private: private),
@@ -489,34 +585,19 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
     BuildContext context,
     String title,
     int count,
-    String description,
-  ) => Column(
-    crossAxisAlignment: CrossAxisAlignment.start,
+  ) => Row(
     children: [
-      Row(
-        children: [
-          Flexible(
-            child: Text(
-              title,
-              style: Theme.of(context).textTheme.titleMedium
-                  ?.copyWith(fontWeight: FontWeight.w700),
-            ),
+      Flexible(
+        child: Text(
+          title,
+          style: Theme.of(context).textTheme.titleSmall?.copyWith(
+            fontSize: 14.5,
+            fontWeight: FontWeight.w800,
           ),
-          const SizedBox(width: 8),
-          Text(
-            '$count',
-            style: Theme.of(context).textTheme.labelMedium?.copyWith(
-              color: Theme.of(context).colorScheme.onSurfaceVariant,
-            ),
-          ),
-        ],
+        ),
       ),
-      const SizedBox(height: 3),
-      Text(
-        description,
-        style: Theme.of(context).textTheme.bodySmall
-            ?.copyWith(color: Theme.of(context).colorScheme.onSurfaceVariant),
-      ),
+      const SizedBox(width: 6),
+      IsleBadgePill(label: '$count'),
     ],
   );
 
@@ -524,25 +605,23 @@ extension _PhotosPageAlbumOverview on _PhotosPageState {
     BuildContext context,
     IconData icon,
     String title,
-    String subtitle,
   ) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 8),
+    padding: const EdgeInsets.symmetric(vertical: 6),
     child: Row(
       children: [
         Icon(
           icon,
-          size: 20,
+          size: 17,
           color: Theme.of(context).colorScheme.onSurfaceVariant,
         ),
-        const SizedBox(width: 10),
+        const SizedBox(width: 8),
         Expanded(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(title, style: Theme.of(context).textTheme.titleSmall),
-              const SizedBox(height: 2),
-              Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
-            ],
+          child: Text(
+            title,
+            style: Theme.of(context).textTheme.bodySmall?.copyWith(
+              fontSize: 12.5,
+              color: Theme.of(context).colorScheme.onSurfaceVariant,
+            ),
           ),
         ),
       ],

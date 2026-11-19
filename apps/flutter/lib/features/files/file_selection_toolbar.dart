@@ -42,43 +42,72 @@ class FileSelectionToolbar extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final anySelected = selectedCount > 0;
+    final compactOutlined = OutlinedButton.styleFrom(
+      visualDensity: VisualDensity.compact,
+      minimumSize: const Size(0, 32),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+    );
+    final compactText = TextButton.styleFrom(
+      visualDensity: VisualDensity.compact,
+      minimumSize: const Size(0, 32),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      textStyle: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
+    );
+
     return IsleSelectionBar(
-      padding: EdgeInsets.fromLTRB(compact ? 10 : 20, 0, compact ? 10 : 20, 12),
+      padding: EdgeInsets.fromLTRB(compact ? 8 : 16, 0, compact ? 8 : 16, 8),
       label: '已选 $selectedCount 项 · 每次最多 50 项',
       actions: [
         OutlinedButton.icon(
+          style: compactOutlined,
           onPressed: busy || !hasLoadedEntries ? null : onToggleAll,
-          icon: const Icon(Icons.select_all_rounded, size: 16),
+          icon: const Icon(Icons.select_all_rounded, size: 15),
           label: Text(allLoadedSelected ? '取消全选' : '全选当前页'),
         ),
         OutlinedButton.icon(
+          style: compactOutlined,
           onPressed: busy || !canSaveFiles ? null : onSave,
-          icon: const Icon(Icons.download_outlined, size: 16),
+          icon: const Icon(Icons.download_outlined, size: 15),
           label: const Text('保存原文件'),
         ),
         OutlinedButton.icon(
+          style: compactOutlined,
           onPressed: busy || !anySelected ? null : onCopy,
-          icon: const Icon(Icons.copy_outlined, size: 16),
+          icon: const Icon(Icons.copy_outlined, size: 15),
           label: const Text('复制到'),
         ),
         OutlinedButton.icon(
+          style: compactOutlined,
           onPressed: busy || !anySelected || !canWriteSelection ? null : onMove,
-          icon: const Icon(Icons.drive_file_move_outline, size: 16),
+          icon: const Icon(Icons.drive_file_move_outline, size: 15),
           label: const Text('移动到'),
         ),
         TextButton.icon(
+          style: compactText,
           onPressed: busy ? null : onClear,
-          icon: const Icon(Icons.clear_all_rounded, size: 16),
+          icon: const Icon(Icons.clear_all_rounded, size: 15),
           label: const Text('清除选择'),
         ),
-        TextButton(onPressed: busy ? null : onDone, child: const Text('完成')),
+        TextButton(
+          style: compactText,
+          onPressed: busy ? null : onDone,
+          child: const Text('完成'),
+        ),
         FilledButton.icon(
           onPressed: busy || !anySelected || !canWriteSelection
               ? null
               : onTrash,
-          icon: const Icon(Icons.delete_outline_rounded, size: 16),
+          icon: const Icon(Icons.delete_outline_rounded, size: 15),
           label: const Text('批量移到回收站'),
           style: FilledButton.styleFrom(
+            visualDensity: VisualDensity.compact,
+            minimumSize: const Size(0, 32),
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 4),
+            textStyle: const TextStyle(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w600,
+            ),
             backgroundColor: colors.error,
             foregroundColor: colors.onError,
           ),

@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../core/isle_action_menu.dart';
+import '../../core/isle_gallery_layout.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
@@ -117,14 +119,40 @@ class _DesktopFolderBackupPageState extends State<DesktopFolderBackupPage> {
       await _refreshFailures();
     } catch (error) {
       if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text(userFacingError(error))));
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text(userFacingError(error))));
       }
     }
   }
 
+  Future<void> _showTaskFailuresDialog(
+    BuildContext context,
+    String label,
+    List<DesktopBackupFailure> failures,
+    int omittedFailures,
+  ) {
+    final total = failures.length + omittedFailures;
+    return showIsleHelpDialog(
+      context,
+      title: '$label · 失败明细（$total 项）',
+      icon: Icons.error_outline_rounded,
+      accentColor: Theme.of(context).colorScheme.error,
+      items: [
+        for (final f in failures.take(20))
+          IsleHelpItem(title: f.relativePath, body: f.reason),
+        if (failures.length > 20 || omittedFailures > 0)
+          IsleHelpItem(
+            title: '其余记录已省略',
+            body:
+                '另有 ${failures.length - (failures.length > 20 ? 20 : failures.length) + omittedFailures} 项待重试记录保存在本机数据库。',
+          ),
+      ],
+    );
+  }
+
   String _formatTimestamp(int ms) {
-    if (ms <= 0) return '尚未完成过完整同步';
+    if (ms <= 0) return '尚未完成同步';
     final dt = DateTime.fromMillisecondsSinceEpoch(ms).toLocal();
     String two(int v) => v.toString().padLeft(2, '0');
     return '${dt.year}-${two(dt.month)}-${two(dt.day)} ${two(dt.hour)}:${two(dt.minute)}';
@@ -133,13 +161,19 @@ class _DesktopFolderBackupPageState extends State<DesktopFolderBackupPage> {
   Widget _buildOverviewCard(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    final palette = IslePalette.of(context);
+    final accent = palette['brandAmber'];
+    final sage = palette['brandSage'];
     final tasks = _controller.tasks;
     final running = _controller.running;
     final progress = _controller.activeProgress;
+    final verifiedCount = tasks.where((t) => t.lastCompleteAtMs > 0).length;
 
     return IsleSurface(
-      radius: IsleRadius.card,
-      padding: const EdgeInsets.all(16),
+      margin: EdgeInsets.zero,
+      tint: accent,
+      radius: IsleRadius.hero,
+      padding: const EdgeInsets.all(18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -154,7 +188,7 @@ class _DesktopFolderBackupPageState extends State<DesktopFolderBackupPage> {
                 children: [
                   IsleSquircleBadge(
                     icon: Icons.drive_folder_upload_rounded,
-                    color: colors.primary,
+                    color: accent,
                     size: 40,
                     iconSize: 20,
                   ),
@@ -166,18 +200,21 @@ class _DesktopFolderBackupPageState extends State<DesktopFolderBackupPage> {
                         Text(
                           '本机文件夹单向增量备份',
                           style: theme.textTheme.titleMedium?.copyWith(
-                            fontWeight: FontWeight.w700,
+                            fontSize: 17,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: -0.3,
                           ),
                         ),
-                        const SizedBox(height: 2),
-                        Text(
-                          tasks.isEmpty
-                              ? '尚未添加文件夹 · 支持断网续传与 SHA-256 落盘核验'
-                              : '已配置 ${tasks.length} 个文件夹任务 · 只读扫描本地源文件',
-                          style: theme.textTheme.bodySmall?.copyWith(
-                            color: colors.onSurfaceVariant,
+                        if (tasks.isNotEmpty) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            '${tasks.length} 个任务 · 已核验 $verifiedCount 个',
+                            style: theme.textTheme.bodySmall?.copyWith(
+                              fontSize: 12,
+                              color: colors.onSurfaceVariant,
+                            ),
                           ),
-                        ),
+                        ],
                       ],
                     ),
                   ),
@@ -185,31 +222,40 @@ class _DesktopFolderBackupPageState extends State<DesktopFolderBackupPage> {
               ),
               Wrap(
                 spacing: 8,
-                runSpacing: 8,
+                runSpacing: 6,
                 children: [
                   FilledButton.tonalIcon(
                     key: const ValueKey('addDesktopBackupTaskButton'),
+                    style: FilledButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                    ),
                     onPressed: running ? null : () => _addOrEditTask(),
                     icon: const Icon(
                       Icons.create_new_folder_outlined,
-                      size: 18,
+                      size: 17,
                     ),
                     label: const Text('添加文件夹'),
                   ),
                   if (running)
                     FilledButton.icon(
                       key: const ValueKey('pauseDesktopBackupButton'),
+                      style: FilledButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                      ),
                       onPressed: _controller.requestCancel,
-                      icon: const Icon(Icons.pause_circle_outline, size: 18),
+                      icon: const Icon(Icons.pause_circle_outline, size: 17),
                       label: const Text('暂停同步'),
                     )
                   else if (tasks.isNotEmpty)
                     FilledButton.icon(
                       key: const ValueKey('runAllDesktopBackupButton'),
+                      style: FilledButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                      ),
                       onPressed: tasks.any((t) => t.enabled)
                           ? () => unawaited(_controller.runAllEnabled())
                           : null,
-                      icon: const Icon(Icons.sync_rounded, size: 18),
+                      icon: const Icon(Icons.sync_rounded, size: 17),
                       label: const Text('全部立即备份'),
                     ),
                 ],
@@ -224,9 +270,9 @@ class _DesktopFolderBackupPageState extends State<DesktopFolderBackupPage> {
                   IsleDonutGauge(
                     fraction: (progress.completedFiles / progress.totalFiles)
                         .clamp(0.0, 1.0),
-                    color: colors.primary,
+                    color: sage,
                     size: 38,
-                    strokeWidth: 4,
+                    strokeWidth: 3.5,
                     centerText:
                         '${((progress.completedFiles / progress.totalFiles).clamp(0.0, 1.0) * 100).round()}%',
                     centerStyle: theme.textTheme.labelSmall?.copyWith(
@@ -237,10 +283,10 @@ class _DesktopFolderBackupPageState extends State<DesktopFolderBackupPage> {
                     semanticsLabel:
                         '桌面备份进度 ${progress.completedFiles}/${progress.totalFiles}',
                   ),
-                  const SizedBox(width: 12),
+                  const SizedBox(width: 10),
                   Expanded(
                     child: IsleSegmentedBar(
-                      height: 8,
+                      height: 7,
                       showPercentInLegend: true,
                       legendGap: 5,
                       legendSpacing: 10,
@@ -249,7 +295,7 @@ class _DesktopFolderBackupPageState extends State<DesktopFolderBackupPage> {
                         IsleChartSegment(
                           label: '已同步',
                           value: progress.completedFiles.toDouble(),
-                          color: colors.primary,
+                          color: sage,
                           detail: '${progress.completedFiles} 项',
                         ),
                         IsleChartSegment(
@@ -257,7 +303,7 @@ class _DesktopFolderBackupPageState extends State<DesktopFolderBackupPage> {
                           value: (progress.totalFiles - progress.completedFiles)
                               .clamp(0, progress.totalFiles)
                               .toDouble(),
-                          color: colors.surfaceContainerHighest,
+                          color: palette['cardItemBottom'],
                           detail:
                               '${(progress.totalFiles - progress.completedFiles).clamp(0, progress.totalFiles)} 项',
                         ),
@@ -267,7 +313,7 @@ class _DesktopFolderBackupPageState extends State<DesktopFolderBackupPage> {
                 ],
               ),
             ] else
-              const LinearProgressIndicator(),
+              const LinearProgressIndicator(minHeight: 3),
             const SizedBox(height: 6),
             Text(
               progress.currentFile.isEmpty
@@ -276,6 +322,7 @@ class _DesktopFolderBackupPageState extends State<DesktopFolderBackupPage> {
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
               style: theme.textTheme.bodySmall?.copyWith(
+                fontSize: 12,
                 color: colors.primary,
                 fontWeight: FontWeight.w600,
               ),
@@ -288,7 +335,7 @@ class _DesktopFolderBackupPageState extends State<DesktopFolderBackupPage> {
             isExpanded: true,
             decoration: const InputDecoration(
               isDense: true,
-              labelText: '自动检查频率（仅客户端打开期间运行，无后台驻留进程）',
+              labelText: '自动检查频率',
             ),
             items: [
               for (final option in DesktopBackupSchedule.values)
@@ -312,38 +359,32 @@ class _DesktopFolderBackupPageState extends State<DesktopFolderBackupPage> {
 
   Widget _buildEmptyState(BuildContext context) {
     final theme = Theme.of(context);
-    final colors = theme.colorScheme;
+    final palette = IslePalette.of(context);
+    final accent = palette['brandAmber'];
     return IsleSurface(
+      margin: EdgeInsets.zero,
       radius: IsleRadius.card,
-      padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 28),
       child: Column(
         children: [
-          Icon(
-            Icons.folder_copy_outlined,
-            size: 42,
-            color: colors.primary.withValues(alpha: 0.8),
+          IsleSquircleBadge(
+            icon: Icons.folder_copy_outlined,
+            color: accent,
+            size: 44,
+            iconSize: 22,
           ),
           const SizedBox(height: 12),
           Text(
-            '将常用桌面文件夹安全增量备份到 NAS',
-            style: theme.textTheme.titleMedium?.copyWith(
-              fontWeight: FontWeight.w700,
+            '还没有本机备份任务',
+            style: theme.textTheme.titleSmall?.copyWith(
+              fontSize: 15,
+              fontWeight: FontWeight.w800,
             ),
           ),
-          const SizedBox(height: 6),
-          Text(
-            '单向增量备份只读取本机源文件，绝不修改或删除本机目录，也不会自动删除 NAS 上的历史文件。\n'
-            '在 macOS 上会自动保存只读安全书签，重启客户端后无需重复授权。',
-            textAlign: TextAlign.center,
-            style: theme.textTheme.bodySmall?.copyWith(
-              color: colors.onSurfaceVariant,
-              height: 1.45,
-            ),
-          ),
-          const SizedBox(height: 16),
+          const SizedBox(height: 14),
           FilledButton.icon(
             onPressed: () => _addOrEditTask(),
-            icon: const Icon(Icons.add_rounded),
+            icon: const Icon(Icons.add_rounded, size: 18),
             label: const Text('添加第一个备份文件夹'),
           ),
         ],
@@ -354,209 +395,269 @@ class _DesktopFolderBackupPageState extends State<DesktopFolderBackupPage> {
   Widget _buildTaskCard(BuildContext context, DesktopBackupTask task) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final palette = IslePalette(isDark);
+    final borderColor = IsleGlass.rimBorderColor(isDark);
     final running = _controller.running;
     final isCurrent = _controller.activeProgress?.taskId == task.id;
     final (failures, omittedFailures) =
         _failuresByTask[task.id] ?? (const <DesktopBackupFailure>[], 0);
     final totalFailures = failures.length + omittedFailures;
 
-    return Padding(
-      padding: const EdgeInsets.only(top: 10),
-      child: IsleSurface(
-        key: ValueKey('desktopBackupTaskCard:${task.id}'),
-        radius: IsleRadius.card,
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Wrap(
-                    crossAxisAlignment: WrapCrossAlignment.center,
-                    spacing: 8,
-                    runSpacing: 4,
-                    children: [
-                      Text(
-                        task.label,
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w700,
-                        ),
+    return IsleSurface(
+      key: ValueKey('desktopBackupTaskCard:${task.id}'),
+      margin: EdgeInsets.zero,
+      radius: IsleRadius.card,
+      padding: const EdgeInsets.all(15),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Wrap(
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  spacing: 8,
+                  runSpacing: 4,
+                  children: [
+                    Text(
+                      task.label,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontSize: 14.5,
+                        fontWeight: FontWeight.w700,
                       ),
+                    ),
+                    IsleStatusBadge(
+                      label: task.conflictPolicy.shortLabel,
+                      color: colors.primary,
+                    ),
+                    if (isCurrent)
                       IsleStatusBadge(
-                        label: task.conflictPolicy.shortLabel,
-                        color: colors.primary,
+                        label: '同步中',
+                        color: palette['brandBlue'],
+                      )
+                    else if (totalFailures > 0 || task.lastError != null)
+                      IsleStatusBadge(
+                        label: totalFailures > 0
+                            ? '待处理 $totalFailures'
+                            : '需检查',
+                        color: palette['brandAmber'],
+                      )
+                    else if (task.lastCompleteAtMs > 0)
+                      IsleStatusBadge(
+                        label: '已核验',
+                        color: palette['brandSage'],
                       ),
-                      if (isCurrent)
-                        const IsleStatusBadge(
-                          label: '同步中',
-                          color: Color(0xFF0EA5E9),
-                        )
-                      else if (totalFailures > 0 || task.lastError != null)
-                        IsleStatusBadge(
-                          label: totalFailures > 0
-                              ? '待处理 $totalFailures'
-                              : '需检查',
-                          color: const Color(0xFFF59E0B),
-                        )
-                      else if (task.lastCompleteAtMs > 0)
-                        const IsleStatusBadge(
-                          label: '已核验',
-                          color: Color(0xFF10B981),
+                    if (failures.isNotEmpty)
+                      ActionChip(
+                        visualDensity: VisualDensity.compact,
+                        avatar: Icon(
+                          Icons.help_outline_rounded,
+                          size: 14,
+                          color: colors.error,
                         ),
-                    ],
-                  ),
-                ),
-                Switch.adaptive(
-                  value: task.enabled,
-                  onChanged: running
-                      ? null
-                      : (v) => unawaited(
-                          _controller.upsertTask(task.copyWith(enabled: v)),
+                        label: Text(
+                          '失败明细 ($totalFailures)',
+                          style: TextStyle(fontSize: 11.5, color: colors.error),
                         ),
+                        onPressed: () => _showTaskFailuresDialog(
+                          context,
+                          task.label,
+                          failures,
+                          omittedFailures,
+                        ),
+                      ),
+                  ],
                 ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            SelectableText(
+              ),
+              Switch.adaptive(
+                value: task.enabled,
+                onChanged: running
+                    ? null
+                    : (v) => unawaited(
+                        _controller.upsertTask(task.copyWith(enabled: v)),
+                      ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: IsleDecorations.recessedWell(context, radius: 10),
+            child: SelectableText(
               '本机：${task.localPath}\n'
-              'NAS：${task.rootName} (代数 ${task.rootGeneration}) → /${task.remoteBasePath == '.' ? '' : task.remoteBasePath}',
+              'NAS：${task.rootName} → /${task.remoteBasePath == '.' ? '' : task.remoteBasePath}',
               style: theme.textTheme.bodySmall?.copyWith(
+                fontSize: 12,
                 color: colors.onSurfaceVariant,
-                height: 1.45,
+                height: 1.4,
               ),
             ),
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '最近同步：${_formatTimestamp(task.lastCompleteAtMs)}'
+            '${task.lastSummary != null ? ' · ${task.lastSummary}' : ''}',
+            style: theme.textTheme.bodySmall?.copyWith(
+              fontSize: 12,
+              color: colors.onSurfaceVariant,
+            ),
+          ),
+          if (task.lastError != null) ...[
             const SizedBox(height: 6),
             Text(
-              '最近完整核验：${_formatTimestamp(task.lastCompleteAtMs)}'
-              '${task.lastSummary != null ? ' · ${task.lastSummary}' : ''}',
+              task.lastError!,
               style: theme.textTheme.bodySmall?.copyWith(
-                color: colors.onSurfaceVariant,
+                fontSize: 12.5,
+                color: colors.error,
+                fontWeight: FontWeight.w600,
               ),
             ),
-            if (task.lastError != null) ...[
-              const SizedBox(height: 8),
-              Text(
-                task.lastError!,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: colors.error,
-                  fontWeight: FontWeight.w600,
+          ],
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              FilledButton.tonalIcon(
+                key: ValueKey('runDesktopBackupTask:${task.id}'),
+                style: FilledButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
                 ),
+                onPressed: running
+                    ? null
+                    : () => unawaited(
+                        _controller
+                            .runTask(task.id)
+                            .then((_) => _refreshFailures()),
+                      ),
+                icon: const Icon(Icons.play_arrow_rounded, size: 17),
+                label: const Text('立即备份'),
               ),
-            ],
-            if (failures.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              ExpansionTile(
-                tilePadding: EdgeInsets.zero,
-                childrenPadding: const EdgeInsets.only(bottom: 8),
-                title: Text(
-                  '失败文件明细（共 $totalFailures 项）',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: colors.error,
-                    fontWeight: FontWeight.w600,
+              if (totalFailures > 0) ...[
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  key: ValueKey('retryDesktopBackupFailures:${task.id}'),
+                  style: OutlinedButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
                   ),
-                ),
-                children: [
-                  for (final f in failures.take(12))
-                    Padding(
-                      padding: const EdgeInsets.symmetric(vertical: 2),
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          '• ${f.relativePath}：${f.reason}',
-                          style: theme.textTheme.bodySmall,
-                        ),
-                      ),
-                    ),
-                  if (failures.length > 12 || omittedFailures > 0)
-                    Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        '其余 ${failures.length - (failures.length > 12 ? 12 : failures.length) + omittedFailures} 项已省略显示',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: colors.onSurfaceVariant,
-                        ),
-                      ),
-                    ),
-                ],
-              ),
-            ],
-            const SizedBox(height: 10),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [
-                FilledButton.tonalIcon(
-                  key: ValueKey('runDesktopBackupTask:${task.id}'),
                   onPressed: running
                       ? null
                       : () => unawaited(
                           _controller
-                              .runTask(task.id)
+                              .runTask(task.id, retryFailuresOnly: true)
                               .then((_) => _refreshFailures()),
                         ),
-                  icon: const Icon(Icons.play_arrow_rounded, size: 18),
-                  label: const Text('立即备份'),
-                ),
-                if (totalFailures > 0)
-                  OutlinedButton.icon(
-                    key: ValueKey('retryDesktopBackupFailures:${task.id}'),
-                    onPressed: running
-                        ? null
-                        : () => unawaited(
-                            _controller
-                                .runTask(task.id, retryFailuresOnly: true)
-                                .then((_) => _refreshFailures()),
-                          ),
-                    icon: const Icon(Icons.replay_rounded, size: 17),
-                    label: const Text('仅重试失败项'),
-                  ),
-                OutlinedButton.icon(
-                  onPressed: running ? null : () => _addOrEditTask(task),
-                  icon: const Icon(Icons.edit_outlined, size: 17),
-                  label: const Text('编辑'),
-                ),
-                TextButton.icon(
-                  onPressed: running ? null : () => _confirmDeleteTask(task),
-                  icon: Icon(
-                    Icons.delete_outline_rounded,
-                    size: 17,
-                    color: colors.error,
-                  ),
-                  label: Text('移除', style: TextStyle(color: colors.error)),
+                  icon: const Icon(Icons.replay_rounded, size: 16),
+                  label: const Text('仅重试失败项'),
                 ),
               ],
-            ),
-          ],
-        ),
+              const Spacer(),
+              PopupMenuButton<String>(
+                tooltip: '任务操作',
+                enabled: !running,
+                icon: Icon(
+                  Icons.more_horiz_rounded,
+                  size: 19,
+                  color: colors.onSurfaceVariant,
+                ),
+                style: IconButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                ),
+                shape: IsleShapes.md(
+                  side: BorderSide(color: borderColor, width: 1.0),
+                ),
+                onSelected: (action) {
+                  if (action == 'edit') {
+                    _addOrEditTask(task);
+                  } else if (action == 'delete') {
+                    _confirmDeleteTask(task);
+                  }
+                },
+                itemBuilder: (_) => [
+                  isleActionMenuItem(
+                    value: 'edit',
+                    icon: Icons.edit_outlined,
+                    label: '编辑配置',
+                  ),
+                  isleActionMenuItem(
+                    value: 'delete',
+                    icon: Icons.delete_outline_rounded,
+                    label: '移除任务',
+                    destructive: true,
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ],
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final palette = IslePalette.of(context);
     return Scaffold(
-      appBar: const IsleAppBar(title: Text('本机文件夹备份')),
+      appBar: IsleAppBar(
+        title: const Text('本机文件夹备份'),
+        actions: [
+          IsleHelpButton(
+            title: '本机备份规则说明',
+            accentColor: palette['brandAmber'],
+            items: const [
+              IsleHelpItem(
+                title: '单向增量只读保护',
+                body: '仅单向读取本机源文件夹并增量上传至 NAS，不会修改或删除本机目录，也不会自动清理 NAS 上已有文件。',
+              ),
+              IsleHelpItem(
+                title: '快检缓存与安全过滤',
+                body:
+                    '结合修改时间、体积与 SHA-256 摘要实现秒级跳过未变动文件，并自动忽略 .DS_Store 等系统隐藏文件与指向目录外的软链接。',
+              ),
+            ],
+          ),
+        ],
+      ),
       body: SafeArea(
         child: IsleListView(
-          maxWidth: IsleLayout.settingsWidth,
+          maxWidth: IsleLayout.workbenchMaxWidth,
           children: [
             _buildOverviewCard(context),
-            if (_controller.tasks.isEmpty) ...[
-              const SizedBox(height: 12),
-              _buildEmptyState(context),
-            ] else
-              for (final task in _controller.tasks)
-                _buildTaskCard(context, task),
-            const SizedBox(height: 14),
-            const IsleHelpDisclosure(
-              summary: '单向增量与数据安全说明',
-              details:
-                  '1. 仅单向新增或更新：本机删除文件不会删除 NAS 上的备份文件。\n'
-                  '2. 两阶段防丢更新：选择「旧版进回收站并更新」时，新文件先完整上传并通过 NAS 端 SHA-256 校验，再将旧版移入 NAS 回收站并原子归位；中途断网绝不损坏旧版。\n'
-                  '3. 物理硬盘防串盘：若目标硬盘离线、移除或代际变更，同步会立即失败闭合，绝不自动写入其他硬盘。',
-            ),
-            const SizedBox(height: 24),
+            const SizedBox(height: 12),
+            if (_controller.tasks.isEmpty)
+              _buildEmptyState(context)
+            else
+              IsleAdaptiveBuilder(
+                builder: (context, tier, width) {
+                  final textScale =
+                      MediaQuery.textScalerOf(context).scale(14) / 14;
+                  if (tier == IsleViewportTier.expanded &&
+                      _controller.tasks.length > 1 &&
+                      textScale <= 1.35) {
+                    final cardWidth = (width - 12) / 2;
+                    return Wrap(
+                      spacing: 12,
+                      runSpacing: 12,
+                      children: [
+                        for (final task in _controller.tasks)
+                          SizedBox(
+                            width: cardWidth,
+                            child: _buildTaskCard(context, task),
+                          ),
+                      ],
+                    );
+                  }
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (var i = 0; i < _controller.tasks.length; i++) ...[
+                        if (i > 0) const SizedBox(height: 10),
+                        _buildTaskCard(context, _controller.tasks[i]),
+                      ],
+                    ],
+                  );
+                },
+              ),
+            const SizedBox(height: 20),
           ],
         ),
       ),

@@ -3,6 +3,8 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../core/authenticated_media_image.dart';
+import '../../core/isle_action_menu.dart';
+import '../../core/isle_gallery_layout.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
@@ -11,8 +13,6 @@ import 'photo_ai_models.dart';
 import 'photo_person_shares_card.dart';
 
 /// Per-user family & baby face clustering view powered by offline macOS Vision.
-/// Tapping a person returns that [PersonSummary] so the caller filters the
-/// timeline by `personId`.
 class PhotoPeoplePage extends StatefulWidget {
   const PhotoPeoplePage({required this.api, super.key});
 
@@ -68,17 +68,21 @@ class _PhotoPeoplePageState extends State<PhotoPeoplePage> {
 
   Future<void> _renamePerson(PersonSummary person) async {
     final controller = TextEditingController(text: person.name);
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final nextName = await showDialog<String>(
       context: context,
       builder: (dialogContext) => AlertDialog(
+        shape: IsleShapes.card(
+          side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
+        ),
         title: const Text('命名人物'),
         content: TextField(
           controller: controller,
           autofocus: true,
           maxLength: 40,
           decoration: const InputDecoration(
+            isDense: true,
             labelText: '人物姓名（如「宝宝」「妈妈」）',
-            border: OutlineInputBorder(),
           ),
         ),
         actions: [
@@ -130,42 +134,56 @@ class _PhotoPeoplePageState extends State<PhotoPeoplePage> {
         .where((p) => p.id != source.id)
         .toList(growable: false);
     if (candidates.isEmpty) {
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('当前没有可合并的其他人物分组。')));
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('当前没有可合并的其他人物分组。')));
       return;
     }
     int? targetId = candidates.first.id;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (context, setDialogState) => AlertDialog(
+          shape: IsleShapes.card(
+            side: BorderSide(
+              color: IsleGlass.rimBorderColor(isDark),
+              width: 1.0,
+            ),
+          ),
           title: Text('合并「${source.displayName}」'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              const Text('将该人物下的所有面孔并入目标人物，方便把同一家人的不同角度照片归为一组：'),
-              const SizedBox(height: 12),
-              DropdownButtonFormField<int>(
-                initialValue: targetId,
-                isExpanded: true,
-                decoration: const InputDecoration(
-                  labelText: '并入目标人物',
-                  border: OutlineInputBorder(),
+          content: SizedBox(
+            width: 420,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                  '将该人物下的所有面孔并入目标人物：',
+                  style: TextStyle(fontSize: 13),
                 ),
-                items: [
-                  for (final candidate in candidates)
-                    DropdownMenuItem(
-                      value: candidate.id,
-                      child: Text(
-                        '${candidate.displayName}（${candidate.photoCount} 张）',
-                        overflow: TextOverflow.ellipsis,
+                const SizedBox(height: 12),
+                DropdownButtonFormField<int>(
+                  initialValue: targetId,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    labelText: '并入目标人物',
+                  ),
+                  items: [
+                    for (final candidate in candidates)
+                      DropdownMenuItem(
+                        value: candidate.id,
+                        child: Text(
+                          '${candidate.displayName}（${candidate.photoCount} 张）',
+                          overflow: TextOverflow.ellipsis,
+                        ),
                       ),
-                    ),
-                ],
-                onChanged: (v) => setDialogState(() => targetId = v),
-              ),
-            ],
+                  ],
+                  onChanged: (v) => setDialogState(() => targetId = v),
+                ),
+              ],
+            ),
           ),
           actions: [
             TextButton(
@@ -200,28 +218,42 @@ class _PhotoPeoplePageState extends State<PhotoPeoplePage> {
     }
   }
 
-  Widget _buildAvatar(BuildContext context, PersonSummary person) {
+  Widget _buildAvatar(BuildContext context, PersonSummary person, double size) {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final palette = IslePalette(isDark);
+    final rose = palette['brandRose'];
     final path = person.coverFaceId > 0
         ? '/api/v2/photos/faces/${person.coverFaceId}/thumbnail'
         : person.coverAssetId > 0
         ? '/api/v2/photos/${person.coverAssetId}/thumbnail'
         : '';
-    return SizedBox(
-      width: 76,
-      height: 76,
+    return Container(
+      width: size,
+      height: size,
+      padding: const EdgeInsets.all(2.5),
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        border: Border.all(
+          color: person.name.isNotEmpty
+              ? rose.withValues(alpha: 0.48)
+              : IsleGlass.rimBorderColor(isDark),
+          width: 1.3,
+        ),
+        boxShadow: IsleShadows.subtle(isDark),
+      ),
       child: ClipOval(
         child: path.isEmpty
             ? ColoredBox(
-                color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                child: const Icon(Icons.face_retouching_natural, size: 34),
+                color: palette['cardItemBottom'],
+                child: const Icon(Icons.face_retouching_natural, size: 28),
               )
             : AuthenticatedMediaImage(
                 api: widget.api,
                 path: path,
                 fit: BoxFit.cover,
                 errorBuilder: (_, _, _) => ColoredBox(
-                  color: Theme.of(context).colorScheme.surfaceContainerHighest,
-                  child: const Icon(Icons.face_retouching_natural, size: 34),
+                  color: palette['cardItemBottom'],
+                  child: const Icon(Icons.face_retouching_natural, size: 28),
                 ),
               ),
       ),
@@ -230,13 +262,32 @@ class _PhotoPeoplePageState extends State<PhotoPeoplePage> {
 
   @override
   Widget build(BuildContext context) {
-    final inset = IsleLayout.pageInset(MediaQuery.sizeOf(context).width);
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final palette = IslePalette(isDark);
+    final borderColor = IsleGlass.rimBorderColor(isDark);
+    final rose = palette['brandRose'];
+    final namedCount = _persons.where((p) => p.name.trim().isNotEmpty).length;
+    final totalAppearances = _persons.fold<int>(
+      0,
+      (sum, p) => sum + p.photoCount,
+    );
+
     return Scaffold(
       appBar: IsleAppBar(
         title: const Text('人物相册'),
         actions: [
           FilterChip(
-            label: const Text('显示已隐藏'),
+            visualDensity: VisualDensity.compact,
+            materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            side: BorderSide(
+              color: _includeHidden
+                  ? colors.primary.withValues(alpha: 0.45)
+                  : borderColor,
+              width: 1.0,
+            ),
+            label: const Text('显示已隐藏', style: TextStyle(fontSize: 12)),
             selected: _includeHidden,
             onSelected: _loading || _busy
                 ? null
@@ -249,140 +300,171 @@ class _PhotoPeoplePageState extends State<PhotoPeoplePage> {
           IconButton(
             tooltip: '刷新人物分组',
             onPressed: _loading || _busy ? null : _load,
-            icon: const Icon(Icons.refresh_rounded),
+            icon: const Icon(Icons.refresh_rounded, size: 20),
           ),
         ],
       ),
-      body: SafeArea(
-        top: false,
-        child: ListView(
-          padding: EdgeInsets.fromLTRB(inset, 12, inset, 28),
-          children: [
-            const IsleIntroCard(
-              icon: Icons.face_retouching_natural_rounded,
-              title: '本地离线人物聚类 · 仅当前账号独立管理',
-              description: '由 Mac 本机 Vision 框架离线提取面孔特征并自动归类，照片与人脸特征均不会上传云端。点击任意人物即可筛选其时间线照片。',
-            ),
-            if (_error != null) ...[
-              const SizedBox(height: 10),
-              Notice(_error!, error: true, onRetry: _loading ? null : _load),
+      body: IsleListView(
+        maxWidth: IsleLayout.workbenchMaxWidth,
+        children: [
+          IsleFocalStage(
+            icon: Icons.face_retouching_natural_rounded,
+            accent: rose,
+            title: '人物肖像馆',
+            metrics: [
+              IsleFocalMetric(
+                label: '人物分组',
+                value: '${_persons.length}',
+                accent: rose,
+              ),
+              IsleFocalMetric(
+                label: '已命名',
+                value: '$namedCount',
+                accent: palette['brandAmber'],
+              ),
+              IsleFocalMetric(
+                label: '累计肖像',
+                value: '$totalAppearances',
+                accent: palette['brandSage'],
+              ),
             ],
-            const SizedBox(height: 12),
-            if (_loading)
-              const Padding(
-                padding: EdgeInsets.symmetric(vertical: 48),
-                child: Center(child: CircularProgressIndicator()),
-              )
-            else if (_persons.isEmpty)
-              const IsleSurface(
-                child: Padding(
-                  padding: EdgeInsets.symmetric(vertical: 28, horizontal: 16),
-                  child: Column(
-                    children: [
-                      Icon(Icons.people_outline_rounded, size: 42),
-                      SizedBox(height: 10),
-                      Text(
-                        '暂未识别到人物分组',
-                        style: TextStyle(fontWeight: FontWeight.w600),
-                      ),
-                      SizedBox(height: 6),
-                      Text(
-                        '后台离线智能索引完成后，出现频率较高的家人与宝宝面孔会自动归类到这里。',
-                        textAlign: TextAlign.center,
-                      ),
-                    ],
-                  ),
-                ),
-              )
-            else
-              IsleResponsiveGrid(
-                minItemWidth: 168,
-                maxColumns: 5,
-                spacing: 12,
-                runSpacing: 12,
-                children: [
-                  for (final person in _persons)
-                    IsleSurface(
-                      margin: EdgeInsets.zero,
-                      child: InkWell(
-                        borderRadius: IsleRadius.brCard,
-                        onTap: _busy
-                            ? null
-                            : () => Navigator.pop(context, person),
-                        child: Padding(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 12,
-                          ),
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              _buildAvatar(context, person),
-                              const SizedBox(height: 10),
-                              Text(
-                                person.displayName,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: Theme.of(context).textTheme.titleSmall
-                                    ?.copyWith(fontWeight: FontWeight.w700),
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                '${person.photoCount} 张照片${person.hidden ? ' · 已隐藏' : ''}',
-                                style: Theme.of(context).textTheme.bodySmall,
-                              ),
-                              const SizedBox(height: 6),
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  IconButton(
-                                    visualDensity: VisualDensity.compact,
-                                    tooltip: '命名',
-                                    onPressed: _busy
-                                        ? null
-                                        : () => _renamePerson(person),
-                                    icon: const Icon(
-                                      Icons.edit_outlined,
-                                      size: 18,
-                                    ),
+          ),
+          const SizedBox(height: 10),
+          if (_error != null)
+            Notice(_error!, error: true, onRetry: _loading ? null : _load),
+          if (_loading)
+            const IsleLoadingState(compact: true, label: '正在读取人物相册…')
+          else if (_persons.isEmpty)
+            const IsleEmptyStateCard(
+              '离线智能索引完成后，常出现的面孔会自动归类到这里。',
+              title: '暂未识别到人物分组',
+              icon: Icons.people_outline_rounded,
+            )
+          else
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final avatarSize = constraints.maxWidth >= 720 ? 74.0 : 64.0;
+                return IsleResponsiveGrid(
+                  minItemWidth: constraints.maxWidth >= 720 ? 168 : 144,
+                  maxColumns: 6,
+                  spacing: 12,
+                  runSpacing: 12,
+                  children: [
+                    for (final person in _persons)
+                      IsleSurface(
+                        margin: EdgeInsets.zero,
+                        radius: IsleRadius.card,
+                        padding: EdgeInsets.zero,
+                        child: Stack(
+                          children: [
+                            InkWell(
+                              borderRadius: IsleRadius.brCard,
+                              onTap: _busy
+                                  ? null
+                                  : () => Navigator.pop(context, person),
+                              child: SizedBox(
+                                width: double.infinity,
+                                child: Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    12,
+                                    16,
+                                    12,
+                                    14,
                                   ),
-                                  IconButton(
-                                    visualDensity: VisualDensity.compact,
-                                    tooltip: '合并到其他人物',
-                                    onPressed: _busy || _persons.length < 2
-                                        ? null
-                                        : () => _mergePerson(person),
-                                    icon: const Icon(
-                                      Icons.merge_type_rounded,
-                                      size: 18,
-                                    ),
+                                  child: Column(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      _buildAvatar(context, person, avatarSize),
+                                      const SizedBox(height: 10),
+                                      Text(
+                                        person.displayName,
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
+                                        style: theme.textTheme.titleSmall
+                                            ?.copyWith(
+                                              fontSize: 14,
+                                              fontWeight: FontWeight.w800,
+                                            ),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        '${person.photoCount} 张${person.hidden ? ' · 已隐藏' : ''}',
+                                        style: theme.textTheme.bodySmall
+                                            ?.copyWith(
+                                              fontSize: 11.5,
+                                              color: colors.onSurfaceVariant,
+                                            ),
+                                      ),
+                                    ],
                                   ),
-                                  IconButton(
-                                    visualDensity: VisualDensity.compact,
-                                    tooltip: person.hidden ? '取消隐藏' : '隐藏人物',
-                                    onPressed: _busy
-                                        ? null
-                                        : () => _toggleHidden(person),
-                                    icon: Icon(
-                                      person.hidden
-                                          ? Icons.visibility_outlined
-                                          : Icons.visibility_off_outlined,
-                                      size: 18,
+                                ),
+                              ),
+                            ),
+                            Positioned(
+                              top: 4,
+                              right: 4,
+                              child: PopupMenuButton<String>(
+                                tooltip: '人物操作',
+                                enabled: !_busy,
+                                icon: Icon(
+                                  Icons.more_horiz_rounded,
+                                  size: 17,
+                                  color: colors.onSurfaceVariant,
+                                ),
+                                style: IconButton.styleFrom(
+                                  visualDensity: VisualDensity.compact,
+                                  minimumSize: const Size(28, 28),
+                                  padding: EdgeInsets.zero,
+                                ),
+                                shape: IsleShapes.md(
+                                  side: BorderSide(
+                                    color: borderColor,
+                                    width: 1.0,
+                                  ),
+                                ),
+                                onSelected: (action) {
+                                  switch (action) {
+                                    case 'rename':
+                                      _renamePerson(person);
+                                    case 'merge':
+                                      _mergePerson(person);
+                                    case 'hide':
+                                      _toggleHidden(person);
+                                  }
+                                },
+                                itemBuilder: (_) => [
+                                  isleActionMenuItem(
+                                    value: 'rename',
+                                    icon: Icons.edit_outlined,
+                                    label: '命名',
+                                  ),
+                                  if (_persons.length >= 2)
+                                    isleActionMenuItem(
+                                      value: 'merge',
+                                      icon: Icons.merge_type_rounded,
+                                      label: '合并到其他人物',
                                     ),
+                                  isleActionMenuItem(
+                                    value: 'hide',
+                                    icon: person.hidden
+                                        ? Icons.visibility_outlined
+                                        : Icons.visibility_off_outlined,
+                                    label: person.hidden ? '取消隐藏' : '隐藏人物',
                                   ),
                                 ],
                               ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
                       ),
-                    ),
-                ],
-              ),
-            const SizedBox(height: 18),
-            PhotoPersonSharesCard(api: widget.api, persons: _persons),
-          ],
-        ),
+                  ],
+                );
+              },
+            ),
+          const SizedBox(height: 16),
+          PhotoPersonSharesCard(api: widget.api, persons: _persons),
+          const SizedBox(height: 20),
+        ],
       ),
     );
   }

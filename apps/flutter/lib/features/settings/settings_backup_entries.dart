@@ -23,14 +23,14 @@ Widget? buildPlatformBackupSettingsEntry(
   final userId = rawId is num
       ? rawId.toInt()
       : int.tryParse(rawId?.toString() ?? '') ?? 0;
+  final palette = IslePalette.of(context);
 
   return switch (defaultTargetPlatform) {
     TargetPlatform.android || TargetPlatform.iOS => IsleGroupTile(
       key: const ValueKey('settingsMobilePhotoBackupTile'),
       icon: Icons.cloud_upload_rounded,
-      iconBgColor: Theme.of(context).colorScheme.primary,
+      iconBgColor: palette['brandRose'],
       title: '手机相册备份',
-      subtitle: '相机原片与原画视频增量备份、iCloud 按需下载与完整性核验',
       onTap: () => _openMobilePhotoBackupFromSettings(
         context,
         api: api,
@@ -43,9 +43,8 @@ Widget? buildPlatformBackupSettingsEntry(
     TargetPlatform.linux => IsleGroupTile(
       key: const ValueKey('settingsDesktopFolderBackupTile'),
       icon: Icons.drive_folder_upload_rounded,
-      iconBgColor: Theme.of(context).colorScheme.primary,
+      iconBgColor: palette['brandTerracotta'],
       title: '本机文件夹备份',
-      subtitle: '桌面本地文件夹单向增量备份到 NAS，支持断网续传与安全防丢更新',
       onTap: () {
         Navigator.of(context).push(
           buildIslePageRoute<void>(
@@ -96,9 +95,13 @@ Future<void> _openMobilePhotoBackupFromSettings(
       route.root == null ||
       route.path == null) {
     final offline = route.kind == PersonalRouteKind.offline;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final openStorage = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
+        shape: IsleShapes.card(
+          side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
+        ),
         title: Text(offline ? '个人照片硬盘当前离线' : '尚未分配个人照片空间'),
         content: Text(
           offline

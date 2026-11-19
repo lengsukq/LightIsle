@@ -48,8 +48,6 @@ extension _PhotosPageLibrary on _PhotosPageState {
               startCursor == null &&
               _feed.activeScopeKey == scopeKey &&
               _feed.assets.isNotEmpty;
-          // Preserve existing gallery rows during same-scope pull-to-refresh
-          // and fast timeline seeks so the screen never flashes empty.
           if (startCursor == null && !sameScope) {
             _feed.assets.clear();
             _feed.nextCursor = 0;
@@ -269,9 +267,9 @@ extension _PhotosPageLibrary on _PhotosPageState {
       builder: (context, constraints) {
         final width = constraints.crossAxisExtent;
         final columns = _computeGridColumns(width);
-        final gridSpacing = _feed.comfortableGrid ? 6.0 : 2.0;
-        final tileRadius = _feed.comfortableGrid ? 10.0 : 2.0;
-        final gridHorizontalInset = _feed.comfortableGrid ? _pageInset : 2.0;
+        final gridSpacing = _feed.comfortableGrid ? 7.0 : 2.5;
+        final tileRadius = _feed.comfortableGrid ? 11.0 : 3.0;
+        final gridHorizontalInset = _feed.comfortableGrid ? _pageInset : 3.0;
         final sections = _groupAssetsByMonth();
         final compact = width < IsleLayout.compactPageWidth;
         return SliverMainAxisGroup(
@@ -306,15 +304,11 @@ extension _PhotosPageLibrary on _PhotosPageState {
         ? 5
         : width < 960
         ? 6
-        : (width / 138).floor().clamp(6, 10);
-    // Thumbnails are image-based, not text-based; increasing system font size
-    // must not turn the gallery back into a sparse file list.
+        : (width / 142).floor().clamp(6, 10);
     return _feed.comfortableGrid ? (baseColumns - 1).clamp(2, 8) : baseColumns;
   }
 
   List<_AssetMonthSection> _groupAssetsByMonth() {
-    // Monthly sections keep the flat newest-first grid but give each month a
-    // header, mirroring the web timeline.
     final sections = <_AssetMonthSection>[];
     for (final asset in _feed.assets) {
       final key = _assetMonthKey(asset.takenAt);
@@ -403,15 +397,17 @@ extension _PhotosPageLibrary on _PhotosPageState {
     final allSectionSelected = section.items
         .take(50)
         .every((item) => _selection.selectedAssets.contains(item.id));
-    final scheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final palette = IslePalette.of(context);
     return SliverToBoxAdapter(
       child: Padding(
         key: isFirst ? _timeline.firstMonthHeadingKey : null,
         padding: EdgeInsets.fromLTRB(
           _pageInset,
-          compact ? 10 : 16,
+          compact ? 12 : 18,
           _pageInset,
-          compact ? 6 : 8,
+          compact ? 6 : 9,
         ),
         child: Row(
           children: [
@@ -426,8 +422,8 @@ extension _PhotosPageLibrary on _PhotosPageState {
                     : () => _toggleSectionSelection(section.items),
                 child: ConstrainedBox(
                   constraints: const BoxConstraints(
-                    minWidth: 36,
-                    minHeight: 36,
+                    minWidth: 34,
+                    minHeight: 34,
                   ),
                   child: Padding(
                     padding: const EdgeInsets.only(right: 6),
@@ -440,24 +436,42 @@ extension _PhotosPageLibrary on _PhotosPageState {
                         size: 20,
                         color: allSectionSelected
                             ? scheme.primary
-                            : scheme.onSurfaceVariant.withValues(alpha: 0.65),
+                            : scheme.onSurfaceVariant.withValues(alpha: 0.62),
                       ),
                     ),
                   ),
                 ),
               ),
             ),
+            Container(
+              width: 3,
+              height: 15,
+              margin: const EdgeInsets.only(right: 8),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(999),
+                color: palette['brandRose'],
+              ),
+            ),
             Expanded(
               child: Text(
                 section.title,
-                style: Theme.of(context).textTheme.titleMedium
-                    ?.copyWith(fontWeight: FontWeight.w700),
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w800,
+                  letterSpacing: -0.25,
+                ),
               ),
             ),
-            Text(
-              '${section.items.length} 项',
-              style: Theme.of(context).textTheme.labelSmall
-                  ?.copyWith(color: scheme.onSurfaceVariant),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2.5),
+              decoration: IsleDecorations.recessedWell(context, radius: 999),
+              child: Text(
+                '${section.items.length} 项',
+                style: theme.textTheme.labelSmall?.copyWith(
+                  color: scheme.onSurfaceVariant,
+                  fontWeight: FontWeight.w600,
+                  fontFeatures: const [FontFeature.tabularFigures()],
+                ),
+              ),
             ),
           ],
         ),
@@ -538,7 +552,7 @@ extension _PhotosPageLibrary on _PhotosPageState {
                         children: [
                           Icon(
                             Icons.motion_photos_on_rounded,
-                            color: Color(0xFF9CDCF5),
+                            color: Color(0xFFF6C177),
                             size: 11,
                           ),
                           SizedBox(width: 3),
@@ -567,10 +581,10 @@ extension _PhotosPageLibrary on _PhotosPageState {
   }
 
   Widget _buildAssetThumbnailSurface(BuildContext context, PhotoAsset asset) {
-    final scheme = Theme.of(context).colorScheme;
+    final palette = IslePalette.of(context);
     if (asset.isRaw) {
       return Container(
-        color: scheme.surfaceContainerLow,
+        color: palette['cardItemBottom'],
         child: const Center(
           child: Column(
             mainAxisSize: MainAxisSize.min,
@@ -591,9 +605,9 @@ extension _PhotosPageLibrary on _PhotosPageState {
       path: '/api/v2/photos/${asset.id}/thumbnail',
       maxBytes: 4 * 1024 * 1024,
       fit: BoxFit.cover,
-      loadingBuilder: (_) => Container(color: scheme.surfaceContainerLow),
+      loadingBuilder: (_) => Container(color: palette['cardItemBottom']),
       errorBuilder: (_, _, retry) => Container(
-        color: scheme.surfaceContainerHigh,
+        color: palette['cardItemBottom'],
         child: Stack(
           fit: StackFit.expand,
           children: [

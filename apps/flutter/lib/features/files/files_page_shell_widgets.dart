@@ -2,22 +2,23 @@ part of 'files_page.dart';
 
 extension _FilesPageShellWidgets on _FilesPageState {
   Widget _buildHeader(BuildContext context) {
+    final palette = IslePalette.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         IslePageHeader(
-          title: '文件',
-          subtitle: '浏览共享目录、管理文件并查看回收站。',
-          hideSubtitleOnCompact: true,
+          accentColor: palette['brandAmber'],
+          title: _filter.showingTrash ? '回收站' : '文件',
           trailing: IconButton(
             tooltip: _filter.showingTrash ? '刷新回收站' : '刷新目录',
             visualDensity: VisualDensity.compact,
             onPressed: _dir.loading || _filter.trashLoading
                 ? null
                 : () => _filter.showingTrash ? _loadTrash() : _loadFiles(),
-            icon: const Icon(Icons.refresh_rounded),
+            icon: const Icon(Icons.refresh_rounded, size: 20),
           ),
         ),
+        const SizedBox(height: 4),
         _buildBreadcrumbs(context),
       ],
     );
@@ -25,25 +26,40 @@ extension _FilesPageShellWidgets on _FilesPageState {
 
   Widget _buildBreadcrumbs(BuildContext context) {
     final segments = _pathSegments();
-    final colors = Theme.of(context).colorScheme;
-    return SingleChildScrollView(
-      scrollDirection: Axis.horizontal,
-      child: Row(
-        children: [
-          for (var index = 0; index < segments.length; index++) ...[
-            if (index > 0)
-              Icon(
-                Icons.chevron_right_rounded,
-                size: 18,
-                color: colors.onSurfaceVariant,
-              ),
-            _breadcrumbSegment(
-              context,
-              segments[index],
-              index == segments.length - 1,
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final palette = IslePalette(isDark);
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: IsleDecorations.recessedWell(context, radius: 11),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(
+          children: [
+            Icon(
+              _filter.showingTrash
+                  ? Icons.delete_outline_rounded
+                  : Icons.folder_special_outlined,
+              size: 15,
+              color: palette['brandAmber'],
             ),
+            const SizedBox(width: 4),
+            for (var index = 0; index < segments.length; index++) ...[
+              if (index > 0)
+                Icon(
+                  Icons.chevron_right_rounded,
+                  size: 16,
+                  color: colors.onSurfaceVariant,
+                ),
+              _breadcrumbSegment(
+                context,
+                segments[index],
+                index == segments.length - 1,
+              ),
+            ],
           ],
-        ],
+        ),
       ),
     );
   }
@@ -59,13 +75,14 @@ extension _FilesPageShellWidgets on _FilesPageState {
       maxLines: 1,
       overflow: TextOverflow.ellipsis,
       style: TextStyle(
+        fontSize: 12.8,
         color: active ? colors.onSurface : colors.primary,
-        fontWeight: active ? FontWeight.w700 : FontWeight.w500,
+        fontWeight: active ? FontWeight.w700 : FontWeight.w600,
       ),
     );
     return ConstrainedBox(
       constraints: BoxConstraints(
-        maxWidth: MediaQuery.sizeOf(context).width < 360 ? 112 : 190,
+        maxWidth: MediaQuery.sizeOf(context).width < 360 ? 112 : 200,
       ),
       child: Tooltip(
         message: segment.$1,
@@ -74,8 +91,8 @@ extension _FilesPageShellWidgets on _FilesPageState {
                 label: '当前位置：${segment.$1}',
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
-                    vertical: 4,
+                    horizontal: 5,
+                    vertical: 3,
                   ),
                   child: label,
                 ),
@@ -85,9 +102,9 @@ extension _FilesPageShellWidgets on _FilesPageState {
                     ? null
                     : () => _loadFiles(target: segment.$2),
                 style: TextButton.styleFrom(
-                  minimumSize: const Size(32, 30),
+                  minimumSize: const Size(28, 26),
                   padding: const EdgeInsets.symmetric(
-                    horizontal: 6,
+                    horizontal: 5,
                     vertical: 2,
                   ),
                   tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -141,6 +158,10 @@ extension _FilesPageShellWidgets on _FilesPageState {
     bool compact,
     double availableWidth,
   ) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final borderColor = IsleGlass.rimBorderColor(isDark);
     final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
     final iconActions = IsleLayout.compactToolbar(availableWidth, textScale);
     final singleRowToolbar =
@@ -152,9 +173,7 @@ extension _FilesPageShellWidgets on _FilesPageState {
             controller: _filter.searchController,
             focusNode: _filter.searchFocusNode,
             enabled: !_dir.loading,
-            hintText: _filter.searchViaSpotlight
-                ? '全文搜索文件名或正文'
-                : (iconActions || compact ? '搜索文件名' : '搜索文件名或空格多关键词'),
+            hintText: _filter.searchViaSpotlight ? '全文搜索文件名或正文' : '搜索文件',
             showClear: _filter.searching,
             onChanged: (_) => _refreshState(() {}),
             onSubmitted: (_) => _searchFiles(),
@@ -172,9 +191,15 @@ extension _FilesPageShellWidgets on _FilesPageState {
         const SizedBox(width: 6),
         FilterChip(
           key: const ValueKey('filesSpotlightToggle'),
-          label: const Text('全文搜索'),
+          label: const Text('全文搜索', style: TextStyle(fontSize: 12)),
           tooltip: '使用 Spotlight 全文检索文件内容',
           visualDensity: VisualDensity.compact,
+          side: BorderSide(
+            color: _filter.searchViaSpotlight
+                ? colors.primary.withValues(alpha: 0.45)
+                : borderColor,
+            width: 1.0,
+          ),
           selected: _filter.searchViaSpotlight,
           onSelected: _dir.loading
               ? null
@@ -193,28 +218,35 @@ extension _FilesPageShellWidgets on _FilesPageState {
       children: [
         if (_filter.showingTrash)
           TextButton.icon(
+            style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
             onPressed: _toggleTrash,
-            icon: const Icon(Icons.arrow_back_rounded, size: 18),
+            icon: const Icon(Icons.arrow_back_rounded, size: 17),
             label: const Text('返回文件'),
           )
         else if (_dir.canWrite && iconActions)
           IconButton.filled(
             tooltip: '上传文件',
+            visualDensity: VisualDensity.compact,
             onPressed: _dir.loading || _transfers.uploadBusy
                 ? null
                 : _chooseUploadSource,
-            icon: const Icon(Icons.add_rounded),
+            icon: const Icon(Icons.add_rounded, size: 19),
           )
         else if (_dir.canWrite)
           FilledButton.icon(
             onPressed: _dir.loading || _transfers.uploadBusy
                 ? null
                 : _chooseUploadSource,
-            icon: const Icon(Icons.add_rounded, size: 17),
+            icon: const Icon(Icons.add_rounded, size: 16),
             label: const Text('上传文件'),
             style: FilledButton.styleFrom(
-              minimumSize: const Size(40, 36),
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+              visualDensity: VisualDensity.compact,
+              minimumSize: const Size(36, 34),
+              padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
+              textStyle: const TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+              ),
             ),
           ),
         if (!_filter.showingTrash && _dir.canWrite) ...[
@@ -222,24 +254,30 @@ extension _FilesPageShellWidgets on _FilesPageState {
           if (compact || iconActions)
             IconButton(
               tooltip: '新建文件夹',
+              visualDensity: VisualDensity.compact,
               onPressed: _dir.loading ? null : _createFolder,
-              icon: const Icon(Icons.create_new_folder_outlined),
+              icon: const Icon(Icons.create_new_folder_outlined, size: 19),
             )
           else
             OutlinedButton.icon(
               onPressed: _dir.loading ? null : _createFolder,
-              icon: const Icon(Icons.create_new_folder_outlined, size: 17),
+              icon: const Icon(Icons.create_new_folder_outlined, size: 16),
               label: const Text('新建文件夹'),
               style: OutlinedButton.styleFrom(
-                minimumSize: const Size(40, 36),
+                visualDensity: VisualDensity.compact,
+                minimumSize: const Size(36, 34),
                 padding: const EdgeInsets.symmetric(
-                  horizontal: 12,
-                  vertical: 6,
+                  horizontal: 11,
+                  vertical: 5,
+                ),
+                textStyle: const TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w600,
                 ),
               ),
             ),
         ],
-        if (!singleRowToolbar) const Spacer() else const SizedBox(width: 6),
+        if (!singleRowToolbar) const Spacer() else const SizedBox(width: 4),
         if (!_filter.showingTrash) ...[
           IconButton(
             key: const Key('files-select-toggle'),
@@ -256,43 +294,26 @@ extension _FilesPageShellWidgets on _FilesPageState {
               _transfers.selecting
                   ? Icons.close_rounded
                   : Icons.checklist_rounded,
+              size: 19,
             ),
-            color: _transfers.selecting
-                ? Theme.of(context).colorScheme.primary
-                : null,
+            color: _transfers.selecting ? colors.primary : null,
           ),
-          IconButton(
-            tooltip: '查看回收站',
-            visualDensity: VisualDensity.compact,
-            onPressed: _dir.loading ? null : _toggleTrash,
-            icon: const Icon(Icons.delete_outline_rounded),
-          ),
-          IconButton(
-            tooltip: '重复大文件清理',
-            visualDensity: VisualDensity.compact,
-            onPressed: _dir.loading ? null : _openDuplicates,
-            icon: const Icon(Icons.cleaning_services_outlined),
-          ),
-          if (!compact)
-            IconButton(
-              tooltip: '下载中心',
-              visualDensity: VisualDensity.compact,
-              onPressed: _dir.loading ? null : _openDownloads,
-              icon: const Icon(Icons.download_outlined),
-            ),
           PopupMenuButton<String>(
             tooltip: '更多文件操作',
-            icon: const Icon(Icons.more_horiz_rounded),
+            icon: const Icon(Icons.more_horiz_rounded, size: 19),
+            style: IconButton.styleFrom(visualDensity: VisualDensity.compact),
             position: PopupMenuPosition.under,
-            constraints: const BoxConstraints(minWidth: 216, maxWidth: 270),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(16),
+            constraints: const BoxConstraints(minWidth: 206, maxWidth: 260),
+            shape: IsleShapes.md(
+              side: BorderSide(color: borderColor, width: 1.0),
             ),
             elevation: 4,
             onSelected: (value) {
               switch (value) {
                 case 'downloads':
                   _openDownloads();
+                case 'duplicates':
+                  _openDuplicates();
                 case 'trash':
                   _toggleTrash();
                 case 'dav':
@@ -313,17 +334,22 @@ extension _FilesPageShellWidgets on _FilesPageState {
               }
             },
             itemBuilder: (_) => [
-              if (compact)
-                isleActionMenuItem(
-                  value: 'downloads',
-                  icon: Icons.download_outlined,
-                  label: '下载中心',
-                ),
               isleActionMenuItem(
                 value: 'trash',
                 icon: Icons.delete_outline_rounded,
                 label: '回收站',
               ),
+              isleActionMenuItem(
+                value: 'downloads',
+                icon: Icons.download_outlined,
+                label: '下载中心',
+              ),
+              isleActionMenuItem(
+                value: 'duplicates',
+                icon: Icons.cleaning_services_outlined,
+                label: '重复大文件清理',
+              ),
+              const PopupMenuDivider(),
               isleActionMenuItem(
                 value: 'dav',
                 icon: Icons.laptop_mac_outlined,
@@ -354,8 +380,6 @@ extension _FilesPageShellWidgets on _FilesPageState {
         ((_filter.searchInputFocused &&
                 _filter.searchController.text.trim().isEmpty) ||
             (_filter.searching && _dir.entries.isEmpty));
-    final showQuickJump =
-        !_filter.showingTrash && !_filter.searching && !_transfers.selecting;
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -364,7 +388,7 @@ extension _FilesPageShellWidgets on _FilesPageState {
           Row(
             children: [
               Expanded(child: searchField),
-              const SizedBox(width: 10),
+              const SizedBox(width: 8),
               actionsRow,
             ],
           )
@@ -384,47 +408,12 @@ extension _FilesPageShellWidgets on _FilesPageState {
             onRemoveTerm: (term) => unawaited(_removeSearchHistory(term)),
             onClearAll: () => unawaited(_clearSearchHistory()),
           ),
-        if (showQuickJump)
-          IsleQuickJumpStrip(
-            padding: const EdgeInsets.only(top: 6),
-            prefixLabel: '关联工具',
-            items: [
-              IsleQuickJumpItem(
-                key: const ValueKey('filesQuickJumpDuplicates'),
-                icon: Icons.cleaning_services_outlined,
-                label: '清理重复文件',
-                tooltip: '快速扫描并清理重复大文件释放空间',
-                onTap: _openDuplicates,
-              ),
-              IsleQuickJumpItem(
-                key: const ValueKey('filesQuickJumpTrash'),
-                icon: Icons.delete_outline_rounded,
-                label: '打开回收站',
-                tooltip: '查看已删文件或永久释放空间',
-                onTap: _toggleTrash,
-              ),
-              IsleQuickJumpItem(
-                key: const ValueKey('filesQuickJumpDav'),
-                icon: Icons.laptop_mac_outlined,
-                label: '挂载到电脑',
-                tooltip: '查看 WebDAV 挂载账号与访达连接地址',
-                onTap: _openWebDavMount,
-              ),
-              if (widget.isAdmin)
-                IsleQuickJumpItem(
-                  key: const ValueKey('filesQuickJumpSmb'),
-                  icon: Icons.dns_outlined,
-                  label: 'SMB 局域网共享',
-                  tooltip: '管理 macOS 本地共享目录与访达接入',
-                  onTap: _openSmbMount,
-                ),
-            ],
-          ),
       ],
     );
   }
 
   Widget _fileViewToggle() => IconButton(
+    visualDensity: VisualDensity.compact,
     tooltip: _prefsState.fileView == 'grid' ? '切换列表视图' : '切换卡片视图',
     onPressed: () =>
         _setFileView(_prefsState.fileView == 'grid' ? 'list' : 'grid'),
@@ -432,12 +421,14 @@ extension _FilesPageShellWidgets on _FilesPageState {
       _prefsState.fileView == 'grid'
           ? Icons.view_list_rounded
           : Icons.grid_view_rounded,
+      size: 19,
     ),
   );
 
   Widget _fileSortMenu() => PopupMenuButton<String>(
+    style: IconButton.styleFrom(visualDensity: VisualDensity.compact),
     tooltip: '文件排序方式',
-    icon: const Icon(Icons.sort_rounded),
+    icon: const Icon(Icons.sort_rounded, size: 19),
     onSelected: _setFileSort,
     itemBuilder: (_) => [
       CheckedPopupMenuItem(

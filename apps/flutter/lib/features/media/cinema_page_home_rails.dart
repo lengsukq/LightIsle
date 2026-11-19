@@ -17,29 +17,43 @@ extension _CinemaPageHomeRails on _CinemaPageState {
     if (film == null) return const SizedBox.shrink();
     final theme = Theme.of(context);
     final wide = screenWidth >= 600;
+    final desktop = screenWidth >= 1024;
     final matchScore = film.rating > 0
         ? (film.rating * 10).round().clamp(78, 99)
         : 0;
+    final posterWidth = desktop ? 176.0 : 148.0;
+
     return Padding(
-      padding: EdgeInsets.fromLTRB(_pageInset, 4, _pageInset, wide ? 16 : 12),
+      padding: EdgeInsets.fromLTRB(
+        _pageInset,
+        4,
+        _pageInset,
+        desktop ? 18 : (wide ? 14 : 10),
+      ),
       child: Container(
         key: const ValueKey('cinemaFeaturedBanner'),
         constraints: wide
-            ? BoxConstraints(minHeight: 236 + 210 * (textScale - 1))
+            ? BoxConstraints(
+                minHeight: (desktop ? 248 : 210) + 170 * (textScale - 1),
+              )
             : null,
         clipBehavior: Clip.antiAlias,
         decoration: BoxDecoration(
           borderRadius: wide ? IsleRadius.brHero : IsleRadius.brCard,
+          border: Border.all(
+            color: const Color(0xFFE07A56).withValues(alpha: 0.24),
+            width: 1.0,
+          ),
           gradient: const LinearGradient(
-            colors: [Color(0xFF0B0D13), Color(0xFF1A1E2B), Color(0xFF281822)],
-            begin: Alignment.centerLeft,
+            colors: [Color(0xFF141318), Color(0xFF1E1A1E), Color(0xFF281D1B)],
+            begin: Alignment.topLeft,
             end: Alignment.bottomRight,
           ),
-          boxShadow: [
+          boxShadow: const [
             BoxShadow(
-              color: Colors.black.withValues(alpha: 0.22),
-              blurRadius: 16,
-              offset: const Offset(0, 6),
+              color: Color(0x52000000),
+              blurRadius: 26,
+              offset: Offset(0, 10),
             ),
           ],
         ),
@@ -49,29 +63,65 @@ extension _CinemaPageHomeRails on _CinemaPageState {
             onTap: () => _openFilm(film),
             child: Stack(
               children: [
+                if (desktop)
+                  Positioned(
+                    right: -40,
+                    top: -40,
+                    bottom: -40,
+                    width: 420,
+                    child: Opacity(
+                      opacity: 0.16,
+                      child: AuthenticatedMediaImage(
+                        api: widget.api,
+                        memoryCache: _posterCache,
+                        path: '/api/v2/cinema/${film.id}/poster',
+                        fit: BoxFit.cover,
+                        maxBytes: 4 * 1024 * 1024,
+                        loadingBuilder: (_) => const SizedBox.shrink(),
+                        errorBuilder: (_, _, _) => const SizedBox.shrink(),
+                      ),
+                    ),
+                  ),
                 if (wide)
                   Positioned(
                     left: 0,
                     top: 0,
                     bottom: 0,
-                    width: 156,
-                    child: AuthenticatedMediaImage(
-                      api: widget.api,
-                      memoryCache: _posterCache,
-                      path: '/api/v2/cinema/${film.id}/poster',
-                      fit: BoxFit.cover,
-                      maxBytes: 4 * 1024 * 1024,
-                      loadingBuilder: (_) => _continuePlaceholder(),
-                      errorBuilder: (_, _, retry) =>
-                          InkWell(onTap: retry, child: _continuePlaceholder()),
+                    width: posterWidth,
+                    child: Stack(
+                      fit: StackFit.expand,
+                      children: [
+                        AuthenticatedMediaImage(
+                          api: widget.api,
+                          memoryCache: _posterCache,
+                          path: '/api/v2/cinema/${film.id}/poster',
+                          fit: BoxFit.cover,
+                          maxBytes: 4 * 1024 * 1024,
+                          loadingBuilder: (_) => _continuePlaceholder(),
+                          errorBuilder: (_, _, retry) => InkWell(
+                            onTap: retry,
+                            child: _continuePlaceholder(),
+                          ),
+                        ),
+                        const DecoratedBox(
+                          decoration: BoxDecoration(
+                            gradient: LinearGradient(
+                              begin: Alignment.centerLeft,
+                              end: Alignment.centerRight,
+                              stops: [0.65, 1.0],
+                              colors: [Colors.transparent, Color(0xFF18161A)],
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
                   ),
                 Padding(
-                  padding: EdgeInsets.only(left: wide ? 156 : 0),
+                  padding: EdgeInsets.only(left: wide ? posterWidth : 0),
                   child: Padding(
                     padding: EdgeInsets.symmetric(
-                      horizontal: wide ? 22 : 14,
-                      vertical: wide ? 16 : 12,
+                      horizontal: desktop ? 28 : (wide ? 20 : 16),
+                      vertical: desktop ? 22 : (wide ? 16 : 14),
                     ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
@@ -85,15 +135,15 @@ extension _CinemaPageHomeRails on _CinemaPageState {
                           children: [
                             Container(
                               padding: const EdgeInsets.symmetric(
-                                horizontal: 7,
-                                vertical: 2,
+                                horizontal: 8,
+                                vertical: 3,
                               ),
                               decoration: BoxDecoration(
-                                color: const Color(0xFFE50914),
-                                borderRadius: BorderRadius.circular(5),
+                                color: const Color(0xFFD95A38),
+                                borderRadius: BorderRadius.circular(6),
                               ),
                               child: Text(
-                                film.canResume ? '继续观看' : '私人影院精选',
+                                film.canResume ? '继续放映' : '剧场银幕精选',
                                 style: const TextStyle(
                                   color: Colors.white,
                                   fontSize: 11,
@@ -106,27 +156,30 @@ extension _CinemaPageHomeRails on _CinemaPageState {
                               Text(
                                 '$matchScore% 推荐 · ★ ${film.rating.toStringAsFixed(1)}',
                                 style: theme.textTheme.labelMedium?.copyWith(
-                                  color: const Color(0xFF46D369),
+                                  color: const Color(0xFFF4C165),
                                   fontWeight: FontWeight.w800,
                                 ),
                               ),
                           ],
                         ),
-                        const SizedBox(height: 6),
+                        SizedBox(height: desktop ? 10 : 7),
                         Text(
                           film.displayTitle,
                           maxLines: wide ? 2 : 1,
                           overflow: TextOverflow.ellipsis,
                           style:
-                              (wide
-                                      ? theme.textTheme.headlineSmall
+                              (desktop
+                                      ? theme.textTheme.headlineMedium
+                                      : wide
+                                      ? theme.textTheme.titleLarge
                                       : theme.textTheme.titleMedium)
                                   ?.copyWith(
-                                    color: Colors.white,
+                                    color: const Color(0xFFF6F3EC),
                                     fontWeight: FontWeight.w800,
+                                    letterSpacing: -0.45,
                                   ),
                         ),
-                        const SizedBox(height: 4),
+                        const SizedBox(height: 5),
                         Text(
                           [
                             if (film.year > 0) '${film.year}',
@@ -143,33 +196,40 @@ extension _CinemaPageHomeRails on _CinemaPageState {
                               film.videoCodec.toUpperCase(),
                           ].join(' · '),
                           style: theme.textTheme.bodySmall?.copyWith(
-                            color: Colors.white70,
+                            color: const Color(0xFFC8C2B8),
+                            fontWeight: FontWeight.w500,
                           ),
                         ),
                         if (film.overview.isNotEmpty) ...[
                           const SizedBox(height: 6),
-                          Text(
-                            film.overview,
-                            maxLines: wide ? 2 : 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: theme.textTheme.bodySmall?.copyWith(
-                              color: Colors.white70,
+                          ConstrainedBox(
+                            constraints: const BoxConstraints(maxWidth: 680),
+                            child: Text(
+                              film.overview,
+                              maxLines: desktop ? 3 : (wide ? 2 : 1),
+                              overflow: TextOverflow.ellipsis,
+                              style: theme.textTheme.bodySmall?.copyWith(
+                                color: const Color(0xFFB5AFA4),
+                                height: 1.45,
+                              ),
                             ),
                           ),
                         ],
-                        const SizedBox(height: 10),
+                        SizedBox(height: desktop ? 14 : 11),
                         Wrap(
-                          spacing: 8,
+                          spacing: 10,
                           runSpacing: 6,
                           crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
                             FilledButton.icon(
                               style: FilledButton.styleFrom(
-                                backgroundColor: Colors.white,
-                                foregroundColor: const Color(0xFF0B0D13),
-                                visualDensity: wide
-                                    ? null
-                                    : VisualDensity.compact,
+                                backgroundColor: const Color(0xFFF6F3EC),
+                                foregroundColor: const Color(0xFF141316),
+                                visualDensity: VisualDensity.compact,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 16,
+                                  vertical: 9,
+                                ),
                               ),
                               onPressed: () => _openFilmPlayer(film),
                               icon: const Icon(
@@ -179,17 +239,21 @@ extension _CinemaPageHomeRails on _CinemaPageState {
                               label: Text(
                                 film.canResume
                                     ? formatCinemaResumeCtaLabel(film)
-                                    : '播放',
+                                    : '立即放映',
                               ),
                             ),
                             OutlinedButton.icon(
                               key: const ValueKey('cinemaFeaturedDetails'),
                               style: OutlinedButton.styleFrom(
-                                foregroundColor: Colors.white,
-                                side: const BorderSide(color: Colors.white54),
-                                visualDensity: wide
-                                    ? null
-                                    : VisualDensity.compact,
+                                foregroundColor: const Color(0xFFF6F3EC),
+                                side: BorderSide(
+                                  color: Colors.white.withValues(alpha: 0.24),
+                                ),
+                                visualDensity: VisualDensity.compact,
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 9,
+                                ),
                               ),
                               onPressed: () => _openFilmDetails(film),
                               icon: const Icon(
@@ -232,7 +296,7 @@ extension _CinemaPageHomeRails on _CinemaPageState {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.only(bottom: 9),
             child: Row(
               children: [
                 Container(
@@ -241,25 +305,33 @@ extension _CinemaPageHomeRails on _CinemaPageState {
                     vertical: 2,
                   ),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFE50914),
+                    color: const Color(0xFFF4C165).withValues(alpha: 0.18),
                     borderRadius: BorderRadius.circular(5),
+                    border: Border.all(
+                      color: const Color(0xFFF4C165).withValues(alpha: 0.35),
+                    ),
                   ),
                   child: const Text(
                     'TOP 10',
                     style: TextStyle(
-                      color: Colors.white,
+                      color: Color(0xFFF4C165),
                       fontSize: 11,
                       fontWeight: FontWeight.w900,
                     ),
                   ),
                 ),
                 const SizedBox(width: 8),
-                Text('高分口碑精选', style: theme.textTheme.titleMedium),
+                Text(
+                  '高分口碑典藏',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
               ],
             ),
           ),
           SizedBox(
-            height: compact ? 168 : 204,
+            height: compact ? 168 : 202,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.only(right: 18),
@@ -268,10 +340,10 @@ extension _CinemaPageHomeRails on _CinemaPageState {
               itemBuilder: (context, index) {
                 final film = top[index];
                 return InkWell(
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: IsleRadius.brSm,
                   onTap: () => _openFilm(film),
                   child: SizedBox(
-                    width: compact ? 142 : 172,
+                    width: compact ? 140 : 170,
                     child: Stack(
                       alignment: Alignment.bottomLeft,
                       children: [
@@ -280,8 +352,15 @@ extension _CinemaPageHomeRails on _CinemaPageState {
                           top: 0,
                           bottom: 0,
                           width: compact ? 108 : 130,
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(12),
+                          child: Container(
+                            decoration: BoxDecoration(
+                              borderRadius: IsleRadius.brSm,
+                              border: Border.all(
+                                color: Colors.white.withValues(alpha: 0.14),
+                                width: 1.0,
+                              ),
+                            ),
+                            clipBehavior: Clip.antiAlias,
                             child: AuthenticatedMediaImage(
                               api: widget.api,
                               memoryCache: _posterCache,
@@ -302,17 +381,14 @@ extension _CinemaPageHomeRails on _CinemaPageState {
                           child: Text(
                             '${index + 1}',
                             style: TextStyle(
-                              fontSize: compact ? 68 : 84,
+                              fontSize: compact ? 64 : 82,
                               height: 1.0,
                               fontWeight: FontWeight.w900,
-                              color: theme.colorScheme.onSurface.withValues(
-                                alpha: 0.82,
-                              ),
-                              shadows: [
-                                Shadow(
-                                  color: theme.colorScheme.surface,
-                                  blurRadius: 8,
-                                ),
+                              color: const Color(
+                                0xFFF4C165,
+                              ).withValues(alpha: 0.86),
+                              shadows: const [
+                                Shadow(color: Color(0xDD0D0D10), blurRadius: 9),
                               ],
                             ),
                           ),
@@ -344,12 +420,12 @@ extension _CinemaPageHomeRails on _CinemaPageState {
         .clamp(1.0, 2.5)
         .toDouble();
     return Padding(
-      padding: EdgeInsets.fromLTRB(_pageInset, 4, 0, compact ? 12 : 18),
+      padding: EdgeInsets.fromLTRB(_pageInset, 2, 0, compact ? 12 : 16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Padding(
-            padding: const EdgeInsets.only(right: 18, bottom: 6),
+            padding: const EdgeInsets.only(right: 18, bottom: 5),
             child: Row(
               children: [
                 Expanded(
@@ -357,10 +433,15 @@ extension _CinemaPageHomeRails on _CinemaPageState {
                     '继续观看',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.titleMedium,
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
                   ),
                 ),
                 TextButton(
+                  style: TextButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
                   onPressed: () => _changeMode('continue'),
                   child: const Text('查看全部'),
                 ),
@@ -368,29 +449,36 @@ extension _CinemaPageHomeRails on _CinemaPageState {
             ),
           ),
           SizedBox(
-            height: (compact ? 136 : 158) + 76 * (textScale - 1),
+            height: (compact ? 134 : 152) + 74 * (textScale - 1),
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.only(right: 18),
               itemCount: films.length,
-              separatorBuilder: (_, _) => const SizedBox(width: 10),
+              separatorBuilder: (_, _) => const SizedBox(width: 11),
               itemBuilder: (context, index) {
                 final film = films[index];
                 final progress = film.duration > 0
                     ? (film.position / film.duration).clamp(0.0, 1.0).toDouble()
                     : 0.0;
-                return SizedBox(
-                  width: (compact ? 256 : 288) + 76 * (textScale - 1),
+                return Container(
+                  width: (compact ? 256 : 292) + 74 * (textScale - 1),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF19181D),
+                    borderRadius: IsleRadius.brMd,
+                    border: Border.all(
+                      color: Colors.white.withValues(alpha: 0.11),
+                      width: 1.0,
+                    ),
+                  ),
+                  clipBehavior: Clip.antiAlias,
                   child: Material(
-                    color: const Color(0xff171d29),
-                    borderRadius: IsleRadius.brItem,
-                    clipBehavior: Clip.antiAlias,
+                    color: Colors.transparent,
                     child: InkWell(
                       onTap: () => _openFilmPlayer(film),
                       child: Row(
                         children: [
                           SizedBox(
-                            width: compact ? 92 : 108,
+                            width: compact ? 88 : 104,
                             height: double.infinity,
                             child: AuthenticatedMediaImage(
                               api: widget.api,
@@ -422,8 +510,8 @@ extension _CinemaPageHomeRails on _CinemaPageState {
                                           overflow: TextOverflow.ellipsis,
                                           style: theme.textTheme.titleSmall
                                               ?.copyWith(
-                                                color: Colors.white,
-                                                fontWeight: FontWeight.w600,
+                                                color: const Color(0xFFF6F3EC),
+                                                fontWeight: FontWeight.w700,
                                               ),
                                         ),
                                       ),
@@ -435,14 +523,14 @@ extension _CinemaPageHomeRails on _CinemaPageState {
                                         visualDensity: VisualDensity.compact,
                                         padding: EdgeInsets.zero,
                                         constraints: const BoxConstraints(
-                                          minWidth: 28,
-                                          minHeight: 28,
+                                          minWidth: 26,
+                                          minHeight: 26,
                                         ),
                                         onPressed: () =>
                                             unawaited(_clearFilmProgress(film)),
                                         icon: const Icon(
                                           Icons.close_rounded,
-                                          size: 16,
+                                          size: 15,
                                           color: Colors.white70,
                                         ),
                                       ),
@@ -452,14 +540,14 @@ extension _CinemaPageHomeRails on _CinemaPageState {
                                   Text(
                                     film.isSeries
                                         ? '${formatCinemaSeasonEpisodeCode(film)} · 第 ${film.season} 季第 ${film.episode} 集'
-                                        : '继续播放',
+                                        : '继续放映',
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
                                     style: theme.textTheme.bodySmall?.copyWith(
-                                      color: Colors.white70,
+                                      color: const Color(0xFFB5AFA4),
                                     ),
                                   ),
-                                  const SizedBox(height: 3),
+                                  const SizedBox(height: 2),
                                   Builder(
                                     builder: (_) {
                                       final remaining =
@@ -469,7 +557,9 @@ extension _CinemaPageHomeRails on _CinemaPageState {
                                             ? '已看 ${formatMediaSeconds(film.position)}'
                                             : '剩余 $remaining',
                                         style: theme.textTheme.labelSmall
-                                            ?.copyWith(color: Colors.white70),
+                                            ?.copyWith(
+                                              color: const Color(0xFFC8C2B8),
+                                            ),
                                       );
                                     },
                                   ),
@@ -478,9 +568,9 @@ extension _CinemaPageHomeRails on _CinemaPageState {
                                     borderRadius: BorderRadius.circular(3),
                                     child: LinearProgressIndicator(
                                       value: progress,
-                                      minHeight: 4,
+                                      minHeight: 3.5,
                                       backgroundColor: Colors.white24,
-                                      color: const Color(0xFFE50914),
+                                      color: const Color(0xFFD95A38),
                                     ),
                                   ),
                                 ],
@@ -523,7 +613,12 @@ extension _CinemaPageHomeRails on _CinemaPageState {
         children: [
           Padding(
             padding: const EdgeInsets.only(bottom: 8),
-            child: Text('最近添加', style: theme.textTheme.titleMedium),
+            child: Text(
+              '最近添加',
+              style: theme.textTheme.titleMedium?.copyWith(
+                fontWeight: FontWeight.w800,
+              ),
+            ),
           ),
           SizedBox(
             height: cardWidth * 1.5 + footerHeight,
@@ -559,8 +654,10 @@ extension _CinemaPageHomeRails on _CinemaPageState {
     );
   }
 
-  Widget _continuePlaceholder() => ColoredBox(
-    color: Theme.of(context).colorScheme.surfaceContainerHigh,
-    child: const Center(child: Icon(Icons.movie_outlined, size: 26)),
+  Widget _continuePlaceholder() => const ColoredBox(
+    color: Color(0xFF1F1E24),
+    child: Center(
+      child: Icon(Icons.movie_outlined, size: 26, color: Colors.white54),
+    ),
   );
 }

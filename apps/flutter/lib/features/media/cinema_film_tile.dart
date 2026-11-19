@@ -81,7 +81,7 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
         !reducedMotion && (_hovered || _pressed) && !widget.selecting;
     final childBody = Material(
       color: widget.selected
-          ? surface.primaryContainer.withValues(alpha: .32)
+          ? surface.primaryContainer.withValues(alpha: .36)
           : Colors.transparent,
       child: InkWell(
         canRequestFocus: false,
@@ -123,7 +123,7 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
             child: reducedMotion
                 ? childBody
                 : AnimatedScale(
-                    scale: scaled ? 1.03 : 1.0,
+                    scale: scaled ? 1.028 : 1.0,
                     duration: IsleMotion.fast,
                     curve: IsleMotion.spring,
                     child: childBody,
@@ -136,23 +136,36 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
 
   Widget _buildPosterFrame(BuildContext context) {
     final film = widget.film;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final percent = film.duration > 0
         ? (film.position / film.duration).clamp(0.0, 1.0).toDouble()
         : 0.0;
     final posterImage = _buildPosterImage();
-    return ClipRRect(
-      borderRadius: IsleRadius.brControl,
-      child: AspectRatio(
-        aspectRatio: 2 / 3,
-        child: Stack(
-          fit: StackFit.expand,
-          children: [
-            if (widget.enableHero)
-              Hero(tag: 'cinema_poster_${film.id}', child: posterImage)
-            else
-              posterImage,
-            ..._buildPosterOverlays(context, percent: percent),
-          ],
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        borderRadius: IsleRadius.brControl,
+        border: Border.all(
+          color: _hovered
+              ? const Color(0xFFE07A56).withValues(alpha: 0.55)
+              : IsleGlass.rimBorderColor(isDark),
+          width: 1.0,
+        ),
+        boxShadow: isDark ? IsleShadows.subtle(true) : null,
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(IsleRadius.control - 1),
+        child: AspectRatio(
+          aspectRatio: 2 / 3,
+          child: Stack(
+            fit: StackFit.expand,
+            children: [
+              if (widget.enableHero)
+                Hero(tag: 'cinema_poster_${film.id}', child: posterImage)
+              else
+                posterImage,
+              ..._buildPosterOverlays(context, percent: percent),
+            ],
+          ),
         ),
       ),
     );
@@ -197,36 +210,36 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
     return [
       if (film.rating > 0 && !widget.selecting)
         Positioned(
-          top: 8,
-          left: 8,
+          top: 7,
+          left: 7,
           child: DecoratedBox(
             decoration: BoxDecoration(
-              color: Colors.black.withValues(alpha: .72),
-              borderRadius: BorderRadius.circular(8),
+              color: Colors.black.withValues(alpha: .74),
+              borderRadius: BorderRadius.circular(7),
             ),
             child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
               child: Text(
                 '★ ${film.rating.toStringAsFixed(1)}',
                 style: textTheme.labelSmall?.copyWith(
-                  color: const Color(0xFF46D369),
-                  fontWeight: FontWeight.w700,
-                  fontSize: 11.5,
+                  color: const Color(0xFFF4C165),
+                  fontWeight: FontWeight.w800,
+                  fontSize: 11,
                 ),
               ),
             ),
           ),
         ),
       Positioned(
-        top: 8,
-        right: 8,
+        top: 7,
+        right: 7,
         child: DecoratedBox(
           decoration: BoxDecoration(
-            color: Colors.black.withValues(alpha: .65),
-            borderRadius: BorderRadius.circular(8),
+            color: Colors.black.withValues(alpha: .66),
+            borderRadius: BorderRadius.circular(7),
           ),
           child: Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2.5),
             child: Text(
               film.isSeries
                   ? 'S${film.season} · E${film.episode}'
@@ -234,7 +247,7 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
               style: textTheme.labelSmall?.copyWith(
                 color: Colors.white,
                 fontWeight: FontWeight.w600,
-                fontSize: 12,
+                fontSize: 11,
               ),
             ),
           ),
@@ -319,7 +332,7 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
             value: percent,
             minHeight: 3.5,
             backgroundColor: Colors.black38,
-            color: const Color(0xFFE50914),
+            color: const Color(0xFFD95A38),
           ),
         ),
       if (widget.selecting) _buildSelectionCheckBadge(surface),
@@ -361,7 +374,7 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
         : '';
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(6, 6, 4, 4),
+      padding: const EdgeInsets.fromLTRB(4, 6, 2, 2),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -374,7 +387,7 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w700,
                     fontSize: 13,
                   ),
                 ),
@@ -385,19 +398,19 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
                   overflow: TextOverflow.ellipsis,
                   style: textTheme.bodySmall?.copyWith(
                     color: surface.onSurfaceVariant,
-                    fontSize: 11.5,
+                    fontSize: 11,
                   ),
                 ),
                 if (film.overview.isNotEmpty) ...[
-                  const SizedBox(height: 2),
+                  const SizedBox(height: 1),
                   Text(
                     film.overview,
-                    maxLines: 2,
+                    maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: textTheme.bodySmall?.copyWith(
-                      color: surface.onSurfaceVariant.withValues(alpha: .82),
-                      fontSize: 11,
-                      height: 1.35,
+                      color: surface.onSurfaceVariant.withValues(alpha: .78),
+                      fontSize: 10.5,
+                      height: 1.3,
                     ),
                   ),
                 ],
@@ -407,9 +420,9 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: textTheme.labelSmall?.copyWith(
-                      color: const Color(0xFF46D369),
-                      fontWeight: FontWeight.w600,
-                      fontSize: 11.5,
+                      color: const Color(0xFF58C48B),
+                      fontWeight: FontWeight.w700,
+                      fontSize: 11,
                     ),
                   )
                 else if (film.canResume)
@@ -418,9 +431,9 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: textTheme.labelSmall?.copyWith(
-                      color: const Color(0xFFE50914),
-                      fontWeight: FontWeight.w600,
-                      fontSize: 11.5,
+                      color: const Color(0xFFE07A56),
+                      fontWeight: FontWeight.w700,
+                      fontSize: 11,
                     ),
                   ),
                 if (!film.canAttemptPlayback)
@@ -430,7 +443,7 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
                     overflow: TextOverflow.ellipsis,
                     style: textTheme.labelSmall?.copyWith(
                       color: surface.error,
-                      fontSize: 11.5,
+                      fontSize: 11,
                     ),
                   ),
                 if (film.metadataSource.isEmpty)
@@ -440,7 +453,7 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
                     overflow: TextOverflow.ellipsis,
                     style: textTheme.labelSmall?.copyWith(
                       color: surface.tertiary,
-                      fontSize: 11.5,
+                      fontSize: 11,
                     ),
                   ),
               ],
@@ -462,24 +475,19 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
 
   Widget _posterPlaceholder(BuildContext context) {
     final film = widget.film;
-    final colors = Theme.of(context).colorScheme;
     return DecoratedBox(
-      decoration: BoxDecoration(
+      decoration: const BoxDecoration(
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [
-            colors.primaryContainer,
-            colors.surfaceContainerHigh,
-            colors.secondaryContainer,
-          ],
+          colors: [Color(0xFF221E24), Color(0xFF19181D), Color(0xFF28201E)],
         ),
       ),
       child: Center(
         child: Icon(
           film.isSeries ? Icons.live_tv_outlined : Icons.movie_outlined,
-          size: 42,
-          color: colors.primary,
+          size: 36,
+          color: const Color(0xFFE07A56),
         ),
       ),
     );

@@ -63,6 +63,8 @@ extension _PhotosPageNavigation on _PhotosPageState {
 
   void _photoAction(String value) {
     switch (value) {
+      case 'gridDensity':
+        _updateState(() => _feed.comfortableGrid = !_feed.comfortableGrid);
       case 'select':
         _updateState(() {
           _selection.selecting = !_selection.selecting;
@@ -131,9 +133,16 @@ extension _PhotosPageNavigation on _PhotosPageState {
 
   Future<void> _openMobilePhotoBackup() async {
     if (!widget.canBackup || widget.backupDirectory == 'PhonePhotos') {
-      final goStorage = await showDialog<bool>(
+      final isDark = Theme.of(context).brightness == Brightness.dark;
+      final goStorage = await showIsleDialog<bool>(
         context: context,
         builder: (dialogContext) => AlertDialog(
+          shape: IsleShapes.card(
+            side: BorderSide(
+              color: IsleGlass.rimBorderColor(isDark),
+              width: 1.0,
+            ),
+          ),
           title: const Text('尚未开启个人照片空间'),
           content: const Text(
             '手机相册备份需要先为当前账号分配在线的个人「照片」存储位置。'
@@ -181,19 +190,17 @@ extension _PhotosPageNavigation on _PhotosPageState {
           _buildNavigationChipStrip(),
           if (_currentPrivateAlbum != null)
             Padding(
-              padding: const EdgeInsets.only(top: 8),
+              padding: const EdgeInsets.only(top: 6),
               child: Text(
                 '私人相册 · 仅当前账号可见',
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ),
           _buildExpandableSearchBar(),
-          if (_scope.hasActiveQueryOrFacets) _buildActiveFilterSummary(context),
-          if (!_selection.selecting && _fullTimelineSelected)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: _buildQuickJumpStrip(),
-            ),
+          IsleAnimatedExpand(
+            expanded: _scope.hasActiveQueryOrFacets,
+            child: _buildActiveFilterSummary(context),
+          ),
         ],
       ),
     );
@@ -212,25 +219,24 @@ extension _PhotosPageNavigation on _PhotosPageState {
       if (_scope.mediaType == 'live') '实况照片',
       if (_scope.mediaType == 'video') '仅视频',
     ];
-    final scheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final palette = IslePalette.of(context);
+    final rose = palette['brandRose'];
     return Container(
       key: const Key('photoFilterSummaryBanner'),
-      margin: const EdgeInsets.only(top: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: scheme.surfaceContainerHigh.withValues(alpha: 0.72),
-        borderRadius: BorderRadius.circular(12),
-      ),
+      margin: const EdgeInsets.only(top: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 5),
+      decoration: IsleDecorations.recessedWell(context, radius: 10),
       child: Row(
         children: [
-          Icon(Icons.filter_alt_outlined, size: 16, color: scheme.primary),
-          const SizedBox(width: 8),
+          Icon(Icons.filter_alt_outlined, size: 15, color: rose),
+          const SizedBox(width: 7),
           Expanded(
             child: Text(
               '当前筛选：${parts.join(' · ')}',
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.bodySmall,
+              style: theme.textTheme.bodySmall?.copyWith(fontSize: 12),
             ),
           ),
           TextButton(
@@ -240,59 +246,59 @@ extension _PhotosPageNavigation on _PhotosPageState {
             },
             style: TextButton.styleFrom(
               visualDensity: VisualDensity.compact,
-              padding: const EdgeInsets.symmetric(horizontal: 8),
+              minimumSize: const Size(0, 26),
+              padding: const EdgeInsets.symmetric(horizontal: 7),
             ),
-            child: const Text('清除条件'),
+            child: const Text('清除条件', style: TextStyle(fontSize: 12)),
           ),
         ],
       ),
     );
   }
 
-  Widget _buildQuickJumpStrip() {
-    final isMobilePlatform =
-        defaultTargetPlatform == TargetPlatform.android ||
-        defaultTargetPlatform == TargetPlatform.iOS;
-    return IsleQuickJumpStrip(
-      prefixLabel: '快速入口',
-      items: [
-        IsleQuickJumpItem(
-          icon: Icons.map_outlined,
-          label: '足迹地图',
-          tooltip: '按拍摄位置在地图上浏览照片',
-          onTap: _openPhotoMap,
+  Widget _actionPillChip({
+    required String label,
+    required IconData icon,
+    required String tooltip,
+    required VoidCallback onPressed,
+  }) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final style = IsleThemeStyle.of(context);
+    final isDark = style.dark;
+    final palette = style.palette;
+    final isSharp = style.preset.cornerStyle == IsleCornerStyle.sharp;
+    final isBrutal = style.preset.surfaceMaterial == IsleSurfaceMaterial.neoBrutal;
+    return ActionChip(
+      tooltip: tooltip,
+      visualDensity: VisualDensity.compact,
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      backgroundColor: isBrutal
+          ? palette['cardTop']
+          : isDark
+          ? palette['cardItemTop'].withValues(alpha: 0.85)
+          : palette['cardTop'].withValues(alpha: 0.95),
+      side: BorderSide(
+        color: style.rimBorderColor(),
+        width: isBrutal ? 1.5 : 1.0,
+      ),
+      shape: isSharp ? style.shapeFor(IsleRadius.sm) : const StadiumBorder(),
+      avatar: Icon(icon, size: 15, color: colors.onSurfaceVariant),
+      label: Text(
+        label,
+        style: TextStyle(
+          fontSize: 12.5,
+          fontWeight: FontWeight.w500,
+          color: colors.onSurface,
         ),
-        IsleQuickJumpItem(
-          icon: Icons.auto_fix_high_outlined,
-          label: '连拍相似清理',
-          tooltip: '对比并清理手机连拍与相似废片',
-          onTap: _openSimilarCleanupPage,
-        ),
-        if (isMobilePlatform && widget.canBackup)
-          IsleQuickJumpItem(
-            icon: Icons.cloud_upload_outlined,
-            label: '手机照片备份',
-            tooltip: '前往手机相册自动备份设置',
-            onTap: _openMobilePhotoBackup,
-          ),
-        IsleQuickJumpItem(
-          icon: Icons.offline_pin_outlined,
-          label: '离线照片库',
-          tooltip: '查看已保存到本机的离线原片',
-          onTap: () => _photoAction('offline'),
-        ),
-        IsleQuickJumpItem(
-          icon: Icons.folder_open_outlined,
-          label: '管理照片文件',
-          tooltip: '打开文件管理器查看原始照片目录',
-          onTap: () => _photoAction('files'),
-        ),
-      ],
+      ),
+      onPressed: onPressed,
     );
   }
 
   Widget _buildNavigationChipStrip() {
     final selectedAlbum = _currentPrivateAlbum ?? _currentAlbum;
+    final wide = MediaQuery.sizeOf(context).width >= 960;
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Row(
@@ -302,16 +308,7 @@ extension _PhotosPageNavigation on _PhotosPageState {
             selected: _scope.isUnscopedCollection,
             onSelected: () => _selectView(),
           ),
-          if (_fullTimelineSelected) ...[
-            const SizedBox(width: 8),
-            ActionChip(
-              tooltip: '快速跳转到指定拍摄年月',
-              avatar: const Icon(Icons.calendar_month_outlined, size: 18),
-              label: const Text('年月'),
-              onPressed: _chooseTimelineMonth,
-            ),
-          ],
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           _filterChip(
             label: _scope.activeFolderName.isNotEmpty
                 ? _scope.activeFolderName
@@ -327,7 +324,7 @@ extension _PhotosPageNavigation on _PhotosPageState {
                 ? () => _selectView()
                 : null,
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           _filterChip(
             label: '我的收藏',
             icon: Icons.star_outline,
@@ -335,14 +332,7 @@ extension _PhotosPageNavigation on _PhotosPageState {
             onSelected: () =>
                 _selectView(personalFavorites: !_scope.personalFavoritesOnly),
           ),
-          const SizedBox(width: 8),
-          ActionChip(
-            tooltip: '按相机型号、定位、年份筛选',
-            avatar: const Icon(Icons.tune_rounded, size: 18),
-            label: const Text('筛选'),
-            onPressed: _openExifFilterSheet,
-          ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           _filterChip(
             label: _scope.activePersonId > 0 ? _scope.activePersonName : '人物',
             icon: Icons.face_retouching_natural_outlined,
@@ -350,13 +340,50 @@ extension _PhotosPageNavigation on _PhotosPageState {
             onSelected: _openPeoplePage,
             onDeleted: _scope.activePersonId > 0 ? () => _selectView() : null,
           ),
-          const SizedBox(width: 8),
-          ActionChip(
-            tooltip: '对比并清理手机连拍和画面相似废片',
-            avatar: const Icon(Icons.auto_fix_high_outlined, size: 18),
-            label: const Text('相似清理'),
-            onPressed: _openSimilarCleanupPage,
+          const SizedBox(width: 6),
+          _actionPillChip(
+            tooltip: '按相机型号、定位、年份筛选',
+            icon: Icons.tune_rounded,
+            label: '筛选',
+            onPressed: _openExifFilterSheet,
           ),
+          if (wide) ...[
+            const SizedBox(width: 10),
+            Container(
+              width: 1,
+              height: 18,
+              color: IsleGlass.rimBorderColor(
+                Theme.of(context).brightness == Brightness.dark,
+              ),
+            ),
+            const SizedBox(width: 10),
+            _filterChip(
+              label: '实况 Live',
+              icon: Icons.motion_photos_on_outlined,
+              selected: _scope.mediaType == 'live',
+              onSelected: () {
+                _updateState(
+                  () =>
+                      _scope.mediaType = _scope.mediaType == 'live' ? '' : 'live',
+                );
+                _loadAssets(reset: true);
+              },
+            ),
+            const SizedBox(width: 6),
+            _filterChip(
+              label: '仅视频',
+              icon: Icons.videocam_outlined,
+              selected: _scope.mediaType == 'video',
+              onSelected: () {
+                _updateState(
+                  () => _scope.mediaType = _scope.mediaType == 'video'
+                      ? ''
+                      : 'video',
+                );
+                _loadAssets(reset: true);
+              },
+            ),
+          ],
           ..._buildActiveFacetChips(),
         ],
       ),
@@ -364,67 +391,66 @@ extension _PhotosPageNavigation on _PhotosPageState {
   }
 
   List<Widget> _buildActiveFacetChips() {
+    final style = IsleThemeStyle.of(context);
+    final borderColor = style.rimBorderColor();
+    final isSharp = style.preset.cornerStyle == IsleCornerStyle.sharp;
+    Widget facetChip(String text, VoidCallback onClear) => InputChip(
+      visualDensity: VisualDensity.compact,
+      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      shape: isSharp ? style.shapeFor(IsleRadius.sm) : const StadiumBorder(),
+      side: BorderSide(color: borderColor, width: style.effectiveBorderWidth()),
+      label: Text(text, style: const TextStyle(fontSize: 12)),
+      onDeleted: onClear,
+    );
+
     return [
       if (_scope.cameraFilter.isNotEmpty) ...[
-        const SizedBox(width: 8),
-        InputChip(
-          label: Text(_scope.cameraFilter),
-          onDeleted: () {
-            _updateState(() => _scope.cameraFilter = '');
-            _loadAssets(reset: true);
-          },
-        ),
+        const SizedBox(width: 6),
+        facetChip(_scope.cameraFilter, () {
+          _updateState(() => _scope.cameraFilter = '');
+          _loadAssets(reset: true);
+        }),
       ],
       if (_scope.locationFilter.isNotEmpty) ...[
-        const SizedBox(width: 8),
-        InputChip(
-          label: Text(_scope.locationFilter == '1' ? '含定位' : '无定位'),
-          onDeleted: () {
-            _updateState(() => _scope.locationFilter = '');
-            _loadAssets(reset: true);
-          },
-        ),
+        const SizedBox(width: 6),
+        facetChip(_scope.locationFilter == '1' ? '含定位' : '无定位', () {
+          _updateState(() => _scope.locationFilter = '');
+          _loadAssets(reset: true);
+        }),
       ],
       if (_scope.yearFilter > 0) ...[
-        const SizedBox(width: 8),
-        InputChip(
-          label: Text('${_scope.yearFilter} 年'),
-          onDeleted: () {
-            _updateState(() => _scope.yearFilter = 0);
-            _loadAssets(reset: true);
-          },
-        ),
+        const SizedBox(width: 6),
+        facetChip('${_scope.yearFilter} 年', () {
+          _updateState(() => _scope.yearFilter = 0);
+          _loadAssets(reset: true);
+        }),
       ],
       if (_scope.takenFromFilter > 0 || _scope.takenToFilter > 0) ...[
-        const SizedBox(width: 8),
-        InputChip(
-          label: Text(_formatCustomDateRangeLabel()),
-          onDeleted: () {
-            _updateState(() {
-              _scope.takenFromFilter = 0;
-              _scope.takenToFilter = 0;
-            });
-            _loadAssets(reset: true);
-          },
-        ),
+        const SizedBox(width: 6),
+        facetChip(_formatCustomDateRangeLabel(), () {
+          _updateState(() {
+            _scope.takenFromFilter = 0;
+            _scope.takenToFilter = 0;
+          });
+          _loadAssets(reset: true);
+        }),
       ],
       if (_scope.favoritesOnly ||
           _scope.onThisDay ||
-          _scope.mediaType.isNotEmpty) ...[
-        const SizedBox(width: 8),
-        InputChip(
-          label: Text(
-            _scope.favoritesOnly
-                ? '共享收藏'
-                : _scope.onThisDay
-                ? '那年今天'
-                : _scope.mediaType == 'photo'
-                ? '仅照片'
-                : _scope.mediaType == 'live'
-                ? '实况照片'
-                : '仅视频',
-          ),
-          onDeleted: () {
+          (_scope.mediaType.isNotEmpty &&
+              MediaQuery.sizeOf(context).width < 960)) ...[
+        const SizedBox(width: 6),
+        facetChip(
+          _scope.favoritesOnly
+              ? '共享收藏'
+              : _scope.onThisDay
+              ? '那年今天'
+              : _scope.mediaType == 'photo'
+              ? '仅照片'
+              : _scope.mediaType == 'live'
+              ? '实况照片'
+              : '仅视频',
+          () {
             _updateState(() => _scope.mediaType = '');
             _selectView();
           },
@@ -434,10 +460,15 @@ extension _PhotosPageNavigation on _PhotosPageState {
   }
 
   Widget _buildExpandableSearchBar() {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final borderColor = IsleGlass.rimBorderColor(isDark);
+
     return IsleAnimatedExpand(
       expanded: _scope.showSearch,
       child: Padding(
-        padding: const EdgeInsets.only(top: 10),
+        padding: const EdgeInsets.only(top: 8),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -470,7 +501,7 @@ extension _PhotosPageNavigation on _PhotosPageState {
                 _loadAssets(reset: true);
               },
             ),
-            const SizedBox(height: 8),
+            const SizedBox(height: 6),
             SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(
@@ -480,7 +511,18 @@ extension _PhotosPageNavigation on _PhotosPageState {
                       padding: const EdgeInsets.only(right: 6),
                       child: ChoiceChip(
                         visualDensity: VisualDensity.compact,
-                        label: Text(mode.label),
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        shape: const StadiumBorder(),
+                        side: BorderSide(
+                          color: _scope.searchMode == mode
+                              ? colors.primary.withValues(alpha: 0.45)
+                              : borderColor,
+                          width: 1.0,
+                        ),
+                        label: Text(
+                          mode.label,
+                          style: const TextStyle(fontSize: 12),
+                        ),
                         selected: _scope.searchMode == mode,
                         onSelected: (_) {
                           if (_scope.searchMode == mode) return;
@@ -514,47 +556,54 @@ extension _PhotosPageNavigation on _PhotosPageState {
   }
 
   Widget _buildMemoriesCarousel() {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final style = IsleThemeStyle.of(context);
+    final isDark = style.dark;
+    final palette = style.palette;
+    final isBrutal = style.preset.surfaceMaterial == IsleSurfaceMaterial.neoBrutal;
+    final isFlat = style.preset.surfaceMaterial == IsleSurfaceMaterial.flatHairline;
+    final screenWidth = MediaQuery.sizeOf(context).width;
+    final compact = screenWidth < IsleLayout.compactPageWidth;
+    final desktop = screenWidth >= IsleLayout.desktopRailWidth;
+    final largeText = MediaQuery.textScalerOf(context).scale(14) > 19;
+
     final stories =
         <
           ({
             String keyId,
             String title,
-            String subtitle,
             IconData icon,
-            List<Color> gradient,
+            Color accent,
             VoidCallback onTap,
           })
         >[
           (
             keyId: 'memoryOnThisDay',
             title: '那年今日',
-            subtitle: '重温往年同一天的美好瞬间',
             icon: Icons.auto_awesome_rounded,
-            gradient: const [Color(0xFF4F46E5), Color(0xFF9333EA)],
+            accent: palette['brandViolet'],
             onTap: () => _selectView(onThisDay: true),
           ),
           (
             keyId: 'memoryPersonalStars',
             title: '星标精选',
-            subtitle: '我标记的个人高光照片',
             icon: Icons.star_rounded,
-            gradient: const [Color(0xFFD97706), Color(0xFFEA580C)],
+            accent: palette['brandAmber'],
             onTap: () => _selectView(personalFavorites: true),
           ),
           (
             keyId: 'memorySharedHearts',
             title: '家庭佳作',
-            subtitle: '与家人共同珍藏的回忆',
             icon: Icons.favorite_rounded,
-            gradient: const [Color(0xFFE11D48), Color(0xFFDB2777)],
+            accent: palette['brandRose'],
             onTap: () => _selectView(favorites: true),
           ),
           (
             keyId: 'memoryLivePhotos',
             title: '实况瞬间',
-            subtitle: '有声动态 Live 照片精选',
             icon: Icons.motion_photos_on_rounded,
-            gradient: const [Color(0xFFF59E0B), Color(0xFFEC4899)],
+            accent: palette['brandTerracotta'],
             onTap: () {
               _updateState(() => _scope.mediaType = 'live');
               _loadAssets(reset: true);
@@ -563,9 +612,8 @@ extension _PhotosPageNavigation on _PhotosPageState {
           (
             keyId: 'memoryVideos',
             title: '动态影像',
-            subtitle: '用视频记录的鲜活故事',
             icon: Icons.play_circle_fill_rounded,
-            gradient: const [Color(0xFF0284C7), Color(0xFF2563EB)],
+            accent: palette['brandBlue'],
             onTap: () {
               _updateState(() => _scope.mediaType = 'video');
               _loadAssets(reset: true);
@@ -574,21 +622,28 @@ extension _PhotosPageNavigation on _PhotosPageState {
           (
             keyId: 'memoryMapFootprints',
             title: '足迹地图',
-            subtitle: '按拍摄地点探索旅行记忆',
             icon: Icons.explore_rounded,
-            gradient: const [Color(0xFF059669), Color(0xFF0D9488)],
+            accent: palette['brandSage'],
             onTap: _openPhotoMap,
           ),
         ];
 
-    final compact =
-        MediaQuery.sizeOf(context).width < IsleLayout.compactPageWidth;
-    final largeText = MediaQuery.textScalerOf(context).scale(14) > 19;
-    final cardHeight = largeText ? 128.0 : (compact ? 86.0 : 104.0);
-    final cardWidth = compact ? 132.0 : 156.0;
+    final cardHeight = largeText
+        ? 86.0
+        : desktop
+        ? 68.0
+        : compact
+        ? 58.0
+        : 64.0;
+    final cardWidth = desktop
+        ? 162.0
+        : compact
+        ? 118.0
+        : 140.0;
+
     return Padding(
       key: const ValueKey('googlePhotosMemoriesCarousel'),
-      padding: const EdgeInsets.only(bottom: 6),
+      padding: const EdgeInsets.only(bottom: 8),
       child: SizedBox(
         height: cardHeight,
         child: ListView.separated(
@@ -598,79 +653,73 @@ extension _PhotosPageNavigation on _PhotosPageState {
           separatorBuilder: (_, _) => SizedBox(width: compact ? 8 : 10),
           itemBuilder: (context, index) {
             final story = stories[index];
+            final cardTop = Color.alphaBlend(
+              story.accent.withValues(alpha: isDark ? 0.14 : 0.08),
+              palette['cardTop'],
+            );
+            final cardBottom = Color.alphaBlend(
+              story.accent.withValues(alpha: isDark ? 0.05 : 0.025),
+              palette['cardBottom'],
+            );
+            final cardRadius = style.borderRadiusFor(IsleRadius.item);
             return SizedBox(
               width: cardWidth,
               child: Material(
                 color: Colors.transparent,
                 child: InkWell(
                   key: ValueKey(story.keyId),
-                  borderRadius: IsleRadius.brItem,
+                  borderRadius: cardRadius,
                   onTap: story.onTap,
                   child: Ink(
                     decoration: BoxDecoration(
-                      borderRadius: IsleRadius.brItem,
-                      gradient: LinearGradient(
-                        begin: Alignment.topLeft,
-                        end: Alignment.bottomRight,
-                        colors: story.gradient,
+                      borderRadius: cardRadius,
+                      color: isBrutal || isFlat ? cardTop : null,
+                      gradient: isBrutal || isFlat
+                          ? null
+                          : LinearGradient(
+                              begin: Alignment.topLeft,
+                              end: Alignment.bottomRight,
+                              colors: [cardTop, cardBottom],
+                            ),
+                      border: Border.all(
+                        color: isBrutal
+                            ? style.rimBorderColor()
+                            : story.accent.withValues(
+                                alpha: isDark ? 0.32 : 0.22,
+                              ),
+                        width: style.effectiveBorderWidth(),
                       ),
-                      boxShadow: [
-                        BoxShadow(
-                          color: story.gradient.last.withValues(alpha: 0.22),
-                          blurRadius: 10,
-                          offset: const Offset(0, 4),
-                        ),
-                      ],
+                      boxShadow: style.subtleShadows(),
                     ),
-                    padding: EdgeInsets.all(compact ? 10 : 12),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Container(
-                          width: compact ? 26 : 30,
-                          height: compact ? 26 : 30,
-                          decoration: BoxDecoration(
-                            color: Colors.white.withValues(alpha: 0.22),
-                            borderRadius: BorderRadius.circular(8),
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(
+                        horizontal: compact ? 10 : 12,
+                        vertical: compact ? 8 : 10,
+                      ),
+                      child: Row(
+                        children: [
+                          IsleSquircleBadge(
+                            icon: story.icon,
+                            color: story.accent,
+                            size: compact ? 26 : 30,
+                            iconSize: compact ? 14.5 : 16,
                           ),
-                          child: Icon(
-                            story.icon,
-                            size: compact ? 15 : 17,
-                            color: Colors.white,
-                          ),
-                        ),
-                        Flexible(
-                          child: Column(
-                            mainAxisSize: MainAxisSize.min,
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                story.title,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: compact ? 13 : 14,
-                                  fontWeight: FontWeight.w800,
-                                  height: 1.15,
-                                ),
+                          const SizedBox(width: 9),
+                          Expanded(
+                            child: Text(
+                              story.title,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                color: colors.onSurface,
+                                fontSize: compact ? 12.5 : 13.5,
+                                fontWeight: FontWeight.w700,
+                                letterSpacing: -0.15,
                               ),
-                              const SizedBox(height: 2),
-                              Text(
-                                story.subtitle,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                style: TextStyle(
-                                  color: Colors.white.withValues(alpha: 0.86),
-                                  fontSize: compact ? 10.5 : 11,
-                                  height: 1.15,
-                                ),
-                              ),
-                            ],
+                            ),
                           ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                   ),
                 ),

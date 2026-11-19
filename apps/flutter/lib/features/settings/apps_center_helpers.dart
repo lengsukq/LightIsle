@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart' show LaunchMode, launchUrl;
+
+import '../../core/lightisle_api.dart';
 
 double? asDoubleOrNull(Object? value) {
   if (value is num) return value.toDouble();
@@ -97,6 +100,63 @@ String appCategoryLabel(String? category) => switch (category) {
   'automation' => '数据看板',
   _ => '实用工具',
 };
+
+/// Wakes/launches a ready LightIsle light-app directly via `/api/v2/apps/{id}/launch`
+/// and opens its authenticated entry URI using the preferred launch mode.
+Future<({Uri targetUri, Uri displayUri})> launchLightIsleApp({
+  required LightIsleApi api,
+  required String appId,
+  bool preferExternal = false,
+  Future<bool> Function(Uri uri, {LaunchMode mode})? urlLauncher,
+}) async {
+  final res = await api.send(
+    'POST',
+    '/api/v2/apps/${Uri.encodeComponent(appId)}/launch',
+  );
+  final launchPath = res['launchUrl']?.toString().trim() ?? '/apps/$appId/';
+  final cleanPath = res['launchPath']?.toString().trim() ?? '/apps/$appId/';
+  final origin = api.uri('/').origin;
+  final urlText = launchPath.startsWith('http')
+      ? launchPath
+      : '$origin${launchPath.startsWith('/') ? launchPath : '/$launchPath'}';
+  final displayUrl = cleanPath.startsWith('http')
+      ? cleanPath
+      : '$origin${cleanPath.startsWith('/') ? cleanPath : '/$cleanPath'}';
+  final targetUri = Uri.parse(urlText);
+  final displayUri = Uri.parse(displayUrl);
+  final launcher =
+      urlLauncher ??
+      (Uri u, {LaunchMode mode = LaunchMode.platformDefault}) =>
+          launchUrl(u, mode: mode);
+
+  var opened = false;
+  Object? lastLaunchError;
+  if (!preferExternal) {
+    for (final mode in const [
+      LaunchMode.inAppWebView,
+      LaunchMode.inAppBrowserView,
+    ]) {
+      try {
+        opened = await launcher(targetUri, mode: mode);
+        if (opened) break;
+      } catch (e) {
+        lastLaunchError = e;
+      }
+    }
+  }
+  if (!opened) {
+    try {
+      opened = await launcher(targetUri, mode: LaunchMode.externalApplication);
+    } catch (e) {
+      lastLaunchError = e;
+    }
+  }
+  if (!opened) {
+    if (lastLaunchError != null) throw lastLaunchError;
+    throw StateError('无法在浏览器中打开该轻应用，请检查系统默认浏览器设置。');
+  }
+  return (targetUri: targetUri, displayUri: displayUri);
+}
 
 IconData appCategoryIcon(String? category) => switch (category) {
   'network' => Icons.router_rounded,

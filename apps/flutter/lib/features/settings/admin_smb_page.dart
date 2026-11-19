@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/isle_gallery_layout.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
@@ -148,9 +149,9 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
     _bonjourUrl = data['bonjourUrl']?.toString() ?? '';
     _lanUrl = data['lanUrl']?.toString() ?? '';
     _shares = objectList(data['shares']).map(SmbSharePoint.fromJson).toList();
-    _roots = objectList(data['candidateRoots'])
-        .map(SmbCandidateRoot.fromJson)
-        .toList();
+    _roots = objectList(
+      data['candidateRoots'],
+    ).map(SmbCandidateRoot.fromJson).toList();
     final online = _onlineRoots;
     if (online.isEmpty) {
       _selectedRootId = '';
@@ -308,13 +309,91 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
 
   void _copy(String text, String label) {
     Clipboard.setData(ClipboardData(text: text));
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text('已复制$label：$text')));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text('已复制$label：$text')));
   }
 
   @override
   Widget build(BuildContext context) {
     final canControl = !_busy && _remoteManageReady;
+    final palette = IslePalette.of(context);
+    final amber = palette['brandAmber'];
+    final mineral = palette['brandBlue'];
+    final sage = palette['brandSage'];
+    final statusText = _serviceEnabled
+        ? (_listeningState == 'listening' ? '已开启' : '已开启 · 待监听')
+        : '未开启';
+
+    final leftConfigColumn = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        IsleGroupCard(
+          margin: EdgeInsets.zero,
+          children: [
+            IsleGroupTile(
+              icon: Icons.dns_rounded,
+              iconBgColor: _serviceEnabled ? sage : amber,
+              title: 'SMB 文件共享服务',
+              subtitle: _computerName.isNotEmpty
+                  ? '$statusText · $_computerName'
+                  : statusText,
+              trailing: Switch.adaptive(
+                key: const ValueKey('smb-service-switch'),
+                value: _serviceEnabled,
+                onChanged: canControl
+                    ? (v) => unawaited(_toggleService(v))
+                    : null,
+              ),
+            ),
+            if (_bonjourUrl.isNotEmpty)
+              IsleGroupTile(
+                icon: Icons.lan_rounded,
+                iconBgColor: mineral,
+                title: '局域网主机地址',
+                subtitle: _bonjourUrl,
+                trailing: const Icon(Icons.copy_rounded, size: 16),
+                onTap: () => _copy(_bonjourUrl, '主机地址'),
+              ),
+            if (_lanUrl.isNotEmpty)
+              IsleGroupTile(
+                icon: Icons.wifi_rounded,
+                iconBgColor: amber,
+                title: '局域网 IP 地址',
+                subtitle: _lanUrl,
+                trailing: const Icon(Icons.copy_rounded, size: 16),
+                onTap: () => _copy(_lanUrl, 'IP 地址'),
+              ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        _buildAddShareCard(context, canControl, palette),
+      ],
+    );
+
+    final rightSharesColumn = Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        IsleSectionHeader(
+          title: '已共享文件夹 (${_shares.length})',
+          accentColor: mineral,
+        ),
+        if (_loading && _shares.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 24),
+            child: Center(child: CircularProgressIndicator()),
+          )
+        else if (_shares.isEmpty)
+          const IsleEmptyStateCard(
+            '当前没有配置任何 SMB 共享文件夹。',
+            icon: Icons.folder_off_outlined,
+          )
+        else
+          for (final share in _shares)
+            _buildShareCard(context, share, canControl, palette),
+      ],
+    );
+
     return Scaffold(
       appBar: IsleAppBar(
         title: const Text('Mac 文件共享 (SMB)'),
@@ -324,104 +403,66 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
             onPressed: (_loading || _busy) ? null : () => unawaited(_refresh()),
             icon: const Icon(Icons.refresh_rounded),
           ),
+          IsleHelpButton(
+            title: 'SMB 共享与权限说明',
+            accentColor: amber,
+            items: const [
+              IsleHelpItem(
+                title: 'macOS 原生文件共享联动',
+                body: '直接管理宿主 Mac 系统级 SMB 共享列表，局域网设备使用 Mac 系统账号或访客身份挂载；移除共享仅取消登记，绝不删除磁盘原文件。',
+              ),
+              IsleHelpItem(
+                title: '私人目录边界提醒',
+                body: '若将包含 Users 目录的整盘设为 SMB 共享，具备该盘挂载权限的局域网用户将能直接访问成员私人目录，建议按子目录精细共享。',
+              ),
+            ],
+          ),
         ],
       ),
       body: IsleListView(
+        maxWidth: IsleLayout.workbenchMaxWidth,
         children: [
           if (!_loading && !_remoteManageReady)
             const Padding(
               padding: EdgeInsets.only(bottom: 12),
               child: Notice(
-                '尚未开启三端免密管理授权。请先在 Mac 管理端「网络与连接 → Mac 文件共享」点击一次「开启免密管理授权」，即可在手机和网页端直接控制 SMB 服务与共享目录。',
+                '请先在 Mac 管理端「网络与连接 → Mac 文件共享」开启一次免密管理授权。',
               ),
             ),
           if (_error != null)
             Padding(
               padding: const EdgeInsets.only(bottom: 10),
-              child: Text(
-                _error!,
-                style: TextStyle(color: Theme.of(context).colorScheme.error),
-              ),
+              child: Notice(_error!, error: true),
             ),
           if (_notice != null)
             Padding(
               padding: const EdgeInsets.only(bottom: 10),
               child: Notice(_notice!),
             ),
-          IsleGroupCard(
-            children: [
-              IsleGroupTile(
-                icon: Icons.dns_rounded,
-                iconBgColor: const Color(0xFFFF9500),
-                title: 'SMB 文件共享服务',
-                subtitle: _computerName.isNotEmpty
-                    ? '${_serviceEnabled ? (_listeningState == "listening" ? "已开启 · 监听已确认" : "已开启 · 监听待确认") : "未开启"} · 局域网搜索名：$_computerName'
-                    : (_serviceEnabled
-                          ? (_listeningState == 'listening'
-                                ? '已开启 · 监听已确认'
-                                : '已开启 · 监听待确认')
-                          : '未开启'),
-                trailing: Switch.adaptive(
-                  key: const ValueKey('smb-service-switch'),
-                  value: _serviceEnabled,
-                  onChanged: canControl
-                      ? (v) => unawaited(_toggleService(v))
-                      : null,
-                ),
-              ),
-              if (_bonjourUrl.isNotEmpty)
-                IsleGroupTile(
-                  icon: Icons.lan_rounded,
-                  iconBgColor: const Color(0xFF007AFF),
-                  title: '局域网主机地址',
-                  subtitle: _bonjourUrl,
-                  trailing: const Icon(Icons.copy_rounded, size: 16),
-                  onTap: () => _copy(_bonjourUrl, '主机地址'),
-                ),
-              if (_lanUrl.isNotEmpty)
-                IsleGroupTile(
-                  icon: Icons.wifi_rounded,
-                  iconBgColor: const Color(0xFF0EA5E9),
-                  title: '局域网 IP 地址',
-                  subtitle: _lanUrl,
-                  trailing: const Icon(Icons.copy_rounded, size: 16),
-                  onTap: () => _copy(_lanUrl, 'IP 地址'),
-                ),
-            ],
+          IsleWorkbenchSplit(
+            breakpoint: 880,
+            primaryFlex: 5,
+            secondaryFlex: 6,
+            primary: leftConfigColumn,
+            secondary: rightSharesColumn,
           ),
-          const SizedBox(height: 12),
-          _buildAddShareCard(context, canControl),
-          IsleSectionHeader(title: '已共享文件夹 (${_shares.length})'),
-          if (_loading && _shares.isEmpty)
-            const Padding(
-              padding: EdgeInsets.symmetric(vertical: 24),
-              child: Center(child: CircularProgressIndicator()),
-            )
-          else if (_shares.isEmpty)
-            const IsleEmptyStateCard(
-              '当前没有配置任何 SMB 共享文件夹。',
-              icon: Icons.folder_off_outlined,
-            )
-          else
-            for (final share in _shares)
-              _buildShareCard(context, share, canControl),
-          const SizedBox(height: 4),
-          const IsleHelpDisclosure(
-            summary: 'SMB 共享与账号说明',
-            details:
-                '移除共享仅从 macOS 文件共享列表取消登记，绝不会删除硬盘原文件。'
-                '首次使用某 Mac 系统账号密码连接 SMB 时，需在 Mac「系统设置 → 通用 → 共享 → 文件共享 → Windows 文件共享」中勾选该账号。',
-          ),
+          const SizedBox(height: 16),
         ],
       ),
     );
   }
 
-  Widget _buildAddShareCard(BuildContext context, bool canControl) {
+  Widget _buildAddShareCard(
+    BuildContext context,
+    bool canControl,
+    IslePalette palette,
+  ) {
     final online = _onlineRoots;
     final current = _currentRoot;
+    final amber = palette['brandAmber'];
     return IsleSurface(
-      radius: 16,
+      radius: IsleRadius.card,
+      tint: amber,
       margin: EdgeInsets.zero,
       padding: const EdgeInsets.all(16),
       child: Column(
@@ -429,17 +470,17 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
         children: [
           Row(
             children: [
-              const IsleSquircleBadge(
+              IsleSquircleBadge(
                 icon: Icons.create_new_folder_rounded,
-                color: Color(0xFFFF9500),
-                size: 34,
+                color: amber,
+                size: 36,
                 iconSize: 18,
               ),
               const SizedBox(width: 10),
               const Expanded(
                 child: Text(
-                  '新增 NAS 共享文件夹',
-                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700),
+                  '新增共享文件夹',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
                 ),
               ),
             ],
@@ -447,13 +488,14 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
           const SizedBox(height: 12),
           if (online.isEmpty)
             const Text(
-              '暂无在线的 NAS 存储盘，请先在 Mac 管理端登记并连接硬盘。',
+              '暂无在线的 NAS 存储盘。',
               style: TextStyle(fontSize: 12),
             )
           else ...[
             DropdownButtonFormField<String>(
               key: const ValueKey('smb-root-dropdown'),
               initialValue: current?.rootId,
+              isExpanded: true,
               decoration: const InputDecoration(
                 labelText: 'NAS 存储盘',
                 isDense: true,
@@ -476,6 +518,7 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
             DropdownButtonFormField<String>(
               key: const ValueKey('smb-subpath-dropdown'),
               initialValue: _selectedSubpath,
+              isExpanded: true,
               decoration: const InputDecoration(
                 labelText: '共享目录范围',
                 isDense: true,
@@ -499,23 +542,24 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
               controller: _nameCtrl,
               enabled: canControl,
               decoration: const InputDecoration(
-                labelText: '自定义共享名称（留空则用文件夹名）',
+                labelText: '自定义共享名称（可选）',
                 isDense: true,
               ),
             ),
             if (_selectionExposesPersonal) ...[
               const SizedBox(height: 8),
-              const Text(
-                '注意：共享整块存储根或 Users 目录会使局域网 SMB 用户直接访问成员私人目录，且通过 SMB 写入的文件不计入轻屿配额账本。',
-                style: TextStyle(fontSize: 12, color: Color(0xFFD97706)),
+              Text(
+                '包含 Users 目录时，局域网 SMB 用户可直接访问成员私人目录。',
+                style: TextStyle(fontSize: 12, color: amber),
               ),
             ],
             const SizedBox(height: 8),
             Wrap(
-              spacing: 12,
+              spacing: 10,
               runSpacing: 4,
               children: [
                 FilterChip(
+                  visualDensity: VisualDensity.compact,
                   label: const Text('仅只读'),
                   selected: _newReadOnly,
                   onSelected: canControl
@@ -523,6 +567,7 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
                       : null,
                 ),
                 FilterChip(
+                  visualDensity: VisualDensity.compact,
                   label: const Text('允许访客'),
                   selected: _newGuestAccess,
                   onSelected: canControl
@@ -530,6 +575,7 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
                       : null,
                 ),
                 FilterChip(
+                  visualDensity: VisualDensity.compact,
                   label: const Text('SMB3 加密'),
                   selected: _newSealed,
                   onSelected: canControl
@@ -538,7 +584,7 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
                 ),
               ],
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 12),
             Align(
               alignment: Alignment.centerRight,
               child: FilledButton.icon(
@@ -558,13 +604,18 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
     BuildContext context,
     SmbSharePoint share,
     bool canControl,
+    IslePalette palette,
   ) {
     final canManage =
         canControl && (_roots.isEmpty || (share.rootId?.isNotEmpty ?? false));
+    final mineral = palette['brandBlue'];
+    final amber = palette['brandAmber'];
+    final muted = Theme.of(context).colorScheme.onSurfaceVariant;
+
     return IsleSurface(
-      radius: 16,
+      radius: IsleRadius.card,
       margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(14),
+      padding: const EdgeInsets.all(15),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -573,9 +624,7 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
             children: [
               IsleSquircleBadge(
                 icon: Icons.folder_shared_rounded,
-                color: share.shared
-                    ? const Color(0xFF007AFF)
-                    : const Color(0xFF64748B),
+                color: share.shared ? mineral : muted,
                 size: 36,
                 iconSize: 19,
               ),
@@ -592,34 +641,31 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
                           share.smbName,
                           style: const TextStyle(
                             fontSize: 14,
-                            fontWeight: FontWeight.w700,
+                            fontWeight: FontWeight.w800,
                           ),
                         ),
                         if (share.rootName != null &&
                             share.rootName!.isNotEmpty)
                           IsleBadgePill(
                             label: 'NAS · ${share.rootName}',
-                            color: const Color(0xFF0EA5E9),
+                            color: mineral,
                           )
                         else if (_roots.isNotEmpty &&
                             (share.rootId?.isEmpty ?? true))
-                          const IsleBadgePill(
+                          IsleBadgePill(
                             label: '本机其他共享（仅 Mac 端管理）',
-                            color: Color(0xFF64748B),
+                            color: muted,
                           ),
                       ],
                     ),
-                    const SizedBox(height: 4),
+                    const SizedBox(height: 5),
                     IsleCodePill(share.path),
                     if (share.exposesPersonalDirs)
-                      const Padding(
-                        padding: EdgeInsets.only(top: 4),
+                      Padding(
+                        padding: const EdgeInsets.only(top: 4),
                         child: Text(
-                          '包含 Users 私人目录：SMB 使用 Mac 账号或访客权限，不受轻屿成员隔离与配额账本限制。',
-                          style: TextStyle(
-                            fontSize: 11,
-                            color: Color(0xFFD97706),
-                          ),
+                          '包含 Users 私人目录',
+                          style: TextStyle(fontSize: 11, color: amber),
                         ),
                       ),
                   ],
@@ -627,6 +673,9 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
               ),
               TextButton.icon(
                 key: ValueKey('smb-remove-${share.recordName}'),
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                ),
                 onPressed: canManage
                     ? () => unawaited(_removeShare(share))
                     : null,
@@ -635,12 +684,13 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
               ),
             ],
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 10),
           Wrap(
             spacing: 8,
             runSpacing: 6,
             children: [
               FilterChip(
+                visualDensity: VisualDensity.compact,
                 label: const Text('启用共享'),
                 selected: share.shared,
                 onSelected: canManage
@@ -648,6 +698,7 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
                     : null,
               ),
               FilterChip(
+                visualDensity: VisualDensity.compact,
                 label: const Text('仅只读'),
                 selected: share.readOnly,
                 onSelected: canManage
@@ -655,6 +706,7 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
                     : null,
               ),
               FilterChip(
+                visualDensity: VisualDensity.compact,
                 label: const Text('允许访客'),
                 selected: share.guestAccess,
                 onSelected: canManage
@@ -662,6 +714,7 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
                     : null,
               ),
               FilterChip(
+                visualDensity: VisualDensity.compact,
                 label: const Text('SMB3 加密'),
                 selected: share.sealed,
                 onSelected: canManage

@@ -9,7 +9,7 @@ import '../../core/authenticated_media_image.dart';
 import '../../core/isle_action_menu.dart';
 import '../../core/isle_cache_manager.dart';
 import '../../core/isle_data_cache.dart';
-import '../../core/isle_quick_jump.dart';
+import '../../core/isle_gallery_layout.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/media_image_memory_cache.dart';
@@ -213,6 +213,8 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
         _startScan();
       case 'refresh':
         _refreshView();
+      case 'dav':
+        _openDavPage();
       case 'local':
         unawaited(_openLocalVideo());
       case 'offline':
@@ -282,45 +284,54 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
 
   @override
   Widget build(BuildContext context) {
+    final cinemaTheme = buildIsleCinemaTheme(Theme.of(context));
     final showHomeRails =
         _isRootCinemaView &&
         _catalog.query.trim().isEmpty &&
         !_selection.selecting;
     final showFilmListSection = _subpages.isRootView;
 
-    return IsleChildPopScope(
-      canPop:
-          !_selection.selecting && !_catalog.showSearch && _isRootCinemaView,
-      onPopInvokedWithResult: _handleSystemBack,
-      child: RefreshIndicator(
-        onRefresh: _refreshView,
-        child: CustomScrollView(
-          key: PageStorageKey<String>(
-            'cinema:${widget.api.selectedRoot?.identity ?? 'default'}',
-          ),
-          physics: const AlwaysScrollableScrollPhysics(),
-          slivers: [
-            _buildTopChromeSliver(context),
-            if (showHomeRails) ...[
-              SliverToBoxAdapter(child: _featuredFilmBanner()),
-              SliverToBoxAdapter(child: _continueWatchingRail()),
-              SliverToBoxAdapter(child: _topRatedRail()),
-              SliverToBoxAdapter(child: _recentlyAddedRail()),
-            ],
-            if (showFilmListSection &&
-                _catalog.mode == 'unmatched' &&
-                widget.isAdmin)
-              SliverToBoxAdapter(child: _adminScrapeBar()),
-            if (showFilmListSection &&
-                _catalog.films.isNotEmpty &&
-                !_selection.selecting)
-              _buildFilmSectionHeadingSliver(context),
-            if (showFilmListSection) _filmGrid(),
-            _buildPaginationFooterSliver(
-              context,
-              showFilmFooter: showFilmListSection && _catalog.films.isNotEmpty,
+    return Theme(
+      data: cinemaTheme,
+      child: Builder(
+        builder: (cinemaContext) => IsleChildPopScope(
+          canPop:
+              !_selection.selecting &&
+              !_catalog.showSearch &&
+              _isRootCinemaView,
+          onPopInvokedWithResult: _handleSystemBack,
+          child: RefreshIndicator(
+            onRefresh: _refreshView,
+            child: CustomScrollView(
+              key: PageStorageKey<String>(
+                'cinema:${widget.api.selectedRoot?.identity ?? 'default'}',
+              ),
+              physics: const AlwaysScrollableScrollPhysics(),
+              slivers: [
+                _buildTopChromeSliver(cinemaContext),
+                if (showHomeRails) ...[
+                  SliverToBoxAdapter(child: _featuredFilmBanner()),
+                  SliverToBoxAdapter(child: _continueWatchingRail()),
+                  SliverToBoxAdapter(child: _topRatedRail()),
+                  SliverToBoxAdapter(child: _recentlyAddedRail()),
+                ],
+                if (showFilmListSection &&
+                    _catalog.mode == 'unmatched' &&
+                    widget.isAdmin)
+                  SliverToBoxAdapter(child: _adminScrapeBar()),
+                if (showFilmListSection &&
+                    _catalog.films.isNotEmpty &&
+                    !_selection.selecting)
+                  _buildFilmSectionHeadingSliver(cinemaContext),
+                if (showFilmListSection) _filmGrid(),
+                _buildPaginationFooterSliver(
+                  cinemaContext,
+                  showFilmFooter:
+                      showFilmListSection && _catalog.films.isNotEmpty,
+                ),
+              ],
             ),
-          ],
+          ),
         ),
       ),
     );
@@ -328,6 +339,7 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
 
   Widget _buildTopChromeSliver(BuildContext context) {
     final screenWidth = MediaQuery.sizeOf(context).width;
+    final palette = IslePalette.of(context);
     return SliverToBoxAdapter(
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -337,11 +349,11 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
               _pageInset,
               IsleLayout.pageTopInset(screenWidth),
               _pageInset,
-              0,
+              4,
             ),
             child: IslePageHeader(
+              accentColor: palette['brandTerracotta'],
               title: '影视',
-              hideSubtitleOnCompact: _isRootCinemaView,
               subtitle: _headerSubtitle,
               trailing: _buildHeaderTrailingActions(context),
             ),
@@ -349,28 +361,30 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
           _cinemaNavigation(),
           _buildSelectionToolbar(),
           _buildStatusBanners(),
-          if (_subpages.showSeries)
-            ..._seriesView()
-          else if (_subpages.showHistory)
-            ..._historyView(),
+          if (_subpages.showSeries || _subpages.showHistory)
+            IsleModeSwitcher(
+              modeKey: _subpages.showSeries ? 'cinema:series' : 'cinema:history',
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: _subpages.showSeries
+                    ? _seriesView()
+                    : _historyView(),
+              ),
+            ),
         ],
       ),
     );
   }
 
   String get _headerSubtitle {
-    if (_subpages.showSeries) return '按剧名与季数整理';
-    if (_subpages.showHistory) return '最近观看的影片';
-    switch (_catalog.mode) {
-      case 'movie':
-        return '电影收藏';
-      case 'unmatched':
-        return '尚未确认海报与简介的影片';
-      case 'continue':
-        return '从上次看到的地方接着看';
-      default:
-        return '找到想看的内容，随时继续播放';
-    }
+    if (_subpages.showSeries) return '剧集库';
+    if (_subpages.showHistory) return '观看历史';
+    return switch (_catalog.mode) {
+      'movie' => '电影收藏',
+      'unmatched' => '待匹配资料',
+      'continue' => '继续观看',
+      _ => '',
+    };
   }
 
   Widget _buildStatusBanners() {
@@ -420,14 +434,12 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
         : _catalog.query.isNotEmpty
         ? '搜索结果'
         : '全部影片';
+    final palette = IslePalette.of(context);
     return SliverToBoxAdapter(
-      child: Padding(
-        padding: EdgeInsets.fromLTRB(_pageInset, 8, _pageInset, 6),
-        child: Text(
-          title,
-          style: Theme.of(context).textTheme.titleMedium
-              ?.copyWith(fontWeight: FontWeight.w700),
-        ),
+      child: IsleSectionHeader(
+        title: title,
+        accentColor: palette['brandTerracotta'],
+        padding: EdgeInsets.fromLTRB(_pageInset, 10, _pageInset, 8),
       ),
     );
   }

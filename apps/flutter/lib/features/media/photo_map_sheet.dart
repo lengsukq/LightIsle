@@ -38,10 +38,12 @@ class _PhotoMapPin extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final palette = IslePalette.of(context);
+    final rose = palette['brandRose'];
     final count = group.ids.length;
     final countLabel = count > 999 ? '999+' : '$count';
     final boxSize = selected ? 50.0 : 44.0;
-    final borderColor = selected ? scheme.primary : Colors.white;
+    final borderColor = selected ? rose : Colors.white;
 
     return Tooltip(
       message: '查看 $count 张照片',
@@ -90,22 +92,22 @@ class _PhotoMapPin extends StatelessWidget {
                     padding: EdgeInsets.all(selected ? 2.5 : 2.0),
                     decoration: BoxDecoration(
                       color: borderColor,
-                      borderRadius: BorderRadius.circular(12),
+                      borderRadius: BorderRadius.circular(13),
                       border: selected
                           ? Border.all(color: Colors.white, width: 1.5)
                           : null,
                       boxShadow: [
                         BoxShadow(
                           color: selected
-                              ? scheme.primary.withValues(alpha: 0.45)
-                              : Colors.black.withValues(alpha: 0.28),
-                          blurRadius: selected ? 12 : 7,
+                              ? rose.withValues(alpha: 0.45)
+                              : const Color(0x451C1917),
+                          blurRadius: selected ? 12 : 8,
                           offset: const Offset(0, 3),
                         ),
                       ],
                     ),
                     child: ClipRRect(
-                      borderRadius: BorderRadius.circular(9.5),
+                      borderRadius: BorderRadius.circular(10),
                       child: Stack(
                         fit: StackFit.expand,
                         children: [
@@ -156,9 +158,7 @@ class _PhotoMapPin extends StatelessWidget {
                         vertical: 2,
                       ),
                       decoration: BoxDecoration(
-                        color: selected
-                            ? scheme.primary
-                            : const Color(0xFF1E293B),
+                        color: selected ? rose : const Color(0xFF1C1917),
                         borderRadius: BorderRadius.circular(999),
                         border: Border.all(color: Colors.white, width: 1.5),
                         boxShadow: const [
@@ -205,41 +205,52 @@ class _MapZoomControls extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final palette = IslePalette(isDark);
+    final borderColor = IsleGlass.rimBorderColor(isDark);
     final canZoomIn = zoom < photoMapMaxZoom - 0.05;
     final canZoomOut = zoom > photoMapMinZoom + 0.05;
     return Material(
-      color: scheme.surface.withValues(alpha: 0.92),
-      elevation: 4,
-      shadowColor: Colors.black26,
-      borderRadius: BorderRadius.circular(14),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          IconButton(
-            key: const ValueKey('photo-map-zoom-in'),
-            tooltip: '放大地图',
-            visualDensity: VisualDensity.compact,
-            onPressed: canZoomIn ? onZoomIn : null,
-            icon: const Icon(Icons.add_rounded, size: 20),
-          ),
-          Divider(height: 1, thickness: 0.5, color: scheme.outlineVariant),
-          IconButton(
-            key: const ValueKey('photo-map-zoom-out'),
-            tooltip: '缩小地图',
-            visualDensity: VisualDensity.compact,
-            onPressed: canZoomOut ? onZoomOut : null,
-            icon: const Icon(Icons.remove_rounded, size: 20),
-          ),
-          Divider(height: 1, thickness: 0.5, color: scheme.outlineVariant),
-          IconButton(
-            key: const ValueKey('photo-map-fit-all'),
-            tooltip: '查看全部足迹',
-            visualDensity: VisualDensity.compact,
-            onPressed: onFitAll,
-            icon: const Icon(Icons.fit_screen_rounded, size: 19),
-          ),
-        ],
+      color: palette['cardTop'].withValues(alpha: 0.96),
+      elevation: 0,
+      shape: IsleShapes.squircle(
+        13,
+        side: BorderSide(color: borderColor, width: 1.0),
+      ),
+      child: DecoratedBox(
+        decoration: BoxDecoration(
+          borderRadius: BorderRadius.circular(13),
+          boxShadow: IsleShadows.card(isDark),
+        ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            IconButton(
+              key: const ValueKey('photo-map-zoom-in'),
+              tooltip: '放大地图',
+              visualDensity: VisualDensity.compact,
+              onPressed: canZoomIn ? onZoomIn : null,
+              icon: const Icon(Icons.add_rounded, size: 19),
+            ),
+            Divider(height: 1, thickness: 1, color: borderColor),
+            IconButton(
+              key: const ValueKey('photo-map-zoom-out'),
+              tooltip: '缩小地图',
+              visualDensity: VisualDensity.compact,
+              onPressed: canZoomOut ? onZoomOut : null,
+              icon: const Icon(Icons.remove_rounded, size: 19),
+            ),
+            Divider(height: 1, thickness: 1, color: borderColor),
+            IconButton(
+              key: const ValueKey('photo-map-fit-all'),
+              tooltip: '查看全部足迹',
+              visualDensity: VisualDensity.compact,
+              onPressed: onFitAll,
+              icon: const Icon(Icons.fit_screen_rounded, size: 18),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -287,191 +298,215 @@ class _LocationPhotoSheet extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
+    final palette = IslePalette(isDark);
+    final borderColor = IsleGlass.rimBorderColor(isDark);
     final dateLabel = group.dateRangeLabel;
 
     return LayoutBuilder(
       builder: (context, constraints) {
+        final desktopDock =
+            constraints.maxWidth >= 900 && constraints.maxHeight >= 460;
         final wide = constraints.maxWidth >= 680;
-        final sheetWidth = wide ? 420.0 : constraints.maxWidth;
-        final maxSheetHeight =
-            (constraints.maxHeight * (expanded ? 0.64 : 0.42)).clamp(
-              190.0,
-              440.0,
-            );
-        final columns = sheetWidth >= 380 ? 4 : 3;
+        final sheetWidth = desktopDock
+            ? 390.0
+            : wide
+            ? 420.0
+            : constraints.maxWidth;
+        final maxSheetHeight = desktopDock
+            ? (constraints.maxHeight - 84).clamp(220.0, 560.0)
+            : (constraints.maxHeight * (expanded ? 0.62 : 0.40)).clamp(
+                180.0,
+                420.0,
+              );
+        final columns = sheetWidth >= 360 ? 4 : 3;
 
         return Align(
-          alignment: wide ? Alignment.bottomRight : Alignment.bottomCenter,
+          alignment: desktopDock
+              ? Alignment.bottomRight
+              : (wide ? Alignment.bottomRight : Alignment.bottomCenter),
           child: Padding(
-            padding: EdgeInsets.fromLTRB(wide ? 16 : 10, 0, wide ? 16 : 10, 10),
+            padding: EdgeInsets.fromLTRB(
+              wide ? 14 : 10,
+              desktopDock ? 68 : 0,
+              wide ? 14 : 10,
+              12,
+            ),
             child: ConstrainedBox(
               constraints: BoxConstraints(
                 maxWidth: sheetWidth,
                 maxHeight: maxSheetHeight,
               ),
-              child: Material(
-                key: const ValueKey('photo-map-location-sheet'),
-                color: scheme.surface.withValues(alpha: 0.97),
-                elevation: 10,
-                shadowColor: Colors.black38,
-                borderRadius: BorderRadius.circular(20),
-                clipBehavior: Clip.antiAlias,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    InkWell(
-                      onTap: onToggleExpand,
-                      child: Padding(
-                        padding: const EdgeInsets.only(top: 8, bottom: 4),
-                        child: Center(
-                          child: Container(
-                            width: 36,
-                            height: 4,
-                            decoration: BoxDecoration(
-                              color: scheme.onSurfaceVariant.withValues(
-                                alpha: 0.35,
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(20),
+                  boxShadow: IsleShadows.floating(isDark),
+                ),
+                child: Material(
+                  key: const ValueKey('photo-map-location-sheet'),
+                  color: palette['cardTop'].withValues(alpha: 0.98),
+                  shape: IsleShapes.squircle(
+                    20,
+                    side: BorderSide(color: borderColor, width: 1.0),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      if (!desktopDock)
+                        InkWell(
+                          onTap: onToggleExpand,
+                          child: Padding(
+                            padding: const EdgeInsets.only(top: 7, bottom: 3),
+                            child: Center(
+                              child: Container(
+                                width: 34,
+                                height: 4,
+                                decoration: BoxDecoration(
+                                  color: scheme.onSurfaceVariant.withValues(
+                                    alpha: 0.35,
+                                  ),
+                                  borderRadius: BorderRadius.circular(99),
+                                ),
                               ),
-                              borderRadius: BorderRadius.circular(99),
                             ),
                           ),
-                        ),
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(14, 2, 8, 6),
-                      child: Row(
-                        children: [
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  sameLocationPickerTitle(group.ids.length),
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
-                                  style: theme.textTheme.titleSmall?.copyWith(
-                                    fontWeight: FontWeight.w700,
-                                  ),
-                                ),
-                                if (dateLabel.isNotEmpty)
+                        )
+                      else
+                        const SizedBox(height: 8),
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(14, 2, 8, 6),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
                                   Text(
-                                    dateLabel,
+                                    sameLocationPickerTitle(group.ids.length),
                                     maxLines: 1,
                                     overflow: TextOverflow.ellipsis,
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                      color: scheme.onSurfaceVariant,
+                                    style: theme.textTheme.titleSmall?.copyWith(
+                                      fontSize: 13.5,
+                                      fontWeight: FontWeight.w800,
                                     ),
                                   ),
-                              ],
+                                  if (dateLabel.isNotEmpty)
+                                    Text(
+                                      dateLabel,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: theme.textTheme.bodySmall
+                                          ?.copyWith(
+                                            fontSize: 11.5,
+                                            color: scheme.onSurfaceVariant,
+                                          ),
+                                    ),
+                                ],
+                              ),
                             ),
-                          ),
-                          if (totalClusters > 1) ...[
+                            if (totalClusters > 1) ...[
+                              IconButton(
+                                tooltip: '上一处足迹',
+                                visualDensity: VisualDensity.compact,
+                                onPressed: () => onStepCluster(-1),
+                                icon: const Icon(
+                                  Icons.chevron_left_rounded,
+                                  size: 19,
+                                ),
+                              ),
+                              Text(
+                                '${clusterIndex + 1}/$totalClusters',
+                                style: theme.textTheme.labelSmall?.copyWith(
+                                  color: scheme.onSurfaceVariant,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              IconButton(
+                                tooltip: '下一处足迹',
+                                visualDensity: VisualDensity.compact,
+                                onPressed: () => onStepCluster(1),
+                                icon: const Icon(
+                                  Icons.chevron_right_rounded,
+                                  size: 19,
+                                ),
+                              ),
+                            ],
+                            if (canZoomCluster)
+                              IconButton(
+                                key: const ValueKey('photo-map-zoom-cluster'),
+                                tooltip: '放大此区域',
+                                visualDensity: VisualDensity.compact,
+                                onPressed: onZoomCluster,
+                                icon: const Icon(
+                                  Icons.zoom_in_map_rounded,
+                                  size: 18,
+                                ),
+                              ),
                             IconButton(
-                              tooltip: '上一处足迹',
+                              key: const ValueKey('photo-map-close-sheet'),
+                              tooltip: '关闭预览',
                               visualDensity: VisualDensity.compact,
-                              onPressed: () => onStepCluster(-1),
-                              icon: const Icon(
-                                Icons.chevron_left_rounded,
-                                size: 20,
-                              ),
-                            ),
-                            Text(
-                              '${clusterIndex + 1}/$totalClusters',
-                              style: theme.textTheme.labelSmall?.copyWith(
-                                color: scheme.onSurfaceVariant,
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            IconButton(
-                              tooltip: '下一处足迹',
-                              visualDensity: VisualDensity.compact,
-                              onPressed: () => onStepCluster(1),
-                              icon: const Icon(
-                                Icons.chevron_right_rounded,
-                                size: 20,
-                              ),
+                              onPressed: onClose,
+                              icon: const Icon(Icons.close_rounded, size: 19),
                             ),
                           ],
-                          if (canZoomCluster)
-                            IconButton(
-                              key: const ValueKey('photo-map-zoom-cluster'),
-                              tooltip: '放大此区域',
-                              visualDensity: VisualDensity.compact,
-                              onPressed: onZoomCluster,
-                              icon: const Icon(
-                                Icons.zoom_in_map_rounded,
-                                size: 19,
-                              ),
-                            ),
-                          IconButton(
-                            key: const ValueKey('photo-map-close-sheet'),
-                            tooltip: '关闭预览',
-                            visualDensity: VisualDensity.compact,
-                            onPressed: onClose,
-                            icon: const Icon(Icons.close_rounded, size: 20),
-                          ),
-                        ],
+                        ),
                       ),
-                    ),
-                    const Divider(height: 1, thickness: 0.5),
-                    Flexible(
-                      child: loading
-                          ? const Padding(
-                              padding: EdgeInsets.symmetric(vertical: 28),
-                              child: Center(
-                                child: SizedBox(
-                                  width: 24,
-                                  height: 24,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2.5,
+                      Divider(height: 1, thickness: 1, color: borderColor),
+                      Flexible(
+                        child: loading
+                            ? const IsleLoadingState(
+                                compact: true,
+                                padding: EdgeInsets.symmetric(vertical: 20),
+                              )
+                            : error != null
+                            ? Padding(
+                                padding: const EdgeInsets.all(12),
+                                child: Notice(
+                                  error!,
+                                  error: true,
+                                  onRetry: onRetry,
+                                ),
+                              )
+                            : assets.isEmpty
+                            ? Padding(
+                                padding: const EdgeInsets.all(16),
+                                child: Text(
+                                  '照片可能已被移走，或当前账号没有访问权限。',
+                                  style: theme.textTheme.bodySmall?.copyWith(
+                                    color: scheme.onSurfaceVariant,
                                   ),
                                 ),
+                              )
+                            : GridView.builder(
+                                padding: const EdgeInsets.all(8),
+                                shrinkWrap: true,
+                                gridDelegate:
+                                    SliverGridDelegateWithFixedCrossAxisCount(
+                                      crossAxisCount: columns,
+                                      mainAxisSpacing: 6,
+                                      crossAxisSpacing: 6,
+                                    ),
+                                itemCount: assets.length,
+                                itemBuilder: (context, index) {
+                                  final asset = assets[index];
+                                  return _LocationPhotoGridTile(
+                                    key: ValueKey(
+                                      'map-sheet-photo-${asset.id}',
+                                    ),
+                                    api: api,
+                                    memoryCache: memoryCache,
+                                    asset: asset,
+                                    onTap: () => onOpenAsset(asset, assets),
+                                  );
+                                },
                               ),
-                            )
-                          : error != null
-                          ? Padding(
-                              padding: const EdgeInsets.all(14),
-                              child: Notice(
-                                error!,
-                                error: true,
-                                onRetry: onRetry,
-                              ),
-                            )
-                          : assets.isEmpty
-                          ? Padding(
-                              padding: const EdgeInsets.all(18),
-                              child: Text(
-                                '照片可能已被移走，或当前账号没有访问权限。',
-                                style: theme.textTheme.bodySmall?.copyWith(
-                                  color: scheme.onSurfaceVariant,
-                                ),
-                              ),
-                            )
-                          : GridView.builder(
-                              padding: const EdgeInsets.all(10),
-                              shrinkWrap: true,
-                              gridDelegate:
-                                  SliverGridDelegateWithFixedCrossAxisCount(
-                                    crossAxisCount: columns,
-                                    mainAxisSpacing: 8,
-                                    crossAxisSpacing: 8,
-                                  ),
-                              itemCount: assets.length,
-                              itemBuilder: (context, index) {
-                                final asset = assets[index];
-                                return _LocationPhotoGridTile(
-                                  key: ValueKey('map-sheet-photo-${asset.id}'),
-                                  api: api,
-                                  memoryCache: memoryCache,
-                                  asset: asset,
-                                  onTap: () => onOpenAsset(asset, assets),
-                                );
-                              },
-                            ),
-                    ),
-                  ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -499,6 +534,7 @@ class _LocationPhotoGridTile extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
+    final palette = IslePalette.of(context);
     final caption = asset.takenAt > 0
         ? formatMediaDate(asset.takenAt)
         : asset.name;
@@ -506,8 +542,8 @@ class _LocationPhotoGridTile extends StatelessWidget {
     return Tooltip(
       message: asset.name,
       child: Material(
-        color: scheme.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(10),
+        color: palette['cardItemBottom'],
+        borderRadius: BorderRadius.circular(9),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: onTap,
@@ -521,25 +557,25 @@ class _LocationPhotoGridTile extends StatelessWidget {
                 maxBytes: 2 * 1024 * 1024,
                 fit: BoxFit.cover,
                 loadingBuilder: (_) => ColoredBox(
-                  color: scheme.surfaceContainerLow,
+                  color: palette['cardItemBottom'],
                   child: Center(
                     child: Icon(
                       asset.isVideo
                           ? Icons.movie_outlined
                           : Icons.photo_outlined,
-                      size: 20,
+                      size: 18,
                       color: scheme.onSurfaceVariant,
                     ),
                   ),
                 ),
                 errorBuilder: (_, _, _) => ColoredBox(
-                  color: scheme.surfaceContainerHigh,
+                  color: palette['cardItemBottom'],
                   child: Center(
                     child: Icon(
                       asset.isVideo
                           ? Icons.movie_outlined
                           : Icons.photo_outlined,
-                      size: 20,
+                      size: 18,
                       color: scheme.onSurfaceVariant,
                     ),
                   ),
@@ -558,13 +594,13 @@ class _LocationPhotoGridTile extends StatelessWidget {
                     ),
                   ),
                   child: Padding(
-                    padding: const EdgeInsets.fromLTRB(5, 10, 5, 4),
+                    padding: const EdgeInsets.fromLTRB(5, 8, 5, 3),
                     child: Row(
                       children: [
                         if (asset.isVideo) ...[
                           const Icon(
                             Icons.play_arrow_rounded,
-                            size: 13,
+                            size: 12,
                             color: Colors.white,
                           ),
                           const SizedBox(width: 2),
@@ -594,10 +630,10 @@ class _LocationPhotoGridTile extends StatelessWidget {
                     asset.personalFavorite
                         ? Icons.star_rounded
                         : Icons.favorite_rounded,
-                    size: 14,
+                    size: 13,
                     color: asset.personalFavorite
                         ? const Color(0xFFFBBF24)
-                        : const Color(0xFFF43F5E),
+                        : palette['brandRose'],
                   ),
                 ),
             ],

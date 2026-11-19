@@ -1,9 +1,10 @@
 import 'package:flutter/material.dart';
 
+import '../../core/isle_gallery_layout.dart';
+import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
-import '../../core/isle_theme.dart';
 
 class UploadMaintenancePage extends StatefulWidget {
   const UploadMaintenancePage({super.key, required this.api});
@@ -18,6 +19,7 @@ class _UploadMaintenancePageState extends State<UploadMaintenancePage> {
   String? _error, _message;
   bool _busy = false, _loaded = false;
   int _days = 30;
+
   @override
   void initState() {
     super.initState();
@@ -116,150 +118,230 @@ class _UploadMaintenancePageState extends State<UploadMaintenancePage> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: IsleAppBar(
-      title: const Text('上传维护'),
-      actions: [
-        IconButton(
-          tooltip: '刷新上传',
-          onPressed: _busy ? null : _load,
-          icon: const Icon(Icons.refresh),
-        ),
-      ],
-    ),
-    body: IsleListView(
-      children: [
-        if (_message != null) Notice(_message!),
-        if (_error != null) Notice(_error!, error: true, onRetry: _load),
-        if (_busy) const LinearProgressIndicator(),
-        IsleSurface(
-          padding: const EdgeInsets.all(16),
-          margin: const EdgeInsets.only(bottom: 12),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  IsleSquircleBadge(
-                    icon: Icons.cleaning_services_rounded,
-                    color: IslePalette.of(context)['brandCyan'],
-                    size: 36,
-                    iconSize: 19,
-                  ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          '清理过期分片上传',
-                          style: Theme.of(context).textTheme.titleSmall
-                              ?.copyWith(fontWeight: FontWeight.w700),
-                        ),
-                        const SizedBox(height: 2),
-                        Text(
-                          '清理长期中断的上传临时分片并释放预占空间，不影响已上传完成的原文件。',
-                          style: Theme.of(context).textTheme.bodySmall
-                              ?.copyWith(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant,
-                              ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+  Widget build(BuildContext context) {
+    final palette = IslePalette.of(context);
+    final abnormalCount = _items
+        .where((i) => i['orphan'] == true || i['corrupt'] == true)
+        .length;
+
+    return Scaffold(
+      appBar: IsleAppBar(
+        title: const Text('上传维护'),
+        actions: [
+          IconButton(
+            tooltip: '刷新上传',
+            onPressed: _busy ? null : _load,
+            icon: const Icon(Icons.refresh),
+          ),
+          IsleHelpButton(
+            title: '分片上传维护说明',
+            accentColor: palette['brandCyan'],
+            body:
+                '此处仅列出尚未合并完成的断点续传临时分片。清理过期或异常分片会释放其占用的暂存空间与成员配额预占，绝不会删除任何已上传完成的正式文件。',
+          ),
+        ],
+      ),
+      body: IsleListView(
+        maxWidth: IsleLayout.workbenchMaxWidth,
+        children: [
+          if (_message != null) Notice(_message!),
+          if (_error != null) Notice(_error!, error: true, onRetry: _load),
+          if (_busy)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: ClipRRect(
+                borderRadius: IsleRadius.brPill,
+                child: const LinearProgressIndicator(minHeight: 3),
               ),
-              const SizedBox(height: 14),
-              DropdownButtonFormField<int>(
-                initialValue: _days,
-                decoration: const InputDecoration(labelText: '未活动时间'),
-                items: [7, 30, 90]
-                    .map((d) => DropdownMenuItem(value: d, child: Text('$d 天')))
-                    .toList(),
-                onChanged: _busy ? null : (v) => setState(() => _days = v!),
+            ),
+          IsleFocalStage(
+            icon: Icons.cleaning_services_rounded,
+            accent: palette['brandCyan'],
+            title: '分片上传维护',
+            metrics: [
+              IsleFocalMetric(
+                label: '暂存会话',
+                value: _loaded ? '${_items.length} 项' : '读取中',
+                icon: Icons.cloud_upload_outlined,
+                color: palette['brandCyan'],
               ),
-              const SizedBox(height: 12),
-              Align(
-                alignment: Alignment.centerLeft,
-                child: OutlinedButton.icon(
-                  onPressed: _busy ? null : _cleanup,
-                  icon: const Icon(Icons.delete_sweep_outlined, size: 18),
-                  label: const Text('清理过期上传'),
+              IsleFocalMetric(
+                label: '异常分片',
+                value: _loaded ? '$abnormalCount 项' : '—',
+                icon: Icons.warning_amber_rounded,
+                color: abnormalCount > 0
+                    ? Theme.of(context).colorScheme.error
+                    : palette['brandSage'],
+              ),
+            ],
+            actions: [
+              for (final d in const [7, 30, 90])
+                ChoiceChip(
+                  visualDensity: VisualDensity.compact,
+                  label: Text('$d 天'),
+                  selected: _days == d,
+                  onSelected: _busy ? null : (_) => setState(() => _days = d),
                 ),
+              FilledButton.tonalIcon(
+                onPressed: _busy ? null : _cleanup,
+                style: FilledButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                ),
+                icon: const Icon(Icons.delete_sweep_outlined, size: 16),
+                label: const Text('清理过期上传'),
               ),
             ],
           ),
-        ),
-        if (_loaded && _items.isEmpty)
-          const IsleEmptyStateCard(
-            '没有待维护的上传。',
-            icon: Icons.cloud_done_outlined,
-          ),
-        if (_items.isNotEmpty) ...[
-          IsleSectionHeader(title: '活动中的分片会话（${_items.length}）'),
-          IsleResponsiveGrid(
-            minItemWidth: 300,
-            maxColumns: 3,
-            spacing: 10,
-            runSpacing: 10,
+          if (_loaded && _items.isEmpty)
+            const IsleEmptyStateCard(
+              '没有待维护的上传。',
+              icon: Icons.cloud_done_outlined,
+            ),
+          if (_items.isNotEmpty) ...[
+            IsleSectionHeader(title: '活动中的分片会话（${_items.length}）'),
+            IsleResponsiveGrid(
+              minItemWidth: 310,
+              maxColumns: 3,
+              spacing: 12,
+              runSpacing: 12,
+              children: [
+                for (final item in _items) _buildUploadSessionCard(context, item),
+              ],
+            ),
+          ],
+          if (!_busy && _cursor.isNotEmpty)
+            Align(
+              alignment: Alignment.centerLeft,
+              child: Padding(
+                padding: const EdgeInsets.only(top: 10),
+                child: FilledButton.tonalIcon(
+                  onPressed: () => _load(more: true),
+                  icon: const Icon(Icons.expand_more_rounded, size: 18),
+                  label: const Text('加载更多'),
+                ),
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildUploadSessionCard(
+    BuildContext context,
+    Map<String, dynamic> item,
+  ) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final palette = IslePalette.of(context);
+    final offset = (item['offset'] as num?)?.toDouble() ?? 0;
+    final size = (item['size'] as num?)?.toDouble() ?? 0;
+    final fraction = size > 0 ? (offset / size).clamp(0.0, 1.0) : 0.0;
+    final abnormal = item['orphan'] == true || item['corrupt'] == true;
+    final accent = abnormal ? colors.error : palette['brandCyan'];
+
+    return IsleSurface(
+      radius: IsleRadius.card,
+      margin: EdgeInsets.zero,
+      padding: const EdgeInsets.all(14),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
             children: [
-              for (final item in _items)
-                IsleSurface(
-                  radius: 16,
-                  margin: EdgeInsets.zero,
-                  padding: EdgeInsets.zero,
-                  child: ListTile(
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 14,
-                      vertical: 4,
-                    ),
-                    leading: IsleSquircleBadge(
-                      icon: Icons.cloud_upload_outlined,
-                      color: IslePalette.of(context)['brandCyan'],
-                      size: 36,
-                      iconSize: 19,
-                    ),
-                    title: Text(
+              IsleSquircleBadge(
+                icon: abnormal
+                    ? Icons.warning_amber_rounded
+                    : Icons.cloud_upload_outlined,
+                color: accent,
+                size: 34,
+                iconSize: 18,
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
                       item['path']?.toString() ?? '',
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.titleSmall
-                          ?.copyWith(fontWeight: FontWeight.w700),
-                    ),
-                    subtitle: Text(
-                      '账号：${item['ownerName'] ?? '已删除'} · '
-                      '${formatBytes(item['offset'] as num?)} / ${formatBytes(item['size'] as num?)}'
-                      '${item['orphan'] == true || item['corrupt'] == true ? '\n上传分片异常' : ''}',
-                      style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                        color: Theme.of(context).colorScheme.onSurfaceVariant,
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
                       ),
                     ),
-                    trailing: TextButton(
-                      onPressed: _busy ? null : () => _cancel(item),
-                      style: TextButton.styleFrom(
-                        foregroundColor: Theme.of(context).colorScheme.error,
+                    Text(
+                      '账号：${item['ownerName'] ?? '已删除'}',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        fontSize: 12,
+                        color: colors.onSurfaceVariant,
                       ),
-                      child: const Text('取消并清理'),
                     ),
-                  ),
+                  ],
                 ),
+              ),
+              IsleStatusBadge(
+                label: abnormal ? '分片异常' : '断点暂存',
+                color: accent,
+              ),
             ],
           ),
-        ],
-        if (!_busy && _cursor.isNotEmpty)
-          Align(
-            alignment: Alignment.centerLeft,
-            child: Padding(
-              padding: const EdgeInsets.only(top: 4),
-              child: OutlinedButton(
-                onPressed: () => _load(more: true),
-                child: const Text('加载更多'),
-              ),
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            decoration: IsleDecorations.recessedWell(
+              context,
+              radius: IsleRadius.sm,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(4),
+                  child: LinearProgressIndicator(
+                    value: fraction,
+                    minHeight: 5,
+                    color: accent,
+                    backgroundColor: accent.withValues(alpha: 0.14),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      '${formatBytes(item['offset'] as num?)} / ${formatBytes(item['size'] as num?)}',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        color: colors.onSurfaceVariant,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                    Text(
+                      '${(fraction * 100).round()}%',
+                      style: theme.textTheme.labelSmall?.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: accent,
+                        fontFeatures: const [FontFeature.tabularFigures()],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
             ),
           ),
-      ],
-    ),
-  );
+          const SizedBox(height: 6),
+          Align(
+            alignment: Alignment.centerRight,
+            child: TextButton(
+              onPressed: _busy ? null : () => _cancel(item),
+              style: TextButton.styleFrom(
+                foregroundColor: colors.error,
+                visualDensity: VisualDensity.compact,
+              ),
+              child: const Text('取消并清理'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }

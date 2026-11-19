@@ -3,12 +3,9 @@ part of 'cinema_page.dart';
 extension _CinemaLibraryControls on _CinemaPageState {
   Widget _cinemaNavigation() {
     final showFilters =
-        (_subpages.isRootView || _subpages.showSeries) && !_selection.selecting;
-    final showQuickJumps =
-        _subpages.isRootView &&
-        !_selection.selecting &&
-        !_catalog.showSearch &&
-        _catalog.query.trim().isEmpty;
+        (!_isRootCinemaView || _catalog.query.trim().isNotEmpty) &&
+        (_subpages.isRootView || _subpages.showSeries) &&
+        !_selection.selecting;
 
     return Padding(
       padding: EdgeInsets.fromLTRB(_pageInset, 0, _pageInset, 8),
@@ -84,6 +81,9 @@ extension _CinemaLibraryControls on _CinemaPageState {
                 if (_subpages.showHistory || _catalog.mode == 'continue') ...[
                   const SizedBox(width: 6),
                   TextButton(
+                    style: TextButton.styleFrom(
+                      visualDensity: VisualDensity.compact,
+                    ),
                     onPressed: () => _switchToFilmMode('all'),
                     child: const Text('返回首页'),
                   ),
@@ -91,14 +91,13 @@ extension _CinemaLibraryControls on _CinemaPageState {
               ],
             ),
           ),
-          if (showFilters) ...[
-            const SizedBox(height: 8),
-            _buildWatchedAndSortBar(context),
-          ],
-          if (showQuickJumps) ...[
-            const SizedBox(height: 8),
-            _buildCinemaQuickJumpStrip(),
-          ],
+          IsleAnimatedExpand(
+            expanded: showFilters,
+            child: Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: _buildWatchedAndSortBar(context),
+            ),
+          ),
           IsleAnimatedExpand(
             expanded: _catalog.showSearch && !_subpages.showHistory,
             child: Padding(
@@ -108,7 +107,7 @@ extension _CinemaLibraryControls on _CinemaPageState {
                 autofocus: true,
                 onChanged: _searchChanged,
                 maxLength: 120,
-                hintText: '搜索影片、剧集或空格组合多关键词',
+                hintText: '搜索影片或剧集',
                 showClear: true,
                 clearTooltip: '关闭搜索',
                 onClear: () {
@@ -127,6 +126,7 @@ extension _CinemaLibraryControls on _CinemaPageState {
   Widget _buildWatchedAndSortBar(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
     return Wrap(
       spacing: 6,
       runSpacing: 6,
@@ -147,16 +147,19 @@ extension _CinemaLibraryControls on _CinemaPageState {
           selected: _catalog.watched == 'watched',
           onSelected: () => _changeWatched('watched'),
         ),
-        const SizedBox(width: 4),
+        const SizedBox(width: 2),
         Tooltip(
           message: '切换影院排序方式',
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 2),
+            padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 3),
             decoration: BoxDecoration(
-              color: scheme.surfaceContainerHighest.withValues(alpha: 0.45),
-              borderRadius: BorderRadius.circular(999),
+              color: isDark
+                  ? Colors.white.withValues(alpha: 0.06)
+                  : scheme.surface,
+              borderRadius: IsleRadius.brPill,
               border: Border.all(
-                color: scheme.outlineVariant.withValues(alpha: 0.45),
+                color: IsleGlass.rimBorderColor(isDark),
+                width: 1.0,
               ),
             ),
             child: DropdownButtonHideUnderline(
@@ -167,7 +170,7 @@ extension _CinemaLibraryControls on _CinemaPageState {
                 style: theme.textTheme.labelMedium?.copyWith(
                   fontWeight: FontWeight.w600,
                 ),
-                icon: const Icon(Icons.sort_rounded, size: 16),
+                icon: const Icon(Icons.sort_rounded, size: 15),
                 items: const [
                   DropdownMenuItem(value: 'recent', child: Text('最近添加')),
                   DropdownMenuItem(value: 'rating', child: Text('评分最高')),
@@ -183,6 +186,7 @@ extension _CinemaLibraryControls on _CinemaPageState {
         ),
         if (_catalog.watched != 'all' || _catalog.sort != 'recent')
           TextButton(
+            style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
             onPressed: () {
               _updateState(() {
                 _catalog.watched = 'all';
@@ -200,48 +204,27 @@ extension _CinemaLibraryControls on _CinemaPageState {
     );
   }
 
-  Widget _buildCinemaQuickJumpStrip() {
-    return IsleQuickJumpStrip(
-      items: [
-        IsleQuickJumpItem(
-          icon: Icons.tv_rounded,
-          label: 'Apple TV / Infuse 大屏接入',
-          tooltip: '查看 WebDAV 挂载地址并接入 Infuse / Apple TV 播放器',
-          onTap: _openDavPage,
-        ),
-        IsleQuickJumpItem(
-          icon: Icons.offline_pin_outlined,
-          label: '我的离线影片库',
-          tooltip: '管理与播放已缓存在本机的离线影片',
-          onTap: () => _cinemaAction('offline'),
-        ),
-        if (widget.isAdmin) ...[
-          IsleQuickJumpItem(
-            icon: Icons.auto_awesome_outlined,
-            label: 'TMDB 刮削状态',
-            tooltip: '查看未匹配影片并管理海报与简介刮削',
-            onTap: () {
-              _switchToFilmMode('unmatched');
-              unawaited(_refreshScrape());
-            },
-          ),
-          IsleQuickJumpItem(
-            icon: Icons.sync_rounded,
-            label: _indexing.scanning ? '正在扫描影视库' : '扫描影视库',
-            tooltip: '重新扫描影视目录与分集结构',
-            onTap: () {
-              if (!_indexing.scanning) unawaited(_startScan());
-            },
-          ),
-        ],
-      ],
-    );
-  }
-
   Widget _buildHeaderTrailingActions(BuildContext context) {
     return Row(
       mainAxisSize: MainAxisSize.min,
       children: [
+        IconButton(
+          visualDensity: VisualDensity.compact,
+          tooltip: '搜索影片',
+          onPressed: () {
+            if (_catalog.showSearch) {
+              _catalog.searchController.clear();
+              _searchChanged('');
+              _updateState(() => _catalog.showSearch = false);
+            } else {
+              _updateState(() {
+                _catalog.showSearch = true;
+                _subpages.showHistory = false;
+              });
+            }
+          },
+          icon: const Icon(Icons.search_rounded),
+        ),
         if (_subpages.isRootView)
           IconButton(
             key: const Key('cinema-select-toggle'),
@@ -267,29 +250,6 @@ extension _CinemaLibraryControls on _CinemaPageState {
           ),
         IconButton(
           visualDensity: VisualDensity.compact,
-          tooltip: '搜索影片',
-          onPressed: () {
-            if (_catalog.showSearch) {
-              _catalog.searchController.clear();
-              _searchChanged('');
-              _updateState(() => _catalog.showSearch = false);
-            } else {
-              _updateState(() {
-                _catalog.showSearch = true;
-                _subpages.showHistory = false;
-              });
-            }
-          },
-          icon: const Icon(Icons.search_rounded),
-        ),
-        IconButton(
-          visualDensity: VisualDensity.compact,
-          tooltip: '刷新影视库',
-          onPressed: _refreshView,
-          icon: const Icon(Icons.refresh_rounded),
-        ),
-        IconButton(
-          visualDensity: VisualDensity.compact,
           tooltip: '上传视频',
           onPressed: _upload,
           icon: const Icon(Icons.add_rounded),
@@ -300,25 +260,25 @@ extension _CinemaLibraryControls on _CinemaPageState {
   }
 
   Widget _buildOverflowMenuButton() {
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     return PopupMenuButton<String>(
       tooltip: '更多影院操作',
       onSelected: _cinemaAction,
       position: PopupMenuPosition.under,
-      constraints: const BoxConstraints(minWidth: 218, maxWidth: 270),
-      shape: IsleShapes.menu(),
+      constraints: const BoxConstraints(minWidth: 214, maxWidth: 264),
+      shape: IsleShapes.menu(
+        side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
+      ),
       itemBuilder: (_) => [
         isleActionMenuItem(
-          value: 'select',
-          icon: _selection.selecting
-              ? Icons.close_rounded
-              : Icons.checklist_rounded,
-          label: _selection.selecting ? '结束多选' : '多选影片',
+          value: 'refresh',
+          icon: Icons.refresh_rounded,
+          label: '刷新影视库',
         ),
-        const PopupMenuDivider(),
         isleActionMenuItem(
-          value: 'files',
-          icon: Icons.folder_open_outlined,
-          label: '管理视频文件',
+          value: 'offline',
+          icon: Icons.offline_pin_outlined,
+          label: '我的离线影片库',
         ),
         isleActionMenuItem(
           value: 'local',
@@ -326,9 +286,14 @@ extension _CinemaLibraryControls on _CinemaPageState {
           label: '播放本地视频（离线）',
         ),
         isleActionMenuItem(
-          value: 'offline',
-          icon: Icons.offline_pin_outlined,
-          label: '我的离线影片库',
+          value: 'dav',
+          icon: Icons.tv_rounded,
+          label: 'Infuse / Apple TV 接入',
+        ),
+        isleActionMenuItem(
+          value: 'files',
+          icon: Icons.folder_open_outlined,
+          label: '管理视频文件',
         ),
         if (widget.isAdmin) ...[
           const PopupMenuDivider(),
@@ -354,43 +319,56 @@ extension _CinemaLibraryControls on _CinemaPageState {
     return IsleAnimatedExpand(
       expanded: _selection.selecting && _subpages.isRootView,
       child: Padding(
-        padding: EdgeInsets.fromLTRB(_pageInset, 0, _pageInset, 14),
+        padding: EdgeInsets.fromLTRB(_pageInset, 0, _pageInset, 10),
         child: MediaSelectionActionBar(
-          label: '已选 ${_selection.selectedFilmIds.length} 项 · 最多 50 项',
+          label: '已选 ${_selection.selectedFilmIds.length} 项',
           actions: [
             OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+              ),
               onPressed: _selection.batchBusy || _catalog.films.isEmpty
                   ? null
                   : _selectVisibleFilms,
-              icon: const Icon(Icons.select_all_rounded, size: 17),
+              icon: const Icon(Icons.select_all_rounded, size: 16),
               label: Text(allPageSelected ? '取消全选' : '全选当前页'),
             ),
             OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+              ),
               onPressed:
                   _selection.batchBusy || _selection.selectedFilmIds.isEmpty
                   ? null
                   : _batchSaveFilms,
-              icon: const Icon(Icons.download_outlined, size: 17),
+              icon: const Icon(Icons.download_outlined, size: 16),
               label: const Text('保存原文件'),
             ),
             OutlinedButton.icon(
+              style: OutlinedButton.styleFrom(
+                visualDensity: VisualDensity.compact,
+              ),
               onPressed:
                   _selection.batchBusy || _selection.selectedFilmIds.isEmpty
                   ? null
                   : _batchShareFilms,
-              icon: const Icon(Icons.ios_share_outlined, size: 17),
+              icon: const Icon(Icons.ios_share_outlined, size: 16),
               label: const Text('分享'),
             ),
             if (canTrashSelected)
               FilledButton.tonalIcon(
+                style: FilledButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                ),
                 onPressed:
                     _selection.batchBusy || _selection.selectedFilmIds.isEmpty
                     ? null
                     : _batchTrashFilms,
-                icon: const Icon(Icons.delete_outline_rounded, size: 17),
+                icon: const Icon(Icons.delete_outline_rounded, size: 16),
                 label: const Text('移入回收站'),
               ),
             TextButton(
+              style: TextButton.styleFrom(visualDensity: VisualDensity.compact),
               onPressed: _selection.batchBusy ? null : _endFilmSelection,
               child: const Text('完成'),
             ),

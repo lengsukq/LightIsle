@@ -1010,4 +1010,90 @@ void _registerMediaDetailTests() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets(
+    'portrait tablet cinema player wraps transport clusters cleanly without vertical pill tower',
+    (tester) async {
+      final api = _MediaApi();
+      final platform = _videoPlayerTestPlatform;
+      VideoPlayerPlatform.instance = platform;
+      platform.videoSize = const Size(1920, 1080);
+      addTearDown(() async {
+        platform.videoSize = const Size(640, 360);
+        await tester.binding.setSurfaceSize(null);
+        await tester.pumpWidget(const SizedBox.shrink());
+        api.close();
+      });
+
+      // Match 1904x3040 @ 440dpi (~692x1105 logical dp) where screenWidth >= 640
+      // previously squeezed rightCluster inside Row+Expanded into 6 stacked rows.
+      await tester.binding.setSurfaceSize(const Size(692, 1105));
+      await tester.pumpWidget(
+        MaterialApp(
+          theme: ThemeData(platform: TargetPlatform.android),
+          home: CinemaDetailDialog(
+            api: api,
+            film: CinemaFilm.fromJson(const <String, dynamic>{
+              'id': 82,
+              'title': 'Black Panther 2',
+              'path': 'Cinema/Movies/bp2.mkv',
+              'kind': 'movie',
+              'year': 2022,
+              'width': 1920,
+              'height': 1080,
+              'videoCodec': 'hevc',
+              'playable': true,
+              'browserPlayback': 'verified-direct',
+              'probeStatus': 'ready',
+            }),
+            playlist: <CinemaFilm>[
+              CinemaFilm.fromJson(const <String, dynamic>{
+                'id': 82,
+                'title': 'Black Panther 2',
+                'path': 'Cinema/Movies/bp2.mkv',
+                'kind': 'movie',
+                'playable': true,
+                'browserPlayback': 'verified-direct',
+                'probeStatus': 'ready',
+              }),
+              CinemaFilm.fromJson(const <String, dynamic>{
+                'id': 331,
+                'title': 'Black Panther 1',
+                'path': 'Cinema/Movies/bp1.mkv',
+                'kind': 'movie',
+                'playable': true,
+                'browserPlayback': 'verified-direct',
+                'probeStatus': 'ready',
+              }),
+            ],
+            isAdmin: true,
+            playerOnly: true,
+            onRename: (film) async => film,
+            onProgressUpdated: (_) {},
+          ),
+        ),
+      );
+      await tester.pumpAndSettle();
+
+      final playlistTop = tester
+          .getTopLeft(find.byKey(const ValueKey('cinemaPlayerPlaylistToggle')))
+          .dy;
+      final subtitleTop = tester.getTopLeft(find.byTooltip('字幕与字号')).dy;
+      final qualityTop = tester.getTopLeft(find.byTooltip('清晰度')).dy;
+      final speedTop = tester.getTopLeft(find.byTooltip('播放倍速')).dy;
+      final fullscreenTop = tester.getTopLeft(find.byTooltip('全屏播放')).dy;
+      final collapseTop = tester
+          .getTopLeft(find.byKey(const ValueKey('cinemaCollapseDockButton')))
+          .dy;
+
+      // All menu pills should share a single horizontal row (not stacked vertically).
+      expect((subtitleTop - playlistTop).abs(), lessThanOrEqualTo(8.0));
+      expect((qualityTop - playlistTop).abs(), lessThanOrEqualTo(8.0));
+      expect((speedTop - playlistTop).abs(), lessThanOrEqualTo(8.0));
+      // Even if action icons wrap once on narrower tablets, total height stays <= 2 lines.
+      expect((collapseTop - playlistTop).abs(), lessThan(64.0));
+      expect((fullscreenTop - collapseTop).abs(), lessThanOrEqualTo(8.0));
+      expect(tester.takeException(), isNull);
+    },
+  );
 }

@@ -56,19 +56,24 @@ class _TailscaleStatusCardState extends State<TailscaleStatusCard> {
     final colors = Theme.of(context).colorScheme;
 
     return IsleSurface(
-      radius: 20,
-      padding: const EdgeInsets.all(16),
+      radius: IsleRadius.card,
+      padding: const EdgeInsets.all(15),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
             children: [
-              Icon(Icons.hub_outlined, size: 20, color: colors.primary),
-              const SizedBox(width: 8),
+              IsleSquircleBadge(
+                icon: Icons.hub_outlined,
+                color: colors.primary,
+                size: 32,
+                iconSize: 17,
+              ),
+              const SizedBox(width: 10),
               Expanded(
                 child: Text(
                   'Tailscale 零配置异地组网',
-                  style: Theme.of(context).textTheme.titleMedium
+                  style: Theme.of(context).textTheme.titleSmall
                       ?.copyWith(fontWeight: FontWeight.w700),
                 ),
               ),
@@ -101,14 +106,11 @@ class _TailscaleStatusCardState extends State<TailscaleStatusCard> {
               runSpacing: 8,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
-                SelectableText(
-                  targetUrl,
-                  style: const TextStyle(
-                    fontFamily: 'monospace',
-                    fontSize: 12.5,
-                  ),
-                ),
+                IsleCodePill(targetUrl, icon: Icons.link_rounded),
                 FilledButton.tonalIcon(
+                  style: FilledButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
                   onPressed: () {
                     Clipboard.setData(ClipboardData(text: targetUrl));
                     ScaffoldMessenger.of(context).showSnackBar(

@@ -103,7 +103,7 @@ Future<MobileBackupStatusSnapshot> readMobilePhotoBackupSnapshot({
   );
 }
 
-/// Compact Liquid Glass status pill displayed in the mobile Photos header.
+/// Compact status pill displayed in the mobile Photos header.
 class PhotoBackupStatusPill extends StatefulWidget {
   const PhotoBackupStatusPill({
     super.key,
@@ -159,7 +159,9 @@ class _PhotoBackupStatusPillState extends State<PhotoBackupStatusPill> {
 
   @override
   Widget build(BuildContext context) {
-    final colors = Theme.of(context).colorScheme;
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final isDark = theme.brightness == Brightness.dark;
     final (IconData icon, Color accent) = switch (_snapshot.kind) {
       MobileBackupBadgeKind.synced => (
         Icons.cloud_done_outlined,
@@ -183,9 +185,12 @@ class _PhotoBackupStatusPillState extends State<PhotoBackupStatusPill> {
     return Tooltip(
       message: _snapshot.tooltip,
       child: Material(
-        color: accent.withValues(alpha: 0.12),
+        color: accent.withValues(alpha: isDark ? 0.16 : 0.10),
         shape: StadiumBorder(
-          side: BorderSide(color: accent.withValues(alpha: 0.34), width: 0.8),
+          side: BorderSide(
+            color: accent.withValues(alpha: isDark ? 0.36 : 0.26),
+            width: 1.0,
+          ),
         ),
         child: InkWell(
           key: const ValueKey('photoBackupStatusPillTap'),
@@ -196,8 +201,8 @@ class _PhotoBackupStatusPillState extends State<PhotoBackupStatusPill> {
           },
           child: Padding(
             padding: EdgeInsets.symmetric(
-              horizontal: showLabel ? 10 : 7,
-              vertical: 5,
+              horizontal: showLabel ? 9 : 7,
+              vertical: 4.5,
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
@@ -206,9 +211,9 @@ class _PhotoBackupStatusPillState extends State<PhotoBackupStatusPill> {
                   IsleDonutGauge(
                     fraction: 1.0,
                     color: accent,
-                    size: 16,
-                    strokeWidth: 2.2,
-                    center: Icon(Icons.check_rounded, size: 10, color: accent),
+                    size: 15,
+                    strokeWidth: 2.0,
+                    center: Icon(Icons.check_rounded, size: 9.5, color: accent),
                     semanticsLabel: '相册已同步完成',
                   )
                 else if (_snapshot.kind ==
@@ -216,23 +221,23 @@ class _PhotoBackupStatusPillState extends State<PhotoBackupStatusPill> {
                   IsleDonutGauge(
                     fraction: 0.72,
                     color: accent,
-                    size: 16,
-                    strokeWidth: 2.2,
+                    size: 15,
+                    strokeWidth: 2.0,
                     center: Icon(
                       Icons.priority_high_rounded,
-                      size: 9.5,
+                      size: 9,
                       color: accent,
                     ),
                     semanticsLabel: _snapshot.label,
                   )
                 else
-                  Icon(icon, size: 15, color: accent),
+                  Icon(icon, size: 14.5, color: accent),
                 if (showLabel) ...[
                   const SizedBox(width: 5),
                   Text(
                     _snapshot.label,
                     style: TextStyle(
-                      fontSize: 12,
+                      fontSize: 11.5,
                       fontWeight: FontWeight.w600,
                       color: accent,
                       height: 1.1,

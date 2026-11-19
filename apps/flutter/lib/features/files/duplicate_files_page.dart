@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../core/isle_gallery_layout.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
@@ -241,10 +242,9 @@ class _DuplicateFilesPageState extends State<DuplicateFilesPage> {
 
   @override
   Widget build(BuildContext context) {
-    final inset = IsleLayout.pageInset(MediaQuery.sizeOf(context).width);
-    final note = _snapshot.quotaReleaseNote.isNotEmpty
-        ? _snapshot.quotaReleaseNote
-        : '移入回收站后可随时恢复；个人空间配额将在从回收站永久删除后释放。';
+    final palette = IslePalette.of(context);
+    final accent = palette['brandAmber'];
+    final sage = palette['brandSage'];
 
     return PopScope(
       canPop: false,
@@ -257,189 +257,249 @@ class _DuplicateFilesPageState extends State<DuplicateFilesPage> {
           leading: BackButton(
             onPressed: () => Navigator.pop(context, _didTrashAny),
           ),
+          actions: [
+            IsleHelpButton(
+              title: '重复检测与空间释放说明',
+              accentColor: accent,
+              items: const [
+                IsleHelpItem(
+                  title: 'SHA-256 全量校验与保留原件',
+                  body:
+                      '先按字节大小初筛再比对全量 SHA-256 哈希，每组强制至少保留 1 份原件，杜绝误删唯一文件。',
+                ),
+                IsleHelpItem(
+                  title: 'APFS 克隆识别与回收站保护',
+                  body:
+                      '自动识别 macOS APFS 写时复制克隆块（零额外物理占用）；清理操作先移入回收站，可随时恢复，永久清空后释放配额。',
+                ),
+              ],
+            ),
+          ],
         ),
-        body: SafeArea(
-          top: false,
-          child: ListView(
-            padding: EdgeInsets.fromLTRB(inset, 12, inset, 28),
-            children: [
-              IsleIntroCard(
-                icon: Icons.file_copy_outlined,
-                title: 'SHA-256 精确核验 · 识别 macOS APFS 写时复制克隆',
-                description:
-                    '仅在当前账号授权目录内扫描，通过文件大小、稀疏采样与完整 SHA-256 三重比对确认完全一致的重复文件，并区分 APFS 零额外物理占用克隆文件。$note',
+        body: IsleListView(
+          maxWidth: IsleLayout.workbenchMaxWidth,
+          children: [
+            IsleFocalStage(
+              icon: Icons.file_copy_outlined,
+              accent: accent,
+              title: '重复文件核验与空间释放',
+              metrics: _snapshot.hasResult
+                  ? [
+                      IsleFocalMetric(
+                        label: '已检大文件',
+                        value: '${_snapshot.scannedFiles}',
+                        accent: palette['brandBlue'],
+                      ),
+                      IsleFocalMetric(
+                        label: '重复分组',
+                        value: '${_snapshot.totalGroups}',
+                        accent: accent,
+                      ),
+                      IsleFocalMetric(
+                        label: '可释放物理空间',
+                        value: formatMediaSize(
+                          _snapshot.totalReclaimablePhysicalBytes,
+                        ),
+                        accent: sage,
+                      ),
+                    ]
+                  : const [],
+            ),
+            const SizedBox(height: 12),
+            IsleSurface(
+              margin: EdgeInsets.zero,
+              padding: const EdgeInsets.all(15),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Wrap(
+                    spacing: 10,
+                    runSpacing: 8,
+                    crossAxisAlignment: WrapCrossAlignment.center,
+                    children: [
+                      SizedBox(
+                        width: 210,
+                        child: DropdownButtonFormField<int>(
+                          initialValue: _minSizeBytes,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            labelText: '扫描最小体积',
+                            isDense: true,
+                          ),
+                          items: [
+                            for (final opt in _minSizeOptions)
+                              DropdownMenuItem(
+                                value: opt.$1,
+                                child: Text(
+                                  opt.$2,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                          ],
+                          onChanged: _scanning || _trashing
+                              ? null
+                              : (v) {
+                                  if (v != null) {
+                                    setState(() => _minSizeBytes = v);
+                                  }
+                                },
+                        ),
+                      ),
+                      SizedBox(
+                        width: 196,
+                        child: DropdownButtonFormField<DuplicateKeepStrategy>(
+                          initialValue: _strategy,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            labelText: '默认保留策略',
+                            isDense: true,
+                          ),
+                          items: [
+                            for (final s in DuplicateKeepStrategy.values)
+                              DropdownMenuItem(
+                                value: s,
+                                child: Text(
+                                  s.label,
+                                  overflow: TextOverflow.ellipsis,
+                                ),
+                              ),
+                          ],
+                          onChanged: _scanning || _trashing
+                              ? null
+                              : (s) {
+                                  if (s == null) return;
+                                  setState(() {
+                                    _strategy = s;
+                                    _applyStrategySelection(_snapshot.groups);
+                                  });
+                                },
+                        ),
+                      ),
+                      FilledButton.icon(
+                        key: const ValueKey('startDuplicateScanButton'),
+                        style: FilledButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                        ),
+                        onPressed: _scanning || _trashing ? null : _runScan,
+                        icon: _scanning
+                            ? const SizedBox(
+                                width: 15,
+                                height: 15,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : const Icon(Icons.radar_rounded, size: 17),
+                        label: Text(_scanning ? '正在后台扫描…' : '开始扫描重复文件'),
+                      ),
+                      if (_scanning)
+                        OutlinedButton.icon(
+                          style: OutlinedButton.styleFrom(
+                            visualDensity: VisualDensity.compact,
+                          ),
+                          onPressed: _cancellingScan ? null : _cancelScan,
+                          icon: const Icon(Icons.cancel_outlined, size: 17),
+                          label: Text(_cancellingScan ? '正在取消…' : '取消扫描'),
+                        ),
+                      if (_selectedTrashCount > 0)
+                        FilledButton.tonalIcon(
+                          style: FilledButton.styleFrom(
+                            visualDensity: VisualDensity.compact,
+                          ),
+                          onPressed: _scanning || _trashing
+                              ? null
+                              : _trashSelected,
+                          icon: const Icon(
+                            Icons.delete_outline_rounded,
+                            size: 17,
+                          ),
+                          label: Text('移入回收站 ($_selectedTrashCount)'),
+                        ),
+                    ],
+                  ),
+                  if (_scanning) ...[
+                    const SizedBox(height: 10),
+                    Text(
+                      '${_snapshot.progressLabel}${_snapshot.progressCurrentPath.isNotEmpty ? " · ${_snapshot.progressCurrentPath}" : ""}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ] else if (_snapshot.hasResult && _snapshot.groups.isNotEmpty)
+                    _buildSavingsComparison(context, palette),
+                ],
               ),
-              const SizedBox(height: 12),
-              IsleSurface(
-                margin: EdgeInsets.zero,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    Wrap(
+            ),
+            if (_message != null) ...[
+              const SizedBox(height: 10),
+              Notice(_message!),
+            ],
+            if (_error != null) ...[
+              const SizedBox(height: 10),
+              Notice(_error!, error: true),
+            ],
+            const SizedBox(height: 12),
+            if (_loading)
+              const IsleLoadingState(compact: true, label: '正在读取重复扫描状态…')
+            else if (!_snapshot.hasResult)
+              const IsleEmptyStateCard(
+                '点击上方「开始扫描重复文件」按需检查当前空间。',
+                icon: Icons.radar_rounded,
+              )
+            else if (_snapshot.groups.isEmpty)
+              const IsleEmptyStateCard(
+                '未发现符合体积阈值的重复大文件。',
+                icon: Icons.check_circle_outline_rounded,
+              )
+            else
+              IsleAdaptiveBuilder(
+                builder: (context, tier, width) {
+                  final textScale =
+                      MediaQuery.textScalerOf(context).scale(14) / 14;
+                  if (tier == IsleViewportTier.expanded &&
+                      _snapshot.groups.length > 1 &&
+                      textScale <= 1.35) {
+                    final cardWidth = (width - 12) / 2;
+                    return Wrap(
                       spacing: 12,
-                      runSpacing: 10,
-                      crossAxisAlignment: WrapCrossAlignment.center,
+                      runSpacing: 12,
                       children: [
-                        SizedBox(
-                          width: 220,
-                          child: DropdownButtonFormField<int>(
-                            initialValue: _minSizeBytes,
-                            isExpanded: true,
-                            decoration: const InputDecoration(
-                              labelText: '扫描最小体积',
-                              border: OutlineInputBorder(),
-                              isDense: true,
+                        for (final group in _snapshot.groups)
+                          SizedBox(
+                            width: cardWidth,
+                            child: _buildDuplicateGroup(
+                              context,
+                              group,
+                              palette,
                             ),
-                            items: [
-                              for (final opt in _minSizeOptions)
-                                DropdownMenuItem(
-                                  value: opt.$1,
-                                  child: Text(
-                                    opt.$2,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                            ],
-                            onChanged: _scanning || _trashing
-                                ? null
-                                : (v) {
-                                    if (v != null) {
-                                      setState(() => _minSizeBytes = v);
-                                    }
-                                  },
-                          ),
-                        ),
-                        SizedBox(
-                          width: 200,
-                          child: DropdownButtonFormField<DuplicateKeepStrategy>(
-                            initialValue: _strategy,
-                            isExpanded: true,
-                            decoration: const InputDecoration(
-                              labelText: '默认保留策略',
-                              border: OutlineInputBorder(),
-                              isDense: true,
-                            ),
-                            items: [
-                              for (final s in DuplicateKeepStrategy.values)
-                                DropdownMenuItem(
-                                  value: s,
-                                  child: Text(
-                                    s.label,
-                                    overflow: TextOverflow.ellipsis,
-                                  ),
-                                ),
-                            ],
-                            onChanged: _scanning || _trashing
-                                ? null
-                                : (s) {
-                                    if (s == null) return;
-                                    setState(() {
-                                      _strategy = s;
-                                      _applyStrategySelection(_snapshot.groups);
-                                    });
-                                  },
-                          ),
-                        ),
-                        FilledButton.icon(
-                          key: const ValueKey('startDuplicateScanButton'),
-                          onPressed: _scanning || _trashing ? null : _runScan,
-                          icon: _scanning
-                              ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                  ),
-                                )
-                              : const Icon(Icons.radar_rounded, size: 18),
-                          label: Text(_scanning ? '正在后台扫描…' : '开始扫描重复文件'),
-                        ),
-                        if (_scanning)
-                          OutlinedButton.icon(
-                            onPressed: _cancellingScan ? null : _cancelScan,
-                            icon: const Icon(Icons.cancel_outlined, size: 18),
-                            label: Text(_cancellingScan ? '正在取消…' : '取消扫描'),
-                          ),
-                        if (_selectedTrashCount > 0)
-                          FilledButton.tonalIcon(
-                            onPressed: _scanning || _trashing
-                                ? null
-                                : _trashSelected,
-                            icon: const Icon(
-                              Icons.delete_outline_rounded,
-                              size: 18,
-                            ),
-                            label: Text('移入回收站 ($_selectedTrashCount)'),
                           ),
                       ],
-                    ),
-                    if (_scanning) ...[
-                      const SizedBox(height: 10),
-                      Text(
-                        '${_snapshot.progressLabel}${_snapshot.progressCurrentPath.isNotEmpty ? " · ${_snapshot.progressCurrentPath}" : ""}',
-                        style: Theme.of(context).textTheme.bodySmall,
-                        maxLines: 2,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ] else if (_snapshot.hasResult) ...[
-                      const SizedBox(height: 10),
-                      Text(
-                        '共检查 ${_snapshot.scannedFiles} 个大文件 · 发现 ${_snapshot.totalGroups} 组重复 · '
-                        '逻辑重复 ${formatMediaSize(_snapshot.totalReclaimableBytes)} · '
-                        '预计可释放物理空间 ${formatMediaSize(_snapshot.totalReclaimablePhysicalBytes)}',
-                        style: Theme.of(context).textTheme.bodySmall,
-                      ),
-                      if (_snapshot.groups.isNotEmpty)
-                        _buildSavingsComparison(context),
+                    );
+                  }
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      for (var i = 0; i < _snapshot.groups.length; i++) ...[
+                        if (i > 0) const SizedBox(height: 10),
+                        _buildDuplicateGroup(
+                          context,
+                          _snapshot.groups[i],
+                          palette,
+                        ),
+                      ],
                     ],
-                  ],
-                ),
+                  );
+                },
               ),
-              if (_message != null) ...[
-                const SizedBox(height: 10),
-                Notice(_message!),
-              ],
-              if (_error != null) ...[
-                const SizedBox(height: 10),
-                Notice(_error!, error: true),
-              ],
-              const SizedBox(height: 12),
-              if (_loading)
-                const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 40),
-                  child: Center(child: CircularProgressIndicator()),
-                )
-              else if (!_snapshot.hasResult)
-                const IsleSurface(
-                  child: Padding(
-                    padding: EdgeInsets.all(24),
-                    child: Text(
-                      '点击上方「开始扫描重复文件」按需检查当前存储空间，不会在后台持续扫盘耗电。',
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                )
-              else if (_snapshot.groups.isEmpty)
-                const IsleSurface(
-                  child: Padding(
-                    padding: EdgeInsets.all(24),
-                    child: Text(
-                      '未发现符合体积阈值的重复大文件。',
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                )
-              else
-                for (final group in _snapshot.groups)
-                  _buildDuplicateGroup(context, group),
-            ],
-          ),
+            const SizedBox(height: 20),
+          ],
         ),
       ),
     );
   }
 
-  Widget _buildSavingsComparison(BuildContext context) {
+  Widget _buildSavingsComparison(BuildContext context, IslePalette palette) {
     final keptBytes = _snapshot.groups.fold<int>(0, (sum, g) => sum + g.size);
     final reclaimBytes = _snapshot.totalReclaimablePhysicalBytes > 0
         ? _snapshot.totalReclaimablePhysicalBytes
@@ -447,19 +507,21 @@ class _DuplicateFilesPageState extends State<DuplicateFilesPage> {
     final total = keptBytes + reclaimBytes;
     if (total <= 0) return const SizedBox.shrink();
     final saveRatio = (reclaimBytes / total).clamp(0.0, 1.0);
+    final sage = palette['brandSage'];
+    final mineral = palette['brandBlue'];
     return Padding(
-      padding: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.only(top: 10),
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.center,
         children: [
           IsleDonutGauge(
             fraction: saveRatio,
-            color: const Color(0xFF10B981),
-            size: 46,
-            strokeWidth: 4.5,
+            color: sage,
+            size: 42,
+            strokeWidth: 4.0,
             centerText: '省${(saveRatio * 100).round()}%',
             centerStyle: Theme.of(context).textTheme.labelSmall?.copyWith(
-              fontSize: 9.5,
+              fontSize: 9,
               fontWeight: FontWeight.w700,
               fontFeatures: const [FontFeature.tabularFigures()],
             ),
@@ -468,16 +530,16 @@ class _DuplicateFilesPageState extends State<DuplicateFilesPage> {
           const SizedBox(width: 12),
           Expanded(
             child: IsleSegmentedBar(
-              height: 8,
+              height: 7,
               showPercentInLegend: true,
-              legendGap: 6,
+              legendGap: 5,
               legendSpacing: 10,
               legendRunSpacing: 4,
               segments: [
                 IsleChartSegment(
                   label: '保留原件',
                   value: keptBytes.toDouble(),
-                  color: const Color(0xFF0071E3),
+                  color: mineral,
                   detail: formatMediaSize(keptBytes),
                 ),
                 IsleChartSegment(
@@ -485,7 +547,7 @@ class _DuplicateFilesPageState extends State<DuplicateFilesPage> {
                       ? '可释放物理冗余'
                       : '逻辑冗余空间',
                   value: reclaimBytes.toDouble(),
-                  color: const Color(0xFF10B981),
+                  color: sage,
                   detail: formatMediaSize(reclaimBytes),
                 ),
               ],
@@ -496,104 +558,126 @@ class _DuplicateFilesPageState extends State<DuplicateFilesPage> {
     );
   }
 
-  Widget _buildDuplicateGroup(BuildContext context, DuplicateFileGroup group) {
+  Widget _buildDuplicateGroup(
+    BuildContext context,
+    DuplicateFileGroup group,
+    IslePalette palette,
+  ) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final borderColor = IsleGlass.rimBorderColor(isDark);
     final keepPath = _keepByGroup[group.groupId] ?? '';
     final selectedTrash = _trashByGroup[group.groupId] ?? const <String>{};
+    final sage = palette['brandSage'];
+    final amber = palette['brandAmber'];
 
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: IsleSurface(
-        margin: EdgeInsets.zero,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Wrap(
+    return IsleSurface(
+      margin: EdgeInsets.zero,
+      padding: EdgeInsets.zero,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 11, 14, 9),
+            child: Wrap(
               spacing: 8,
               runSpacing: 6,
               crossAxisAlignment: WrapCrossAlignment.center,
               children: [
                 Text(
                   '单文件 ${formatMediaSize(group.size)} × ${group.count} 份',
-                  style: Theme.of(context).textTheme.titleSmall
-                      ?.copyWith(fontWeight: FontWeight.w700),
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
                 if (group.allApfsClones)
-                  const IsleStatusBadge(
-                    label: 'APFS 克隆 · 零额外物理占用',
-                    color: Color(0xFFD97706),
-                  )
+                  IsleStatusBadge(label: 'APFS 克隆 · 零额外物理占用', color: amber)
                 else
                   IsleStatusBadge(
                     label:
                         '可释放物理空间 ${formatMediaSize(group.reclaimablePhysicalBytes)}',
-                    color: const Color(0xFF059669),
+                    color: sage,
                   ),
               ],
             ),
-            const SizedBox(height: 8),
-            for (final item in group.items)
-              Builder(
-                builder: (context) {
-                  final isKeep = item.path == keepPath;
-                  final isChecked = selectedTrash.contains(item.path);
-                  return ListTile(
-                    dense: true,
-                    contentPadding: EdgeInsets.zero,
-                    leading: IconButton(
-                      tooltip: isKeep ? '当前保留原件' : '设为此组保留原件',
-                      onPressed: isKeep
-                          ? null
-                          : () {
-                              setState(() {
-                                _keepByGroup[group.groupId] = item.path;
-                                final next =
-                                    _trashByGroup[group.groupId] ?? <String>{};
+          ),
+          Divider(height: 1, thickness: 1, color: borderColor),
+          for (var i = 0; i < group.items.length; i++) ...[
+            if (i > 0)
+              Divider(height: 1, thickness: 1, indent: 44, color: borderColor),
+            Builder(
+              builder: (context) {
+                final item = group.items[i];
+                final isKeep = item.path == keepPath;
+                final isChecked = selectedTrash.contains(item.path);
+                return ListTile(
+                  dense: true,
+                  visualDensity: VisualDensity.compact,
+                  contentPadding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 1,
+                  ),
+                  leading: IconButton(
+                    visualDensity: VisualDensity.compact,
+                    tooltip: isKeep ? '当前保留原件' : '设为此组保留原件',
+                    onPressed: isKeep
+                        ? null
+                        : () {
+                            setState(() {
+                              _keepByGroup[group.groupId] = item.path;
+                              final next =
+                                  _trashByGroup[group.groupId] ?? <String>{};
+                              next.remove(item.path);
+                              _trashByGroup[group.groupId] = next;
+                            });
+                          },
+                    icon: Icon(
+                      isKeep
+                          ? Icons.verified_rounded
+                          : Icons.radio_button_unchecked_rounded,
+                      size: 19,
+                      color: isKeep ? sage : null,
+                    ),
+                  ),
+                  title: Text(
+                    item.path,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(fontSize: 13),
+                  ),
+                  subtitle: Text(
+                    [
+                      formatMediaDate(item.modified),
+                      if (isKeep) '保留原件',
+                      if (item.isApfsClone) 'APFS 克隆',
+                      if (!item.canTrash) '只读权限',
+                    ].join(' · '),
+                    style: const TextStyle(fontSize: 11.5),
+                  ),
+                  trailing: Checkbox(
+                    visualDensity: VisualDensity.compact,
+                    value: isChecked && !isKeep,
+                    onChanged: isKeep || !item.canTrash
+                        ? null
+                        : (v) {
+                            setState(() {
+                              final next =
+                                  _trashByGroup[group.groupId] ?? <String>{};
+                              if (v == true) {
+                                next.add(item.path);
+                              } else {
                                 next.remove(item.path);
-                                _trashByGroup[group.groupId] = next;
-                              });
-                            },
-                      icon: Icon(
-                        isKeep
-                            ? Icons.verified_rounded
-                            : Icons.radio_button_unchecked_rounded,
-                        color: isKeep ? const Color(0xFF059669) : null,
-                      ),
-                    ),
-                    title: Text(
-                      item.path,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    subtitle: Text(
-                      [
-                        formatMediaDate(item.modified),
-                        if (isKeep) '保留原件',
-                        if (item.isApfsClone) 'APFS 克隆',
-                        if (!item.canTrash) '只读权限',
-                      ].join(' · '),
-                    ),
-                    trailing: Checkbox(
-                      value: isChecked && !isKeep,
-                      onChanged: isKeep || !item.canTrash
-                          ? null
-                          : (v) {
-                              setState(() {
-                                final next =
-                                    _trashByGroup[group.groupId] ?? <String>{};
-                                if (v == true) {
-                                  next.add(item.path);
-                                } else {
-                                  next.remove(item.path);
-                                }
-                                _trashByGroup[group.groupId] = next;
-                              });
-                            },
-                    ),
-                  );
-                },
-              ),
+                              }
+                              _trashByGroup[group.groupId] = next;
+                            });
+                          },
+                  ),
+                );
+              },
+            ),
           ],
-        ),
+        ],
       ),
     );
   }

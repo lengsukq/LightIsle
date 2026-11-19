@@ -406,11 +406,45 @@ void main() {
       expect(find.byType(IsleSegmentedBar), findsWidgets);
       expect(find.byType(IsleDonutGauge), findsWidgets);
 
+      final desktopCards = find.descendant(
+        of: find.byType(AdminTelemetryBentoGrid),
+        matching: find.byType(IsleBentoStatCard),
+      );
+      expect(desktopCards, findsNWidgets(4));
+      final desktopHeights = [
+        for (var i = 0; i < 4; i++) tester.getSize(desktopCards.at(i)).height,
+      ];
+      expect(
+        desktopHeights.every((h) => (h - desktopHeights.first).abs() < 0.5),
+        isTrue,
+        reason: 'Desktop telemetry cards must share identical heights: $desktopHeights',
+      );
+
       api.cpuPercent = 66.0;
       api.networkDownBps = 8192;
       await tester.pump(const Duration(seconds: 5));
       await tester.pump();
       expect(find.text('66.0%'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+
+      tester.view.physicalSize = const Size(375, 812);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      await tester.pump();
+      final mobileCards = find.descendant(
+        of: find.byType(AdminTelemetryBentoGrid),
+        matching: find.byType(IsleBentoStatCard),
+      );
+      expect(mobileCards, findsNWidgets(4));
+      final mobileHeights = [
+        for (var i = 0; i < 4; i++) tester.getSize(mobileCards.at(i)).height,
+      ];
+      expect(
+        mobileHeights.every((h) => (h - mobileHeights.first).abs() < 0.5),
+        isTrue,
+        reason: 'Mobile 2x2 telemetry cards must share identical heights: $mobileHeights',
+      );
       expect(tester.takeException(), isNull);
     },
   );
