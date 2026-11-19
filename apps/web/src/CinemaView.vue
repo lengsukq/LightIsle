@@ -27,11 +27,8 @@ import { pushModalLayer, type ModalLayerHandle } from "./modalStack.ts";
 import IsleButton from "./IsleButton.vue";
 import type { Movie } from "./cinemaTypes.ts";
 
-const props = defineProps<{ active?: boolean; admin: boolean; rootId?: string; rootGeneration?: number }>();
-const emit = defineEmits<{
-  (e: "open-mount-guide"): void;
-  (e: "open-scraping-settings"): void;
-}>();
+const props = defineProps<{ active?: boolean; admin: boolean; rootId?: string; rootGeneration?: number; launchRequest?: { film: Movie; nonce: number } | null }>();
+const emit = defineEmits<{ (e: "open-mount-guide"): void; (e: "open-scraping-settings"): void; (e: "launch-handled"): void }>();
 const movies = ref<Movie[]>([]);
 const mode = ref("all");
 const watchedFilter = ref<"all" | "unwatched" | "watched">("all");
@@ -472,6 +469,16 @@ function onPageHideFlush() {
   if (selected.value && viewerPlaying.value) void save();
 }
 
+let lastHandledLaunchNonce = 0;
+function consumeLaunchRequest(req: { film: Movie; nonce: number } | null | undefined) {
+  if (!req || req.nonce === lastHandledLaunchNonce || props.active === false) return;
+  lastHandledLaunchNonce = req.nonce;
+  emit("launch-handled");
+  void open(req.film, true);
+}
+watch(() => [props.active, props.launchRequest] as const, ([activeVal, req]) => {
+  if (activeVal !== false && req) consumeLaunchRequest(req);
+});
 onMounted(() => {
   disposed = false;
   document.addEventListener("visibilitychange", onVisibilityFlush);
@@ -488,6 +495,7 @@ onMounted(() => {
   });
   void load(true); void loadHomeShelves(); void status(); void refreshScrape();
   syncCinemaActiveBindings(props.active !== false);
+  consumeLaunchRequest(props.launchRequest);
 });
 
 watch(() => props.active, (val) => {
@@ -641,7 +649,6 @@ onUnmounted(() => {
       @load-more="load()"
       @poster-error="(id) => { posterFailed[id] = true }"
     />
-    <details class="cinema-foot"><summary>播放兼容性说明</summary><p>优先原画直出；浏览器不兼容时可在线转码（需 FFmpeg，不改动原片）或下载后用本地播放器打开。</p></details>
 
     <CinemaRenameModal
       :open="Boolean(renameTarget)"

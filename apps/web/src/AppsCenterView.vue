@@ -1,18 +1,20 @@
 <script setup lang="ts">
 import {
-  RefreshCcw, Trash2, Clock, Bell, ScrollText, Settings2,
-  Play, Square, RotateCw, ExternalLink, Maximize2, Minimize2,
-  ArrowLeft, Sparkles, Cpu, Globe, Lock, Users,
-  Download, Upload,
+  RefreshCcw, Clock, Bell, ScrollText, Settings2,
+  Play, Sparkles, Cpu, Globe, Lock, Users,
 } from "lucide-vue-next";
 import { describeUserFacingError } from "./userFacingError.ts";
+import AppDetailPanel from "./AppDetailPanel.vue";
 import AppStorageLocationsCard from "./AppStorageLocationsCard.vue";
+import AppWorkbenchStage from "./AppWorkbenchStage.vue";
 import AppleSelect from "./AppleSelect.vue";
 import IsleModal from "./IsleModal.vue";
 import IsleButton from "./IsleButton.vue";
 import IsleBanner from "./IsleBanner.vue";
 import IsleBadge from "./IsleBadge.vue";
 import IsleEmpty from "./IsleEmpty.vue";
+import IsleHelpButton from "./IsleHelpButton.vue";
+import IslePageHeader from "./IslePageHeader.vue";
 import {
   AVAILABLE_CHANNELS,
   DELIVERY_LABELS,
@@ -47,6 +49,7 @@ const {
   failedIcons,
   launchingAppId,
   activeWorkbenchApp,
+  detailApp,
   activeIframeUrl,
   iframeKey,
   workbenchFullscreen,
@@ -73,17 +76,18 @@ const {
   hasCron,
   reload,
   openApp,
+  openAppDetail,
+  closeAppDetail,
+  resetAppDetailDraft,
+  saveDetailChanges,
   closeWorkbench,
   refreshWorkbench,
   openInNewTab,
   runAction,
-  openAccessModal,
   saveAccess,
-  openConfigDrawer,
   saveConfig,
   activateApp,
   loadLogs,
-  openLogsModal,
   exportAppData,
   triggerRestoreAppData,
   onRestoreFileChange,
@@ -95,42 +99,87 @@ const {
 
 <template>
   <section class="apps-center">
-    <div v-if="activeWorkbenchApp && activeIframeUrl" class="app-workbench" :class="{ fullscreen: workbenchFullscreen }">
-      <header class="workbench-topbar">
-        <div class="workbench-left">
-          <IsleButton variant="glass" size="sm" @click="closeWorkbench"><ArrowLeft :size="15" /> 返回应用中心</IsleButton>
-          <strong class="workbench-title">{{ activeWorkbenchApp.name }}</strong>
-          <IsleBadge variant="accent" size="sm">{{ workbenchBadge(activeWorkbenchApp) }}</IsleBadge>
-        </div>
-        <div class="workbench-actions">
-          <IsleButton variant="glass" size="sm" @click="refreshWorkbench"><RotateCw :size="14" /> 刷新画面</IsleButton>
-          <IsleButton variant="glass" size="sm" @click="workbenchFullscreen = !workbenchFullscreen">
-            <Minimize2 v-if="workbenchFullscreen" :size="14" /><Maximize2 v-else :size="14" />
-            {{ workbenchFullscreen ? "退出全屏" : "全屏展开" }}
-          </IsleButton>
-          <IsleButton variant="primary" size="sm" @click="openInNewTab"><ExternalLink :size="14" /> 新标签页打开</IsleButton>
-        </div>
-      </header>
-      <iframe
-        :key="iframeKey" :src="activeIframeUrl"
-        sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-downloads"
-        referrerpolicy="no-referrer"
-        class="app-workbench-iframe" :title="activeWorkbenchApp.name"
-      />
-    </div>
+    <AppWorkbenchStage
+      v-if="activeWorkbenchApp && activeIframeUrl"
+      :app="activeWorkbenchApp"
+      :iframe-url="activeIframeUrl"
+      :iframe-key="iframeKey"
+      :fullscreen="workbenchFullscreen"
+      :badge-text="workbenchBadge(activeWorkbenchApp)"
+      back-label="返回应用中心"
+      @close="closeWorkbench"
+      @refresh="refreshWorkbench"
+      @toggle-fullscreen="workbenchFullscreen = !workbenchFullscreen"
+      @open-external="openInNewTab"
+    />
+
+    <AppDetailPanel
+      v-else-if="detailApp"
+      :app="detailApp"
+      :busy="busy"
+      :launching="launchingAppId === detailApp.id"
+      :icon-failed="failedIcons.has(detailApp.id)"
+      :error="modalError || error"
+      :notice="notice"
+      :non-admin-members="nonAdminMembers"
+      :configured-channels="configuredChannels"
+      :access-policy="accessPolicy"
+      :access-allowed-user-i-ds="accessAllowedUserIDs"
+      :web-enabled="webEnabled"
+      :web-mode="webMode"
+      :web-idle-timeout-seconds="webIdleTimeoutSeconds"
+      :web-auto-restart="webAutoRestart"
+      :cron-enabled="cronEnabled"
+      :cron-expr="cronExpr"
+      :cron-timezone="cronTimezone"
+      :cron-events="cronEvents"
+      :cron-channels="cronChannels"
+      :logs-loading="logsLoading"
+      :web-output="webOutput"
+      :cron-runs="cronRuns"
+      @back="closeAppDetail"
+      @refresh="reload(isAdmin)"
+      @icon-error="failedIcons.add(detailApp.id)"
+      @launch="openApp(detailApp)"
+      @activate="activateApp(detailApp)"
+      @action="runAction(detailApp, $event)"
+      @update:access-policy="accessPolicy = $event"
+      @update:access-allowed-user-i-ds="accessAllowedUserIDs = $event"
+      @update:web-enabled="webEnabled = $event"
+      @update:web-mode="webMode = $event"
+      @update:web-idle-timeout-seconds="webIdleTimeoutSeconds = $event"
+      @update:web-auto-restart="webAutoRestart = $event"
+      @update:cron-enabled="cronEnabled = $event"
+      @update:cron-expr="cronExpr = $event"
+      @update:cron-timezone="cronTimezone = $event"
+      @update:cron-events="cronEvents = $event"
+      @update:cron-channels="cronChannels = $event"
+      @save="saveDetailChanges($event)"
+      @reset="resetAppDetailDraft"
+      @reload-logs="loadLogs(detailApp)"
+      @export-data="exportAppData(detailApp)"
+      @restore-data="triggerRestoreAppData(detailApp)"
+      @delete="removeApp(detailApp)"
+    />
 
     <template v-else>
-      <header class="apps-header">
-        <div>
-          <h2>应用中心</h2>
-          <p v-if="isAdmin">按需唤醒家庭轻应用与定时采集插件，闲置自动休眠并支持按成员授权；切换局域网或公网访问域名后应用自动跟随生效。</p>
-          <p v-else>打开已授权的家庭轻应用，免二次登录；更换访问域名后应用自动跟随当前地址。</p>
-        </div>
-        <IsleButton variant="glass" :disabled="busy" @click="reload(isAdmin)">
-          <RefreshCcw :size="15" :class="{ spinning: busy }" />
-          {{ busy ? "正在刷新…" : isAdmin ? "刷新应用列表" : "刷新" }}
-        </IsleButton>
-      </header>
+      <IslePageHeader title="应用中心">
+        <template #title-extra>
+          <IsleHelpButton
+            title="家庭轻应用说明"
+            :items="[
+              { title: '按需唤醒与免二次登录', body: '支持纯静态与按需启动进程，闲置后自动休眠释放内存；已授权家庭成员点击即可免密使用。' },
+              { title: '域名与存储跟随', body: '切换局域网、Tailscale 或公网域名时应用自动跟随生效，业务数据可独立存放在内置盘或外置盘。' },
+            ]"
+          />
+        </template>
+        <template #actions>
+          <IsleButton variant="glass" size="sm" :disabled="busy" @click="reload(isAdmin)">
+            <template #icon><RefreshCcw :size="15" :class="{ spinning: busy }" /></template>
+            {{ busy ? "正在刷新…" : isAdmin ? "刷新应用列表" : "刷新" }}
+          </IsleButton>
+        </template>
+      </IslePageHeader>
 
       <section v-if="isAdmin && appStorage" aria-label="应用数据存储位置">
         <AppStorageLocationsCard
@@ -151,10 +200,9 @@ const {
         <div class="apps-templates-info" style="flex: 1 1 100%">
           <div class="apps-templates-title">
             <Sparkles :size="17" />
-            <strong>官方精选家庭轻应用模板（0 MB 纯静态即装即用）</strong>
+            <strong>官方精选家庭轻应用模板</strong>
             <IsleBadge variant="accent" size="sm">零外部依赖</IsleBadge>
           </div>
-          <small>随包内置高频家庭小工具，点击即可安装到选定的应用存储位置并可在「成员权限」中授权给家人。</small>
           <div v-if="appStorage && appStorage.locations.length > 1" class="apps-install-target-row">
             <span>安装到存储位置：</span>
             <AppleSelect
@@ -234,19 +282,9 @@ const {
             <IsleButton v-if="app.web?.enabled !== false" :variant="app.pendingActivation && isAdmin ? 'glass' : 'primary'" :disabled="!!launchingAppId" @click="openApp(app)">
               <Play :size="14" /> {{ launchingAppId === app.id ? "正在唤醒轻应用..." : "立即打开" }}
             </IsleButton>
-            <template v-if="isAdmin">
-              <IsleButton variant="glass" :disabled="busy" @click="openAccessModal(app)"><Users :size="14" /> 成员权限</IsleButton>
-              <IsleButton variant="glass" :disabled="busy" @click="openConfigDrawer(app)"><Settings2 :size="14" /> 生命周期与定时</IsleButton>
-              <IsleButton variant="glass" :disabled="busy" @click="openLogsModal(app)"><ScrollText :size="14" /> 运行日志</IsleButton>
-              <template v-if="appMode(app) !== 'static'">
-                <IsleButton v-if="appStatus(app) === 'running'" variant="glass" :disabled="busy" @click="runAction(app, 'stop')"><Square :size="13" /> 停止</IsleButton>
-                <IsleButton v-else variant="glass" :disabled="busy" @click="runAction(app, 'start')"><Play :size="13" /> 启动</IsleButton>
-              </template>
-              <IsleButton v-if="hasCron(app)" variant="glass" :disabled="busy" @click="runAction(app, 'run_cron')"><Clock :size="13" /> 立即采集</IsleButton>
-              <IsleButton variant="glass" :disabled="busy" @click="exportAppData(app)"><Download :size="13" /> 导出数据</IsleButton>
-              <IsleButton variant="glass" :disabled="busy" @click="triggerRestoreAppData(app)"><Upload :size="13" /> 恢复数据</IsleButton>
-              <IsleButton variant="danger" :disabled="busy || appStatus(app) === 'running'" @click="removeApp(app)"><Trash2 :size="13" /> 删除</IsleButton>
-            </template>
+            <IsleButton v-if="isAdmin" variant="glass" :disabled="busy" @click="openAppDetail(app)">
+              <Settings2 :size="14" /> 详情与设置
+            </IsleButton>
           </div>
         </article>
       </div>

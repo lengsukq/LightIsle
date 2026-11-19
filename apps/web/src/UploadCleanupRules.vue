@@ -61,12 +61,15 @@ onUnmounted(()=>{disposed=true;controller.abort()});
         <IsleButton variant="glass" size="sm" :disabled="busy" @click="load">重新读取</IsleButton>
       </template>
     </IsleBanner>
-    <div v-if="error && savedDays === null" style="margin: 4px 0;">
+    <div v-if="error && savedDays === null" style="margin: 2px 0;">
       <IsleButton variant="danger" size="sm" :disabled="busy" @click="disableUntilRepaired">暂停清理并修复规则</IsleButton>
     </div>
     <IsleBanner v-if="notice" type="info" compact role="status">{{ notice }}</IsleBanner>
     <div class="cleanup-rule-row">
-      <label>未活动保留天数 <input v-model="days" type="number" min="0" max="3650" step="1" :disabled="busy || savedDays === null" /></label>
+      <label class="cleanup-rule-label">
+        <span>未活动保留天数</span>
+        <input v-model="days" type="number" min="0" max="3650" step="1" :disabled="busy || savedDays === null" />
+      </label>
       <IsleButton variant="primary" size="sm" :loading="busy" :disabled="busy || savedDays === null" @click="save">
         {{ busy ? '处理中…' : '保存规则' }}
       </IsleButton>
@@ -75,8 +78,9 @@ onUnmounted(()=>{disposed=true;controller.abort()});
 </template>
 
 <style scoped>
-.upload-cleanup-rules{margin:12px 0;display:grid;gap:10px}
-.upload-cleanup-rules p{margin:0;font-size:12.5px;color:var(--text-secondary);line-height:1.5}
-.cleanup-rule-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px}
-.upload-cleanup-rules input{width:92px;margin-left:8px;padding:7px 10px;border-radius:10px;border:1px solid var(--fluid-card-border);background:var(--fluid-card-fill);color:var(--text-primary);font:inherit}
+.upload-cleanup-rules{margin:8px 0;display:grid;gap:8px}
+.upload-cleanup-rules p{margin:0;font-size:12px;color:var(--text-secondary);line-height:1.5}
+.cleanup-rule-row{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;padding:8px 12px;border-radius:10px;border:1px solid var(--fluid-card-border);background:var(--fluid-card-fill);font-size:12.5px}
+.cleanup-rule-label{display:inline-flex;align-items:center;gap:8px;font-weight:550;color:var(--text-primary)}
+.upload-cleanup-rules input{width:84px;height:30px;padding:0 9px;border-radius:7px;border:1px solid var(--fluid-card-border);background:var(--fluid-card-item-fill);color:var(--text-primary);font:inherit;font-size:12.5px}
 </style>

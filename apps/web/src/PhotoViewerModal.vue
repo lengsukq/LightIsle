@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from "vue";
 import {
-  ChevronDown, ChevronLeft, ChevronRight, Eye, EyeOff,
+  ChevronDown, ChevronLeft, ChevronRight, Download, Eye, EyeOff,
   Film, FolderPlus, Heart, Info, Star, Trash2, X,
 } from "lucide-vue-next";
 import AppleSelect from "./AppleSelect.vue";
@@ -61,12 +61,14 @@ const props = defineProps<{
   privateAlbumsLoading: boolean;
   albumBusy: boolean;
   message: string;
+  fileBrowserMode?: boolean;
   setDialogRef: (el: HTMLElement | null) => void;
   setCloseButtonRef: (el: HTMLButtonElement | null) => void;
 }>();
 
 const emit = defineEmits<{
   close: [];
+  download: [];
   "show-at": [index: number];
   "toggle-favorite": [];
   "toggle-personal-favorite": [];
@@ -148,57 +150,66 @@ watch(
           aria-label="照片详细信息"
           tabindex="-1"
         >
-          <div v-if="viewerChromeVisible" class="gallery-modal-toolbar">
-            <div>
-              <strong>{{ selected.name }}</strong>
-              <small>{{ dateLabel(selected.takenAt) }} · {{ selected.type === "video" ? "视频" : "照片" }} · {{ selectedIndex + 1 }} / {{ modalAssets.length }}</small>
+          <Transition name="viewer-chrome-top">
+            <div v-if="viewerChromeVisible" class="gallery-modal-toolbar">
+              <div>
+                <strong>{{ selected.name }}</strong>
+                <small>{{ fileBrowserMode ? "文件预览" : dateLabel(selected.takenAt) }} · {{ selected.type === "video" ? "视频" : "照片" }} · {{ selectedIndex + 1 }} / {{ modalAssets.length }}</small>
+              </div>
+              <div class="gallery-modal-actions">
+                <template v-if="!fileBrowserMode">
+                  <button v-if="canWrite" type="button" :disabled="pendingFavorite" title="收藏（F）" aria-label="收藏或取消收藏（快捷键 F）" @click="emit('toggle-favorite')">
+                    <Heart :size="17" :fill="selected.favorite ? 'currentColor' : 'none'" />
+                  </button>
+                  <span v-else class="gallery-readonly-favorite">共享收藏只读</span>
+                  <button type="button" :disabled="pendingFavorite" :title="selected.personalFavorite ? '从我的收藏移除（F）' : '加入我的收藏（F）'" @click="emit('toggle-personal-favorite')">
+                    <Star :size="17" :fill="selected.personalFavorite ? 'currentColor' : 'none'" />
+                  </button>
+                  <button type="button" :class="{ chosen: albumOrganizerOpen }" :aria-expanded="albumOrganizerOpen" title="整理到相册" aria-label="整理到相册" @click="emit('toggle-album-organizer')">
+                    <FolderPlus :size="17" />
+                  </button>
+                  <button
+                    v-if="inAnyRemovableAlbum"
+                    type="button"
+                    class="album-remove-pill"
+                    :disabled="albumBusy"
+                    title="仅从当前相册视图移出，原始照片/视频文件不会删除"
+                    @click="activePrivateAlbum ? emit('remove-private') : emit('remove-shared')"
+                  >
+                    从相册移出（保留原片）
+                  </button>
+                  <button v-if="selected.type === 'photo' && modalAssets.length > 1" type="button" class="viewer-pill-btn" :title="slideshow ? '暂停幻灯片' : '开始幻灯片，每4秒一张'" @click="emit('toggle-slideshow')">
+                    {{ slideshow ? "暂停轮播" : "幻灯片" }}
+                  </button>
+                  <button type="button" :class="{ chosen: viewerInfo }" :aria-expanded="viewerInfo" aria-controls="photo-viewer-info" aria-label="拍摄信息与相册（I）" title="拍摄信息（快捷键 I）" @click="emit('toggle-info')">
+                    <Info :size="17" />
+                  </button>
+                </template>
+                <button v-else type="button" title="下载原文件" aria-label="下载原文件" @click="emit('download')">
+                  <Download :size="17" />
+                </button>
+                <button type="button" title="隐藏底栏胶片带与工具栏" aria-label="隐藏底栏胶片带与工具栏" @click="viewerChromeVisible = false">
+                  <EyeOff :size="16" />
+                </button>
+                <button v-if="!fileBrowserMode && canWrite" type="button" :disabled="trashBusy" title="移入回收站（删除照片原片）" aria-label="移入回收站（删除照片）" @click="emit('trash-selected')">
+                  <Trash2 :size="17" />
+                </button>
+                <button :ref="(el) => setCloseButtonRef(el as HTMLButtonElement | null)" type="button" title="关闭（Esc）" aria-label="关闭查看器" @click="emit('close')">
+                  <X :size="17" />
+                </button>
+              </div>
             </div>
-            <div class="gallery-modal-actions">
-              <button v-if="canWrite" type="button" :disabled="pendingFavorite" title="收藏（F）" aria-label="收藏或取消收藏（快捷键 F）" @click="emit('toggle-favorite')">
-                <Heart :size="19" :fill="selected.favorite ? 'currentColor' : 'none'" />
-              </button>
-              <span v-else class="gallery-readonly-favorite">共享收藏只读</span>
-              <button type="button" :disabled="pendingFavorite" :title="selected.personalFavorite ? '从我的收藏移除（F）' : '加入我的收藏（F）'" @click="emit('toggle-personal-favorite')">
-                <Star :size="19" :fill="selected.personalFavorite ? 'currentColor' : 'none'" />
-              </button>
-              <button type="button" :class="{ chosen: albumOrganizerOpen }" :aria-expanded="albumOrganizerOpen" title="整理到相册" aria-label="整理到相册" @click="emit('toggle-album-organizer')">
-                <FolderPlus :size="19" />
-              </button>
-              <button
-                v-if="inAnyRemovableAlbum"
-                type="button"
-                class="album-remove-pill"
-                :disabled="albumBusy"
-                title="仅从当前相册视图移出，原始照片/视频文件不会删除"
-                @click="activePrivateAlbum ? emit('remove-private') : emit('remove-shared')"
-              >
-                从相册移出（保留原片）
-              </button>
-              <button v-if="selected.type === 'photo' && modalAssets.length > 1" type="button" class="viewer-pill-btn" :title="slideshow ? '暂停幻灯片' : '开始幻灯片，每4秒一张'" @click="emit('toggle-slideshow')">
-                {{ slideshow ? "暂停轮播" : "幻灯片" }}
-              </button>
-              <button type="button" :class="{ chosen: viewerInfo }" :aria-expanded="viewerInfo" aria-controls="photo-viewer-info" aria-label="拍摄信息与相册（I）" title="拍摄信息（快捷键 I）" @click="emit('toggle-info')">
-                <Info :size="19" />
-              </button>
-              <button type="button" title="隐藏底栏胶片带与工具栏" aria-label="隐藏底栏胶片带与工具栏" @click="viewerChromeVisible = false">
-                <EyeOff :size="18" />
-              </button>
-              <button v-if="canWrite" type="button" :disabled="trashBusy" title="移入回收站（删除照片原片）" aria-label="移入回收站（删除照片）" @click="emit('trash-selected')">
-                <Trash2 :size="19" />
-              </button>
-              <button :ref="(el) => setCloseButtonRef(el as HTMLButtonElement | null)" type="button" title="关闭（Esc）" aria-label="关闭查看器" @click="emit('close')">
-                <X :size="19" />
-              </button>
+          </Transition>
+          <Transition name="viewer-chrome-top">
+            <div v-if="!viewerChromeVisible" class="viewer-floating-restore">
+              <button type="button" title="显示工具栏与胶片缩略图栏" aria-label="显示工具栏与胶片栏" @click="viewerChromeVisible = true"><Eye :size="16" /></button>
+              <button type="button" title="关闭（Esc）" aria-label="关闭查看器" @click="emit('close')"><X :size="16" /></button>
             </div>
-          </div>
-          <div v-else class="viewer-floating-restore">
-            <button type="button" title="显示工具栏与胶片缩略图栏" aria-label="显示工具栏与胶片栏" @click="viewerChromeVisible = true"><Eye :size="17" /></button>
-            <button type="button" title="关闭（Esc）" aria-label="关闭查看器" @click="emit('close')"><X :size="17" /></button>
-          </div>
+          </Transition>
 
           <div class="gallery-media-layout">
             <PhotoViewerInfoSidebar
-              v-if="viewerInfo"
+              v-if="!fileBrowserMode && viewerInfo"
               :asset="selected"
               :ai-detail="viewerAIDetail"
               :ai-loading="viewerAILoading"
@@ -210,7 +221,7 @@ watch(
             />
             <div class="gallery-stage">
               <button v-if="selected.type !== 'video' && selectedIndex > 0" type="button" class="viewer-nav prev" title="上一张（←）" aria-label="上一张" @click="emit('show-at', selectedIndex - 1)">
-                <ChevronLeft :size="26" />
+                <ChevronLeft :size="22" />
               </button>
               <div
                 v-if="selected.type === 'photo'"
@@ -263,61 +274,65 @@ watch(
                 @ended="slideshow && emit('show-at', selectedIndex + 1)"
               />
               <button v-if="selected.type !== 'video' && selectedIndex + 1 < modalAssets.length" type="button" class="viewer-nav next" title="下一张（→）" aria-label="下一张" @click="emit('show-at', selectedIndex + 1)">
-                <ChevronRight :size="26" />
+                <ChevronRight :size="22" />
               </button>
             </div>
           </div>
 
-          <nav v-if="viewerChromeVisible && filmstripWindow.length && selected.type !== 'video'" ref="filmstripRef" class="viewer-filmstrip" aria-label="相邻照片胶片缩略图导航">
-            <button
-              v-for="item in filmstripWindow"
-              :key="item.asset.id"
-              type="button"
-              class="viewer-filmstrip-thumb"
-              :class="{ active: item.index === selectedIndex }"
-              :data-film-index="item.index"
-              :aria-current="item.index === selectedIndex ? 'true' : undefined"
-              :title="item.asset.name"
-              @click="emit('show-at', item.index)"
-            >
-              <img :src="thumbFor(item.asset)" :alt="item.asset.name" loading="lazy" decoding="async" />
-              <span v-if="item.asset.type === 'video'" class="viewer-filmstrip-badge">
-                <Film :size="9" />
-                <template v-if="(item.asset.durationSeconds ?? 0) > 0">{{ formatDuration(item.asset.durationSeconds!) }}</template>
-              </span>
-              <span v-else-if="(item.asset.liveVideoAssetId ?? 0) > 0" class="viewer-filmstrip-badge">实况</span>
-            </button>
-          </nav>
+          <Transition name="viewer-chrome-bottom">
+            <nav v-if="viewerChromeVisible && filmstripWindow.length && (fileBrowserMode || selected.type !== 'video')" ref="filmstripRef" class="viewer-filmstrip" aria-label="相邻照片胶片缩略图导航">
+              <button
+                v-for="item in filmstripWindow"
+                :key="item.asset.id"
+                type="button"
+                class="viewer-filmstrip-thumb"
+                :class="{ active: item.index === selectedIndex }"
+                :data-film-index="item.index"
+                :aria-current="item.index === selectedIndex ? 'true' : undefined"
+                :title="item.asset.name"
+                @click="emit('show-at', item.index)"
+              >
+                <img :src="thumbFor(item.asset)" :alt="item.asset.name" loading="lazy" decoding="async" />
+                <span v-if="item.asset.type === 'video'" class="viewer-filmstrip-badge">
+                  <Film :size="9" />
+                  <template v-if="(item.asset.durationSeconds ?? 0) > 0">{{ formatDuration(item.asset.durationSeconds!) }}</template>
+                </span>
+                <span v-else-if="(item.asset.liveVideoAssetId ?? 0) > 0" class="viewer-filmstrip-badge">实况</span>
+              </button>
+            </nav>
+          </Transition>
 
-          <div v-if="viewerChromeVisible && (albumOrganizerOpen || sharedAlbumsError || privateAlbumsError)" class="gallery-modal-footer">
-            <div v-if="folderAlbums.length" class="private-album-picker">
-              <span>文件夹相册</span>
-              <AppleSelect :model-value="folderTarget" :options="folderAlbumOptions" size="sm" aria-label="选择文件夹相册" @update:model-value="emit('update:folderTarget', $event)" />
-              <button type="button" :disabled="!folderTarget || albumBusy" @click="emit('folder-action', 'copy')">复制到相册</button>
-              <button type="button" :disabled="!folderTarget || albumBusy || !canWrite" @click="emit('folder-action', 'move')">移动到相册</button>
+          <Transition name="viewer-chrome-bottom">
+            <div v-if="!fileBrowserMode && viewerChromeVisible && (albumOrganizerOpen || sharedAlbumsError || privateAlbumsError)" class="gallery-modal-footer">
+              <div v-if="folderAlbums.length" class="private-album-picker">
+                <span>文件夹相册</span>
+                <AppleSelect :model-value="folderTarget" :options="folderAlbumOptions" size="sm" aria-label="选择文件夹相册" @update:model-value="emit('update:folderTarget', $event)" />
+                <button type="button" :disabled="!folderTarget || albumBusy" @click="emit('folder-action', 'copy')">复制到相册</button>
+                <button type="button" :disabled="!folderTarget || albumBusy || !canWrite" @click="emit('folder-action', 'move')">移动到相册</button>
+              </div>
+              <span v-else class="private-album-hint">可在相册页新建「文件夹相册」，以真实目录整理照片。</span>
+              <div v-if="admin && albums.length" class="private-album-picker">
+                <span>旧版共享相册</span>
+                <AppleSelect :model-value="addAlbum" :options="albumOptions" size="sm" aria-label="选择相册" @update:model-value="emit('update:addAlbum', $event)" />
+                <button type="button" :disabled="!addAlbum || albumBusy" @click="emit('add-shared')">加入 <ChevronDown :size="13" /></button>
+                <button v-if="activeAlbum" type="button" class="album-remove-photo" :disabled="albumBusy" @click="emit('remove-shared')">从相册移出（保留原片）</button>
+              </div>
+              <div v-if="sharedAlbumsError && selected" class="gallery-modal-feedback" role="alert">
+                共享相册读取失败：{{ sharedAlbumsError }}
+                <button type="button" class="refresh" :disabled="sharedAlbumsLoading" @click="emit('retry-shared')">{{ sharedAlbumsLoading ? "正在重试…" : "重试" }}</button>
+              </div>
+              <div v-if="privateAlbums.length" class="private-album-picker">
+                <span>旧版私人相册</span>
+                <AppleSelect :model-value="addPrivateAlbum" :options="privateAlbumOptions" size="sm" aria-label="选择我的私人相册" @update:model-value="emit('update:addPrivateAlbum', $event)" />
+                <button type="button" :disabled="!addPrivateAlbum || albumBusy" @click="emit('add-private')">加入 <ChevronDown :size="13" /></button>
+              </div>
+              <span v-else-if="privateAlbumsError && selected" class="private-album-hint" role="alert">
+                私人相册读取失败：{{ privateAlbumsError }}
+                <button type="button" class="refresh" :disabled="privateAlbumsLoading" @click="emit('retry-private')">{{ privateAlbumsLoading ? "正在重试…" : "重试" }}</button>
+              </span>
+              <button v-if="activePrivateAlbum" type="button" class="album-remove-photo" :disabled="albumBusy" @click="emit('remove-private')">从相册移出（保留原片）</button>
             </div>
-            <span v-else class="private-album-hint">可在相册页新建「文件夹相册」，以真实目录整理照片。</span>
-            <div v-if="admin && albums.length" class="private-album-picker">
-              <span>旧版共享相册</span>
-              <AppleSelect :model-value="addAlbum" :options="albumOptions" size="sm" aria-label="选择相册" @update:model-value="emit('update:addAlbum', $event)" />
-              <button type="button" :disabled="!addAlbum || albumBusy" @click="emit('add-shared')">加入 <ChevronDown :size="14" /></button>
-              <button v-if="activeAlbum" type="button" class="album-remove-photo" :disabled="albumBusy" @click="emit('remove-shared')">从相册移出（保留原片）</button>
-            </div>
-            <div v-if="sharedAlbumsError && selected" class="gallery-modal-feedback" role="alert">
-              共享相册读取失败：{{ sharedAlbumsError }}
-              <button type="button" class="refresh" :disabled="sharedAlbumsLoading" @click="emit('retry-shared')">{{ sharedAlbumsLoading ? "正在重试…" : "重试" }}</button>
-            </div>
-            <div v-if="privateAlbums.length" class="private-album-picker">
-              <span>旧版私人相册</span>
-              <AppleSelect :model-value="addPrivateAlbum" :options="privateAlbumOptions" size="sm" aria-label="选择我的私人相册" @update:model-value="emit('update:addPrivateAlbum', $event)" />
-              <button type="button" :disabled="!addPrivateAlbum || albumBusy" @click="emit('add-private')">加入 <ChevronDown :size="14" /></button>
-            </div>
-            <span v-else-if="privateAlbumsError && selected" class="private-album-hint" role="alert">
-              私人相册读取失败：{{ privateAlbumsError }}
-              <button type="button" class="refresh" :disabled="privateAlbumsLoading" @click="emit('retry-private')">{{ privateAlbumsLoading ? "正在重试…" : "重试" }}</button>
-            </span>
-            <button v-if="activePrivateAlbum" type="button" class="album-remove-photo" :disabled="albumBusy" @click="emit('remove-private')">从相册移出（保留原片）</button>
-          </div>
+          </Transition>
           <p v-if="message" class="gallery-modal-feedback" role="status">{{ message }}</p>
         </div>
       </div>
@@ -331,8 +346,8 @@ watch(
 }
 .viewer-floating-restore {
   position: absolute;
-  top: 14px;
-  right: 14px;
+  top: 12px;
+  right: 12px;
   z-index: 20;
   display: inline-flex;
   gap: 6px;
@@ -340,11 +355,11 @@ watch(
 .viewer-floating-restore button {
   display: grid;
   place-items: center;
-  width: 34px;
-  height: 34px;
+  width: 32px;
+  height: 32px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.2);
-  background: rgba(9, 12, 18, 0.72);
+  background: rgba(16, 15, 14, 0.74);
   color: #fff;
   cursor: pointer;
 }
@@ -354,11 +369,11 @@ watch(
   grid-template-columns: minmax(0, 1fr);
   flex: 1;
   min-height: 0;
-  gap: 14px;
+  gap: 10px;
 }
 .gallery-media-layout:has(:deep(.viewer-info)) {
   grid-template-areas: "stage info";
-  grid-template-columns: minmax(0, 1fr) clamp(240px, 26vw, 320px);
+  grid-template-columns: minmax(0, 1fr) clamp(236px, 25vw, 304px);
 }
 .gallery-stage {
   position: relative;
@@ -378,14 +393,14 @@ watch(
   place-items: center;
   min-height: 200px;
   overflow: hidden;
-  border-radius: 12px;
-  background: #05070a;
+  border-radius: 14px;
+  background: #0c0c0b;
   touch-action: none;
 }
 .gallery-viewer .gallery-modal-image {
   max-height: 70vh;
   will-change: transform;
-  transition: transform 0.18s ease;
+  transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
   user-select: none;
 }
 .gallery-viewer.gesturing .gallery-modal-image {
@@ -393,10 +408,10 @@ watch(
 }
 .gallery-viewer-hint {
   position: absolute;
-  left: 12px;
-  bottom: 10px;
+  left: 10px;
+  bottom: 8px;
   font-size: 11px;
-  color: #93a0b4;
+  color: rgba(244, 241, 234, 0.68);
   pointer-events: none;
 }
 .viewer-nav {
@@ -406,31 +421,31 @@ watch(
   z-index: 2;
   display: grid;
   place-items: center;
-  width: 40px;
-  height: 40px;
-  border: none;
+  width: 36px;
+  height: 36px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
   border-radius: 99px;
-  background: rgba(9, 12, 18, 0.55);
-  color: #e8edf5;
+  background: rgba(18, 17, 15, 0.58);
+  color: #f4f1ea;
   backdrop-filter: blur(6px);
   cursor: pointer;
 }
 .viewer-nav:hover {
-  background: rgba(9, 12, 18, 0.8);
+  background: rgba(18, 17, 15, 0.84);
 }
 .viewer-nav.prev {
-  left: 10px;
+  left: 8px;
 }
 .viewer-nav.next {
-  right: 10px;
+  right: 8px;
 }
 .album-remove-pill {
-  padding: 5px 10px !important;
+  padding: 4px 10px !important;
   border-radius: 999px !important;
   border: 1px solid var(--fluid-card-border) !important;
   background: var(--fluid-card-fill) !important;
   color: var(--text-primary) !important;
-  font-size: 12px !important;
+  font-size: 11.5px !important;
   font-weight: 600;
   white-space: nowrap;
 }
@@ -444,8 +459,8 @@ watch(
 .viewer-filmstrip {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding: 8px 18px 2px;
+  gap: 5px;
+  padding: 4px 10px 2px;
   overflow-x: auto;
   scrollbar-width: none;
   flex-shrink: 0;
@@ -456,16 +471,19 @@ watch(
 .viewer-filmstrip-thumb {
   position: relative;
   flex: 0 0 auto;
-  width: 48px;
-  height: 48px;
+  width: 44px;
+  height: 44px;
   padding: 0;
-  border-radius: 9px;
+  border-radius: 7px;
   overflow: hidden;
   border: 2px solid transparent;
   background: rgba(0, 0, 0, 0.35);
-  opacity: 0.66;
+  opacity: 0.68;
   cursor: pointer;
-  transition: transform 0.16s ease, opacity 0.16s ease, border-color 0.16s ease;
+  transition:
+    transform 0.2s cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 0.16s ease,
+    border-color 0.16s ease;
 }
 .viewer-filmstrip-thumb:hover {
   opacity: 0.94;
@@ -503,19 +521,19 @@ watch(
 .gallery-modal-footer .album-remove-photo {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
   border: 1px solid var(--fluid-card-border);
-  border-radius: var(--radius-sm);
+  border-radius: 8px;
   background: var(--fluid-card-fill);
   color: var(--text-secondary);
-  padding: 8px 11px;
-  font-size: 12px;
+  padding: 6px 10px;
+  font-size: 11.5px;
   font-weight: 600;
 }
 .private-album-picker {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
   color: var(--text-secondary);
   font-size: 12px;
@@ -536,10 +554,32 @@ watch(
 }
 .gallery-modal-feedback {
   margin: 0;
-  padding: 0 20px 16px;
+  padding: 0 12px 10px;
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: 12px;
   line-height: 1.5;
+}
+.viewer-chrome-top-enter-active,
+.viewer-chrome-bottom-enter-active {
+  transition:
+    opacity 0.22s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.viewer-chrome-top-leave-active,
+.viewer-chrome-bottom-leave-active {
+  transition:
+    opacity 0.14s cubic-bezier(0.32, 0, 0.67, 0),
+    transform 0.14s cubic-bezier(0.32, 0, 0.67, 0);
+}
+.viewer-chrome-top-enter-from,
+.viewer-chrome-top-leave-to {
+  opacity: 0;
+  transform: translate3d(0, -8px, 0);
+}
+.viewer-chrome-bottom-enter-from,
+.viewer-chrome-bottom-leave-to {
+  opacity: 0;
+  transform: translate3d(0, 8px, 0);
 }
 @media (max-width: 780px) {
   .gallery-media-layout:has(:deep(.viewer-info)) {
@@ -555,13 +595,17 @@ watch(
     min-height: 140px;
   }
   .gallery-modal-footer {
-    max-height: min(25vh, 210px);
+    max-height: min(25vh, 200px);
     overflow: auto;
   }
 }
 @media (prefers-reduced-motion: reduce) {
   .gallery-viewer .gallery-modal-image,
-  .viewer-filmstrip-thumb {
+  .viewer-filmstrip-thumb,
+  .viewer-chrome-top-enter-active,
+  .viewer-chrome-top-leave-active,
+  .viewer-chrome-bottom-enter-active,
+  .viewer-chrome-bottom-leave-active {
     transition: none;
   }
 }

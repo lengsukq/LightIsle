@@ -410,8 +410,8 @@ onUnmounted(() => {
       </div>
     </template>
 
-    <IsleBanner v-if="error" type="error" compact dismissible :message="error" @close="error = ''" />
-    <IsleBanner v-if="success" type="success" compact dismissible :message="success" @close="success = ''" />
+    <IsleBanner v-if="error" type="error" compact closable :message="error" @close="error = ''" />
+    <IsleBanner v-if="success" type="success" compact closable :message="success" @close="success = ''" />
 
     <div v-if="isRunning" class="dup-progress-box" role="status" aria-live="polite">
       <strong>{{ progressLabel }}</strong>
@@ -429,7 +429,7 @@ onUnmounted(() => {
         <div v-if="dedupeSavingsChart" class="dup-chart-overview">
           <IsleCharts
             kind="donut"
-            :size="56"
+            :size="52"
             :stroke-width="6"
             :segments="dedupeSavingsChart.segments"
             :total="dedupeSavingsChart.totalBytes"
@@ -442,7 +442,7 @@ onUnmounted(() => {
             kind="segmented"
             :segments="dedupeSavingsChart.segments"
             :total="dedupeSavingsChart.totalBytes"
-            :bar-height="10"
+            :bar-height="9"
             compact-legend
             aria-label="保留原件体积与可释放冗余空间对比"
           />
@@ -468,7 +468,7 @@ onUnmounted(() => {
               :disabled="totalSelectedTrashCount === 0 || isRunning"
               @click="trashSelectedDuplicates"
             >
-              <Trash2 :size="14" /><span>移入回收站 ({{ totalSelectedTrashCount }})</span>
+              <Trash2 :size="13" /><span>移入回收站 ({{ totalSelectedTrashCount }})</span>
             </IsleButton>
           </div>
         </div>
@@ -530,30 +530,31 @@ onUnmounted(() => {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 .dup-progress-box {
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 10px 12px;
-  margin-bottom: 12px;
+  gap: 3px;
+  padding: 9px 12px;
+  margin-bottom: 10px;
   border-radius: 10px;
-  background: rgba(0, 113, 227, 0.08);
-  font-size: 13px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 24%, var(--fluid-card-border));
+  background: color-mix(in srgb, var(--accent-primary) 7%, var(--fluid-card-top));
+  font-size: 12.5px;
 }
 .dup-progress-path {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11.5px;
-  color: var(--text-secondary, #6e6e73);
+  font-size: 11px;
+  color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .dup-empty {
-  padding: 18px 4px;
-  font-size: 13px;
-  color: var(--text-secondary, #6e6e73);
+  padding: 12px 2px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
 }
 .dup-summary-bar {
   display: flex;
@@ -561,62 +562,66 @@ onUnmounted(() => {
   gap: 10px;
   padding: 12px 14px;
   border-radius: 12px;
-  background: rgba(120, 120, 128, 0.07);
-  margin-bottom: 12px;
-  font-size: 13px;
+  border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-item-fill);
+  margin-bottom: 10px;
+  font-size: 12.5px;
 }
 .dup-chart-overview {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 12px;
   padding-bottom: 10px;
-  border-bottom: 1px solid color-mix(in srgb, var(--border-subtle, rgba(142, 142, 147, 0.25)) 60%, transparent);
+  border-bottom: 1px solid var(--fluid-divider, var(--fluid-card-border));
 }
 .dup-summary-controls {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
 }
 .dup-metrics {
   display: flex;
   flex-wrap: wrap;
-  gap: 14px;
+  gap: 12px;
 }
 .dup-strategy-bar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
 }
 .dup-strategy-label {
   font-size: 12px;
-  opacity: 0.75;
+  color: var(--text-secondary);
 }
 .dup-chip {
   padding: 4px 10px;
   border-radius: 999px;
-  font-size: 12px;
-  border: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.12));
-  background: transparent;
-  color: inherit;
+  font-size: 11.5px;
+  font-weight: 550;
+  border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-fill);
+  color: var(--text-secondary);
   cursor: pointer;
 }
 .dup-chip.active {
-  background: var(--accent, #0071e3);
-  color: #fff;
-  border-color: transparent;
+  background: color-mix(in srgb, var(--accent-primary) 12%, var(--fluid-card-top));
+  color: var(--accent-primary);
+  border-color: color-mix(in srgb, var(--accent-primary) 40%, var(--fluid-card-border));
+  font-weight: 600;
 }
 .dup-group-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 .dup-group-card {
-  padding: 12px 14px;
+  padding: 10px 12px;
   border-radius: 12px;
-  border: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.08));
+  border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-item-fill);
 }
 .dup-group-head {
   display: flex;
@@ -625,25 +630,30 @@ onUnmounted(() => {
   align-items: center;
   gap: 8px;
   margin-bottom: 8px;
-  font-size: 13px;
+  font-size: 12.5px;
 }
 .dup-item-rows {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  border: 1px solid var(--fluid-card-border);
+  border-radius: 9px;
+  background: var(--fluid-card-fill);
+  overflow: hidden;
 }
 .dup-item-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 8px;
-  border-radius: 8px;
-  background: rgba(120, 120, 128, 0.05);
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--fluid-divider, var(--fluid-card-border));
   font-size: 12px;
   cursor: pointer;
 }
+.dup-item-row:last-child {
+  border-bottom: 0;
+}
 .dup-item-row.is-keep {
-  background: rgba(52, 199, 89, 0.08);
+  background: rgba(16, 185, 129, 0.06);
 }
 .dup-item-path {
   flex: 1;
@@ -656,13 +666,13 @@ onUnmounted(() => {
 .dup-item-tags {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
 }
 .dup-footer-note {
   display: flex;
   align-items: center;
   gap: 6px;
   font-size: 12px;
-  color: var(--text-secondary, #6e6e73);
+  color: var(--text-secondary);
 }
 </style>

@@ -76,18 +76,18 @@ onUnmounted(()=>{disposed=true;document.removeEventListener("visibilitychange",v
 
 <template>
   <section class="pending-media">
-    <p>{{admin?"查看当前硬盘所有目录中待处理的缺失媒体记录。":"显示你在当前硬盘个人目录中待处理的缺失媒体记录。"}}原收藏、相册与观看进度会保留。</p>
+    <p class="pending-desc">{{admin?"查看当前硬盘所有目录中待处理的缺失媒体记录。":"显示你在当前硬盘个人目录中待处理的缺失媒体记录。"}}原收藏、相册与观看进度会保留。</p>
     <IsleBanner v-if="notice" type="info" compact role="status">{{ notice }}</IsleBanner>
     <div v-for="kind in (['photos','cinema'] as const)" :key="kind" class="pending-kind">
       <div class="account-heading">
         <h4>{{ kind === 'photos' ? '照片与视频' : '影视' }}</h4>
-        <div style="display: flex; gap: 8px;">
+        <div class="pending-head-actions">
           <IsleButton variant="glass" size="sm" :loading="busy" @click="recheck(kind)">重新检查</IsleButton>
           <IsleButton variant="glass" size="sm" :loading="groups[kind].loading" @click="load(kind)">刷新</IsleButton>
         </div>
       </div>
       <IsleBanner v-if="groups[kind].error" type="error" compact role="alert">{{ groups[kind].error }}</IsleBanner>
-      <p v-else-if="groups[kind].loading && !groups[kind].loaded">正在读取…</p>
+      <p v-else-if="groups[kind].loading && !groups[kind].loaded" class="footnote">正在读取…</p>
       <p v-if="groups[kind].loaded && groups[kind].scan==='running'" class="footnote">检查正在进行，当前结果尚不完整；完成后会自动更新。</p>
       <IsleBanner v-else-if="groups[kind].loaded && groups[kind].scan==='failed'" type="warning" compact role="alert">
         上次检查未完成，结果可能不完整。请检查硬盘连接后重新检查。
@@ -95,14 +95,16 @@ onUnmounted(()=>{disposed=true;document.removeEventListener("visibilitychange",v
       <p v-else-if="groups[kind].loaded && groups[kind].scan==='not_checked'" class="footnote">尚未完成检查，当前结果可能不完整。</p>
       <p v-else-if="groups[kind].loaded && groups[kind].scan==='finished'" class="footnote">最近一次检查已结束；如果只检查了部分目录，其他目录可能尚未核对。</p>
       <IsleEmpty v-if="groups[kind].loaded && !groups[kind].items.length && !groups[kind].error" compact description="当前没有已发现的缺失记录。" />
-      <div v-for="item in groups[kind].items" :key="item.id" class="account-row">
-        <div class="pending-path">
-          <strong>{{ item.path }}</strong>
-          <small>{{ reason(item.reason) }} · 保留：{{ dataLabel(item.data) }}{{ item.canManage ? '' : ' · 当前没有写入权限，请联系管理员' }}</small>
-        </div>
-        <div class="pending-actions">
-          <IsleButton variant="tonal" size="sm" :disabled="busy || !item.canManage" @click="attach(kind, item)">关联当前文件…</IsleButton>
-          <IsleButton variant="danger" size="sm" :disabled="busy || !item.canManage" @click="discard(kind, item)">放弃旧记录…</IsleButton>
+      <div v-if="groups[kind].items.length" class="pending-list">
+        <div v-for="item in groups[kind].items" :key="item.id" class="account-row pending-row">
+          <div class="pending-path">
+            <strong>{{ item.path }}</strong>
+            <small>{{ reason(item.reason) }} · 保留：{{ dataLabel(item.data) }}{{ item.canManage ? '' : ' · 当前没有写入权限，请联系管理员' }}</small>
+          </div>
+          <div class="pending-actions">
+            <IsleButton variant="tonal" size="sm" :disabled="busy || !item.canManage" @click="attach(kind, item)">关联当前文件…</IsleButton>
+            <IsleButton variant="danger" size="sm" :disabled="busy || !item.canManage" @click="discard(kind, item)">放弃旧记录…</IsleButton>
+          </div>
         </div>
       </div>
       <IsleButton v-if="groups[kind].next" variant="glass" size="sm" :loading="groups[kind].loading" @click="load(kind, true)">加载更多</IsleButton>
@@ -111,5 +113,13 @@ onUnmounted(()=>{disposed=true;document.removeEventListener("visibilitychange",v
 </template>
 
 <style scoped>
-.pending-media{margin-top:12px}.pending-kind{margin-top:16px}.pending-path{min-width:0;overflow-wrap:anywhere}.pending-kind .account-heading button+button{margin-left:8px}.pending-actions{display:flex;flex-wrap:wrap;gap:8px}
+.pending-media{margin-top:8px;display:grid;gap:10px}
+.pending-desc{margin:0;font-size:12px;color:var(--text-secondary)}
+.pending-kind{display:grid;gap:8px}
+.pending-head-actions{display:flex;gap:6px;flex-wrap:wrap}
+.pending-list{border:1px solid var(--fluid-card-border);border-radius:10px;background:var(--fluid-card-fill);overflow:hidden}
+.pending-row{margin:0;border:0;border-bottom:1px solid var(--fluid-divider,var(--fluid-card-border));border-radius:0;background:transparent;box-shadow:none;padding:8px 12px}
+.pending-row:last-child{border-bottom:0}
+.pending-path{min-width:0;overflow-wrap:anywhere}
+.pending-actions{display:flex;flex-wrap:wrap;gap:6px}
 </style>

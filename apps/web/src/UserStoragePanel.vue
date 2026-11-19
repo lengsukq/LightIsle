@@ -6,6 +6,7 @@ import IsleButton from "./IsleButton.vue";
 import IsleBanner from "./IsleBanner.vue";
 import IsleBadge from "./IsleBadge.vue";
 import IsleCard from "./IsleCard.vue";
+import IsleHelpButton from "./IsleHelpButton.vue";
 import UserStorageModals from "./UserStorageModals.vue";
 import DuplicateFilesPanel from "./DuplicateFilesPanel.vue";
 import IsleCharts from "./IsleCharts.vue";
@@ -188,13 +189,20 @@ function unlimitedDiskSegments(root: {
     <!-- BLOCK 1: 存储目录管理 -->
     <IsleCard
       v-if="admin && (!mode || mode === 'all' || mode === 'roots')"
-      title="存储目录管理（默认主目录与可用空间池）"
-      subtitle="整个应用初始化时设定默认主目录，后续添加的互不嵌套目录作为独立存储空间；Mac 端添加目录时强制校验整盘与目录读写权限。"
+      title="存储目录管理"
+      subtitle="查看默认主目录与外接存储池容量构成。"
     >
       <template #icon>
         <div class="block-header-icon"><HardDrive :size="18" /></div>
       </template>
       <template #actions>
+        <IsleHelpButton
+          title="存储目录登记与权限规则"
+          :items="[
+            { title: '互不嵌套独立空间', body: '首次初始化设定默认主目录，后续添加的互不嵌套目录作为独立存储空间池。' },
+            { title: '本机权限管理', body: '添加新物理盘或目录、切换默认主目录及修复 macOS 整盘读写权限，请在 Mac 本机「设置 → 权限与初始化」中操作。' },
+          ]"
+        />
         <IsleButton variant="glass" size="sm" :loading="pending" @click="load">
           <RefreshCw :size="14" /><span>刷新目录</span>
         </IsleButton>
@@ -267,20 +275,13 @@ function unlimitedDiskSegments(root: {
           </div>
         </div>
       </div>
-
-      <template #footer>
-        <div class="permission-guard-tip">
-          <ShieldCheck :size="15" class="guard-icon" />
-          <span>添加新物理盘或目录、切换默认主目录及修复 macOS 整盘读写权限，请在 Mac 本机「设置 → 权限与初始化」中操作。</span>
-        </div>
-      </template>
     </IsleCard>
 
     <!-- BLOCK 2: 用户空间管理 -->
     <IsleCard
       v-if="!mode || mode === 'all' || mode === 'users'"
-      :title="admin ? '用户空间管理（目录分配、独立配额与跨目录迁移）' : '我的存储空间与目录绑定'"
-      :subtitle="admin ? '管理每位用户可以拥有哪些存储目录、调整单目录配额，并支持将旧目录中的数据一键迁移到新目录。' : '个人文件、照片与视频存放在已分配的存储目录中；各目录独立计算配额。'"
+      :title="admin ? '用户空间管理' : '我的存储空间'"
+      :subtitle="admin ? '按成员分配目录、调整配额或跨盘迁移数据。' : '各已分配目录独立计算空间配额。'"
     >
       <template #icon>
         <div class="block-header-icon"><ArrowRightLeft :size="18" /></div>

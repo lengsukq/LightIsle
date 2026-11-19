@@ -156,7 +156,7 @@ async function submit() {
           :disabled="loading || busy || crumb.path === dir"
           @click="dir = crumb.path"
         >
-          {{ crumb.label }} <ChevronRight :size="13" />
+          {{ crumb.label }} <ChevronRight :size="12" />
         </button>
       </div>
 
@@ -164,10 +164,10 @@ async function submit() {
         <p v-if="loading && !folders.length" class="file-operation-feedback"><LoaderCircle :size="15" class="spin-icon" /> 正在读取目录…</p>
         <template v-else>
           <button v-if="dir !== '.'" type="button" class="file-operation-folder" :disabled="loading || busy" @click="dir = dir.split('/').slice(0, -1).join('/') || '.'">
-            <ChevronLeft :size="17" /> 上一级
+            <ChevronLeft :size="15" /> 上一级
           </button>
           <button v-for="folder in folders" :key="folder.path" type="button" class="file-operation-folder" :disabled="loading || busy" @click="dir = folder.path">
-            <Folder :size="18" /> <span>{{ folder.name }}</span> <ChevronRight :size="15" />
+            <Folder :size="16" /> <span>{{ folder.name }}</span> <ChevronRight :size="14" />
           </button>
           <p v-if="!folders.length" class="file-operation-feedback">当前没有可浏览的子文件夹。</p>
           <IsleButton v-if="nextCursor" variant="glass" size="sm" :loading="loading" class="file-operation-more" @click="loadFolders(true)">
@@ -214,13 +214,13 @@ async function submit() {
 .file-op-dialog-content {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 10px;
 }
 
 .file-operation-crumbs {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 5px;
 }
 
 .file-operation-crumbs button {
@@ -228,8 +228,8 @@ async function submit() {
   align-items: center;
   gap: 4px;
   font-size: 12px;
-  padding: 5px 10px;
-  border-radius: var(--radius-xs, 8px);
+  padding: 4px 9px;
+  border-radius: 7px;
   border: 1px solid var(--fluid-card-border);
   background: var(--fluid-card-item-fill);
   color: var(--text-primary);
@@ -248,28 +248,29 @@ async function submit() {
 
 .file-operation-folder-list {
   border: 1px solid var(--fluid-card-border);
-  border-radius: var(--radius-md, 16px);
-  padding: 8px;
-  min-height: 95px;
-  max-height: 195px;
+  border-radius: 12px;
+  padding: 4px;
+  min-height: 88px;
+  max-height: 186px;
   overflow: auto;
   background: var(--fluid-card-item-fill);
 }
 
 .file-operation-folder {
   width: 100%;
-  padding: 8px 12px;
+  min-height: 36px;
+  padding: 6px 10px;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   text-align: left;
-  border-radius: var(--radius-sm, 10px);
+  border-radius: 8px;
   border: none;
   background: transparent;
   color: var(--text-primary);
   cursor: pointer;
   transition: background 0.15s ease;
-  font-size: 13.5px;
+  font-size: 13px;
 }
 
 .file-operation-folder:hover {
@@ -283,9 +284,9 @@ async function submit() {
 }
 
 .file-operation-feedback {
-  padding: 12px;
+  padding: 10px;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: 12.5px;
   display: flex;
   align-items: center;
   gap: 8px;
@@ -293,27 +294,28 @@ async function submit() {
 }
 
 .file-operation-more {
-  margin: 8px auto;
+  margin: 6px auto;
   display: flex;
 }
 
 .file-operation-label {
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 600;
   display: grid;
-  gap: 6px;
+  gap: 5px;
   color: var(--text-primary);
 }
 
 .file-operation-label input {
   width: 100%;
   min-width: 0;
-  padding: 9px 12px;
-  border-radius: var(--radius-sm, 10px);
+  height: 34px;
+  padding: 0 11px;
+  border-radius: 9px;
   border: 1px solid var(--fluid-card-border);
   background: var(--fluid-card-fill);
   color: inherit;
-  font-size: 13.5px;
+  font-size: 13px;
   box-sizing: border-box;
   outline: none;
   transition: border-color 0.15s ease;
@@ -324,7 +326,7 @@ async function submit() {
 }
 
 .file-operation-destination {
-  font-size: 12.5px;
+  font-size: 12px;
   overflow-wrap: anywhere;
   color: var(--text-secondary);
   margin: 0;
@@ -334,7 +336,7 @@ async function submit() {
   display: flex;
   justify-content: flex-end;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
 }
 
 .spin-icon {

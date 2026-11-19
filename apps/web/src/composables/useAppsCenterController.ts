@@ -114,6 +114,20 @@ export function cronSummary(app: PublicAppItem): string {
   return `${c.enabled ? "⏰ 定时开启" : "⏸ 定时暂停"} · ${expr} (${tz})`;
 }
 
+export function stripLaunchTicket(rawUrl: string): string {
+  if (!rawUrl) return "";
+  try {
+    const parsed = new URL(rawUrl, "http://localhost");
+    parsed.searchParams.delete("__li_ticket");
+    const query = parsed.searchParams.toString();
+    return parsed.pathname + (query ? `?${query}` : "") + parsed.hash;
+  } catch {
+    return rawUrl.replace(/([?&])__li_ticket=[^&#]*(&|$)/, (_, sep, trail) =>
+      trail ? sep : ""
+    );
+  }
+}
+
 export function categoryLabel(category?: string): string {
   return category ? (CATEGORY_LABELS[category] || category) : "轻应用";
 }
@@ -159,7 +173,9 @@ export function useAppsCenterController(
 
   const launchingAppId = ref("");
   const activeWorkbenchAppId = ref("");
+  const detailAppId = ref("");
   const activeIframeUrl = ref("");
+  const activeLaunchPath = ref("");
   const iframeKey = ref(0);
   const workbenchFullscreen = ref(false);
 
@@ -186,6 +202,7 @@ export function useAppsCenterController(
   const restoreInputRef = ref<HTMLInputElement | null>(null);
 
   const activeWorkbenchApp = computed(() => apps.value.find((a) => a.id === activeWorkbenchAppId.value) ?? null);
+  const detailApp = computed(() => apps.value.find((a) => a.id === detailAppId.value) ?? null);
   const nonAdminMembers = computed(() => members.value.filter((m) => m.role !== "admin"));
   const installLocationOptions = computed(() => {
     const locs = appStorage.value?.locations ?? [];
@@ -262,8 +279,12 @@ export function useAppsCenterController(
         app.status = res.status;
         if (app.web) app.web.status = res.status;
       }
+      const fallbackPath = `/apps/${encodeURIComponent(app.id)}/`;
+      const launchUrl = res.launchUrl || app.launchUrl || fallbackPath;
+      const cleanPath = res.launchPath || stripLaunchTicket(launchUrl) || fallbackPath;
       activeWorkbenchAppId.value = app.id;
-      activeIframeUrl.value = res.launchUrl || app.launchUrl || `/apps/${encodeURIComponent(app.id)}/`;
+      activeLaunchPath.value = cleanPath;
+      activeIframeUrl.value = launchUrl;
       iframeKey.value++;
     } catch (e) {
       error.value = `打开「${app.name}」失败：` + describeUserFacingError(e);
@@ -276,16 +297,20 @@ export function useAppsCenterController(
   function closeWorkbench() {
     activeWorkbenchAppId.value = "";
     activeIframeUrl.value = "";
+    activeLaunchPath.value = "";
     workbenchFullscreen.value = false;
     void reload(false);
   }
 
   function refreshWorkbench() {
+    const cleanPath = activeLaunchPath.value || stripLaunchTicket(activeIframeUrl.value);
+    if (cleanPath) activeIframeUrl.value = cleanPath;
     iframeKey.value++;
   }
 
   function openInNewTab() {
-    if (activeIframeUrl.value) window.open(activeIframeUrl.value, "_blank", "noopener");
+    const target = activeLaunchPath.value || stripLaunchTicket(activeIframeUrl.value);
+    if (target) window.open(target, "_blank", "noopener");
   }
 
   async function loadLogs(app: PublicAppItem) {
@@ -294,12 +319,14 @@ export function useAppsCenterController(
     modalError.value = "";
     try {
       const res = await apiClient.fetchLogs(app.id);
-      if (viewingLogsApp.value?.id === app.id) {
+      if (viewingLogsApp.value?.id === app.id || detailAppId.value === app.id) {
         webOutput.value = res.webOutput;
         cronRuns.value = res.cronRuns as AppCronRunEntry[];
       }
     } catch (e) {
-      if (viewingLogsApp.value?.id === app.id) modalError.value = "读取应用日志失败：" + describeUserFacingError(e);
+      if (viewingLogsApp.value?.id === app.id || detailAppId.value === app.id) {
+        modalError.value = "读取应用日志失败：" + describeUserFacingError(e);
+      }
     } finally {
       logsLoading.value = false;
     }
@@ -340,11 +367,109 @@ export function useAppsCenterController(
     }
   }
 
+  function populateAccessForm(app: PublicAppItem) {
+    accessPolicy.value = normalizeAccessPolicy(app.access?.policy);
+    accessAllowedUserIDs.value = [...(app.access?.allowedUserIDs || [])];
+  }
+
+  function populateConfigForm(app: PublicAppItem) {
+    webEnabled.value = app.web?.enabled ?? true;
+    webMode.value = appMode(app);
+    webIdleTimeoutSeconds.value = app.web?.idleTimeoutSeconds ?? 900;
+    webAutoRestart.value = app.web?.autoRestart ?? true;
+    const c = app.cron;
+    cronEnabled.value = c?.enabled ?? false;
+    cronExpr.value = c?.cron || c?.schedule?.cron || "*/15 * * * *";
+    cronTimezone.value = c?.timezone || c?.schedule?.timezone || "Asia/Shanghai";
+    cronEvents.value = [...(c?.events || c?.notification?.events || ["failure", "timeout"])];
+    cronChannels.value = [...(c?.channels || c?.notification?.channels || [])];
+  }
+
+  function openAppDetail(app: PublicAppItem) {
+    modalError.value = "";
+    error.value = "";
+    notice.value = "";
+    webOutput.value = "";
+    cronRuns.value = [];
+    populateAccessForm(app);
+    populateConfigForm(app);
+    detailAppId.value = app.id;
+    void loadLogs(app);
+  }
+
+  function closeAppDetail() {
+    detailAppId.value = "";
+    modalError.value = "";
+  }
+
+  function resetAppDetailDraft() {
+    const app = detailApp.value;
+    if (!app) return;
+    populateAccessForm(app);
+    populateConfigForm(app);
+    modalError.value = "";
+  }
+
+  async function saveDetailChanges(optionsArg: { saveAccessPart: boolean; saveConfigPart: boolean }) {
+    const app = detailApp.value;
+    if (!app || busy.value) return;
+    if (!optionsArg.saveAccessPart && !optionsArg.saveConfigPart) return;
+    busy.value = true;
+    modalError.value = "";
+    notice.value = "";
+    try {
+      let currentApp = app;
+      if (optionsArg.saveAccessPart) {
+        const res = await apiClient.saveAccess(currentApp, accessPolicy.value, accessAllowedUserIDs.value);
+        if (res.app) {
+          upsertSingleApp(res.app);
+          currentApp = res.app;
+        }
+        if (Array.isArray(res.apps)) {
+          apps.value = res.apps;
+          currentApp = apps.value.find((item) => item.id === currentApp.id) ?? currentApp;
+        }
+      }
+      if (optionsArg.saveConfigPart) {
+        const res = await apiClient.saveConfig(
+          currentApp,
+          {
+            enabled: webEnabled.value,
+            mode: webMode.value,
+            idleTimeoutSeconds: Math.max(60, Number(webIdleTimeoutSeconds.value) || 900),
+            autoRestart: webAutoRestart.value,
+          },
+          {
+            enabled: cronEnabled.value,
+            cron: cronExpr.value,
+            timezone: cronTimezone.value,
+            events: cronEvents.value,
+            channels: cronChannels.value,
+          },
+        );
+        if (res.app) {
+          upsertSingleApp(res.app);
+          currentApp = res.app;
+        }
+        if (Array.isArray(res.apps)) {
+          apps.value = res.apps;
+          currentApp = apps.value.find((item) => item.id === currentApp.id) ?? currentApp;
+        }
+      }
+      populateAccessForm(currentApp);
+      populateConfigForm(currentApp);
+      notice.value = `已保存「${currentApp.name}」的设置修改。`;
+    } catch (e) {
+      modalError.value = "保存设置失败：" + describeUserFacingError(e);
+    } finally {
+      busy.value = false;
+    }
+  }
+
   function openAccessModal(app: PublicAppItem) {
     modalError.value = "";
     editingAccessApp.value = app;
-    accessPolicy.value = normalizeAccessPolicy(app.access?.policy);
-    accessAllowedUserIDs.value = [...(app.access?.allowedUserIDs || [])];
+    populateAccessForm(app);
   }
 
   async function saveAccess() {
@@ -368,16 +493,7 @@ export function useAppsCenterController(
   function openConfigDrawer(app: PublicAppItem) {
     modalError.value = "";
     editingConfigApp.value = app;
-    webEnabled.value = app.web?.enabled ?? true;
-    webMode.value = appMode(app);
-    webIdleTimeoutSeconds.value = app.web?.idleTimeoutSeconds ?? 900;
-    webAutoRestart.value = app.web?.autoRestart ?? true;
-    const c = app.cron;
-    cronEnabled.value = c?.enabled ?? false;
-    cronExpr.value = c?.cron || c?.schedule?.cron || "*/15 * * * *";
-    cronTimezone.value = c?.timezone || c?.schedule?.timezone || "Asia/Shanghai";
-    cronEvents.value = [...(c?.events || c?.notification?.events || ["failure", "timeout"])];
-    cronChannels.value = [...(c?.channels || c?.notification?.channels || [])];
+    populateConfigForm(app);
   }
 
   async function saveConfig() {
@@ -598,6 +714,7 @@ export function useAppsCenterController(
     failedIcons,
     launchingAppId,
     activeWorkbenchApp,
+    detailApp,
     activeIframeUrl,
     iframeKey,
     workbenchFullscreen,
@@ -624,6 +741,10 @@ export function useAppsCenterController(
     hasCron: hasCronModule,
     reload,
     openApp,
+    openAppDetail,
+    closeAppDetail,
+    resetAppDetailDraft,
+    saveDetailChanges,
     closeWorkbench,
     refreshWorkbench,
     openInNewTab,

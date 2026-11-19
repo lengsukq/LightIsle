@@ -41,7 +41,7 @@ async function copyOcrText() {
   <div id="photo-viewer-info" class="viewer-info" role="region" aria-label="当前媒体信息">
     <div class="viewer-info-heading">
       <strong>媒体与拍摄参数</strong>
-      <button type="button" aria-label="关闭媒体信息" @click="emit('close')"><X :size="18" /></button>
+      <button type="button" aria-label="关闭媒体信息" @click="emit('close')"><X :size="16" /></button>
     </div>
 
     <div
@@ -145,44 +145,51 @@ async function copyOcrText() {
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  padding: 14px;
+  padding: 13px 14px;
   border: 1px solid var(--fluid-card-border);
-  border-radius: var(--radius-md);
+  border-radius: 14px;
   background: var(--fluid-card-fill);
 }
 .viewer-info-heading {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 12px;
+  gap: 8px;
+  margin-bottom: 10px;
+  font-size: 13.5px;
   color: var(--text-primary);
 }
 .viewer-info-heading button {
-  background: transparent;
-  border: 0;
-  color: var(--text-primary);
-  padding: 6px;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  background: var(--fluid-card-item-fill);
+  border: 1px solid var(--fluid-card-border);
+  color: var(--text-secondary);
+  padding: 0;
   display: grid;
   place-items: center;
   cursor: pointer;
 }
+.viewer-info-heading button:hover {
+  color: var(--text-primary);
+}
 .exif-filmstrip-card {
-  margin-bottom: 12px;
-  padding: 10px 11px;
-  border-radius: 12px;
+  margin-bottom: 10px;
+  padding: 9px 11px;
+  border-radius: 10px;
   border: 1px solid var(--fluid-card-border);
-  background: color-mix(in srgb, var(--fluid-card-item-fill) 85%, transparent);
+  background: var(--fluid-card-item-fill);
   display: grid;
-  gap: 5px;
+  gap: 4px;
 }
 .exif-camera-name {
   font-size: 12.5px;
-  font-weight: 700;
+  font-weight: 650;
   color: var(--text-primary);
 }
 .exif-lens-name {
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--text-secondary);
 }
 .exif-filmstrip-pills {
@@ -193,18 +200,18 @@ async function copyOcrText() {
 }
 .exif-pill {
   font-size: 11px;
-  font-weight: 650;
+  font-weight: 600;
   font-variant-numeric: tabular-nums;
-  padding: 2px 7px;
-  border-radius: 6px;
-  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: var(--fluid-card-fill);
   border: 1px solid var(--fluid-card-border);
   color: var(--text-primary);
 }
 .viewer-info dl {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 9px;
+  gap: 7px;
   margin: 0;
 }
 .viewer-info dl > div {
@@ -215,17 +222,19 @@ async function copyOcrText() {
 }
 .viewer-info dt {
   flex: none;
+  min-width: 52px;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 11.5px;
 }
 .viewer-info dd {
   margin: 0;
   color: var(--text-primary);
-  font-size: 12.5px;
+  font-size: 12px;
   word-break: break-word;
 }
 .viewer-path-dd {
-  font-size: 11.5px !important;
+  font-size: 11px !important;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   color: var(--text-secondary) !important;
 }
 .viewer-location {
@@ -237,73 +246,75 @@ async function copyOcrText() {
 .viewer-map-link {
   border: none;
   background: none;
-  color: #7c9bff;
-  font-size: 12px;
+  color: var(--accent-primary, #2563eb);
+  font-size: 11.5px;
+  font-weight: 600;
   padding: 0;
   text-decoration: underline;
   cursor: pointer;
 }
 .ai-sidebar-section {
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid rgba(255, 255, 255, 0.1);
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--fluid-divider, var(--fluid-card-border));
 }
 .ai-sidebar-title-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 .ai-sidebar-title {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 12px;
-  font-weight: 600;
-  opacity: 0.88;
+  font-size: 11.5px;
+  font-weight: 650;
+  color: var(--text-secondary);
   margin-bottom: 6px;
 }
 .ai-sidebar-title-row .ai-sidebar-title {
   margin-bottom: 0;
 }
 .ai-sidebar-muted {
-  font-size: 12px;
-  opacity: 0.65;
+  font-size: 11.5px;
+  color: var(--text-secondary);
 }
 .ai-tag-list,
 .ai-face-chip-list {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 5px;
 }
 .ai-tag-chip {
-  padding: 3px 9px;
+  padding: 2px 8px;
   border-radius: 999px;
-  font-size: 12px;
-  background: rgba(255, 255, 255, 0.12);
-  color: inherit;
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  font-size: 11.5px;
+  background: var(--fluid-card-item-fill);
+  color: var(--text-primary);
+  border: 1px solid var(--fluid-card-border);
   cursor: pointer;
 }
 .ai-tag-chip:hover {
-  background: rgba(255, 255, 255, 0.2);
+  background: var(--fluid-card-hover);
+  border-color: var(--fluid-card-border-strong, var(--accent-primary));
 }
 .ai-face-chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 9px 3px 3px;
+  padding: 2px 8px 2px 3px;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.12);
-  color: inherit;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  font-size: 12px;
+  background: var(--fluid-card-item-fill);
+  color: var(--text-primary);
+  border: 1px solid var(--fluid-card-border);
+  font-size: 11.5px;
   cursor: pointer;
 }
 .ai-face-chip img {
-  width: 22px;
-  height: 22px;
+  width: 20px;
+  height: 20px;
   border-radius: 50%;
   object-fit: cover;
 }
@@ -311,26 +322,31 @@ async function copyOcrText() {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 8px;
+  padding: 2px 7px;
   border-radius: 6px;
   font-size: 11px;
-  background: rgba(255, 255, 255, 0.14);
-  color: inherit;
-  border: none;
+  background: var(--fluid-card-item-fill);
+  border: 1px solid var(--fluid-card-border);
+  color: var(--text-secondary);
   cursor: pointer;
+}
+.ai-copy-btn:hover {
+  color: var(--text-primary);
 }
 .ai-ocr-box {
   margin: 0;
   padding: 8px 10px;
-  max-height: 150px;
+  max-height: 140px;
   overflow-y: auto;
   white-space: pre-wrap;
   word-break: break-word;
   font-family: inherit;
-  font-size: 12px;
+  font-size: 11.5px;
   line-height: 1.5;
   border-radius: 8px;
-  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-item-fill);
+  color: var(--text-primary);
   user-select: text;
 }
 </style>

@@ -178,6 +178,7 @@ export interface AppLaunchResponse {
   status?: string;
   ticket?: string;
   launchUrl?: string;
+  launchPath?: string;
   url?: string;
   [key: string]: unknown;
 }

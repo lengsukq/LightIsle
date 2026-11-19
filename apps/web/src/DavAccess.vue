@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { FolderSync, Plus, Copy, Trash2, KeyRound, RefreshCw, HardDrive, ShieldCheck } from "lucide-vue-next";
+import { FolderSync, Plus, Copy, Trash2, KeyRound, RefreshCw, HardDrive } from "lucide-vue-next";
 import { requestConfirm } from "./useConfirmDialog.ts";
 import { describeUserFacingError } from "./userFacingError.ts";
 import { copyTextToClipboard } from "./clipboard.ts";
@@ -10,6 +10,7 @@ import IsleButton from "./IsleButton.vue";
 import IsleBadge from "./IsleBadge.vue";
 import IsleBanner from "./IsleBanner.vue";
 import IsleEmpty from "./IsleEmpty.vue";
+import IsleHelpButton from "./IsleHelpButton.vue";
 
 type Credential = { id: number; label: string; createdAt: number; lastUsedAt: number };
 type MountRoot = { rootID: string; generation: number; name: string; online: boolean };
@@ -25,6 +26,17 @@ const freshPassword = ref("");
 const freshCopied = ref(false);
 const tvCopiedRoot = ref("");
 const urlCopiedRoot = ref("");
+
+const davHelpItems = [
+  {
+    title: "访达 / Windows / Infuse 连接方式",
+    body: "macOS 访达按 ⌘K（连接服务器），或 Windows / Infuse / VidHub 选择 WebDAV，填入下方挂载地址、当前轻屿用户名与生成的独立密码。",
+  },
+  {
+    title: "独立密码与换盘规则",
+    body: "WebDAV 不复用网页登录密码，可按设备分别创建、重新生成或撤销；存储盘重新绑定后请刷新并复制新地址。",
+  },
+];
 
 function mountUrl(root: MountRoot) {
   return `${location.origin}/dav-roots/${encodeURIComponent(root.rootID)}/${root.generation}/`;
@@ -183,10 +195,11 @@ onMounted(() => {
   <IsleCard
     class="dav-panel"
     title="WebDAV 访问"
-    subtitle="使用独立密码挂载至访达、Windows 或 Infuse，不复用网页登录态。"
+    subtitle="使用独立密码挂载至访达、Windows 或 Infuse。"
   >
     <template #icon><FolderSync :size="18" /></template>
     <template #actions>
+      <IsleHelpButton title="WebDAV 连接向导与安全说明" :items="davHelpItems" modal-size="md" />
       <IsleButton variant="glass" size="sm" :loading="loading" :disabled="busy" @click="refresh">
         <template #icon><RefreshCw :size="14" /></template>
         {{ loading ? "加载中…" : "刷新" }}
@@ -199,7 +212,7 @@ onMounted(() => {
       <div class="dav-section">
         <div class="dav-section-header">
           <strong>已授权挂载地址</strong>
-          <small>每块已授权硬盘对应独立 WebDAV 挂载点</small>
+          <small>每块已授权硬盘对应独立挂载点</small>
         </div>
         <p v-if="!roots.length && !loading && !mountError" class="footnote">
           当前账号还没有可挂载的硬盘。
@@ -221,7 +234,7 @@ onMounted(() => {
               </IsleButton>
               <IsleButton variant="glass" size="sm" @click="copy(buildTvClientGuide(root), 'TV:' + root.rootID)">
                 <template #icon><Copy :size="13" /></template>
-                {{ tvCopiedRoot === root.rootID ? '已复制大屏参数' : 'Infuse / VidHub 大屏配置' }}
+                {{ tvCopiedRoot === root.rootID ? '已复制大屏参数' : 'Infuse 大屏参数' }}
               </IsleButton>
             </div>
           </div>
@@ -231,7 +244,7 @@ onMounted(() => {
       <div class="dav-section">
         <div class="dav-section-header">
           <strong>独立连接密码</strong>
-          <small>可按设备分别创建密码，随时单独旋转或撤销</small>
+          <small>按设备分别创建，随时重置或撤销</small>
         </div>
 
         <div class="dav-create">
@@ -239,17 +252,17 @@ onMounted(() => {
             v-model="label"
             class="isle-text-input"
             maxlength="64"
-            placeholder="输入客户端标签（如：MacBook Finder / Apple TV Infuse）"
+            placeholder="输入设备标签（如：MacBook 访达 / Apple TV Infuse）"
             @keyup.enter="create"
           />
-          <IsleButton variant="primary" size="md" :loading="busy" @click="create">
-            <template #icon><Plus :size="15" /></template>
+          <IsleButton variant="primary" size="sm" :loading="busy" @click="create">
+            <template #icon><Plus :size="14" /></template>
             生成新密码
           </IsleButton>
         </div>
 
         <div v-if="freshPassword" class="dav-fresh" role="status">
-          <p><KeyRound :size="14" /> 新密码（仅显示这一次，请立即保存）：</p>
+          <p><KeyRound :size="14" /> 新密码（仅显示一次，请立即保存）：</p>
           <div class="dav-fresh-row">
             <code>{{ freshPassword }}</code>
             <IsleButton variant="tonal" size="sm" @click="copy(freshPassword, '密码')">
@@ -269,7 +282,7 @@ onMounted(() => {
           compact
           :icon="KeyRound"
           title="暂无 WebDAV 独立密码"
-          description="生成一个后即可用「用户名 + 该密码」在访达或第三方客户端安全连接。"
+          description="生成一个后即可用「用户名 + 独立密码」安全挂载。"
         />
 
         <div v-if="credentials.length" class="dav-cred-list">
@@ -295,18 +308,6 @@ onMounted(() => {
         </div>
       </div>
     </div>
-
-    <template #footer>
-      <div class="dav-guide">
-        <ShieldCheck :size="15" class="dav-guide-icon" />
-        <div>
-          <strong>连接说明：</strong>
-          <span>
-            macOS 访达按 ⌘K，或 Windows / Infuse 选择 WebDAV，输入上方挂载地址、当前用户名与生成的独立密码。硬盘重新绑定后请刷新并复制新地址。
-          </span>
-        </div>
-      </div>
-    </template>
   </IsleCard>
 </template>
 
@@ -314,16 +315,16 @@ onMounted(() => {
 .dav-body {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 13px;
 }
 .dav-section {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 .dav-section + .dav-section {
-  padding-top: 16px;
-  border-top: 1px solid color-mix(in srgb, var(--fluid-card-border) 65%, transparent);
+  padding-top: 12px;
+  border-top: 1px solid var(--fluid-divider, var(--stroke-subtle));
 }
 .dav-section-header {
   display: flex;
@@ -333,37 +334,37 @@ onMounted(() => {
   flex-wrap: wrap;
 }
 .dav-section-header strong {
-  font-size: 13.5px;
+  font-size: 13px;
   font-weight: 650;
   color: var(--text-primary);
 }
 .dav-section-header small {
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--text-secondary);
 }
 .dav-mounts-list,
 .dav-cred-list {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 .dav-url-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
-  padding: 11px 14px;
-  border-radius: 14px;
+  padding: 9px 12px;
+  border-radius: 12px;
   border: 1px solid var(--fluid-card-border);
   background: var(--fluid-card-item-fill);
-  box-shadow: var(--fluid-item-card-shadow);
 }
 .dav-root-title {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   flex-wrap: wrap;
+  font-size: 13px;
 }
 .dav-root-icon {
   color: var(--accent-primary);
@@ -371,7 +372,7 @@ onMounted(() => {
 .dav-url-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
   min-width: 0;
   flex: 1;
@@ -379,66 +380,66 @@ onMounted(() => {
 }
 .dav-url {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--text-primary);
   background: var(--fluid-card-fill);
   border: 1px solid var(--fluid-card-border);
-  border-radius: 9px;
-  padding: 6px 10px;
+  border-radius: 8px;
+  padding: 5px 9px;
   overflow-wrap: anywhere;
   user-select: all;
 }
 .dav-create {
   display: flex;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
   align-items: center;
 }
 .dav-create input {
   flex: 1;
-  min-width: 220px;
+  min-width: 210px;
   border: 1px solid var(--fluid-card-border);
-  border-radius: 12px;
-  padding: 10px 14px;
+  border-radius: 10px;
+  padding: 8px 12px;
   background: var(--fluid-card-item-bottom);
   color: var(--text-primary);
-  font-size: 13px;
+  font-size: 12.5px;
   transition: border-color 0.2s ease, box-shadow 0.2s ease;
 }
 .dav-create input:focus {
   border-color: var(--accent-primary);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary) 18%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary) 16%, transparent);
   outline: none;
 }
 .dav-fresh {
   display: grid;
-  gap: 10px;
-  padding: 14px 16px;
-  border-radius: 14px;
+  gap: 8px;
+  padding: 11px 13px;
+  border-radius: 12px;
   border: 1px solid color-mix(in srgb, var(--accent-primary) 35%, transparent);
   background: color-mix(in srgb, var(--accent-primary) 7%, transparent);
 }
 .dav-fresh p {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 650;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
 }
 .dav-fresh-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 .dav-fresh-row code {
-  font-size: 13px;
-  letter-spacing: 0.4px;
+  font-size: 12.5px;
+  letter-spacing: 0.3px;
   background: var(--fluid-card-fill);
   border: 1px solid var(--fluid-card-border);
-  border-radius: 9px;
-  padding: 7px 11px;
+  border-radius: 8px;
+  padding: 6px 10px;
   user-select: all;
   overflow-wrap: anywhere;
 }
@@ -451,43 +452,25 @@ onMounted(() => {
   justify-content: space-between;
   gap: 10px;
   flex-wrap: wrap;
-  padding: 12px 16px;
-  border-radius: 14px;
+  padding: 9px 12px;
+  border-radius: 12px;
   border: 1px solid var(--fluid-card-border);
   background: var(--fluid-card-item-fill);
-  box-shadow: var(--fluid-item-card-shadow);
 }
 .dav-item-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 .dav-item strong {
   display: block;
-  font-size: 13.5px;
+  font-size: 13px;
   color: var(--text-primary);
 }
 .dav-item small {
   font-size: 11.5px;
   color: var(--text-secondary);
-}
-.dav-guide {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  width: 100%;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--text-secondary);
-}
-.dav-guide-icon {
-  color: var(--accent-primary);
-  flex-shrink: 0;
-  margin-top: 2px;
-}
-.dav-guide strong {
-  color: var(--text-primary);
 }
 @media (prefers-reduced-motion: reduce) {
   .dav-create input {

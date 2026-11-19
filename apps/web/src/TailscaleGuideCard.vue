@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue";
-import { Network, Copy, RefreshCw, ExternalLink, ChevronRight } from "lucide-vue-next";
+import { Network, Copy, RefreshCw, ExternalLink } from "lucide-vue-next";
 import { apiRequest } from "./apiClient.ts";
 import { copyTextToClipboard } from "./clipboard.ts";
 import { describeUserFacingError } from "./userFacingError.ts";
@@ -8,6 +8,7 @@ import IsleCard from "./IsleCard.vue";
 import IsleButton from "./IsleButton.vue";
 import IsleBadge from "./IsleBadge.vue";
 import IsleBanner from "./IsleBanner.vue";
+import IsleHelpButton from "./IsleHelpButton.vue";
 
 type TailscaleStatus = {
   installed: boolean;
@@ -27,6 +28,17 @@ const status = ref<TailscaleStatus | null>(null);
 const loading = ref(false);
 const error = ref("");
 const copied = ref("");
+
+const guideHelpItems = [
+  {
+    title: "Tailscale 零配置加密直连（推荐）",
+    body: "无需公网 IP 或云服务器。在 Mac 与手机登录同一 Tailscale 账号后，于轻屿 Mac 端打开「网络与连接 → 局域网访问」，即可自动双栈绑定 100.x 组网接口与多域名 TLS 证书，在异地满速直连看原图与 4K 影片。",
+  },
+  {
+    title: "高级穿透选项（Cloudflare Tunnel / FRP）",
+    body: "若需向未安装 Tailscale 的访客提供免客户端域名访问，可在 LightIsle Mac 端「网络与连接」中配置 Cloudflare Tunnel 或自建 FRP 客户端（frpc）。",
+  },
+];
 
 async function refresh() {
   if (loading.value) return;
@@ -60,11 +72,12 @@ onMounted(() => {
 
 <template>
   <IsleCard
-    title="远程访问与组网连接（主推方案 + 高级穿透）"
-    subtitle="主推 Tailscale 零配置加密组网：无需公网 IP 或云服务器，开启 Mac 局域网访问后自动双栈绑定本机 100.x 虚拟组网接口与多域名 TLS 证书。"
+    title="远程访问与加密组网"
+    subtitle="无需公网 IP，推荐通过 Tailscale 实现异地原画直连。"
   >
     <template #icon><Network :size="18" /></template>
     <template #actions>
+      <IsleHelpButton title="异地组网与高级穿透说明" :items="guideHelpItems" modal-size="md" />
       <IsleButton variant="glass" size="sm" :loading="loading" @click="refresh">
         <template #icon><RefreshCw :size="14" /></template>
         刷新状态
@@ -72,10 +85,6 @@ onMounted(() => {
     </template>
 
     <div class="ts-body">
-      <div class="ts-recommend-banner">
-        <strong>主推方案：Tailscale 零配置加密组网</strong>
-        <IsleBadge variant="accent" size="sm">推荐日常使用</IsleBadge>
-      </div>
       <IsleBanner v-if="error" type="error" compact :message="error" />
 
       <template v-if="status">
@@ -97,107 +106,76 @@ onMounted(() => {
             rel="noopener noreferrer"
             class="ts-download-link"
           >
-            前往下载 macOS 版 Tailscale <ExternalLink :size="13" />
+            下载 macOS 版 Tailscale <ExternalLink :size="13" />
           </a>
         </div>
 
         <div v-if="status.suggestedUrl" class="ts-url-box">
           <div>
-            <strong>异地直连地址{{ status.boundUrl ? "（已绑定监听）" : "（开启 Mac 局域网访问后生效）" }}</strong>
+            <strong>异地直连地址{{ status.boundUrl ? "（已监听）" : "（开启 Mac 局域网访问后生效）" }}</strong>
             <code>{{ status.suggestedUrl }}</code>
           </div>
           <IsleButton variant="tonal" size="sm" @click="copyText(status.suggestedUrl, 'url')">
-            <template #icon><Copy :size="13" /></template>
+            <template #icon><Copy :size="12" /></template>
             {{ copied === "url" ? "已复制地址" : "复制组网地址" }}
           </IsleButton>
         </div>
-
-        <p class="ts-hint">
-          在 Mac 与手机安装登录同一 Tailscale 账号后，于轻屿 Mac 端打开「网络与连接 → 局域网访问」，即可在异地通过上方地址满速直连看原图与 4K 影片。
-        </p>
       </template>
-
-      <details class="apple-disclosure-card">
-        <summary>
-          <ChevronRight class="disclosure-chevron" :size="16" />
-          <div class="disclosure-title"><span>高级穿透选项（Cloudflare Tunnel / FRP）</span></div>
-        </summary>
-        <div class="disclosure-body">
-          <p class="ts-hint" style="margin:0">
-            若需向未安装 Tailscale 的访客提供免客户端域名访问，可在 LightIsle Mac 端「网络与连接」中配置
-            <strong>Cloudflare Tunnel</strong>（支持临时 trycloudflare.com 或自定义域名）或自建 <strong>FRP 客户端（frpc）</strong>。日常个人与家庭使用建议保持以上 Tailscale 主推直连方案，延迟更低且全链路端到端加密。
-          </p>
-        </div>
-      </details>
     </div>
   </IsleCard>
 </template>
 
 <style scoped>
-.ts-recommend-banner {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: 13px;
-  color: var(--text-primary);
-}
 .ts-body {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 .ts-status-row {
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 10px;
+  gap: 8px;
 }
 .ts-badges {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 6px;
 }
 .ts-download-link {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
-  font-size: 12.5px;
+  gap: 4px;
+  font-size: 12px;
   font-weight: 600;
-  color: var(--accent-primary, #0071e3);
+  color: var(--accent-primary, #1f5162);
   text-decoration: none;
 }
 .ts-url-box {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
-  padding: 12px 14px;
-  border-radius: 14px;
-  border: 1px solid var(--fluid-card-border, rgba(0, 0, 0, 0.08));
-  background: var(--fluid-card-item-fill, rgba(255, 255, 255, 0.6));
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-item-fill);
 }
 .ts-url-box > div {
   min-width: 0;
-  flex: 1 1 220px;
+  flex: 1 1 200px;
 }
 .ts-url-box strong {
   display: block;
-  font-size: 12.5px;
-  margin-bottom: 4px;
+  font-size: 12px;
+  margin-bottom: 3px;
 }
 .ts-url-box code {
-  font-size: 12.5px;
+  font-size: 12px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
   user-select: all;
   overflow-wrap: anywhere;
-}
-.ts-hint {
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-secondary, #6e6e73);
-  line-height: 1.55;
 }
 </style>

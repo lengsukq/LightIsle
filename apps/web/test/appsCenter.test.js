@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { parse } from "@vue/compiler-sfc";
+import { ref } from "vue";
 import { describeUserFacingError } from "../src/userFacingError.ts";
 import {
   buildAccessPutPayload,
@@ -12,8 +13,11 @@ import {
 } from "../src/appsCenterApi.ts";
 import { findAutoLaunchTarget } from "../src/composables/useAppsCenterController.ts";
 import { filterHomeLaunchableApps } from "../src/overviewPageModels.ts";
+import { useOverviewAndDisclosures } from "../src/useOverviewAndDisclosures.ts";
 
 const appsViewSource = readFileSync(new URL("../src/AppsCenterView.vue", import.meta.url), "utf8");
+const appDetailPanelSource = readFileSync(new URL("../src/AppDetailPanel.vue", import.meta.url), "utf8");
+const appWorkbenchStageSource = readFileSync(new URL("../src/AppWorkbenchStage.vue", import.meta.url), "utf8");
 const appVueSource = readFileSync(new URL("../src/App.vue", import.meta.url), "utf8");
 const appShellSource = readFileSync(new URL("../src/AppShell.html", import.meta.url), "utf8");
 const fileSearchControlsSource = readFileSync(new URL("../src/FileSearchControls.vue", import.meta.url), "utf8");
@@ -159,16 +163,37 @@ test("AppsCenterView SFC parses cleanly and includes sandboxed iframe workbench,
   assert.match(storageCardSource, /1 内置盘 \+ 1 其他盘/);
   assert.match(storageCardSource, /添加其他盘位置/);
   assert.match(template, /<AppStorageLocationsCard/);
+  assert.match(template, /<AppDetailPanel/);
+  assert.match(template, /详情与设置/);
+  assert.match(template, /<AppWorkbenchStage/);
+  assert.match(template, /back-label="返回应用中心"/);
 
+  const detailParsed = parse(appDetailPanelSource, { filename: "AppDetailPanel.vue" });
+  assert.equal(detailParsed.errors.length, 0);
+  const detailTemplate = detailParsed.descriptor.template?.content ?? "";
+  assert.match(detailTemplate, /返回应用中心/);
+  assert.match(detailTemplate, /家庭成员访问权限/);
+  assert.match(detailTemplate, /Web 服务与生命周期/);
+  assert.match(detailTemplate, /定时任务 \(Cron\) 与告警通知/);
+  assert.match(detailTemplate, /导出数据/);
+  assert.match(detailTemplate, /恢复备份/);
+  assert.match(detailTemplate, /删除插件/);
+  assert.match(detailTemplate, /value="admin_only"/);
+  assert.match(detailTemplate, /value="selected_members"/);
+  assert.match(detailTemplate, /value="all_members"/);
+
+  const stageParsed = parse(appWorkbenchStageSource, { filename: "AppWorkbenchStage.vue" });
+  assert.equal(stageParsed.errors.length, 0);
+  const stageTemplate = stageParsed.descriptor.template?.content ?? "";
   assert.match(
-    template,
+    stageTemplate,
     /sandbox="allow-scripts allow-forms allow-same-origin allow-popups allow-downloads"/
   );
-  assert.match(template, /返回应用中心/);
-  assert.match(template, /刷新画面/);
-  assert.match(template, /全屏展开/);
-  assert.match(template, /退出全屏/);
-  assert.match(template, /新标签页打开/);
+  assert.match(stageTemplate, /\{\{\s*backLabel\s*\}\}/);
+  assert.match(stageTemplate, /刷新画面/);
+  assert.match(stageTemplate, /全屏展开/);
+  assert.match(stageTemplate, /退出全屏/);
+  assert.match(stageTemplate, /新标签页打开/);
   assert.match(template, /正在唤醒轻应用\.\.\./);
   assert.doesNotMatch(template, /AI Agent \(MCP\) 服务/);
   assert.doesNotMatch(template, /允许局域网 \/ Cloud MCP 访问/);
@@ -179,8 +204,6 @@ test("AppsCenterView SFC parses cleanly and includes sandboxed iframe workbench,
   assert.match(template, /成员权限/);
   assert.match(template, /生命周期与定时/);
   assert.match(template, /运行日志/);
-  assert.match(template, /导出数据/);
-  assert.match(template, /恢复数据/);
   assert.match(template, /value="admin_only"/);
   assert.match(template, /value="selected_members"/);
   assert.match(template, /value="all_members"/);
@@ -215,4 +238,83 @@ test("Home tile helpers filter non-web apps, sort ready apps first, and guard au
   assert.equal(findAutoLaunchTarget(apps, { appId: "b-invalid", seq: 3 }), null);
   assert.equal(findAutoLaunchTarget(apps, { appId: "cron-only", seq: 4 }), null);
   assert.equal(findAutoLaunchTarget(apps, { appId: "missing", seq: 5 }), null);
+});
+
+test("useOverviewAndDisclosures opens ready home apps directly inside overview and returns straight to overview", async () => {
+  assert.match(appShellSource, /active === 'overview' && homeWorkbenchStageProps/);
+  assert.match(appShellSource, /<AppWorkbenchStage v-bind="homeWorkbenchStageProps" v-on="homeWorkbenchStageEvents"/);
+
+  const activePage = ref("overview");
+  const launchedIds = [];
+  const externalUrls = [];
+  const readyApp = {
+    id: "vault",
+    name: "Vault",
+    status: "ready",
+    launchUrl: "/apps/vault/",
+    runtime: { web: { enabled: true, mode: "on-demand", status: "stopped" } },
+  };
+  const pendingApp = {
+    id: "draft",
+    name: "Draft",
+    status: "pendingActivation",
+    pendingActivation: true,
+    runtime: { web: { enabled: true, mode: "on-demand", status: "stopped" } },
+  };
+
+  const state = useOverviewAndDisclosures({
+    user: ref({ username: "admin", role: "admin" }),
+    activePage,
+    fetchApps: async () => ({ apps: [readyApp, pendingApp] }),
+    launchApp: async (appId) => {
+      launchedIds.push(appId);
+      return {
+        app: { ...readyApp, runtime: { web: { enabled: true, mode: "on-demand", status: "running", memoryMB: 12 } } },
+        launchUrl: "/apps/vault/?__li_ticket=t1",
+        launchPath: "/apps/vault/",
+      };
+    },
+    openExternalUrl: (url) => externalUrls.push(url),
+    fileSearch: ref(""),
+    searchViaSpotlight: ref(false),
+    filesLoading: ref(false),
+    searchingFiles: ref(false),
+    telemetry: {
+      stats: ref(null),
+      error: ref(null),
+      polling: ref(false),
+      cpu: { value: null },
+      usedMemory: { value: null },
+      usedDisk: { value: null },
+      diskActivity: { value: null },
+      bytes: (n) => String(n),
+      percent: () => 0,
+    },
+    sharedRoots: ref([]),
+    rootDiscoveryError: ref(""),
+    rootDiscoveryState: ref("unknown"),
+    selectedRoot: { value: null },
+    taskLoaded: ref(true),
+    taskLoading: ref(false),
+    taskError: ref(""),
+    tasks: ref([]),
+  });
+
+  await state.openHomeApp(readyApp);
+  assert.deepEqual(launchedIds, ["vault"]);
+  assert.equal(activePage.value, "overview");
+  assert.equal(state.homeWorkbenchActive.value, true);
+  assert.equal(state.homeWorkbenchStageProps.value?.backLabel, "返回概览");
+  assert.equal(state.homeWorkbenchStageProps.value?.iframeUrl, "/apps/vault/?__li_ticket=t1");
+
+  state.homeWorkbenchStageEvents["open-external"]();
+  assert.deepEqual(externalUrls, ["/apps/vault/"]);
+
+  state.homeWorkbenchStageEvents.close();
+  assert.equal(state.homeWorkbenchActive.value, false);
+  assert.equal(activePage.value, "overview");
+
+  await state.openHomeApp(pendingApp);
+  assert.equal(activePage.value, "apps");
+  assert.equal(state.homeWorkbenchActive.value, false);
 });

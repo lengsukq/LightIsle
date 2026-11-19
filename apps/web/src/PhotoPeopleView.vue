@@ -144,8 +144,8 @@ onMounted(() => {
 
     <IsleEmpty
       v-if="!persons.length && !loading"
+      card
       :icon="Users"
-      :icon-size="42"
       title="暂未发现已归类的人物面孔"
       description="照片扫描完成后，Mac 会在后台自动识别清晰人脸并建立聚类；稍后刷新即可为宝宝或家人命名。"
     />
@@ -172,7 +172,7 @@ onMounted(() => {
               decoding="async"
               @error="failedAvatars[person.id] = true"
             />
-            <Users v-else :size="30" />
+            <Users v-else :size="26" />
           </span>
           <strong class="person-name">{{ person.name || "点击命名人物" }}</strong>
           <small class="person-count">{{ person.photoCount }} 张照片<span v-if="person.hidden"> · 已隐藏</span></small>
@@ -180,7 +180,7 @@ onMounted(() => {
 
         <div class="person-actions">
           <button type="button" class="person-mini-btn" :disabled="busy" title="修改姓名" @click="beginRename(person)">
-            <Pencil :size="12" /> 命名
+            <Pencil :size="11" /> 命名
           </button>
           <button
             v-if="persons.length > 1"
@@ -190,10 +190,10 @@ onMounted(() => {
             title="与同一人的其他分组聚类合并"
             @click="beginMerge(person)"
           >
-            <GitMerge :size="12" /> 合并
+            <GitMerge :size="11" /> 合并
           </button>
           <button type="button" class="person-mini-btn" :disabled="busy" @click="toggleHidden(person)">
-            <Eye v-if="person.hidden" :size="12" /><EyeOff v-else :size="12" />
+            <Eye v-if="person.hidden" :size="11" /><EyeOff v-else :size="11" />
             {{ person.hidden ? "恢复" : "隐藏" }}
           </button>
         </div>
@@ -205,8 +205,10 @@ onMounted(() => {
             placeholder="例如：宝宝、妈妈…"
             aria-label="人物姓名"
           />
-          <button type="submit" :disabled="busy">保存</button>
-          <button type="button" class="secondary" @click="editingId = null">取消</button>
+          <div class="person-inline-btns">
+            <button type="submit" :disabled="busy">保存</button>
+            <button type="button" class="secondary" @click="editingId = null">取消</button>
+          </div>
         </form>
 
         <div v-if="mergingSourceId === person.id" class="person-inline-form">
@@ -218,8 +220,10 @@ onMounted(() => {
             block
             aria-label="选择合并目标人物"
           />
-          <button type="button" :disabled="busy || !mergeTargetId" @click="confirmMerge(person)">确认合并</button>
-          <button type="button" class="secondary" @click="mergingSourceId = null">取消</button>
+          <div class="person-inline-btns">
+            <button type="button" :disabled="busy || !mergeTargetId" @click="confirmMerge(person)">确认合并</button>
+            <button type="button" class="secondary" @click="mergingSourceId = null">取消</button>
+          </div>
         </div>
       </div>
     </div>
@@ -239,59 +243,60 @@ onMounted(() => {
 .people-view {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
 }
 .people-header {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
 }
 .people-header h3 {
-  margin: 0 0 4px;
-  font-size: 17px;
+  margin: 0 0 3px;
+  font-size: 15.5px;
+  font-weight: 650;
 }
 .people-header p {
   margin: 0;
-  font-size: 13px;
-  color: var(--text-secondary, #6e6e73);
+  font-size: 12.5px;
+  color: var(--text-secondary);
 }
 .people-header-actions {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 .people-toggle-hidden {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
   cursor: pointer;
 }
 .people-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(175px, 1fr));
-  gap: 14px;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 10px;
 }
 .person-card {
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 16px 12px 12px;
-  border-radius: 16px;
-  background: var(--surface-card, rgba(255, 255, 255, 0.72));
-  border: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.07));
-  gap: 10px;
+  padding: 14px 10px 11px;
+  border-radius: 14px;
+  background: var(--fluid-card-fill);
+  border: 1px solid var(--fluid-card-border);
+  box-shadow: var(--fluid-item-card-shadow);
+  gap: 8px;
   content-visibility: auto;
-  contain-intrinsic-size: 175px 190px;
-  transition: transform var(--motion-fast) var(--motion-spring), opacity var(--motion-fast) ease;
+  contain-intrinsic-size: 160px 176px;
+  transition: border-color var(--motion-fast) ease, background-color var(--motion-fast) ease;
 }
 .person-card:hover {
-  transform: translateY(-2px);
-}
-.person-card:active {
-  transform: scale(0.985);
+  border-color: var(--fluid-card-border-strong, var(--accent-primary));
+  background: var(--fluid-card-hover);
 }
 .person-card.is-hidden {
   opacity: 0.65;
@@ -300,23 +305,25 @@ onMounted(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   background: none;
   border: none;
   color: inherit;
   cursor: pointer;
   width: 100%;
+  padding: 0;
 }
 .person-avatar-ring {
-  width: 88px;
-  height: 88px;
+  width: 72px;
+  height: 72px;
   border-radius: 50%;
   overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(120, 120, 128, 0.12);
-  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+  background: var(--fluid-card-item-fill);
+  border: 1px solid var(--fluid-card-border);
+  color: var(--text-secondary);
 }
 .person-avatar-ring img {
   width: 100%;
@@ -324,33 +331,38 @@ onMounted(() => {
   object-fit: cover;
 }
 .person-name {
-  font-size: 14px;
-  max-width: 150px;
+  font-size: 13px;
+  font-weight: 600;
+  max-width: 140px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .person-count {
-  font-size: 12px;
-  color: var(--text-secondary, #6e6e73);
+  font-size: 11.5px;
+  color: var(--text-secondary);
 }
 .person-actions {
   display: flex;
   flex-wrap: wrap;
   justify-content: center;
-  gap: 6px;
+  gap: 5px;
 }
 .person-mini-btn {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  font-size: 12px;
-  border-radius: 8px;
-  border: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.09));
-  background: transparent;
-  color: inherit;
+  gap: 3px;
+  padding: 3px 7px;
+  font-size: 11.5px;
+  border-radius: 7px;
+  border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-item-fill);
+  color: var(--text-secondary);
   cursor: pointer;
+}
+.person-mini-btn:hover:not(:disabled) {
+  color: var(--text-primary);
+  border-color: var(--fluid-card-border-strong, var(--accent-primary));
 }
 .person-inline-form {
   display: flex;
@@ -358,28 +370,36 @@ onMounted(() => {
   gap: 6px;
   width: 100%;
 }
-.person-inline-form input,
-.person-inline-form select {
+.person-inline-form input {
   width: 100%;
-  padding: 6px 8px;
+  height: 30px;
+  padding: 0 8px;
   font-size: 12px;
-  border-radius: 8px;
-  border: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.14));
-  background: var(--surface-input, #fff);
+  border-radius: 7px;
+  border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-item-fill);
   color: inherit;
+  box-sizing: border-box;
+}
+.person-inline-btns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 5px;
 }
 .person-inline-form button {
   padding: 5px 8px;
-  font-size: 12px;
-  border-radius: 8px;
-  border: none;
-  background: var(--accent, #0071e3);
+  font-size: 11.5px;
+  font-weight: 600;
+  border-radius: 7px;
+  border: 1px solid transparent;
+  background: var(--accent-primary, #2563eb);
   color: #fff;
   cursor: pointer;
 }
 .person-inline-form button.secondary {
-  background: rgba(120, 120, 128, 0.14);
-  color: inherit;
+  background: var(--fluid-card-item-fill);
+  border-color: var(--fluid-card-border);
+  color: var(--text-primary);
 }
 @media (prefers-reduced-motion: reduce) {
   .person-card {

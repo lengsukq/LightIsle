@@ -165,13 +165,13 @@ onMounted(() => {
       </IsleButton>
     </header>
 
-    <IsleBanner v-if="error" type="error" compact dismissible :message="error" @close="error = ''" />
-    <IsleBanner v-if="feedback" type="success" compact dismissible :message="feedback" @close="feedback = ''" />
+    <IsleBanner v-if="error" type="error" compact closable :message="error" @close="error = ''" />
+    <IsleBanner v-if="feedback" type="success" compact closable :message="feedback" @close="feedback = ''" />
 
     <IsleEmpty
       v-if="!groups.length && !loading"
+      card
       :icon="CheckCircle2"
-      :icon-size="42"
       title="暂未发现需要清理的连拍或相似废片"
       description="照片完成后台智能识图索引后，短时间内的连拍或近似构图会自动归组供你对比挑选。"
     />
@@ -180,7 +180,7 @@ onMounted(() => {
       <div v-if="cleanupSavingsSummary" class="similar-savings-card" aria-label="相似废片空间瘦身比例预览">
         <IsleCharts
           kind="donut"
-          :size="56"
+          :size="52"
           :stroke-width="6"
           :segments="cleanupSavingsSummary.segments"
           :total="cleanupSavingsSummary.totalBytes"
@@ -195,7 +195,7 @@ onMounted(() => {
             kind="segmented"
             :segments="cleanupSavingsSummary.segments"
             :total="cleanupSavingsSummary.totalBytes"
-            :bar-height="10"
+            :bar-height="9"
             compact-legend
             aria-label="保留精选体积与可释放冗余空间占比条"
           />
@@ -218,7 +218,7 @@ onMounted(() => {
               :disabled="!(selections[group.groupId] ?? []).length"
               @click="trashGroupSelection(group)"
             >
-              <Trash2 :size="14" />
+              <Trash2 :size="13" />
               <span>移入回收站 ({{ (selections[group.groupId] ?? []).length }})</span>
             </IsleButton>
           </div>
@@ -266,117 +266,118 @@ onMounted(() => {
 .similar-cleanup-view {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 14px;
 }
 .similar-header {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
 }
 .similar-header h3 {
-  margin: 0 0 4px;
-  font-size: 17px;
+  margin: 0 0 3px;
+  font-size: 15.5px;
+  font-weight: 650;
 }
 .similar-header p {
   margin: 0;
-  font-size: 13px;
-  color: var(--text-secondary, #6e6e73);
+  font-size: 12.5px;
+  color: var(--text-secondary);
 }
 .similar-group-list {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 .similar-savings-card {
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 12px 16px;
+  gap: 12px;
+  padding: 11px 14px;
   border-radius: 14px;
-  background: var(--surface-card, rgba(255, 255, 255, 0.74));
-  border: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.08));
+  background: var(--fluid-card-fill);
+  border: 1px solid var(--fluid-card-border);
+  box-shadow: var(--fluid-card-shadow);
 }
 .similar-savings-body {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 7px;
-  font-size: 13px;
+  gap: 6px;
+  font-size: 12.5px;
 }
 .similar-group-card {
-  padding: 16px;
-  border-radius: 16px;
-  background: var(--surface-card, rgba(255, 255, 255, 0.74));
-  border: 1px solid var(--border-subtle, rgba(0, 0, 0, 0.08));
+  padding: 13px 15px;
+  border-radius: 14px;
+  background: var(--fluid-card-fill);
+  border: 1px solid var(--fluid-card-border);
+  box-shadow: var(--fluid-card-shadow);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
   content-visibility: auto;
-  contain-intrinsic-size: auto 260px;
+  contain-intrinsic-size: auto 240px;
 }
 .similar-group-top {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
+  font-size: 13px;
 }
 .similar-kind-pill {
   display: inline-block;
   padding: 2px 8px;
-  margin-right: 8px;
+  margin-right: 6px;
   border-radius: 999px;
   font-size: 11px;
   font-weight: 600;
-  background: rgba(0, 113, 227, 0.12);
-  color: var(--accent, #0071e3);
+  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+  color: var(--accent-primary, #2563eb);
 }
 .similar-reason {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  margin-left: 10px;
-  font-size: 12px;
-  color: var(--text-secondary, #6e6e73);
+  margin-left: 8px;
+  font-size: 11.5px;
+  color: var(--text-secondary);
 }
 .similar-group-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 .similar-candidate-strip {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(185px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(172px, 1fr));
+  gap: 10px;
 }
 .similar-candidate-card {
-  border-radius: 12px;
+  border-radius: 10px;
   overflow: hidden;
-  border: 2px solid transparent;
-  background: rgba(120, 120, 128, 0.06);
+  border: 1.5px solid var(--fluid-card-border);
+  background: var(--fluid-card-item-fill);
   cursor: pointer;
-  transition: transform var(--motion-fast) var(--motion-spring), opacity 0.15s ease;
+  transition: border-color var(--motion-fast) ease, opacity 0.15s ease;
 }
 .similar-candidate-card:hover {
-  transform: translateY(-2px);
-}
-.similar-candidate-card:active {
-  transform: scale(0.985);
+  border-color: var(--fluid-card-border-strong, var(--accent-primary));
 }
 .similar-candidate-card.is-recommended {
-  border-color: rgba(52, 199, 89, 0.7);
+  border-color: rgba(16, 185, 129, 0.72);
 }
 .similar-candidate-card.is-marked-trash {
-  border-color: rgba(255, 59, 48, 0.65);
-  opacity: 0.85;
+  border-color: rgba(239, 68, 68, 0.65);
+  opacity: 0.86;
 }
 .similar-thumb-wrap {
   position: relative;
   aspect-ratio: 4 / 3;
-  background: rgba(0, 0, 0, 0.06);
+  background: var(--surface-raised);
 }
 .similar-thumb-wrap img {
   width: 100%;
@@ -385,33 +386,33 @@ onMounted(() => {
 }
 .similar-badge {
   position: absolute;
-  left: 8px;
-  top: 8px;
-  padding: 2px 8px;
+  left: 6px;
+  top: 6px;
+  padding: 2px 7px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 600;
   background: rgba(0, 0, 0, 0.62);
   color: #fff;
 }
 .similar-badge.best {
-  background: rgba(40, 167, 69, 0.9);
+  background: rgba(16, 185, 129, 0.9);
 }
 .similar-check {
   position: absolute;
-  right: 8px;
-  bottom: 8px;
-  padding: 2px 8px;
+  right: 6px;
+  bottom: 6px;
+  padding: 2px 7px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: 10.5px;
   background: rgba(0, 0, 0, 0.65);
   color: #fff;
 }
 .similar-meta {
-  padding: 8px 10px;
+  padding: 7px 9px;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
 }
 .similar-meta strong {
   font-size: 12px;
@@ -421,7 +422,7 @@ onMounted(() => {
 }
 .similar-meta small {
   font-size: 11px;
-  color: var(--text-secondary, #6e6e73);
+  color: var(--text-secondary);
 }
 @media (prefers-reduced-motion: reduce) {
   .similar-candidate-card {

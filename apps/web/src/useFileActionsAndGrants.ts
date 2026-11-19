@@ -6,6 +6,8 @@ import { copyTextToClipboard } from "./clipboard.ts";
 import { requestConfirm } from "./useConfirmDialog.ts";
 import type { ManagedAccount } from "./useAccountManagement.ts";
 import type { SharedFileEntry } from "./useFileShares.ts";
+import type { BatchAsset } from "./usePhotoBatchActions.ts";
+import type { Movie } from "./cinemaTypes.ts";
 
 export type FileGrant = { userId: number; path: string; canWrite: boolean };
 
@@ -33,6 +35,7 @@ export function useFileActionsAndGrants(options: {
   loadFiles: (path?: string) => Promise<unknown>;
   loadTrash: () => Promise<void>;
   isAbortError: (error: unknown) => boolean;
+  onCinemaFilmMatched?: (film: Movie) => void;
 }) {
   const grantUser = ref<ManagedAccount | null>(null);
   const grants = ref<FileGrant[]>([]);
@@ -52,6 +55,9 @@ export function useFileActionsAndGrants(options: {
   const previewError = ref("");
   const showPreviewPlaylist = ref(false);
   const previewAutoplayNext = ref(false);
+  const fileMediaAssets = ref<BatchAsset[]>([]);
+  const fileMediaSelected = ref<BatchAsset | null>(null);
+  const fileMediaEntriesByPath = new Map<string, SharedFileEntry>();
 
   function entryDirectory(path: string) {
     const normalized = path.replace(/\\/g, "/").trim().replace(/^\/+|\/+$/g, "");
@@ -60,11 +66,51 @@ export function useFileActionsAndGrants(options: {
   }
 
   function isPreviewVideo(item: SharedFileEntry | null) {
-    return Boolean(item && item.type === "file" && /\.(mp4|webm|m4v|mov)$/i.test(item.name));
+    return Boolean(item && item.type === "file" && /\.(mp4|webm|m4v|mov|mkv|avi|ts|mts|3gp|flv)$/i.test(item.name));
   }
 
   function isPreviewImage(item: SharedFileEntry | null) {
-    return Boolean(item && item.type === "file" && /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(item.name));
+    return Boolean(item && item.type === "file" && /\.(jpe?g|png|gif|webp|heic|heif|bmp)$/i.test(item.name));
+  }
+
+  function toFileMediaAsset(entry: SharedFileEntry, syntheticId: number): BatchAsset {
+    const numericModified = Number(entry.modified);
+    const parsedTime = Number.isFinite(numericModified) && numericModified > 0
+      ? numericModified
+      : Math.floor((Date.parse(entry.modified) || 0) / 1000);
+    return {
+      id: syntheticId,
+      path: entry.path,
+      name: entry.name,
+      type: isPreviewVideo(entry) ? "video" : "photo",
+      size: entry.size,
+      takenAt: parsedTime > 0 ? parsedTime : 0,
+      favorite: false,
+      canWrite: false,
+    };
+  }
+
+  const fileMediaIndex = computed(() => {
+    const current = fileMediaSelected.value;
+    if (!current) return -1;
+    return fileMediaAssets.value.findIndex((asset) => asset.path === current.path);
+  });
+
+  function showFileMediaAt(index: number): boolean {
+    const target = fileMediaAssets.value[index];
+    if (!target) return false;
+    fileMediaSelected.value = target;
+    return true;
+  }
+
+  function closeFileMedia() {
+    fileMediaSelected.value = null;
+    fileMediaAssets.value = [];
+  }
+
+  function fileEntryForMediaAsset(asset: BatchAsset | null): SharedFileEntry | null {
+    if (!asset) return null;
+    return fileMediaEntriesByPath.get(asset.path) ?? null;
   }
 
   const previewImagePlaylist = computed<SharedFileEntry[]>(() => {
@@ -320,11 +366,60 @@ export function useFileActionsAndGrants(options: {
     }
   }
 
+  async function lookupCinemaFilm(path: string): Promise<Movie | null> {
+    try {
+      const response = await options.rootFetch(
+        options.scopedApiPath("/api/v2/cinema/lookup") + "?path=" + encodeURIComponent(path),
+        { credentials: "same-origin" },
+      );
+      if (!response.ok) return null;
+      const film = (await response.json()) as Movie;
+      return film && film.id > 0 ? film : null;
+    } catch {
+      return null;
+    }
+  }
+
+  function openFileMediaViewer(item: SharedFileEntry) {
+    const dir = entryDirectory(item.path);
+    const siblings = options.fileEntries.value.filter(
+      (entry) => (isPreviewImage(entry) || isPreviewVideo(entry)) && entryDirectory(entry.path) === dir,
+    );
+    if (!siblings.some((entry) => entry.path === item.path)) {
+      siblings.push(item);
+    }
+    siblings.sort((a, b) => a.name.toLowerCase().localeCompare(b.name.toLowerCase()));
+    fileMediaEntriesByPath.clear();
+    const assets: BatchAsset[] = siblings.map((entry, idx) => {
+      fileMediaEntriesByPath.set(entry.path, entry);
+      return toFileMediaAsset(entry, -(idx + 1));
+    });
+    fileMediaAssets.value = assets;
+    fileMediaSelected.value = assets.find((asset) => asset.path === item.path) ?? assets[0] ?? null;
+    previewItem.value = null;
+    showPreviewPlaylist.value = false;
+  }
+
   async function previewFile(item: SharedFileEntry) {
+    const scopeEpoch = options.rootContextEpoch();
+    if (isPreviewVideo(item) && options.onCinemaFilmMatched) {
+      const cinemaFilm = await lookupCinemaFilm(item.path);
+      if (scopeEpoch !== options.rootContextEpoch()) return;
+      if (cinemaFilm) {
+        previewItem.value = null;
+        closeFileMedia();
+        options.onCinemaFilmMatched(cinemaFilm);
+        return;
+      }
+    }
+    if (isPreviewImage(item) || isPreviewVideo(item)) {
+      openFileMediaViewer(item);
+      return;
+    }
+    closeFileMedia();
     previewItem.value = item;
     previewText.value = "";
     previewError.value = "";
-    const scopeEpoch = options.rootContextEpoch();
     if (/\.(txt|md|json|log|ya?ml|toml|csv|xml|ini|conf|sh|py|ts|js|vue|go|swift|css|html)$/i.test(item.name)) {
       try {
         const response = await options.rootFetch(
@@ -556,6 +651,8 @@ export function useFileActionsAndGrants(options: {
     previewText.value = "";
     previewError.value = "";
     showPreviewPlaylist.value = false;
+    closeFileMedia();
+    fileMediaEntriesByPath.clear();
     grantUser.value = null;
     grants.value = [];
     grantError.value = "";
@@ -582,6 +679,12 @@ export function useFileActionsAndGrants(options: {
     previewText,
     previewError,
     previewURL,
+    fileMediaAssets,
+    fileMediaSelected,
+    fileMediaIndex,
+    showFileMediaAt,
+    closeFileMedia,
+    fileEntryForMediaAsset,
     showPreviewPlaylist,
     previewAutoplayNext,
     previewVideoPlaylist,

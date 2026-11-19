@@ -128,7 +128,7 @@ onUnmounted(()=>{disposed=true;generation++;controller.abort()});
         刷新
       </IsleButton>
     </div>
-    <p>管理当前共享目录的断点续传残留。取消后需重新上传；不会删除已经发布的文件。</p>
+    <p class="upload-sub">管理当前共享目录的断点续传残留。取消后需重新上传；不会删除已发布的文件。</p>
     <IsleBanner v-if="error" type="error" compact role="alert">{{ error }}</IsleBanner>
     <IsleBanner v-if="notice" type="info" compact role="status">{{ notice }}</IsleBanner>
     <p v-if="loading && !uploads.length" class="footnote">正在读取上传记录…</p>
@@ -152,7 +152,7 @@ onUnmounted(()=>{disposed=true;generation++;controller.abort()});
         <div class="disclosure-title"><span>检查无法识别的上传暂存文件</span></div>
       </summary>
       <div class="disclosure-body">
-        <p style="margin-top:0">位于 <code>.lightisle-parts</code> 的未识别文件不会自动清理，请在 Mac 访达（⌘⇧. 显示隐藏文件）核对处理。</p>
+        <p style="margin-top:0;font-size:12px">位于 <code>.lightisle-parts</code> 的未识别文件不会自动清理，请在 Mac 访达（⌘⇧. 显示隐藏文件）核对处理。</p>
         <IsleBanner v-if="unknownError" type="error" compact role="alert">{{ unknownError }}</IsleBanner>
         <p v-else-if="unknownLoading && !unknownLoaded" class="footnote">正在检查…</p>
         <IsleEmpty v-else-if="unknownLoaded && !unknownItems.length" compact description="当前未发现无法识别的条目。" />
@@ -172,7 +172,7 @@ onUnmounted(()=>{disposed=true;generation++;controller.abort()});
     </div>
     <div v-if="confirming" class="upload-confirm" role="group" aria-label="确认清理上传">
       <p>{{confirming==='expired'?`清理 ${days} 天没有活动、尚未发布的上传残留？正在写入和提交的上传会受到保护。`:`取消“${confirming.path}”的断点续传残留？已上传的临时部分将被清理。`}}</p>
-      <div style="display: flex; gap: 10px;">
+      <div style="display: flex; gap: 8px;">
         <IsleButton variant="danger" size="sm" :loading="busy" :disabled="busy" @click="confirm">
           {{ busy ? '正在处理…' : '确认清理' }}
         </IsleButton>
@@ -183,10 +183,11 @@ onUnmounted(()=>{disposed=true;generation++;controller.abort()});
 </template>
 
 <style scoped>
-.upload-maintenance{margin-bottom:20px}
+.upload-maintenance{margin-bottom:14px}
+.upload-sub{margin:4px 0 8px;font-size:12.5px;color:var(--text-secondary)}
 .upload-detail{min-width:0;overflow-wrap:anywhere}
-.upload-cleanup-controls{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-top:18px}
-.upload-cleanup-label{font-size:13px;color:var(--text-primary)}
-.upload-confirm{margin-top:12px;padding:12px;border:1px solid var(--fluid-card-border);border-radius:8px}
-.upload-confirm button+button{margin-left:12px}
+.upload-cleanup-controls{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin-top:12px;padding-top:12px;border-top:1px solid var(--fluid-divider, var(--stroke-subtle))}
+.upload-cleanup-label{font-size:12.5px;color:var(--text-primary)}
+.upload-confirm{margin-top:10px;padding:11px 13px;border:1px solid var(--fluid-card-border);background:var(--fluid-card-item-fill);border-radius:11px}
+.upload-confirm p{margin:0 0 8px;font-size:12.5px}
 </style>

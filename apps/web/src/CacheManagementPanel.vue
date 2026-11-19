@@ -4,6 +4,7 @@ import IsleButton from './IsleButton.vue'
 import IsleBanner from './IsleBanner.vue'
 import IsleBadge from './IsleBadge.vue'
 import IsleCharts from './IsleCharts.vue'
+import IsleHelpButton from './IsleHelpButton.vue'
 import {
   ISLE_WEB_CACHE_CATEGORIES,
   clearLocalCache,
@@ -195,7 +196,6 @@ watch(cacheEpochVersion, () => {
   <section class="panel settings-card cache-mgmt-panel" data-testid="cache-management-panel">
     <div class="section-head">
       <div>
-        <p class="eyebrow">CACHE &amp; STORAGE</p>
         <h3>缓存与本地存储管理</h3>
       </div>
       <div class="row-actions">
@@ -203,6 +203,12 @@ watch(cacheEpochVersion, () => {
           浏览器缓存 {{ formatCacheBytes(localReport?.totalBytes || 0) }} ·
           {{ localReport?.totalEntries || 0 }} 项
         </IsleBadge>
+        <IsleHelpButton
+          title="缓存加速与原片安全"
+          :items="[
+            { title: '清理缓存不删原片', body: '系统会自动缓存缩略图、海报、地图瓦片与页面状态以加速浏览；清理浏览器或服务端派生缓存绝不会删除任何原始照片、视频或文件。' },
+          ]"
+        />
         <IsleButton
           variant="glass"
           size="sm"
@@ -213,10 +219,6 @@ watch(cacheEpochVersion, () => {
         </IsleButton>
       </div>
     </div>
-
-    <p class="muted">
-      自动缓存缩略图、海报、地图瓦片与页面状态以加速浏览；清理缓存不会删除任何原始文件。
-    </p>
 
     <IsleBanner
       v-if="notice"
@@ -231,8 +233,8 @@ watch(cacheEpochVersion, () => {
       <div class="cache-donut-block">
         <IsleCharts
           kind="donut"
-          :size="64"
-          :stroke-width="7"
+          :size="56"
+          :stroke-width="6"
           :segments="cacheChartSegments"
           :total="localReport?.totalBytes || 0"
           :show-legend="false"
@@ -249,7 +251,7 @@ watch(cacheEpochVersion, () => {
         kind="segmented"
         :segments="cacheChartSegments"
         :total="localReport?.totalBytes || 0"
-        :bar-height="10"
+        :bar-height="8"
         aria-label="浏览器缓存 4 分类占比条"
       />
     </div>
@@ -429,9 +431,9 @@ watch(cacheEpochVersion, () => {
 .cache-mgmt-panel {
   display: flex;
   flex-direction: column;
-  gap: 16px;
-  padding: 24px;
-  border-radius: 24px;
+  gap: 12px;
+  padding: 16px 18px;
+  border-radius: 18px;
   background: var(--fluid-card-fill);
   border: 1px solid var(--fluid-card-border);
   box-shadow: var(--fluid-card-shadow);
@@ -440,66 +442,66 @@ watch(cacheEpochVersion, () => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
 }
 .eyebrow {
-  margin: 0 0 4px;
-  font-size: 11px;
+  margin: 0 0 2px;
+  font-size: 10.5px;
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   color: var(--text-tertiary);
 }
 .section-head h3 {
   margin: 0;
-  font-size: 18px;
-  font-weight: 700;
+  font-size: 15.5px;
+  font-weight: 680;
   color: var(--text-primary);
 }
 .row-actions {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 .muted {
   color: var(--text-secondary);
   margin: 0;
-  line-height: 1.5;
-  font-size: 13px;
+  line-height: 1.45;
+  font-size: 12.5px;
 }
 .small-text {
-  font-size: 12px;
+  font-size: 11.5px;
 }
 .cache-chart-summary {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
-  gap: 18px;
-  padding: 14px 16px;
-  border-radius: 16px;
+  gap: 14px;
+  padding: 11px 14px;
+  border-radius: 14px;
   border: 1px solid var(--fluid-card-border);
   background: var(--fluid-card-item-fill);
 }
 .cache-donut-block {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
 }
 .cache-donut-meta {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   min-width: 0;
 }
 .cache-donut-kicker {
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--text-secondary);
 }
 .cache-donut-total {
-  font-size: 15px;
+  font-size: 14.5px;
   font-weight: 700;
   color: var(--text-primary);
   font-variant-numeric: tabular-nums;
@@ -507,33 +509,34 @@ watch(cacheEpochVersion, () => {
 @media (max-width: 640px) {
   .cache-chart-summary {
     grid-template-columns: 1fr;
-    gap: 14px;
+    gap: 10px;
   }
 }
 .cache-dot-lg {
-  width: 10px;
-  height: 10px;
+  width: 9px;
+  height: 9px;
   border-radius: 999px;
   flex-shrink: 0;
 }
 .cache-subcard {
   background: var(--fluid-card-item-fill);
   border: 1px solid var(--fluid-card-border);
-  border-radius: 16px;
-  padding: 14px 16px;
+  border-radius: 14px;
+  padding: 11px 14px;
   margin-top: 0;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
 }
 .cache-subcard-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
-  padding-bottom: 8px;
-  border-bottom: 1px solid color-mix(in srgb, var(--stroke-subtle) 70%, transparent);
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--fluid-divider, var(--stroke-subtle));
+  font-size: 13px;
 }
 .cache-category-list {
   display: flex;
@@ -544,9 +547,9 @@ watch(cacheEpochVersion, () => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 10px 0;
-  border-bottom: 1px solid color-mix(in srgb, var(--stroke-subtle) 65%, transparent);
+  gap: 10px;
+  padding: 7px 0;
+  border-bottom: 1px solid var(--fluid-divider, var(--stroke-subtle));
   flex-wrap: wrap;
 }
 .cache-category-row:first-child {
@@ -559,7 +562,7 @@ watch(cacheEpochVersion, () => {
 .cache-category-label {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 9px;
   cursor: pointer;
   flex: 1 1 220px;
   min-width: 0;
@@ -567,18 +570,21 @@ watch(cacheEpochVersion, () => {
 .cache-category-text {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   min-width: 0;
 }
+.cache-category-text strong {
+  font-size: 13px;
+}
 .cache-bulk-actions {
-  margin-top: 4px;
-  padding-top: 10px;
-  border-top: 1px solid color-mix(in srgb, var(--stroke-subtle) 65%, transparent);
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 1px solid var(--fluid-divider, var(--stroke-subtle));
 }
 @media (max-width: 640px) {
   .cache-mgmt-panel {
-    padding: 18px 16px;
-    border-radius: 20px;
+    padding: 14px;
+    border-radius: 16px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

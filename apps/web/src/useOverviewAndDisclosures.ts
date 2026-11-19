@@ -3,7 +3,7 @@ import { readApiFailure } from "./apiFailure.ts";
 import { createAppsCenterClient } from "./appsCenterApi.ts";
 import { describeUserFacingError } from "./userFacingError.ts";
 import { isHomeAppReady, type PersonalSpaceSummary } from "./overviewPageModels.ts";
-import type { AppLaunchRequest } from "./composables/useAppsCenterController.ts";
+import { stripLaunchTicket, workbenchBadge, type AppLaunchRequest } from "./composables/useAppsCenterController.ts";
 import type { PublicAppItem } from "./types/appsCenter.ts";
 import type { ServerStats } from "./useHostTelemetry.ts";
 import type { BackendTask } from "./useTaskCenter.ts";
@@ -12,6 +12,8 @@ export function useOverviewAndDisclosures(options: {
   user: Ref<{ username: string; role: "admin" | "member" } | null>;
   activePage?: Ref<string>;
   fetchApps?: () => Promise<{ apps?: PublicAppItem[] }>;
+  launchApp?: (appId: string) => Promise<{ app?: PublicAppItem; status?: string; launchUrl?: string; launchPath?: string }>;
+  openExternalUrl?: (url: string) => void;
   fileSearch: Ref<string>;
   searchViaSpotlight: Ref<boolean>;
   filesLoading: Ref<boolean>;
@@ -47,18 +49,91 @@ export function useOverviewAndDisclosures(options: {
   const overviewAppsLoading = ref(false);
   const overviewAppsError = ref("");
   let overviewAppsRequest = 0;
-  let homeAppLaunchSeq = 0;
   const pendingAppLaunch = ref<AppLaunchRequest | null>(null);
+  const homeWorkbenchApp = ref<PublicAppItem | null>(null);
+  const homeWorkbenchIframeUrl = ref("");
+  const homeWorkbenchLaunchPath = ref("");
+  const homeWorkbenchIframeKey = ref(0);
+  const homeWorkbenchFullscreen = ref(false);
+  let homeWorkbenchRequest = 0;
 
-  function openHomeApp(app: PublicAppItem) {
-    pendingAppLaunch.value = isHomeAppReady(app) ? { appId: app.id, seq: ++homeAppLaunchSeq } : null;
-    if (options.activePage) {
-      options.activePage.value = "apps";
+  const homeWorkbenchActive = computed(() => homeWorkbenchApp.value !== null);
+
+  function closeHomeWorkbench(opts: { refresh?: boolean } = {}) {
+    homeWorkbenchRequest += 1;
+    homeWorkbenchApp.value = null;
+    homeWorkbenchIframeUrl.value = "";
+    homeWorkbenchLaunchPath.value = "";
+    homeWorkbenchFullscreen.value = false;
+    if (opts.refresh !== false) void refreshOverviewApps();
+  }
+
+  function refreshHomeWorkbench() {
+    homeWorkbenchIframeKey.value += 1;
+  }
+
+  function toggleHomeWorkbenchFullscreen() {
+    homeWorkbenchFullscreen.value = !homeWorkbenchFullscreen.value;
+  }
+
+  function openHomeWorkbenchExternal() {
+    const app = homeWorkbenchApp.value;
+    if (!app) return;
+    const target =
+      homeWorkbenchLaunchPath.value ||
+      stripLaunchTicket(homeWorkbenchIframeUrl.value) ||
+      `/apps/${encodeURIComponent(app.id)}/`;
+    if (!target) return;
+    if (options.openExternalUrl) options.openExternalUrl(target);
+    else if (typeof window !== "undefined") window.open(target, "_blank", "noopener");
+  }
+
+  async function openHomeApp(app: PublicAppItem) {
+    if (!isHomeAppReady(app)) {
+      pendingAppLaunch.value = null;
+      closeHomeWorkbench({ refresh: false });
+      if (options.activePage) {
+        options.activePage.value = "apps";
+      }
+      return;
+    }
+    const reqId = ++homeWorkbenchRequest;
+    const usernameSnapshot = options.user.value?.username ?? "";
+    overviewAppsError.value = "";
+    const launcher = options.launchApp ?? ((appId: string) => createAppsCenterClient().launchApp(appId));
+    try {
+      const res = await launcher(app.id);
+      if (reqId !== homeWorkbenchRequest || (options.user.value?.username ?? "") !== usernameSnapshot) return;
+      if (options.activePage && options.activePage.value !== "overview") return;
+      const latestApp = res.app || app;
+      const fallbackPath = `/apps/${encodeURIComponent(latestApp.id)}/`;
+      const launchUrl = res.launchUrl || latestApp.launchUrl || fallbackPath;
+      const cleanPath = res.launchPath || stripLaunchTicket(launchUrl) || fallbackPath;
+      homeWorkbenchApp.value = latestApp;
+      homeWorkbenchLaunchPath.value = cleanPath;
+      homeWorkbenchIframeUrl.value = launchUrl;
+      homeWorkbenchIframeKey.value += 1;
+      homeWorkbenchFullscreen.value = false;
+      pendingAppLaunch.value = null;
+    } catch (e) {
+      if (reqId !== homeWorkbenchRequest || (options.user.value?.username ?? "") !== usernameSnapshot) return;
+      overviewAppsError.value = "打开「" + app.name + "」失败：" + describeUserFacingError(e);
     }
   }
 
   function clearPendingAppLaunch(seq: number) {
     if (pendingAppLaunch.value?.seq === seq) pendingAppLaunch.value = null;
+  }
+
+  if (options.activePage) {
+    watch(
+      () => options.activePage?.value,
+      (page) => {
+        if (page && page !== "overview" && homeWorkbenchApp.value) {
+          closeHomeWorkbench({ refresh: false });
+        }
+      },
+    );
   }
 
   async function refreshOverviewApps() {
@@ -230,6 +305,26 @@ export function useOverviewAndDisclosures(options: {
     failedTasks: isAdminDashboard.value ? options.tasks.value.filter((task) => !task.running && !!task.lastError).length : 0,
   }));
 
+  const homeWorkbenchStageProps = computed(() =>
+    homeWorkbenchApp.value
+      ? {
+          app: homeWorkbenchApp.value,
+          iframeUrl: homeWorkbenchIframeUrl.value,
+          iframeKey: homeWorkbenchIframeKey.value,
+          fullscreen: homeWorkbenchFullscreen.value,
+          badgeText: workbenchBadge(homeWorkbenchApp.value),
+          backLabel: "返回概览",
+        }
+      : null,
+  );
+
+  const homeWorkbenchStageEvents = {
+    close: () => closeHomeWorkbench(),
+    refresh: refreshHomeWorkbench,
+    "toggle-fullscreen": toggleHomeWorkbenchFullscreen,
+    "open-external": openHomeWorkbenchExternal,
+  };
+
   function resetOverviewAndDisclosures() {
     personalSpaceRequest += 1;
     personalSpace.value = null;
@@ -239,6 +334,7 @@ export function useOverviewAndDisclosures(options: {
     overviewAppsLoading.value = false;
     overviewAppsError.value = "";
     pendingAppLaunch.value = null;
+    closeHomeWorkbench({ refresh: false });
     cpuHistory.value = [];
     memoryHistory.value = [];
     showHardwareSpecs.value = false;
@@ -267,6 +363,10 @@ export function useOverviewAndDisclosures(options: {
     pendingAppLaunch,
     openHomeApp,
     clearPendingAppLaunch,
+    homeWorkbenchActive,
+    homeWorkbenchStageProps,
+    homeWorkbenchStageEvents,
+    closeHomeWorkbench,
     overviewIdentity,
     overviewSearch,
     overviewTelemetry,

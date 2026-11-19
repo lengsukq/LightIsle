@@ -111,24 +111,26 @@ onUnmounted(() => { disposed = true; controller.abort(); });
         <IsleBanner v-if="group(account.id).error" type="error" compact role="alert">{{ group(account.id).error }}</IsleBanner>
         <p v-else-if="group(account.id).loading && !group(account.id).loaded" class="footnote">正在读取…</p>
         <IsleEmpty v-else-if="group(account.id).loaded && !group(account.id).items.length" compact description="该成员当前没有已记录的预占。" />
-        <div v-for="item in group(account.id).items" :key="item.id" class="account-row">
-          <div class="reservation-path">
-            <strong>{{ item.relativePath }}</strong>
-            <small>{{ rootLabel(item) }} · {{ size(item.sizeBytes) }} · {{ date(item.createdAt) }}</small>
-            <small v-if="item.uploadID">有关联上传：请切换到对应硬盘，在「未完成上传」中检查任务后处理。</small>
-            <small v-else-if="item.operation === 'download_publish'">下载发布待核对。请接回原盘，再到下载中心查看和继续原任务。</small>
-            <small v-else-if="item.operation?.startsWith('dav_')">WebDAV 写入待核对。请接回原盘，核对目标文件和回收站。</small>
-            <small v-else>没有可确认的上传关联；请在 Mac 上核对原硬盘、目标文件和存储配置，暂不能安全释放。</small>
+        <div v-if="group(account.id).items.length" class="reservation-list">
+          <div v-for="item in group(account.id).items" :key="item.id" class="account-row reservation-row">
+            <div class="reservation-path">
+              <strong>{{ item.relativePath }}</strong>
+              <small>{{ rootLabel(item) }} · {{ size(item.sizeBytes) }} · {{ date(item.createdAt) }}</small>
+              <small v-if="item.uploadID">有关联上传：请切换到对应硬盘，在「未完成上传」中检查任务后处理。</small>
+              <small v-else-if="item.operation === 'download_publish'">下载发布待核对。请接回原盘，再到下载中心查看和继续原任务。</small>
+              <small v-else-if="item.operation?.startsWith('dav_')">WebDAV 写入待核对。请接回原盘，核对目标文件和回收站。</small>
+              <small v-else>没有可确认的上传关联；请在 Mac 上核对原硬盘、目标文件和存储配置，暂不能安全释放。</small>
+            </div>
           </div>
         </div>
-        <div style="display: flex; gap: 8px; margin-top: 8px;">
+        <div style="display: flex; gap: 6px; margin-top: 8px;">
           <IsleButton v-if="group(account.id).next" variant="glass" size="sm" :loading="group(account.id).loading" @click="load(account.id, true)">加载更多</IsleButton>
           <IsleButton variant="glass" size="sm" :loading="group(account.id).loading" @click="load(account.id)">重新检查</IsleButton>
         </div>
       </div>
     </details>
 
-    <div style="margin-top: 14px;">
+    <div style="margin-top: 8px;">
       <IsleButton variant="tonal" size="sm" @click="emit('open-storage')">打开成员存储管理</IsleButton>
     </div>
   </div>
@@ -136,15 +138,33 @@ onUnmounted(() => { disposed = true; controller.abort(); });
 
 <style scoped>
 .pending-reservations {
-  margin: 8px 0;
+  margin: 6px 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
 .res-note {
-  margin: 0 0 4px;
-  font-size: 12.5px;
+  margin: 0 0 2px;
+  font-size: 12px;
   color: var(--text-secondary);
+}
+.reservation-list {
+  border: 1px solid var(--fluid-card-border);
+  border-radius: 10px;
+  background: var(--fluid-card-fill);
+  overflow: hidden;
+}
+.reservation-row {
+  margin: 0;
+  border: 0;
+  border-bottom: 1px solid var(--fluid-divider, var(--fluid-card-border));
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 8px 12px;
+}
+.reservation-row:last-child {
+  border-bottom: 0;
 }
 .reservation-path {
   min-width: 0;

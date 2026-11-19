@@ -5,8 +5,8 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { describeUserFacingError } from "./userFacingError.ts";
 import { createScopedRootApi } from "./apiClient.ts";
 import {
-  Heart, Star, RefreshCw, Images, Film, X,
-  Pencil, Trash2, Sparkles, Search, LayoutList,
+  Heart, Star, RefreshCw, Images, Film,
+  Pencil, Trash2, Sparkles, LayoutList,
   Map as MapIcon, Grid2x2, Grid3x3, Check, Users, FolderPlus,
 } from "lucide-vue-next";
 import { createLatestRequestGate } from "./latestRequestGate.ts";
@@ -20,8 +20,11 @@ import PhotosBatchBar from "./PhotosBatchBar.vue";
 import PhotosTimelineToolbar from "./PhotosTimelineToolbar.vue";
 import PhotoViewerModal from "./PhotoViewerModal.vue";
 import IsleButton from "./IsleButton.vue";
+import IsleHelpButton from "./IsleHelpButton.vue";
 import IsleEmpty from "./IsleEmpty.vue";
 import IsleCharts from "./IsleCharts.vue";
+import IslePageHeader from "./IslePageHeader.vue";
+import IsleSearchInput from "./IsleSearchInput.vue";
 import { ISLE_CHART_COLORS } from "./isleChartsMath.ts";
 import { usePhotoViewer } from "./usePhotoViewer.ts";
 import { dateLabel, formatDuration } from "./photoPresentation.ts";
@@ -52,7 +55,6 @@ const onThisDayOnly = ref(false);
 const typeFilter = ref<"" | "photo" | "video" | "live">("");
 const searchInput = ref("");
 const searchApplied = ref("");
-const searchComposing = ref(false);
 let searchTimer: number | undefined;
 
 const loading = ref(false);
@@ -285,7 +287,6 @@ watch(selected, (asset) => {
 });
 
 watch(searchInput, (value) => {
-  if (searchComposing.value) return;
   if (searchTimer) clearTimeout(searchTimer);
   searchTimer = window.setTimeout(() => {
     const term = value.trim();
@@ -295,22 +296,7 @@ watch(searchInput, (value) => {
   }, 400);
 });
 
-function onSearchCompositionEnd() {
-  searchComposing.value = false;
-  if (searchTimer) clearTimeout(searchTimer);
-  searchTimer = window.setTimeout(() => {
-    const term = searchInput.value.trim();
-    if (term === searchApplied.value) return;
-    searchApplied.value = term;
-    void load(true);
-  }, 150);
-}
-
-function onSearchEnter(event: KeyboardEvent) {
-  if (searchComposing.value || event.isComposing) {
-    event.preventDefault();
-    return;
-  }
+function onSearchSubmit() {
   if (searchTimer) clearTimeout(searchTimer);
   const term = searchInput.value.trim();
   if (term !== searchApplied.value) {
@@ -319,8 +305,7 @@ function onSearchEnter(event: KeyboardEvent) {
   }
 }
 
-function onSearchEsc() {
-  if (searchComposing.value) return;
+function onSearchClear() {
   if (searchTimer) clearTimeout(searchTimer);
   searchInput.value = "";
   if (searchApplied.value) {
@@ -407,12 +392,21 @@ onUnmounted(() => {
 
 <template>
   <div ref="photosPage" class="content photos-page">
-    <div class="section-heading photos-header-bar">
-      <div>
-        <h2>时光相册</h2>
-        <p>{{ activePerson ? "人物筛选 · " + activePerson.name : activeFolderAlbum ? "文件夹相册 · " + activeFolderAlbum.name : currentPrivateAlbum ? "私人相册 · " + currentPrivateAlbum.name : currentAlbum ? "共享相册 · " + currentAlbum.name : onThisDayOnly ? "那年今天" : personalOnly ? "我的收藏" : favoritesOnly ? "共享收藏" : browseTitle ? "正在浏览 " + browseTitle : "按时间线、相册、人物与智能语义浏览原片。" }}</p>
-      </div>
-      <div class="photos-header-actions">
+    <IslePageHeader
+      title="时光相册"
+      :subtitle="activePerson ? '人物筛选 · ' + activePerson.name : activeFolderAlbum ? '文件夹相册 · ' + activeFolderAlbum.name : currentPrivateAlbum ? '私人相册 · ' + currentPrivateAlbum.name : currentAlbum ? '共享相册 · ' + currentAlbum.name : onThisDayOnly ? '那年今天' : personalOnly ? '我的收藏' : favoritesOnly ? '共享收藏' : browseTitle ? '正在浏览 ' + browseTitle : ''"
+      class="photos-header-bar"
+    >
+      <template #title-extra>
+        <IsleHelpButton
+          title="相册浏览与原片保护"
+          :items="[
+            { title: '原片零改动', body: '照片和视频缩略图按需生成缓存加速浏览，图库绝不修改或复制你的原始媒体文件。' },
+            { title: '多维检索与整理', body: '支持按时间线、人物、相似清理、文件夹相册及地图足迹查看，点击照片支持双击缩放与胶片带翻页。' },
+          ]"
+        />
+      </template>
+      <template #actions>
         <div class="photo-mode-tabs" role="tablist" aria-label="照片浏览方式">
           <button type="button" role="tab" :aria-selected="viewMode==='timeline'" :class="{chosen:viewMode==='timeline'}" @click="viewMode='timeline'"><LayoutList :size="15"/> 时间线</button>
           <button type="button" role="tab" :aria-selected="viewMode==='people'" :class="{chosen:viewMode==='people'}" @click="viewMode='people'"><Users :size="15"/> 人物</button>
@@ -421,20 +415,13 @@ onUnmounted(() => {
           <button type="button" role="tab" :aria-selected="viewMode==='map'" :class="{chosen:viewMode==='map'}" @click="viewMode='map'"><MapIcon :size="15"/> 地图回溯</button>
         </div>
         <template v-if="viewMode==='timeline'">
-          <label class="timeline-search">
-            <Search :size="14"/>
-            <input
-              v-model="searchInput"
-              :placeholder="currentSearchPlaceholder()"
-              aria-label="搜索照片和视频"
-              enterkeyhint="search"
-              @compositionstart="searchComposing = true"
-              @compositionend="onSearchCompositionEnd"
-              @keydown.enter="onSearchEnter"
-              @keydown.esc.stop.prevent="onSearchEsc"
-            >
-            <button v-if="searchInput || searchApplied" type="button" title="清除搜索（Esc）" aria-label="清除搜索" @click="onSearchEsc"><X :size="13"/></button>
-          </label>
+          <IsleSearchInput
+            v-model="searchInput"
+            :placeholder="currentSearchPlaceholder()"
+            aria-label="搜索照片和视频"
+            @submit="onSearchSubmit"
+            @clear="onSearchClear"
+          />
           <button type="button" class="photo-tool-btn" :class="{chosen:compactGrid}" :title="compactGrid?'当前：紧凑视图（点击切舒适）':'当前：舒适视图（点击切紧凑）'" :aria-label="compactGrid?'切换舒适视图':'切换紧凑视图'" @click="toggleCompactGrid">
             <Grid3x3 v-if="compactGrid" :size="15"/><Grid2x2 v-else :size="15"/>
           </button>
@@ -442,11 +429,12 @@ onUnmounted(() => {
             <Check :size="15"/> {{ trashSelecting ? "退出" : "多选" }}
           </button>
         </template>
-        <button v-if="admin" type="button" class="refresh" @click="startScan" :disabled="scan.running&&!scanStatusError">
-          <RefreshCw :size="15" :class="{spinning:scan.running&&!scanStatusError}" /> {{scan.running&&!scanStatusError?"扫描中…":"扫描媒体"}}
-        </button>
-      </div>
-    </div>
+        <IsleButton v-if="admin" variant="glass" size="sm" :disabled="scan.running&&!scanStatusError" @click="startScan">
+          <template #icon><RefreshCw :size="15" :class="{spinning:scan.running&&!scanStatusError}" /></template>
+          {{scan.running&&!scanStatusError?"扫描中…":"扫描媒体"}}
+        </IsleButton>
+      </template>
+    </IslePageHeader>
 
     <p v-if="previousRootShareWarning" class="form-error" role="alert">{{previousRootShareWarning}} <button type="button" class="refresh" @click="previousRootShareWarning=''">知道了</button></p>
     <div v-if="scan.running&&!scanStatusError" class="scan-banner">正在后台整理媒体 · 已检查 {{scan.scanned}} 项 · 发现 {{scan.found}} 项</div>
@@ -662,7 +650,6 @@ onUnmounted(() => {
       <button v-if="nextCursor" type="button" @click="load()" :disabled="loading">{{loading?"自动加载中…":"加载更多"}}</button>
       <span v-else-if="assets.length">已显示 {{assets.length}} 项</span>
     </div>
-    <p class="footnote">照片和视频缩略图按需生成 JPEG 缓存；图库不修改或复制你的原始媒体。</p>
     </div>
 
     <PhotosBatchBar

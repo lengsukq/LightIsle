@@ -25,6 +25,32 @@ const iconNames = [
   "ShieldCheck", "Sparkles", "Trash2", "Wallet", "WifiOff", "Wrench",
 ];
 const IconStub = Vue.defineComponent({ setup: () => () => null });
+const IslePageHeaderStub = Vue.defineComponent({
+  props: ["title", "subtitle"],
+  setup(props, { slots }) {
+    return () => Vue.h("header", { class: "isle-page-header" }, [
+      Vue.h("h2", null, props.title),
+      props.subtitle ? Vue.h("p", null, props.subtitle) : null,
+      slots["title-extra"]?.(),
+      slots.actions?.(),
+    ]);
+  },
+});
+const IsleBadgeStub = Vue.defineComponent({
+  setup(_, { slots }) {
+    return () => Vue.h("span", { class: "isle-badge" }, slots.default?.());
+  },
+});
+const IsleButtonStub = Vue.defineComponent({
+  props: ["disabled"],
+  emits: ["click"],
+  setup(props, { slots, emit }) {
+    return () => Vue.h("button", { type: "button", disabled: props.disabled, onClick: (e) => emit("click", e) }, [
+      slots.icon?.(),
+      slots.default?.(),
+    ]);
+  },
+});
 
 const OverviewTestHarness = Vue.defineComponent({
   props: ["identity", "search", "telemetry", "personalSpace", "pending", "apps"],
@@ -34,7 +60,12 @@ const OverviewTestHarness = Vue.defineComponent({
     "open-apps-center", "open-app", "refresh-apps",
     "update:query", "update:spotlight", "update:expanded",
   ],
-  components: Object.fromEntries(iconNames.map(name => [name, IconStub])),
+  components: {
+    ...Object.fromEntries(iconNames.map(name => [name, IconStub])),
+    IslePageHeader: IslePageHeaderStub,
+    IsleBadge: IsleBadgeStub,
+    IsleButton: IsleButtonStub,
+  },
   setup(props, { emit }) {
     const failedAppIcons = Vue.ref(new Set());
     const view = {

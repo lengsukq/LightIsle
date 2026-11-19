@@ -105,7 +105,7 @@ function submitEditor() {
     <div class="apps-storage-header">
       <div>
         <div class="apps-section-title-row">
-          <HardDrive :size="17" />
+          <HardDrive :size="16" />
           <strong>应用数据存储位置</strong>
           <IsleBadge variant="accent" size="sm">
             已配置 {{ locations.length }} / {{ storage.maxLocations }}（1 内置盘 + 1 其他盘）
@@ -119,7 +119,6 @@ function submitEditor() {
     </div>
 
     <div class="apps-storage-slots">
-      <!-- Slot 1: Internal Disk -->
       <article v-if="internalLocation" class="apps-storage-slot" :class="{ default: internalLocation.isDefault }">
         <div class="apps-storage-slot-top">
           <div>
@@ -170,7 +169,6 @@ function submitEditor() {
         </div>
       </article>
 
-      <!-- Slot 2: External / Other Disk (Max 1) -->
       <article v-if="externalLocation" class="apps-storage-slot" :class="{ default: externalLocation.isDefault, offline: !externalLocation.online }">
         <div class="apps-storage-slot-top">
           <div>
@@ -231,7 +229,6 @@ function submitEditor() {
       </article>
     </div>
 
-    <!-- Inline Editor for Internal or External Location -->
     <div v-if="editorMode" class="apps-storage-editor">
       <div class="apps-storage-editor-head">
         <strong>{{ editorMode === "internal" ? "修改 Mac 内置盘应用目录" : (externalLocation ? "更换其他盘位置" : "添加其他盘位置（仅限 1 个）") }}</strong>
@@ -285,40 +282,40 @@ function submitEditor() {
 
 <style scoped>
 .apps-storage-card {
-  border: 1px solid var(--fluid-card-border); border-radius: 20px; background: var(--fluid-card-fill);
-  box-shadow: var(--fluid-card-shadow); padding: 16px 18px; margin-bottom: 16px; display: grid; gap: 12px;
+  border: 1px solid var(--fluid-card-border); border-radius: 16px; background: var(--fluid-card-fill);
+  box-shadow: var(--fluid-card-shadow); padding: 14px 16px; margin-bottom: 14px; display: grid; gap: 10px;
 }
-.apps-storage-header small { display: block; margin-top: 5px; color: var(--text-secondary); line-height: 1.5; }
-.apps-storage-slots { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; }
+.apps-storage-header small { display: block; margin-top: 3px; font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+.apps-storage-slots { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 10px; }
 .apps-storage-slot {
-  padding: 13px 14px; border-radius: 14px; background: var(--fluid-card-item-fill);
-  border: 1px solid var(--fluid-card-border); display: grid; gap: 8px;
+  padding: 11px 13px; border-radius: 12px; background: var(--fluid-card-item-fill);
+  border: 1px solid var(--fluid-card-border); display: grid; gap: 7px;
 }
-.apps-storage-slot.default { border-color: color-mix(in srgb, var(--accent-primary) 42%, transparent); }
-.apps-storage-slot.offline { border-color: color-mix(in srgb, #f59e0b 45%, transparent); }
+.apps-storage-slot.default { border-color: color-mix(in srgb, var(--accent-primary) 42%, var(--fluid-card-border)); }
+.apps-storage-slot.offline { border-color: color-mix(in srgb, #f59e0b 45%, var(--fluid-card-border)); }
 .apps-storage-slot-empty { background: transparent; border-style: dashed; }
-.apps-storage-slot-empty small { color: var(--text-secondary); line-height: 1.5; }
-.apps-storage-slot-top { display: flex; justify-content: space-between; gap: 10px; }
-.apps-storage-slot-title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
-.apps-storage-path { display: block; margin-top: 4px; font-size: 12px; color: var(--text-secondary); word-break: break-all; }
-.apps-storage-meta { display: flex; flex-wrap: wrap; gap: 12px; font-size: 12px; color: var(--text-secondary); }
-.apps-storage-actions { display: flex; flex-wrap: wrap; gap: 8px; }
+.apps-storage-slot-empty small { font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+.apps-storage-slot-top { display: flex; justify-content: space-between; gap: 8px; }
+.apps-storage-slot-title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; }
+.apps-storage-path { display: block; margin-top: 3px; font-size: 11.5px; color: var(--text-secondary); word-break: break-all; }
+.apps-storage-meta { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11.5px; color: var(--text-secondary); }
+.apps-storage-actions { display: flex; flex-wrap: wrap; gap: 6px; }
 .apps-storage-editor {
-  padding: 12px 14px; border-radius: 14px; background: var(--fluid-card-item-fill);
-  border: 1px solid var(--fluid-card-border); display: grid; gap: 10px;
+  padding: 11px 13px; border-radius: 12px; background: var(--fluid-card-item-fill);
+  border: 1px solid var(--fluid-card-border); display: grid; gap: 9px;
 }
-.apps-storage-editor-head { display: flex; align-items: center; justify-content: space-between; }
+.apps-storage-editor-head { display: flex; align-items: center; justify-content: space-between; font-size: 13px; }
 .apps-storage-vol-picks { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); }
 .apps-storage-vol-chip {
   border: 1px solid var(--fluid-card-border); background: var(--fluid-card-fill); border-radius: 999px;
-  padding: 4px 10px; font-size: 12px; cursor: pointer; color: var(--text-primary);
+  padding: 3px 9px; font-size: 11.5px; cursor: pointer; color: var(--text-primary);
 }
 .apps-storage-vol-chip:disabled { opacity: 0.45; cursor: not-allowed; }
-.apps-storage-editor-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.apps-storage-editor-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px; }
 .apps-storage-editor-fields label { display: grid; gap: 4px; font-size: 12px; color: var(--text-secondary); }
 .apps-storage-editor-fields input {
-  padding: 8px 10px; border-radius: 10px; border: 1px solid var(--fluid-card-border);
-  background: var(--fluid-card-fill); color: var(--text-primary); font-size: 13px;
+  height: 34px; padding: 0 10px; border-radius: 9px; border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-fill); color: var(--text-primary); font-size: 12.5px;
 }
-.apps-storage-editor-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; }
+.apps-storage-editor-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
 </style>

@@ -207,7 +207,7 @@ onMounted(() => { void refresh(); });
     <template #icon><HardDrive :size="18" /></template>
     <template #actions>
       <IsleButton variant="glass" size="sm" :loading="loading" :disabled="!!pending" @click="refresh">
-        <template #icon><RefreshCcw :size="15" /></template>
+        <template #icon><RefreshCcw :size="14" /></template>
         {{ loading ? "检测中…" : "刷新" }}
       </IsleButton>
     </template>
@@ -226,14 +226,14 @@ onMounted(() => { void refresh(); });
               :aria-expanded="showSystemPartitions"
               @click="showSystemPartitions = !showSystemPartitions"
             >
-              <ChevronDown :size="14" class="disk-system-toggle-chevron" />
+              <ChevronDown :size="13" class="disk-system-toggle-chevron" />
               <span>{{ showSystemPartitions ? "隐藏" : "显示" }}系统引导分区与磁盘映像 ({{ systemPartitions.length }})</span>
             </button>
             <span v-if="!primaryDisks.length" class="disk-system-hint">当前未检测到独立外置数据磁盘</span>
           </div>
           <div v-else class="disk-admin-item" :class="{ 'is-system': entry.system }">
             <div class="disk-admin-main">
-              <span class="disk-admin-icon"><HardDrive :size="20" /></span>
+              <span class="disk-admin-icon"><HardDrive :size="18" /></span>
               <div class="disk-admin-name">
                 <strong>{{ entry.disk.name }}</strong>
                 <span>{{ entry.disk.id }} · {{ entry.disk.filesystem || "格式未知" }} · {{ entry.disk.protocol || "连接方式未知" }}</span>
@@ -245,7 +245,7 @@ onMounted(() => { void refresh(); });
             <div v-if="entry.disk.total > 0" class="disk-admin-capacity-chart">
               <IsleCharts
                 kind="donut"
-                :size="50"
+                :size="46"
                 :stroke-width="5"
                 :percent="entry.disk.mounted ? pct(entry.disk) : null"
                 :color="pct(entry.disk) >= 90 ? ISLE_CHART_COLORS.rose : ISLE_CHART_COLORS.blue"
@@ -257,7 +257,7 @@ onMounted(() => { void refresh(); });
                     kind="segmented"
                     :segments="diskUsageSegments(entry.disk.total, entry.disk.free)"
                     :total="entry.disk.total"
-                    :bar-height="9"
+                    :bar-height="8"
                     compact-legend
                     :aria-label="`${entry.disk.name} 已用与可用空间比例`"
                   />
@@ -272,21 +272,21 @@ onMounted(() => { void refresh(); });
 
             <div class="disk-admin-actions">
               <IsleButton variant="tonal" size="sm" :disabled="smartLoading === entry.disk.id" @click="toggleSmart(entry.disk)">
-                <template #icon><HeartPulse :size="14" /></template>
+                <template #icon><HeartPulse :size="13" /></template>
                 {{ smartOpen[entry.disk.id] ? "收起健康详情" : "健康详情" }}{{ smartLoading === entry.disk.id ? "…" : "" }}
               </IsleButton>
               <template v-if="!entry.disk.identity">
-                <span class="disk-admin-warning"><AlertTriangle :size="14" /> 设备唯一身份不可验证，禁止修改</span>
+                <span class="disk-admin-warning"><AlertTriangle :size="13" /> 设备唯一身份不可验证，禁止修改</span>
               </template>
               <template v-else>
                 <IsleButton v-if="entry.disk.mounted" variant="glass" size="sm" :disabled="!!pending" @click="openRenameModal(entry.disk)">
-                  <template #icon><Pencil :size="14" /></template>重命名
+                  <template #icon><Pencil :size="13" /></template>重命名
                 </IsleButton>
                 <IsleButton v-if="entry.disk.mounted" variant="glass" size="sm" :disabled="!!pending" @click="act(entry.disk, 'eject')">
-                  <template #icon><ArrowUpRight :size="14" /></template>安全弹出
+                  <template #icon><ArrowUpRight :size="13" /></template>安全弹出
                 </IsleButton>
                 <IsleButton v-else variant="primary" size="sm" :disabled="!!pending" @click="act(entry.disk, 'mount')">
-                  <template #icon><PlugZap :size="14" /></template>挂载
+                  <template #icon><PlugZap :size="13" /></template>挂载
                 </IsleButton>
                 <span v-if="pending === entry.disk.id" class="disk-admin-pending">macOS 正在处理…</span>
               </template>
@@ -326,7 +326,7 @@ onMounted(() => { void refresh(); });
                     v-if="temperatureValues(entry.disk.id).length"
                     kind="sparkline"
                     :points="temperatureValues(entry.disk.id)"
-                    :spark-height="44"
+                    :spark-height="40"
                     :color="ISLE_CHART_COLORS.amber"
                     aria-label="历史温度变化曲线"
                   />
@@ -344,7 +344,7 @@ onMounted(() => { void refresh(); });
 
       <div v-if="volumes.length" class="disk-admin-volumes">
         <div class="disk-volumes-head">
-          <h4><Activity :size="15" /> 存储卷概览</h4>
+          <h4><Activity :size="14" /> 存储卷概览</h4>
           <button
             v-if="systemVolumes.length && !systemPartitions.length"
             type="button"
@@ -352,7 +352,7 @@ onMounted(() => { void refresh(); });
             :aria-expanded="showSystemPartitions"
             @click="showSystemPartitions = !showSystemPartitions"
           >
-            <ChevronDown :size="14" class="disk-system-toggle-chevron" />
+            <ChevronDown :size="13" class="disk-system-toggle-chevron" />
             <span>{{ showSystemPartitions ? "隐藏" : "显示" }}系统与映像卷 ({{ systemVolumes.length }})</span>
           </button>
         </div>
@@ -367,7 +367,7 @@ onMounted(() => { void refresh(); });
               kind="segmented"
               :segments="diskUsageSegments(v.total, v.free)"
               :total="v.total"
-              :bar-height="8"
+              :bar-height="7"
               compact-legend
               :aria-label="`${v.name} 存储卷空间比例`"
             />
@@ -378,7 +378,7 @@ onMounted(() => { void refresh(); });
 
     <template #footer>
       <div class="disk-admin-footer">
-        <ShieldCheck :size="15" />
+        <ShieldCheck :size="14" />
         <span>SMART 不支持读取并不等于健康。格式化为 APFS 或 exFAT 请在 Mac 的「磁盘工具」中操作，并先备份原文件。</span>
       </div>
     </template>
@@ -394,8 +394,8 @@ onMounted(() => { void refresh(); });
     :show-close="!pending"
     @close="closeRenameModal"
   >
-    <template #icon><Pencil :size="18" /></template>
-    <IsleBanner v-if="renameError" type="error" compact :message="renameError" style="margin-bottom: 12px" />
+    <template #icon><Pencil :size="16" /></template>
+    <IsleBanner v-if="renameError" type="error" compact :message="renameError" style="margin-bottom: 10px" />
     <form id="disk-rename-form" class="disk-rename-form" @submit.prevent="submitRename">
       <label>
         <span>新卷显示名称</span>
@@ -411,7 +411,7 @@ onMounted(() => { void refresh(); });
       </label>
     </form>
     <template #footer>
-      <div style="display:flex;justify-content:flex-end;gap:10px;width:100%">
+      <div style="display:flex;justify-content:flex-end;gap:8px;width:100%">
         <IsleButton variant="glass" :disabled="!!pending" @click="closeRenameModal">取消</IsleButton>
         <IsleButton type="submit" form="disk-rename-form" variant="primary" :loading="!!pending">确认重命名</IsleButton>
       </div>
@@ -423,12 +423,12 @@ onMounted(() => { void refresh(); });
 .disk-body {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 .disk-admin-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 330px), 1fr));
+  gap: 10px;
   align-items: start;
 }
 .disk-system-toggle-row {
@@ -436,21 +436,21 @@ onMounted(() => { void refresh(); });
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
   padding-top: 2px;
 }
 .disk-system-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 6px 13px;
+  gap: 5px;
+  padding: 5px 11px;
   border-radius: 999px;
   border: 1px solid var(--fluid-card-border);
   background: var(--fluid-card-fill);
   color: var(--text-secondary);
   font: inherit;
-  font-size: 12px;
+  font-size: 11.5px;
   font-weight: 600;
   cursor: pointer;
   transition: background var(--motion-fast) ease, color var(--motion-fast) ease, border-color var(--motion-fast) ease;
@@ -471,11 +471,10 @@ onMounted(() => { void refresh(); });
   color: var(--text-tertiary);
 }
 .disk-admin-item {
-  padding: 16px 18px;
-  border-radius: 18px;
+  padding: 13px 15px;
+  border-radius: 14px;
   border: 1px solid var(--fluid-card-border);
   background: var(--fluid-card-item-fill);
-  box-shadow: var(--fluid-item-card-shadow);
   min-width: 0;
 }
 .disk-admin-item.is-system {
@@ -484,12 +483,12 @@ onMounted(() => { void refresh(); });
 .disk-admin-main {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 .disk-admin-icon {
-  width: 42px;
-  height: 42px;
-  border-radius: 14px;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
   background: color-mix(in srgb, var(--accent-primary) 10%, transparent);
   color: var(--accent-primary);
   display: grid;
@@ -498,64 +497,41 @@ onMounted(() => { void refresh(); });
 }
 .disk-admin-name {
   display: grid;
-  gap: 3px;
+  gap: 2px;
   min-width: 0;
   flex: 1;
 }
 .disk-admin-name strong {
-  font-size: 14px;
+  font-size: 13.5px;
   color: var(--text-primary);
 }
 .disk-admin-name span,
 .disk-admin-name small {
   color: var(--text-secondary);
-  font-size: 11.5px;
+  font-size: 11px;
   overflow-wrap: anywhere;
-}
-.disk-admin-capacity {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 13px;
-}
-.disk-admin-meter {
-  height: 6px;
-  flex: 1;
-  min-width: 60px;
-  border-radius: 8px;
-  background: var(--stroke-subtle);
-  overflow: hidden;
-}
-.disk-admin-meter > div {
-  height: 100%;
-  border-radius: inherit;
-  background: var(--accent-primary);
-}
-.disk-admin-capacity span {
-  font-size: 11.5px;
-  color: var(--text-secondary);
 }
 .disk-admin-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
-  margin-top: 14px;
+  margin-top: 10px;
 }
 .disk-admin-warning,
 .disk-admin-pending {
   font-size: 11.5px;
   color: var(--text-secondary);
   display: flex;
-  gap: 6px;
+  gap: 5px;
   align-items: center;
 }
 .disk-admin-footer {
   display: flex;
-  gap: 8px;
+  gap: 7px;
   align-items: center;
   width: 100%;
-  font-size: 12px;
+  font-size: 11.5px;
   line-height: 1.5;
   color: var(--text-secondary);
 }
@@ -564,18 +540,18 @@ onMounted(() => { void refresh(); });
   color: var(--accent-primary);
 }
 .disk-admin-smart {
-  margin-top: 12px;
-  padding: 14px 16px;
-  border-radius: 14px;
+  margin-top: 10px;
+  padding: 12px 14px;
+  border-radius: 12px;
   background: var(--fluid-card-fill);
   border: 1px solid var(--fluid-card-border);
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 .disk-admin-smart-grid {
   display: grid;
   grid-template-columns: auto 1fr;
-  gap: 6px 16px;
+  gap: 5px 14px;
   font-size: 12px;
 }
 .disk-admin-smart-grid span {
@@ -595,10 +571,10 @@ onMounted(() => { void refresh(); });
 .disk-admin-smart-reason {
   margin: 0;
   display: flex;
-  gap: 7px;
+  gap: 6px;
   align-items: flex-start;
   font-size: 12px;
-  line-height: 1.6;
+  line-height: 1.55;
   color: var(--text-secondary);
 }
 .disk-admin-smart small {
@@ -609,7 +585,7 @@ onMounted(() => { void refresh(); });
   display: flex;
   justify-content: space-between;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
 }
 .disk-admin-health-title strong {
@@ -624,40 +600,34 @@ onMounted(() => { void refresh(); });
 }
 .disk-health-history {
   display: grid;
-  gap: 7px;
-  margin-top: 6px;
-  border-top: 1px solid var(--stroke-subtle);
-  padding-top: 12px;
+  gap: 6px;
+  margin-top: 4px;
+  border-top: 1px solid var(--fluid-divider, var(--fluid-card-border));
+  padding-top: 10px;
 }
 .disk-health-history > strong {
   font-size: 12px;
 }
-.disk-health-history svg {
-  width: 100%;
-  max-height: 116px;
-  background: var(--surface-base);
-  border-radius: 10px;
-}
 .disk-health-item {
   display: flex;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
   font-size: 11px;
   color: var(--text-secondary);
 }
 .disk-admin-volumes {
   display: grid;
-  gap: 6px;
-  margin-top: 8px;
-  border-top: 1px solid var(--stroke-subtle);
-  padding-top: 12px;
+  gap: 4px;
+  margin-top: 6px;
+  border-top: 1px solid var(--fluid-divider, var(--fluid-card-border));
+  padding-top: 10px;
 }
 .disk-volumes-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 .disk-admin-volume.is-system {
@@ -666,26 +636,26 @@ onMounted(() => { void refresh(); });
 .disk-admin-capacity-chart {
   display: flex;
   align-items: center;
-  gap: 12px;
-  margin-top: 12px;
+  gap: 10px;
+  margin-top: 10px;
 }
 .disk-admin-capacity-bar {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 3px;
 }
 .disk-unmounted-bar {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
 }
 .disk-unmounted-track {
-  height: 9px;
+  height: 8px;
   width: 100%;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--stroke-subtle) 55%, transparent);
+  background: color-mix(in srgb, var(--fluid-card-border) 55%, transparent);
   border: 1px dashed color-mix(in srgb, var(--text-tertiary) 35%, transparent);
 }
 .disk-capacity-caption {
@@ -695,16 +665,16 @@ onMounted(() => { void refresh(); });
 .disk-admin-volumes h4 {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin: 0 0 4px;
-  font-size: 13.5px;
+  gap: 6px;
+  margin: 0 0 2px;
+  font-size: 13px;
   color: var(--text-primary);
 }
 .disk-admin-volume {
-  padding: 10px 0;
-  border-bottom: 1px solid var(--stroke-subtle);
+  padding: 8px 0;
+  border-bottom: 1px solid var(--fluid-divider, var(--fluid-card-border));
   display: grid;
-  gap: 6px;
+  gap: 5px;
 }
 .disk-admin-volume:last-child {
   border-bottom: none;
@@ -713,44 +683,45 @@ onMounted(() => { void refresh(); });
 .disk-admin-volume-main {
   display: flex;
   align-items: baseline;
-  gap: 10px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 .disk-admin-volume-main strong {
-  font-size: 13px;
+  font-size: 12.5px;
   color: var(--text-primary);
 }
 .disk-admin-volume-main span {
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--text-secondary);
 }
 .disk-admin-volume-capacity {
-  margin-top: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
 }
 @media (max-width: 600px) {
   .disk-admin-main {
     flex-wrap: wrap;
   }
-  .disk-admin-capacity {
-    flex-wrap: wrap;
-  }
 }
 .disk-rename-form label {
   display: grid;
-  gap: 6px;
+  gap: 5px;
   font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
 }
 .disk-rename-form input {
   width: 100%;
+  height: 36px;
   box-sizing: border-box;
-  border: 1px solid var(--stroke-subtle);
-  border-radius: 10px;
-  background: var(--surface-base);
+  border: 1px solid var(--fluid-card-border);
+  border-radius: 9px;
+  background: var(--fluid-card-item-fill);
   color: var(--text-primary);
-  padding: 9px 12px;
-  font-size: 14px;
+  padding: 0 11px;
+  font-size: 13px;
 }
 @media (prefers-reduced-motion: reduce) {
   .disk-system-toggle,

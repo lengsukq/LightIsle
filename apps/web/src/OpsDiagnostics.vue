@@ -73,14 +73,14 @@ onMounted(()=>{void load();});
 <template>
   <section class="account-panel ops-diagnostics">
     <div class="account-heading">
-      <h3><Activity :size="17"/> 资源历史与网络诊断</h3>
+      <h3><Activity :size="16"/> 资源历史与网络诊断</h3>
       <div class="ops-diagnostic-actions">
         <AppleSelect v-model="limit" :options="limitOptions" size="sm" aria-label="资源历史时间范围" :disabled="loading" @change="load" />
         <IsleButton variant="glass" size="sm" :disabled="loading" @click="load"><template #icon><RefreshCcw :size="14"/></template>刷新</IsleButton>
         <IsleButton variant="glass" size="sm" :disabled="!diagnostics" @click="exportReport"><template #icon><Download :size="14"/></template>导出诊断</IsleButton>
       </div>
     </div>
-    <IsleBanner v-if="error" type="error" compact :message="error" style="margin-top: 10px">
+    <IsleBanner v-if="error" type="error" compact :message="error" style="margin-top: 8px">
       <template #action>
         <IsleButton variant="tonal" size="sm" @click="load">重试</IsleButton>
       </template>
@@ -89,15 +89,15 @@ onMounted(()=>{void load();});
     <div v-if="history.length>1" class="ops-plot" role="img" aria-label="历史 CPU、内存和磁盘使用率百分比折线">
       <svg viewBox="0 0 500 130" preserveAspectRatio="none" aria-hidden="true">
         <path d="M 10 15 H 490 M 10 62.5 H 490 M 10 110 H 490" fill="none" stroke="currentColor" stroke-opacity=".15" stroke-dasharray="3 4"/>
-        <polyline :points="polyline('cpuPercent')" fill="none" stroke="#0071E3" stroke-width="2.5" vector-effect="non-scaling-stroke"/>
-        <polyline :points="polyline('memoryPercent')" fill="none" stroke="#34A853" stroke-width="2.5" vector-effect="non-scaling-stroke"/>
-        <polyline :points="polyline('diskPercent')" fill="none" stroke="#E98A32" stroke-width="2.5" vector-effect="non-scaling-stroke"/>
+        <polyline :points="polyline('cpuPercent')" fill="none" stroke="#0071E3" stroke-width="2.2" vector-effect="non-scaling-stroke"/>
+        <polyline :points="polyline('memoryPercent')" fill="none" stroke="#34A853" stroke-width="2.2" vector-effect="non-scaling-stroke"/>
+        <polyline :points="polyline('diskPercent')" fill="none" stroke="#E98A32" stroke-width="2.2" vector-effect="non-scaling-stroke"/>
       </svg>
     </div>
     <p v-else class="footnote">历史样本不足两条。保持 Mac App 运行，稍后会看到曲线。</p>
     <p class="ops-legend"><span>● CPU</span><span>● 内存</span><span>● 数据盘</span><small>最近采样：{{lastSeen}}</small></p>
     <div v-if="diagnostics" class="ops-network">
-      <h4><Network :size="17"/> Mac 本机网络</h4>
+      <h4><Network :size="15"/> Mac 本机网络</h4>
       <p class="footnote">当前请求：{{diagnostics.requestTransport}} · 默认网关：{{diagnostics.gatewayIPv4||"未检测到"}} · 默认出口：{{diagnostics.defaultInterface||"未检测到"}}</p>
       <div v-for="item in diagnostics.interfaces" :key="item.name" class="account-row">
         <div><strong>{{item.name}} · {{item.up?"已启用":"未启用"}}</strong><small>{{item.addresses.length?item.addresses.join("、"):"没有分配非链路本地 IP 地址"}}</small></div>
@@ -109,10 +109,10 @@ onMounted(()=>{void load();});
 </template>
 
 <style scoped>
-.ops-diagnostics{margin-bottom:20px}.ops-diagnostics h3,.ops-network h4{display:flex;align-items:center;gap:7px}
-.ops-diagnostic-actions{display:flex;gap:7px;flex-wrap:wrap;align-items:center}
-.ops-plot{height:184px;max-width:100%;padding:15px 12px 8px;border:1px solid var(--fluid-card-border);background:var(--fluid-card-item-fill);border-radius:16px}
-.ops-plot svg{height:100%;width:100%}.ops-legend{display:flex;gap:17px;flex-wrap:wrap;font-size:12px}
-.ops-legend span:nth-child(1){color:#0071E3}.ops-legend span:nth-child(2){color:#34A853}.ops-legend span:nth-child(3){color:#E98A32}.ops-network{margin-top:24px}
-@media(max-width:650px){.ops-diagnostic-actions{width:100%}.ops-plot{height:145px}}
+.ops-diagnostics{margin-bottom:14px}.ops-diagnostics h3,.ops-network h4{display:flex;align-items:center;gap:6px;margin:0}
+.ops-diagnostic-actions{display:flex;gap:6px;flex-wrap:wrap;align-items:center}
+.ops-plot{height:152px;max-width:100%;padding:12px 10px 6px;border:1px solid var(--fluid-card-border);background:var(--fluid-card-item-fill);border-radius:12px}
+.ops-plot svg{height:100%;width:100%}.ops-legend{display:flex;gap:14px;flex-wrap:wrap;font-size:11.5px;margin:6px 0 0}
+.ops-legend span:nth-child(1){color:#0071E3}.ops-legend span:nth-child(2){color:#34A853}.ops-legend span:nth-child(3){color:#E98A32}.ops-network{margin-top:14px}
+@media(max-width:650px){.ops-diagnostic-actions{width:100%}.ops-plot{height:132px}}
 </style>

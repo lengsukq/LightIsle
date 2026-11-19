@@ -95,31 +95,33 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); alertReque
     <div class="alert-body">
       <IsleBanner v-if="error" type="error" compact role="alert">{{ error }}</IsleBanner>
       <IsleEmpty v-if="!alerts.length && !loading && !error" compact :description="'目前没有' + (history ? '历史' : '未恢复的') + '异常记录。'" />
-      <div v-for="alert in alerts" :key="alert.code" class="account-row alert-item">
-        <div>
-          <strong>
-            <IsleBadge
-              :variant="alert.severity === 'critical' ? 'danger' : alert.active ? 'warning' : 'online'"
-              size="sm"
-            >
-              {{ alert.severity === 'critical' ? '严重' : alert.active ? '警告' : '恢复' }}
-            </IsleBadge>
-            <AlertTriangle v-if="alert.active && !alert.acknowledged" :size="15" aria-hidden="true" />
-            <CheckCircle2 v-else :size="15" aria-hidden="true" />
-            {{ alert.message }}
-          </strong>
-          <small>{{ alert.active ? alert.acknowledged ? "已确认，异常仍存在" : "待确认" : "已恢复" }} · 发现于 {{ new Date(alert.firstSeen * 1000).toLocaleString("zh-CN") }}</small>
+      <div v-if="alerts.length" class="alert-group-list">
+        <div v-for="alert in alerts" :key="alert.code" class="account-row alert-item">
+          <div>
+            <strong>
+              <IsleBadge
+                :variant="alert.severity === 'critical' ? 'danger' : alert.active ? 'warning' : 'online'"
+                size="sm"
+              >
+                {{ alert.severity === 'critical' ? '严重' : alert.active ? '警告' : '恢复' }}
+              </IsleBadge>
+              <AlertTriangle v-if="alert.active && !alert.acknowledged" :size="14" aria-hidden="true" />
+              <CheckCircle2 v-else :size="14" aria-hidden="true" />
+              {{ alert.message }}
+            </strong>
+            <small>{{ alert.active ? alert.acknowledged ? "已确认，异常仍存在" : "待确认" : "已恢复" }} · 发现于 {{ new Date(alert.firstSeen * 1000).toLocaleString("zh-CN") }}</small>
+          </div>
+          <IsleButton
+            v-if="alert.active && !alert.acknowledged"
+            variant="tonal"
+            size="sm"
+            :loading="busy === alert.code"
+            :disabled="!!busy"
+            @click="acknowledge(alert)"
+          >
+            确认已知晓
+          </IsleButton>
         </div>
-        <IsleButton
-          v-if="alert.active && !alert.acknowledged"
-          variant="tonal"
-          size="sm"
-          :loading="busy === alert.code"
-          :disabled="!!busy"
-          @click="acknowledge(alert)"
-        >
-          确认已知晓
-        </IsleButton>
       </div>
     </div>
   </IsleCard>
@@ -131,25 +133,40 @@ onUnmounted(() => { disposed = true; if (timer) clearInterval(timer); alertReque
   flex-direction: column;
   gap: 8px;
 }
-.alert-body .account-row {
+.alert-group-list {
+  border: 1px solid var(--fluid-card-border);
+  border-radius: 12px;
+  background: var(--fluid-card-item-fill);
+  overflow: hidden;
+}
+.alert-group-list .account-row {
   margin: 0;
+  border: 0;
+  border-bottom: 1px solid var(--fluid-divider, var(--fluid-card-border));
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: 9px 13px;
+}
+.alert-group-list .account-row:last-child {
+  border-bottom: 0;
 }
 .alert-item strong {
   display: flex;
   align-items: center;
   gap: 6px;
-  font-size: 13px;
+  font-size: 12.5px;
   flex-wrap: wrap;
 }
 .alert-item small {
   display: block;
-  margin-top: 6px;
+  margin-top: 3px;
   color: var(--text-secondary);
   font-size: 11px;
 }
 .alert-actions {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   align-items: center;
   flex-wrap: wrap;
 }

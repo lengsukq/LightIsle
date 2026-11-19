@@ -124,7 +124,7 @@ function seasonLabel(season: number): string {
     :aria-label="(seriesDetail?.series.name || '剧集') + ' · 剧集列表'"
     @close="emit('close')"
   >
-    <template #icon><Tv :size="18" /></template>
+    <template #icon><Tv :size="17" /></template>
 
     <template v-if="seriesDetail">
       <div v-if="activeResumeEpisode" class="series-resume-bar">
@@ -136,7 +136,7 @@ function seasonLabel(season: number): string {
           </small>
         </div>
         <IsleButton variant="primary" size="sm" @click="emit('play-episode', activeResumeEpisode)">
-          <template #icon><Play :size="15" fill="currentColor" /></template>
+          <template #icon><Play :size="14" fill="currentColor" /></template>
           {{ resumeButtonLabel }}
         </IsleButton>
       </div>
@@ -173,40 +173,42 @@ function seasonLabel(season: number): string {
 
       <div v-for="season in visibleSeasons" :key="season" class="cinema-season">
         <h4>{{ seasonLabel(season) }}</h4>
-        <div
-          v-for="episode in seriesDetail.films.filter((f) => f.season === season)"
-          :key="episode.id"
-          :ref="(el) => setEpisodeRef(episode.id, el)"
-          class="cinema-episode-row"
-          :class="{ 'cinema-episode-row--resume': activeResumeEpisode?.id === episode.id }"
-        >
-          <button type="button" class="cinema-episode-main" @click="emit('play-episode', episode)">
-            <span class="cinema-episode-no">E{{ episode.episode }}</span>
-            <span class="cinema-episode-title">{{ episode.title }}</span>
-            <span class="cinema-episode-meta">{{ duration(episode.durationSeconds || episode.duration) }}</span>
-            <IsleBadge v-if="episode.completed" variant="online" size="sm">已看完</IsleBadge>
-            <IsleBadge v-else-if="episode.position > 5" variant="accent" size="sm">已看 {{ percent(episode) }}%</IsleBadge>
-          </button>
-          <div class="cinema-episode-actions">
-            <button
-              type="button"
-              class="cinema-episode-action-btn"
-              :title="episode.completed ? '标记为未看' : '标记为已看完'"
-              @click="emit('toggle-watched', episode, !episode.completed)"
-            >
-              <CheckCircle2 :size="14" />
-              <span>{{ episode.completed ? "标未看" : "标已看" }}</span>
+        <div class="cinema-episode-list">
+          <div
+            v-for="episode in seriesDetail.films.filter((f) => f.season === season)"
+            :key="episode.id"
+            :ref="(el) => setEpisodeRef(episode.id, el)"
+            class="cinema-episode-row"
+            :class="{ 'cinema-episode-row--resume': activeResumeEpisode?.id === episode.id }"
+          >
+            <button type="button" class="cinema-episode-main" @click="emit('play-episode', episode)">
+              <span class="cinema-episode-no">E{{ episode.episode }}</span>
+              <span class="cinema-episode-title">{{ episode.title }}</span>
+              <span class="cinema-episode-meta">{{ duration(episode.durationSeconds || episode.duration) }}</span>
+              <IsleBadge v-if="episode.completed" variant="online" size="sm">已看完</IsleBadge>
+              <IsleBadge v-else-if="episode.position > 5" variant="accent" size="sm">已看 {{ percent(episode) }}%</IsleBadge>
             </button>
-            <button
-              v-if="episode.position > 5 && !episode.completed"
-              type="button"
-              class="cinema-episode-action-btn"
-              title="清除本集播放进度，移出继续观看"
-              @click="emit('clear-progress', episode)"
-            >
-              <RotateCcw :size="13" />
-              <span>重头/移除续播</span>
-            </button>
+            <div class="cinema-episode-actions">
+              <button
+                type="button"
+                class="cinema-episode-action-btn"
+                :title="episode.completed ? '标记为未看' : '标记为已看完'"
+                @click="emit('toggle-watched', episode, !episode.completed)"
+              >
+                <CheckCircle2 :size="13" />
+                <span>{{ episode.completed ? "标未看" : "标已看" }}</span>
+              </button>
+              <button
+                v-if="episode.position > 5 && !episode.completed"
+                type="button"
+                class="cinema-episode-action-btn"
+                title="清除本集播放进度，移出继续观看"
+                @click="emit('clear-progress', episode)"
+              >
+                <RotateCcw :size="12" />
+                <span>重头/移除续播</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -238,57 +240,57 @@ function seasonLabel(season: number): string {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
-  padding: 12px 14px;
-  margin-bottom: 14px;
-  border-radius: 14px;
-  border: 1px solid color-mix(in srgb, var(--accent-primary) 34%, var(--fluid-card-border));
-  background: color-mix(in srgb, var(--accent-primary) 10%, var(--fluid-card-fill));
+  padding: 10px 13px;
+  margin-bottom: 10px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 32%, var(--fluid-card-border));
+  background: color-mix(in srgb, var(--accent-primary) 8%, var(--fluid-card-fill));
 }
 .series-resume-text {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 1px;
   min-width: 0;
 }
 .series-resume-text strong {
-  font-size: 13.5px;
+  font-size: 13px;
   color: var(--text-primary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .series-resume-text small {
-  font-size: 12px;
+  font-size: 11.5px;
   color: var(--text-secondary);
 }
 .cinema-synopsis {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  max-height: 150px;
+  max-height: 132px;
   overflow: auto;
-  font-size: 13px;
+  font-size: 12.5px;
   color: var(--text-secondary);
-  line-height: 1.6;
-  margin: 0 0 12px;
+  line-height: 1.55;
+  margin: 0 0 10px;
 }
 .series-banner {
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 .series-season-tabs {
   display: flex;
-  gap: 6px;
+  gap: 5px;
   flex-wrap: wrap;
-  margin: 10px 0 14px;
+  margin: 6px 0 10px;
 }
 .series-season-pill {
   border: 1px solid var(--fluid-card-border);
-  background: var(--fluid-card-fill);
+  background: var(--fluid-card-item-fill);
   color: var(--text-secondary);
-  border-radius: var(--radius-pill);
-  padding: 6px 13px;
-  font-size: 12.5px;
+  border-radius: 999px;
+  padding: 4px 11px;
+  font-size: 12px;
   font-weight: 600;
   cursor: pointer;
   transition: background var(--motion-fast) ease, color var(--motion-fast) ease, border-color var(--motion-fast) ease;
@@ -298,51 +300,57 @@ function seasonLabel(season: number): string {
   background: var(--fluid-card-hover);
 }
 .series-season-pill.active {
-  background: var(--accent-primary);
-  border-color: var(--accent-primary);
-  color: #fff;
+  background: color-mix(in srgb, var(--accent-primary) 12%, var(--fluid-card-top));
+  border-color: color-mix(in srgb, var(--accent-primary) 42%, var(--fluid-card-border));
+  color: var(--accent-primary);
 }
 .cinema-season h4 {
-  margin: 10px 0 8px;
-  font-size: 14px;
+  margin: 8px 0 6px;
+  font-size: 13px;
+  font-weight: 650;
   color: var(--text-primary);
+}
+.cinema-episode-list {
+  border: 1px solid var(--fluid-card-border);
+  border-radius: 12px;
+  background: var(--fluid-card-item-fill);
+  overflow: hidden;
 }
 .cinema-episode-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 10px;
-  border: 1px solid var(--fluid-card-border);
-  border-radius: var(--radius-md);
-  background: var(--fluid-card-fill);
-  margin-bottom: 8px;
-  transition: background var(--motion-fast) ease, border-color var(--motion-fast) ease;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--fluid-divider, var(--fluid-card-border));
+  transition: background var(--motion-fast) ease;
+}
+.cinema-episode-row:last-child {
+  border-bottom: 0;
 }
 .cinema-episode-row:hover {
   background: var(--fluid-card-hover);
 }
 .cinema-episode-row--resume {
-  border-color: color-mix(in srgb, var(--accent-primary) 55%, var(--fluid-card-border));
-  background: color-mix(in srgb, var(--accent-primary) 8%, var(--fluid-card-fill));
+  background: color-mix(in srgb, var(--accent-primary) 7%, var(--fluid-card-fill));
 }
 .cinema-episode-main {
   flex: 1;
   min-width: 0;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 9px;
   border: 0;
   background: transparent;
   color: var(--text-primary);
   text-align: left;
-  padding: 6px 4px;
+  padding: 6px 2px;
   cursor: pointer;
 }
 .cinema-episode-no {
   font-weight: 700;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--accent-primary);
-  min-width: 34px;
+  min-width: 32px;
   flex-shrink: 0;
 }
 .cinema-episode-title {
@@ -351,11 +359,11 @@ function seasonLabel(season: number): string {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-size: 13px;
+  font-size: 12.5px;
 }
 .cinema-episode-meta {
   color: var(--text-tertiary);
-  font-size: 11.5px;
+  font-size: 11px;
   flex-shrink: 0;
 }
 .cinema-episode-actions {
@@ -369,11 +377,11 @@ function seasonLabel(season: number): string {
   align-items: center;
   gap: 4px;
   border: 1px solid var(--fluid-card-border);
-  background: transparent;
+  background: var(--fluid-card-fill);
   color: var(--text-secondary);
-  border-radius: var(--radius-sm);
-  padding: 4px 8px;
-  font-size: 11.5px;
+  border-radius: 7px;
+  padding: 3px 7px;
+  font-size: 11px;
   font-weight: 600;
   cursor: pointer;
 }
@@ -382,40 +390,42 @@ function seasonLabel(season: number): string {
   border-color: var(--accent-primary);
 }
 .cinema-alert {
-  background: var(--fluid-card-fill);
+  background: var(--fluid-card-item-fill);
   color: var(--accent-primary);
   border: 1px solid var(--fluid-card-border);
-  border-radius: var(--radius-md);
-  padding: 10px 14px;
-  font-size: 12.5px;
-  margin: 12px 0;
+  border-radius: 10px;
+  padding: 8px 12px;
+  font-size: 12px;
+  margin: 8px 0;
 }
 .cinema-tmdb-panel {
-  margin: 14px 0 4px;
-  padding: 10px 0 0;
-  border-top: 1px solid var(--stroke-subtle);
+  margin: 10px 0 2px;
+  padding: 8px 0 0;
+  border-top: 1px solid var(--fluid-divider, var(--fluid-card-border));
   font-size: 12px;
 }
 .cinema-tmdb-panel summary {
   cursor: pointer;
-  font-weight: 650;
+  font-weight: 600;
   color: var(--text-primary);
-  padding: 4px 0;
+  padding: 3px 0;
 }
 .cinema-tmdb-form {
   display: flex;
   gap: 8px;
   flex-wrap: wrap;
-  margin: 10px 0;
+  margin: 8px 0 2px;
 }
 .cinema-tmdb-form input {
   min-width: 170px;
   flex: 1;
-  border: 1px solid var(--stroke-subtle);
+  height: 32px;
+  border: 1px solid var(--fluid-card-border);
   border-radius: 8px;
-  background: var(--surface-base);
+  background: var(--fluid-card-item-fill);
   color: var(--text-primary);
-  padding: 8px;
+  padding: 0 10px;
+  font-size: 12.5px;
 }
 @media (max-width: 640px) {
   .cinema-episode-row {
@@ -424,7 +434,7 @@ function seasonLabel(season: number): string {
   }
   .cinema-episode-actions {
     justify-content: flex-end;
-    padding-bottom: 2px;
+    padding-bottom: 4px;
   }
 }
 @media (prefers-reduced-motion: reduce) {

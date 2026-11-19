@@ -188,7 +188,7 @@ onMounted(() => {
   <div class="person-shares-panel">
     <div class="person-shares-head">
       <div>
-        <h4><Share2 :size="15" /> 宝宝 / 家人自动只读共享视图</h4>
+        <h4><Share2 :size="14" /> 宝宝 / 家人自动只读共享视图</h4>
         <p>将指定人物自动聚类流只读授权给家庭成员，后续备份的新照片会自动出现，无需手动挑图或复制文件。</p>
       </div>
     </div>
@@ -239,11 +239,11 @@ onMounted(() => {
     </div>
 
     <IsleModal v-if="activeShare" :title="activeShare.label" size="wide" @close="activeShare = null">
-      <template #icon><Users :size="17" /></template>
+      <template #icon><Users :size="16" /></template>
       <div v-if="previewAsset" class="shared-asset-preview">
         <div class="shared-asset-preview-bar">
           <strong>{{ previewAsset.name }}</strong>
-          <button type="button" class="person-mini-close" @click="previewAsset = null"><X :size="14" /> 返回缩略图</button>
+          <button type="button" class="person-mini-close" @click="previewAsset = null"><X :size="13" /> 返回缩略图</button>
         </div>
         <div class="shared-asset-stage">
           <img
@@ -283,93 +283,96 @@ onMounted(() => {
 
 <style scoped>
 .person-shares-panel {
-  margin-top: 8px;
-  padding: 16px 18px;
-  border-radius: 16px;
-  border: 1px solid var(--fluid-card-border, rgba(0, 0, 0, 0.08));
-  background: var(--fluid-card-item-fill, rgba(255, 255, 255, 0.65));
+  margin-top: 6px;
+  padding: 13px 15px;
+  border-radius: 14px;
+  border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-fill);
+  box-shadow: var(--fluid-card-shadow);
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 10px;
 }
 .person-shares-head h4 {
-  margin: 0 0 4px;
-  font-size: 14.5px;
+  margin: 0 0 3px;
+  font-size: 13.5px;
+  font-weight: 650;
   display: flex;
   align-items: center;
   gap: 6px;
 }
 .person-shares-head p {
   margin: 0;
-  font-size: 12.5px;
-  color: var(--text-secondary, #6e6e73);
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 .person-share-create-bar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 .person-share-input {
-  padding: 6px 10px;
-  border-radius: 10px;
-  border: 1px solid var(--fluid-card-border, rgba(0, 0, 0, 0.14));
-  background: var(--fluid-card-fill, #fff);
+  height: 30px;
+  padding: 0 9px;
+  border-radius: 8px;
+  border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-item-fill);
   color: inherit;
-  font-size: 12.5px;
+  font-size: 12px;
 }
 .person-share-group {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 .person-share-group > strong {
-  font-size: 12.5px;
-  color: var(--text-secondary, #6e6e73);
+  font-size: 12px;
+  color: var(--text-secondary);
 }
 .person-share-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  gap: 8px;
 }
 .person-share-card {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
-  padding: 10px 14px;
-  border-radius: 12px;
-  border: 1px solid var(--fluid-card-border, rgba(0, 0, 0, 0.08));
-  background: var(--fluid-card-fill, rgba(255, 255, 255, 0.8));
+  gap: 8px;
+  padding: 9px 12px;
+  border-radius: 10px;
+  border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-item-fill);
 }
 .person-share-card strong {
   display: block;
-  font-size: 13.5px;
+  font-size: 13px;
 }
 .person-share-card small {
-  font-size: 11.5px;
-  color: var(--text-secondary, #6e6e73);
+  font-size: 11px;
+  color: var(--text-secondary);
 }
 .person-share-card-actions {
   display: flex;
-  gap: 6px;
+  gap: 5px;
 }
 .shared-assets-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(auto-fill, minmax(112px, 1fr));
+  gap: 6px;
   max-height: 62vh;
   overflow-y: auto;
 }
 .shared-asset-tile {
   position: relative;
   aspect-ratio: 1;
-  border: none;
-  border-radius: 10px;
+  border: 1px solid var(--fluid-card-border);
+  border-radius: 8px;
   overflow: hidden;
   padding: 0;
   cursor: pointer;
-  background: rgba(120, 120, 128, 0.14);
+  background: var(--fluid-card-item-fill);
 }
 .shared-asset-tile img {
   width: 100%;
@@ -378,9 +381,9 @@ onMounted(() => {
 }
 .shared-live-tag {
   position: absolute;
-  top: 6px;
-  left: 6px;
-  padding: 2px 6px;
+  top: 5px;
+  left: 5px;
+  padding: 1px 5px;
   border-radius: 999px;
   background: rgba(0, 0, 0, 0.65);
   color: #fff;
@@ -391,7 +394,7 @@ onMounted(() => {
   position: relative;
   height: 58vh;
   background: #000;
-  border-radius: 12px;
+  border-radius: 10px;
   overflow: hidden;
   display: flex;
   align-items: center;
@@ -413,17 +416,18 @@ onMounted(() => {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 5px 10px;
-  border-radius: 8px;
-  border: 1px solid rgba(120, 120, 128, 0.25);
-  background: transparent;
+  padding: 4px 9px;
+  border-radius: 7px;
+  border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-item-fill);
   color: inherit;
+  font-size: 12px;
   cursor: pointer;
 }
 .shared-empty-note {
-  padding: 28px;
+  padding: 22px;
   text-align: center;
-  font-size: 13px;
-  color: var(--text-secondary, #6e6e73);
+  font-size: 12.5px;
+  color: var(--text-secondary);
 }
 </style>

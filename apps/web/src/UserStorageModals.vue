@@ -75,7 +75,6 @@ const emit = defineEmits<{
 </script>
 
 <template>
-  <!-- MODAL 1: 分配存储目录 -->
   <IsleModal
     :model-value="showAllocModal"
     title="为用户分配存储目录"
@@ -155,7 +154,6 @@ const emit = defineEmits<{
     </template>
   </IsleModal>
 
-  <!-- MODAL 2: 旧目录 → 新目录数据迁移向导 -->
   <IsleModal
     :model-value="showMigrateModal"
     title="旧目录 → 新目录数据迁移向导"
@@ -171,7 +169,7 @@ const emit = defineEmits<{
           <span class="node-tag">旧目录</span>
           <strong>{{ migrateSourceName }}</strong>
         </div>
-        <ArrowRightLeft :size="16" class="route-arrow" />
+        <ArrowRightLeft :size="15" class="route-arrow" />
         <div class="route-node is-target">
           <span class="node-tag">新目录</span>
           <strong>{{ migrateTargetName }}</strong>
@@ -184,15 +182,15 @@ const emit = defineEmits<{
         <div class="status-header">
           <CheckCircle2
             v-if="migrateStatus.phase === 'completed' || migrateStatus.phase === 'ready_to_cleanup'"
-            :size="16"
+            :size="15"
             class="status-icon ok"
           />
           <AlertTriangle
             v-else-if="migrateStatus.phase === 'failed'"
-            :size="16"
+            :size="15"
             class="status-icon err"
           />
-          <RefreshCw v-else :size="16" class="status-icon spin" />
+          <RefreshCw v-else :size="15" class="status-icon spin" />
           <strong>{{ migrationPhaseLabel(migrateStatus.phase) }}</strong>
         </div>
 
@@ -365,20 +363,20 @@ const emit = defineEmits<{
 .modal-form {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 11px;
 }
 .form-field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 5px;
 }
 .form-row-two {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
 }
 .field-label {
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -388,34 +386,35 @@ const emit = defineEmits<{
   color: var(--text-secondary);
 }
 .field-hint.warn {
-  color: var(--warning, #ff9500);
+  color: var(--warning, #d97706);
 }
 .isle-input {
+  height: 34px;
   border: 1px solid var(--fluid-card-border);
-  border-radius: 10px;
-  padding: 7px 11px;
-  font-size: 13px;
-  background: var(--fluid-card-fill);
+  border-radius: 9px;
+  padding: 0 11px;
+  font-size: 12.5px;
+  background: var(--fluid-card-item-fill);
   color: var(--text-primary);
   outline: none;
 }
 .isle-input:focus {
-  border-color: var(--accent, #007aff);
+  border-color: var(--accent-primary, #2563eb);
 }
 .quota-input-row,
 .checkbox-group,
 .quota-presets {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 .preset-chip {
   border: 1px solid var(--fluid-card-border);
-  background: var(--fluid-card-fill);
+  background: var(--fluid-card-item-fill);
   border-radius: 999px;
-  padding: 3px 9px;
-  font-size: 11.5px;
+  padding: 3px 8px;
+  font-size: 11px;
   cursor: pointer;
   color: var(--text-primary);
 }
@@ -423,106 +422,106 @@ const emit = defineEmits<{
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 6px 12px;
+  padding: 5px 10px;
   border-radius: 999px;
   border: 1px solid var(--fluid-card-border);
-  background: var(--fluid-card-fill);
-  font-size: 12.5px;
+  background: var(--fluid-card-item-fill);
+  font-size: 12px;
   cursor: pointer;
 }
 .migration-route-pill {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 12px 16px;
-  border-radius: 14px;
-  background: rgba(0, 122, 255, 0.07);
-  border: 1px solid rgba(0, 122, 255, 0.2);
+  gap: 10px;
+  padding: 9px 13px;
+  border-radius: 11px;
+  background: color-mix(in srgb, var(--accent-primary) 7%, var(--fluid-card-top));
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 24%, var(--fluid-card-border));
 }
 .route-node {
   display: flex;
   flex-direction: column;
-  gap: 2px;
-  font-size: 13px;
+  gap: 1px;
+  font-size: 12.5px;
 }
 .node-tag {
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--text-secondary);
 }
 .route-arrow {
-  color: var(--accent, #007aff);
+  color: var(--accent-primary, #2563eb);
   flex-shrink: 0;
 }
 .mode-cards {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 .mode-card {
   display: flex;
   align-items: flex-start;
-  gap: 10px;
-  padding: 10px 12px;
-  border-radius: 12px;
+  gap: 8px;
+  padding: 9px 11px;
+  border-radius: 10px;
   border: 1px solid var(--fluid-card-border);
-  background: var(--fluid-card-fill);
+  background: var(--fluid-card-item-fill);
   cursor: pointer;
 }
 .mode-card.active {
-  border-color: var(--accent, #007aff);
-  background: rgba(0, 122, 255, 0.06);
+  border-color: var(--accent-primary, #2563eb);
+  background: color-mix(in srgb, var(--accent-primary) 7%, var(--fluid-card-top));
 }
 .mode-card strong {
   display: block;
-  font-size: 13px;
-  margin-bottom: 2px;
+  font-size: 12.5px;
+  margin-bottom: 1px;
 }
 .mode-card small {
-  font-size: 11.5px;
+  font-size: 11px;
   color: var(--text-secondary);
 }
 .migration-status-card {
-  padding: 12px 14px;
-  border-radius: 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
   border: 1px solid var(--fluid-card-border);
-  background: var(--fluid-card-fill);
+  background: var(--fluid-card-item-fill);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 .status-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 13px;
+  gap: 7px;
+  font-size: 12.5px;
 }
 .status-icon.ok {
-  color: #34c759;
+  color: #10b981;
 }
 .status-icon.err {
-  color: #ff3b30;
+  color: #ef4444;
 }
 .status-icon.spin {
-  color: var(--accent, #007aff);
+  color: var(--accent-primary, #2563eb);
   animation: spin 1.2s linear infinite;
 }
 .capacity-bar-track {
   width: 100%;
   height: 6px;
   border-radius: 999px;
-  background: var(--stroke-subtle, rgba(120, 120, 128, 0.16));
+  background: var(--fluid-card-border);
   overflow: hidden;
 }
 .capacity-bar-fill {
   height: 100%;
   border-radius: 999px;
-  background: linear-gradient(90deg, var(--accent, #007aff), #32ade6);
+  background: var(--accent-primary, #2563eb);
 }
 .status-error-detail {
   margin: 0;
-  font-size: 12px;
-  color: #ff3b30;
+  font-size: 11.5px;
+  color: #dc2626;
 }
 @keyframes spin {
   to {

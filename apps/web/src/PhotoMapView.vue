@@ -1,7 +1,4 @@
 <script setup lang="ts">
-// Map view for located photos: Leaflet grid clusters with an honest
-// degradation path — when basemap tiles are unreachable the map drops to a
-// dot-matrix view and says so, and the tile server stays user-configurable.
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { computed, nextTick, onBeforeUnmount, onMounted, ref } from "vue";
@@ -68,12 +65,8 @@ let geoRequest=0;
 let disposed=false;
 let basemapRetryTimer:number|undefined;
 let pendingFocus:{lat:number;lon:number}|null=null;
-// Rendered bubbles indexed by the clusters' stable grid-cell key, so a pan
-// can add/remove markers incrementally instead of rebuilding the layer.
 const markersByKey=new Map<string,L.Marker>();
 let renderedZoom=-1;
-// Defensive ceiling: even inside one viewport a pathological point spread
-// can produce more bubbles than a page should hold at once.
 const maxVisibleMarkers=2000;
 const viewportMargin=0.25;
 const markerOverflow=ref(false);
@@ -145,8 +138,6 @@ async function retryBasemap(){
   basemapRetrying.value=true;
   if(mapSource.value==="tianditu")await refreshMapStatus();
   attachTileLayer();
-  // A retry needs fresh tile fetches; success arrives asynchronously and
-  // clears the flag via tileload or re-fails via degradeBasemap.
   if(basemapRetryTimer!==undefined)clearTimeout(basemapRetryTimer);
   basemapRetryTimer=window.setTimeout(()=>{
     basemapRetryTimer=undefined;
@@ -218,10 +209,6 @@ function createClusterMarker(cluster:GeoCluster,key:string){
   marker.on("click",()=>void openCluster(cluster,key));
   return marker;
 }
-// Clustering runs over all points every time (O(n), cheap); only the marker
-// layer is view-bound. A zoom change alters cluster granularity, so the
-// layer rebuilds from scratch; a pan keeps granularity, so markers inside
-// the previous view are reused and only the ones crossing the edge move.
 function renderClusters(rebuild=false){
   if(!map)return;
   const zoom=map.getZoom();
@@ -253,8 +240,6 @@ async function openCluster(cluster:GeoCluster,key?:string){
     activeClusterKey.value=key??(map?clusterCellKey(cluster,map.getZoom()):"");
     renderClusters(true);
     try{
-      // The endpoint caps id lists at 120; geo points arrive newest-first so
-      // the visible strip is the newest slice and says so when truncated.
       const ids=cluster.items.slice(0,120).map(item=>item.id);
       const assets=await props.transport.loadAssetsByIds(ids);
       strip.value=assets;
@@ -290,7 +275,6 @@ function stepCluster(delta:number){
   void openCluster(next,nextKey);
 }
 
-// Jump target for "view on map" from the photo viewer.
 function focusAsset(lat:number,lon:number){
   if(!map){pendingFocus={lat,lon};return}
   map.setView([lat,lon],Math.min(18,Math.max(map.getZoom(),13)),{animate:true});
@@ -325,13 +309,8 @@ async function loadGeo(){
     total.value=result.total;
     truncated.value=result.truncated;
     putMetadata(geoCacheKey.value,{points:result.points,total:result.total,truncated:result.truncated});
-    // An initial empty library may gain GPS photos on a later refresh.
-    // Fit bounds whenever a new Leaflet instance is created, not just on
-    // the first successful (possibly empty) API response.
     const needsFit=!map;
     geoLoaded.value=true;
-    // The canvas is hidden until a successful response. Wait for Vue to
-    // display it before creating Leaflet, including a retry after an error.
     await nextTick();
     if(disposed||request!==geoRequest)return;
     if(result.points.length>0&&!map&&mapElement.value){
@@ -365,7 +344,6 @@ async function loadGeo(){
       destroyMarkerLayer();tileLayer?.remove();tileLayer=undefined;
       map.remove();map=undefined;renderedZoom=-1;
     }
-    // Point data changed, so reused markers could hold stale click targets.
     renderClusters(true);
   }catch(error){
     if(!disposed&&request===geoRequest)geoError.value=describePhotoMapFailure(error);
@@ -391,15 +369,17 @@ onBeforeUnmount(()=>{
   <div class="photo-map">
     <div class="photo-map-toolbar">
       <span class="photo-map-status"><MapPin :size="14"/> {{geoStatusLabel}}</span>
-      <IsleButton variant="glass" size="sm" :loading="geoLoading" @click="loadGeo">
-        <template #icon><RefreshCw :size="13"/></template> {{ geoLoading ? "读取中…" : "刷新位置" }}
-      </IsleButton>
-      <IsleButton variant="glass" size="sm" :class="{chosen:settingsOpen}" @click="settingsOpen=!settingsOpen">
-        <template #icon><Settings2 :size="14"/></template> 地图设置
-      </IsleButton>
+      <div class="photo-map-toolbar-actions">
+        <IsleButton variant="glass" size="sm" :loading="geoLoading" @click="loadGeo">
+          <template #icon><RefreshCw :size="13"/></template> {{ geoLoading ? "读取中…" : "刷新位置" }}
+        </IsleButton>
+        <IsleButton variant="glass" size="sm" :selected="settingsOpen" @click="settingsOpen=!settingsOpen">
+          <template #icon><Settings2 :size="13"/></template> 地图设置
+        </IsleButton>
+      </div>
     </div>
     <form v-if="settingsOpen" class="photo-map-tile-form" @submit.prevent="applyTileURL">
-      <AppleSelect v-model="mapSourceInput" :options="mapSourceOptions" aria-label="地图来源" />
+      <AppleSelect v-model="mapSourceInput" size="sm" :options="mapSourceOptions" aria-label="地图来源" />
       <span v-if="mapSourceInput==='tianditu'" class="photo-map-status">
         {{ tiandituConfigured?'已在 Mac 启用天地图底图':(mapStatusError?'无法读取地图配置':'请在 Mac 端「设置 → 媒体服务」填写天地图 Key') }}
       </span>
@@ -429,6 +409,7 @@ onBeforeUnmount(()=>{
     </IsleBanner>
     <IsleEmpty
       v-if="geoError&&!geoLoaded"
+      card
       :icon="MapPin"
       title="位置地图暂不可用"
       :description="geoError"
@@ -445,6 +426,7 @@ onBeforeUnmount(()=>{
     </IsleBanner>
     <IsleEmpty
       v-if="geoLoaded&&total===0"
+      card
       :icon="MapPin"
       title="还没有带位置信息的照片"
       description="带 GPS 的照片（手机拍摄、相机开启定位）和 iPhone 视频会出现在这里。已入库的旧照片会在后台自动补齐位置信息。"
@@ -454,10 +436,10 @@ onBeforeUnmount(()=>{
       <div class="photo-map-strip-head">
         <span class="photo-map-strip-title">{{stripLabel}}</span>
         <div class="photo-map-strip-actions">
-          <button type="button" class="photo-map-strip-btn" title="上一处足迹" @click="stepCluster(-1)"><ChevronLeft :size="15"/></button>
-          <button type="button" class="photo-map-strip-btn" title="下一处足迹" @click="stepCluster(1)"><ChevronRight :size="15"/></button>
-          <button v-if="activeCluster&&activeCluster.count>1" type="button" class="photo-map-strip-btn" title="放大此区域" @click="zoomIntoActiveCluster"><ZoomIn :size="14"/> 放大此区域</button>
-          <button type="button" class="photo-map-strip-btn" title="收起" @click="closeStrip"><X :size="14"/></button>
+          <button type="button" class="photo-map-strip-btn" title="上一处足迹" @click="stepCluster(-1)"><ChevronLeft :size="14"/></button>
+          <button type="button" class="photo-map-strip-btn" title="下一处足迹" @click="stepCluster(1)"><ChevronRight :size="14"/></button>
+          <button v-if="activeCluster&&activeCluster.count>1" type="button" class="photo-map-strip-btn" title="放大此区域" @click="zoomIntoActiveCluster"><ZoomIn :size="13"/> 放大此区域</button>
+          <button type="button" class="photo-map-strip-btn" title="收起" @click="closeStrip"><X :size="13"/></button>
         </div>
       </div>
       <div class="photo-map-strip-grid">
@@ -471,30 +453,31 @@ onBeforeUnmount(()=>{
 </template>
 
 <style scoped>
-.photo-map{display:flex;flex-direction:column;gap:10px;margin-bottom:16px}
-.photo-map-toolbar{display:flex;align-items:center;justify-content:space-between;gap:10px;flex-wrap:wrap;color:var(--text-secondary);font-size:12px}
-.photo-map-status{display:inline-flex;align-items:center;gap:6px}
-.photo-map-tile-form{display:flex;gap:8px;flex-wrap:wrap}
-.photo-map-tile-form input{flex:1;min-width:220px;border:1px solid var(--fluid-card-border);border-radius:var(--radius-sm);background:var(--fluid-card-fill);color:var(--text-primary);padding:8px 10px;font-size:12px}
-.photo-map-tile-form button{border:1px solid var(--fluid-card-border);border-radius:var(--radius-sm);background:var(--fluid-card-fill);color:var(--text-primary);padding:8px 12px;font-size:12px}
-.photo-map-canvas{height:min(64vh,620px);border-radius:var(--radius-md);border:1px solid var(--fluid-card-border);background:#0d1117;z-index:0}
-.photo-map-strip{border:1px solid var(--fluid-card-border);border-radius:var(--radius-md);background:var(--fluid-card-fill);overflow:hidden;box-shadow:0 8px 28px rgba(0,0,0,.18)}
-.photo-map-strip-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 14px;color:var(--text-primary);font-size:13px;font-weight:600;border-bottom:1px solid var(--fluid-card-border)}
+.photo-map{display:flex;flex-direction:column;gap:8px;margin-bottom:14px}
+.photo-map-toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;color:var(--text-secondary);font-size:12px}
+.photo-map-toolbar-actions{display:inline-flex;align-items:center;gap:6px}
+.photo-map-status{display:inline-flex;align-items:center;gap:5px}
+.photo-map-tile-form{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 12px;border-radius:12px;border:1px solid var(--fluid-card-border);background:var(--fluid-card-fill)}
+.photo-map-tile-form input{flex:1;min-width:200px;height:30px;border:1px solid var(--fluid-card-border);border-radius:8px;background:var(--fluid-card-item-fill);color:var(--text-primary);padding:0 10px;font-size:12px}
+.photo-map-canvas{height:min(64vh,600px);border-radius:14px;border:1px solid var(--fluid-card-border);background:#0d1117;z-index:0}
+.photo-map-strip{border:1px solid var(--fluid-card-border);border-radius:14px;background:var(--fluid-card-fill);overflow:hidden;box-shadow:var(--fluid-card-shadow)}
+.photo-map-strip-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;color:var(--text-primary);font-size:12.5px;font-weight:600;border-bottom:1px solid var(--fluid-divider,var(--fluid-card-border))}
 .photo-map-strip-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.photo-map-strip-actions{display:inline-flex;align-items:center;gap:6px}
-.photo-map-strip-btn{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--fluid-card-border);border-radius:var(--radius-sm);background:var(--fluid-card-fill);color:var(--text-secondary);padding:4px 8px;font-size:12px;cursor:pointer}
-.photo-map-strip-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(104px,1fr));gap:10px;max-height:280px;overflow-y:auto;padding:12px}
-.photo-map-strip-tile{display:grid;gap:4px;justify-items:center;border:none;background:none;color:var(--text-secondary);font-size:11px;padding:0;cursor:pointer}
-.photo-map-strip-tile img{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:var(--radius-sm);display:block;background:rgba(255,255,255,.06)}
+.photo-map-strip-actions{display:inline-flex;align-items:center;gap:5px}
+.photo-map-strip-btn{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--fluid-card-border);border-radius:7px;background:var(--fluid-card-item-fill);color:var(--text-secondary);padding:4px 8px;font-size:11.5px;cursor:pointer}
+.photo-map-strip-btn:hover{color:var(--text-primary);background:var(--fluid-card-hover)}
+.photo-map-strip-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;max-height:260px;overflow-y:auto;padding:10px}
+.photo-map-strip-tile{display:grid;gap:3px;justify-items:center;border:none;background:none;color:var(--text-secondary);font-size:11px;padding:0;cursor:pointer}
+.photo-map-strip-tile img{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:8px;border:1px solid var(--fluid-card-border);display:block;background:var(--surface-raised)}
 :global(.photo-map-pin-wrapper){background:transparent;border:none}
 :global(.photo-map-pin){position:relative;width:54px;height:60px;display:flex;justify-content:center;align-items:flex-start;cursor:pointer}
 :global(.photo-map-pin-frame){width:46px;height:46px;margin-top:4px;border-radius:11px;padding:2px;background:#fff;box-shadow:0 4px 12px rgba(0,0,0,.32);overflow:hidden;transition:transform .16s ease,box-shadow .16s ease,background .16s ease}
-:global(.photo-map-pin.active .photo-map-pin-frame){transform:scale(1.1);background:#5865f2;box-shadow:0 6px 16px rgba(88,101,242,.5)}
+:global(.photo-map-pin.active .photo-map-pin-frame){transform:scale(1.08);background:var(--accent-primary,#2563eb);box-shadow:0 6px 16px rgba(37,99,235,.45)}
 :global(.photo-map-pin-frame img){width:100%;height:100%;object-fit:cover;border-radius:9px;display:block;background:#1e293b}
 :global(.photo-map-pin-badge){position:absolute;top:0;right:1px;min-width:20px;padding:1px 5px;border-radius:999px;background:#1e293b;color:#fff;font-size:10.5px;font-weight:800;line-height:1.3;text-align:center;border:1.5px solid #fff;box-shadow:0 2px 5px rgba(0,0,0,.3)}
-:global(.photo-map-pin.active .photo-map-pin-badge){background:#5865f2}
+:global(.photo-map-pin.active .photo-map-pin-badge){background:var(--accent-primary,#2563eb)}
 :global(.photo-map-pin-tail){position:absolute;bottom:6px;width:10px;height:10px;background:#fff;border-radius:2px;transform:rotate(45deg);box-shadow:2px 2px 4px rgba(0,0,0,.22);z-index:-1}
-:global(.photo-map-pin.active .photo-map-pin-tail){background:#5865f2}
+:global(.photo-map-pin.active .photo-map-pin-tail){background:var(--accent-primary,#2563eb)}
 @media(prefers-reduced-motion:reduce){
  :global(.photo-map-pin-frame){transition:none}
 }

@@ -6,6 +6,9 @@ import {
 } from "lucide-vue-next";
 import RecentSearchPopover from "./RecentSearchPopover.vue";
 import IsleCharts from "./IsleCharts.vue";
+import IsleBadge from "./IsleBadge.vue";
+import IsleButton from "./IsleButton.vue";
+import IslePageHeader from "./IslePageHeader.vue";
 import { ISLE_CHART_COLORS } from "./isleChartsMath.ts";
 import {
   buildHostDiskSegments,
@@ -175,21 +178,19 @@ onUnmounted(() => window.removeEventListener("pointerdown", handleOutsideSearchP
 
 <template>
 <div class="content isle-cascade">
-  <!-- 1. Hero with warm welcoming & integrated Spotlight Search -->
+  <!-- 1. Compact Gallery Hero with integrated Spotlight Search -->
   <div class="hero">
     <div class="hero-text">
-      <p class="eyebrow">轻屿家庭数字空间</p>
-      <h1 v-if="identity.isAdmin">管理你的家庭空间，<br /><span>查看这台 Mac 上的轻屿。</span></h1>
-      <h1 v-else>欢迎回来，{{ identity.username }}。<br /><span>你的文件与回忆都在这里。</span></h1>
-      <p class="hero-desc">{{identity.isAdmin?'查看本机状态、成员空间与家庭影音。':'浏览已授权的文件、相册与家庭影院。'}}</p>
+      <h1 v-if="identity.isAdmin">管理你的家庭空间，<span>查看这台 Mac 上的轻屿。</span></h1>
+      <h1 v-else>欢迎回来，{{ identity.username }}。<span>你的文件与回忆都在这里。</span></h1>
       <div ref="searchBarRef" class="hero-search-bar" style="position: relative">
-        <Search :size="16" class="search-icon" />
+        <Search :size="15" class="search-icon" />
         <input
           ref="searchInputRef"
           v-model="query"
           maxlength="128"
           type="search"
-          :placeholder="search.spotlight ? '搜索文件名或正文内容（支持单字/多词）…' : '搜索文件与文件夹（支持单字、空格多词）…'"
+          :placeholder="search.spotlight ? '搜索文件名或正文内容…' : '搜索文件与文件夹…'"
           aria-label="搜索共享目录中的文件和文件夹名称"
           @focus="searchFocused = true"
           @blur="searchFocused = false"
@@ -224,20 +225,21 @@ onUnmounted(() => window.removeEventListener("pointerdown", handleOutsideSearchP
     </div>
   </div>
 
-  <!-- 2. Personal Sanctuaries (Content First!) -->
-  <div class="section-heading apps-heading">
-    <div><h2>数字生活空间</h2><p>跨设备浏览本地文件、相册与家庭影音。</p></div>
-    <span class="planned-tag">本地存储</span>
-  </div>
+  <!-- 2. Personal Sanctuaries -->
+  <IslePageHeader title="数字生活空间" compact>
+    <template #actions>
+      <IsleBadge variant="accent" size="sm">本地原片直连</IsleBadge>
+    </template>
+  </IslePageHeader>
   <div class="sanctuary-grid" :class="{ 'sanctuary-grid--four': !identity.isAdmin }">
     <button type="button" class="sanctuary-card" @click="emit('navigate', 'files')">
-      <div class="sanctuary-icon file"><Folder :size="26" /></div>
+      <div class="sanctuary-icon file"><Folder :size="21" /></div>
       <div class="sanctuary-body">
         <div class="sanctuary-head">
           <h3>私人文件</h3>
-          <ArrowUpRight :size="18" class="feature-arrow" />
+          <ArrowUpRight :size="16" class="feature-arrow" />
         </div>
-        <p>浏览、上传与分享已授权目录文件。</p>
+        <p>浏览、上传与限时分享。</p>
         <div class="sanctuary-footer">
           <span class="sanctuary-chip">即时存取</span>
           <span class="sanctuary-action">浏览文件 &rarr;</span>
@@ -246,13 +248,13 @@ onUnmounted(() => window.removeEventListener("pointerdown", handleOutsideSearchP
     </button>
 
     <button type="button" class="sanctuary-card" @click="emit('navigate', 'photos')">
-      <div class="sanctuary-icon photos"><Images :size="26" /></div>
+      <div class="sanctuary-icon photos"><Images :size="21" /></div>
       <div class="sanctuary-body">
         <div class="sanctuary-head">
           <h3>时光相册</h3>
-          <ArrowUpRight :size="18" class="feature-arrow" />
+          <ArrowUpRight :size="16" class="feature-arrow" />
         </div>
-        <p>按时间线、相册与足迹地图查看原片。</p>
+        <p>时间线、相册与足迹地图。</p>
         <div class="sanctuary-footer">
           <span class="sanctuary-chip">原画保存</span>
           <span class="sanctuary-action">翻阅相册 &rarr;</span>
@@ -261,13 +263,13 @@ onUnmounted(() => window.removeEventListener("pointerdown", handleOutsideSearchP
     </button>
 
     <button type="button" class="sanctuary-card" @click="emit('navigate', 'cinema')">
-      <div class="sanctuary-icon cinema"><Clapperboard :size="26" /></div>
+      <div class="sanctuary-icon cinema"><Clapperboard :size="21" /></div>
       <div class="sanctuary-body">
         <div class="sanctuary-head">
           <h3>私人影院</h3>
-          <ArrowUpRight :size="18" class="feature-arrow" />
+          <ArrowUpRight :size="16" class="feature-arrow" />
         </div>
-        <p>海报墙浏览、外挂字幕与跨端续播。</p>
+        <p>海报墙、外挂字幕与续播。</p>
         <div class="sanctuary-footer">
           <span class="sanctuary-chip">无损串流</span>
           <span class="sanctuary-action">开启放映 &rarr;</span>
@@ -276,13 +278,13 @@ onUnmounted(() => window.removeEventListener("pointerdown", handleOutsideSearchP
     </button>
 
     <button v-if="!identity.isAdmin" type="button" class="sanctuary-card" @click="emit('navigate', 'downloads')">
-      <div class="sanctuary-icon downloads"><ArrowDownToLine :size="26" /></div>
+      <div class="sanctuary-icon downloads"><ArrowDownToLine :size="21" /></div>
       <div class="sanctuary-body">
         <div class="sanctuary-head">
           <h3>下载中心</h3>
-          <ArrowUpRight :size="18" class="feature-arrow" />
+          <ArrowUpRight :size="16" class="feature-arrow" />
         </div>
-        <p>查看与管理个人离线下载任务及保存目录。</p>
+        <p>离线链接与磁力下载管理。</p>
         <div class="sanctuary-footer">
           <span class="sanctuary-chip">进度可见</span>
           <span class="sanctuary-action">打开下载 &rarr;</span>
@@ -293,15 +295,14 @@ onUnmounted(() => window.removeEventListener("pointerdown", handleOutsideSearchP
 
   <!-- 2.5 Home Light-Apps Tile Launcher -->
   <section v-if="showHomeAppsSection" class="home-apps-section" aria-label="家庭轻应用">
-    <div class="section-heading apps-heading">
-      <div>
-        <h2>家庭轻应用</h2>
-        <p>{{ identity.isAdmin ? "一键唤醒已安装的轻应用或管理家族成员访问。" : "已为你授权的家庭工具与实用看板，点击即开。" }}</p>
-      </div>
-      <button type="button" class="home-apps-manage-btn" @click="emit('open-apps-center')">
-        <LayoutDashboard :size="14" /> {{ identity.isAdmin ? "管理应用中心" : "全部应用" }}
-      </button>
-    </div>
+    <IslePageHeader title="家庭轻应用" compact>
+      <template #actions>
+        <IsleButton variant="glass" size="sm" @click="emit('open-apps-center')">
+          <template #icon><LayoutDashboard :size="14" /></template>
+          {{ identity.isAdmin ? "管理应用中心" : "全部应用" }}
+        </IsleButton>
+      </template>
+    </IslePageHeader>
 
     <div v-if="appsState.error" class="home-apps-status" role="status">
       <span>{{ appsState.error }}</span>
@@ -328,17 +329,17 @@ onUnmounted(() => window.removeEventListener("pointerdown", handleOutsideSearchP
               decoding="async"
               @error="markAppIconFailed(app.id)"
             />
-            <Router v-else-if="homeAppCategoryKey(app.category) === 'network'" :size="20" />
-            <Clapperboard v-else-if="homeAppCategoryKey(app.category) === 'media'" :size="20" />
-            <Wallet v-else-if="homeAppCategoryKey(app.category) === 'finance'" :size="20" />
-            <Wrench v-else-if="homeAppCategoryKey(app.category) === 'utility'" :size="20" />
-            <Activity v-else-if="homeAppCategoryKey(app.category) === 'system' || homeAppCategoryKey(app.category) === 'automation'" :size="20" />
-            <Cpu v-else :size="20" />
+            <Router v-else-if="homeAppCategoryKey(app.category) === 'network'" :size="18" />
+            <Clapperboard v-else-if="homeAppCategoryKey(app.category) === 'media'" :size="18" />
+            <Wallet v-else-if="homeAppCategoryKey(app.category) === 'finance'" :size="18" />
+            <Wrench v-else-if="homeAppCategoryKey(app.category) === 'utility'" :size="18" />
+            <Activity v-else-if="homeAppCategoryKey(app.category) === 'system' || homeAppCategoryKey(app.category) === 'automation'" :size="18" />
+            <Cpu v-else :size="18" />
           </div>
           <div class="home-app-meta">
             <div class="home-app-title-row">
               <h3>{{ app.name }}</h3>
-              <ArrowUpRight :size="15" class="home-app-arrow" />
+              <ArrowUpRight :size="14" class="home-app-arrow" />
             </div>
             <span class="home-app-cat-pill">{{ homeAppCategoryLabel(app.category) }}</span>
           </div>
@@ -359,29 +360,41 @@ onUnmounted(() => window.removeEventListener("pointerdown", handleOutsideSearchP
       class="home-apps-guide-tile"
       @click="emit('open-apps-center')"
     >
-      <div class="home-app-icon cat-default"><Sparkles :size="20" /></div>
+      <div class="home-app-icon cat-default"><Sparkles :size="18" /></div>
       <div class="home-apps-guide-copy">
         <h3>安装或添加家庭轻应用</h3>
-        <p>内置 0 MB 纯静态精选模板（家庭网络脉搏、宽带仪表、订阅账本等），进入应用中心即可一键部署。</p>
+        <p>内置零依赖精选模板，进入应用中心即可一键部署。</p>
       </div>
       <span class="sanctuary-action">进入应用中心 &rarr;</span>
     </button>
   </section>
 
-  <!-- 3. Mac Sanctuary Vitality (Warm Consolidated Card) -->
-  <section v-if="!identity.isAdmin" class="account-panel" aria-label="我的家庭空间" style="margin-top:22px">
-    <div class="account-heading"><h2>我的空间</h2></div>
-    <p>仅显示已授权的个人内容；硬盘离线时请联系管理员检查连接。</p>
+  <!-- 3. Member Space Summary -->
+  <section v-if="!identity.isAdmin" class="account-panel" aria-label="我的家庭空间" style="margin-top:16px">
+    <div class="account-heading">
+      <h2>我的空间</h2>
+      <div class="overview-member-head-actions">
+        <button type="button" class="account-action" @click="emit('navigate', 'files')">打开我的文件</button>
+        <button type="button" class="account-action" @click="emit('open-account-settings')">空间与账号</button>
+        <details class="overview-more-menu">
+          <summary aria-label="空间整理工具" title="空间整理工具">···</summary>
+          <div class="overview-more-popover">
+            <button type="button" @click="emit('open-duplicates')"><CopyCheck :size="13" /> 重复文件清理</button>
+            <button type="button" @click="emit('open-similar-photos')"><Sparkles :size="13" /> 相似照片瘦身</button>
+            <button type="button" @click="emit('open-trash')"><Trash2 :size="13" /> 回收站</button>
+          </div>
+        </details>
+      </div>
+    </div>
     <p v-if="personalSpace.error" role="status">{{personalSpace.error}}</p>
     <div v-if="personalSpace.summary" class="account-row overview-personal-summary">
       <div style="flex:1; min-width:0;">
-        <strong>{{personalSpace.summary.locations.length}} 个分类存储位置已配置</strong>
-        <small>{{personalSpace.summary.rootQuotas?.length??0}} 个个人存储目录独立计额，普通成员默认每盘 100 GiB</small>
+        <strong>{{personalSpace.summary.locations.length}} 个分类存储位置 · {{personalSpace.summary.rootQuotas?.length??0}} 个目录独立计额</strong>
         <small v-for="q in personalSpace.summary.rootQuotas??[]" :key="q.rootID+':'+q.rootGeneration">
           {{personalSpace.rootNames?.[q.rootID] || "存储位置"}}：{{q.quotaBytes===null?'不限额':telemetry.bytes(q.quotaBytes)}} · 已用 {{telemetry.bytes(q.accountedBytes)}} · 预占 {{telemetry.bytes(q.reservedBytes)}}
         </small>
         <small>已计入 {{personalSpace.bytes(personalSpace.summary.accountedBytes)}} · 上传预占 {{personalSpace.bytes(personalSpace.summary.reservedBytes)}}</small>
-        <small v-if="!personalSpace.summary.usageComplete">当前仅统计已接入的写入渠道（应用内已入账 / 传输预占），SMB 等直接写盘方式暂未计入，不能作为全部文件实际用量。</small>
+        <small v-if="!personalSpace.summary.usageComplete">仅统计应用内入账与传输预占，SMB 等直接写盘暂未计入。</small>
         <div v-if="personalQuotaCharts.length" class="overview-quota-charts">
           <div v-for="qc in personalQuotaCharts" :key="qc.key" class="overview-quota-chart-card">
             <div class="overview-quota-chart-head">
@@ -391,8 +404,8 @@ onUnmounted(() => window.removeEventListener("pointerdown", handleOutsideSearchP
             <div class="overview-quota-chart-body">
               <IsleCharts
                 kind="donut"
-                :size="52"
-                :stroke-width="5"
+                :size="46"
+                :stroke-width="4.5"
                 :percent="qc.usedPercent"
                 :color="qc.usedPercent >= 90 ? ISLE_CHART_COLORS.rose : ISLE_CHART_COLORS.blue"
                 :aria-label="`${qc.label} 已用 ${qc.usedPercent}%`"
@@ -401,7 +414,7 @@ onUnmounted(() => window.removeEventListener("pointerdown", handleOutsideSearchP
                 kind="segmented"
                 :segments="qc.segments"
                 :total="qc.quotaBytes"
-                :bar-height="10"
+                :bar-height="8"
                 compact-legend
                 :aria-label="`${qc.label} 空间构成：已入账、传输预占与剩余额度`"
               />
@@ -409,13 +422,6 @@ onUnmounted(() => window.removeEventListener("pointerdown", handleOutsideSearchP
           </div>
         </div>
       </div>
-    </div>
-    <div class="hero-actions">
-      <button type="button" class="account-action" @click="emit('navigate', 'files')">打开我的文件</button>
-      <button type="button" class="account-action" @click="emit('open-account-settings')">查看个人空间与账号</button>
-      <button type="button" class="account-action" @click="emit('open-duplicates')"><CopyCheck :size="13" /> 重复文件清理</button>
-      <button type="button" class="account-action" @click="emit('open-similar-photos')"><Sparkles :size="13" /> 相似照片瘦身</button>
-      <button type="button" class="account-action" @click="emit('open-trash')"><Trash2 :size="13" /> 回收站</button>
     </div>
   </section>
 
@@ -442,26 +448,29 @@ onUnmounted(() => window.removeEventListener("pointerdown", handleOutsideSearchP
     <p class="footnote">缺失媒体与上传残留请打开任务中心检查；此概况不代表所有数据已核对。</p>
   </section>
 
-  <div v-if="identity.isAdmin" class="section-heading">
-    <div><h2>轻屿运行体征</h2><p>实时查看宿主 Mac 负载、内存与磁盘余量。</p></div>
-    <button class="refresh" type="button" @click="emit('refresh')" :disabled="telemetry.polling">
-      <RefreshCcw :size="15" :class="{ spinning: telemetry.polling }" /> 刷新状态
-    </button>
-  </div>
+  <!-- 4. Mac Sanctuary Vitality (Locked Equal-Height 4-Card Grid) -->
+  <IslePageHeader v-if="identity.isAdmin" title="轻屿运行体征" compact>
+    <template #actions>
+      <IsleButton variant="glass" size="sm" :disabled="telemetry.polling" @click="emit('refresh')">
+        <template #icon><RefreshCcw :size="15" :class="{ spinning: telemetry.polling }" /></template>
+        刷新状态
+      </IsleButton>
+    </template>
+  </IslePageHeader>
   <div v-if="identity.isAdmin&&telemetry.error" class="error-notice"><WifiOff :size="17" /> 无法读取系统状态：{{ telemetry.error }}。请确认 Mac App 仍在运行。</div>
 
   <section v-if="identity.isAdmin" class="vitality-container">
     <div class="vitality-card">
       <div class="vitality-header">
         <div class="vitality-host">
-          <div class="host-icon-bubble"><Monitor :size="22" /></div>
+          <div class="host-icon-bubble"><Monitor :size="19" /></div>
           <div>
             <strong>{{ telemetry.stats?.architecture ? 'Apple Silicon Mac (' + telemetry.stats.architecture + ')' : '宿主 Mac 设备' }}</strong>
-            <small>{{ telemetry.stats && !telemetry.error ? '正在运行 · 设备状态已更新' : telemetry.error ? '暂时无法获取状态' : telemetry.polling ? '正在读取状态…' : '等待刷新' }}</small>
+            <small>{{ telemetry.stats && !telemetry.error ? '运行平稳 · 实时采样' : telemetry.error ? '暂时无法获取状态' : telemetry.polling ? '正在读取状态…' : '等待刷新' }}</small>
           </div>
         </div>
         <button type="button" class="toggle-specs-btn" @click="emit('update:expanded', !telemetry.expanded)">
-          {{ telemetry.expanded ? "收起详细指标" : "查看硬件详情" }}
+          {{ telemetry.expanded ? "收起指标" : "硬件详情" }}
         </button>
       </div>
 
@@ -469,83 +478,105 @@ onUnmounted(() => window.removeEventListener("pointerdown", handleOutsideSearchP
         <div class="vitality-chip">
           <div class="vitality-chip-top">
             <div>
-              <span class="chip-label"><Activity :size="14" class="chip-icon violet" /> 处理器负载</span>
+              <span class="chip-label"><Activity :size="13" class="chip-icon violet" /> 处理器负载</span>
               <strong class="chip-val">{{ telemetry.stats && !telemetry.error ? (telemetry.cpu == null ? '—' : telemetry.percent(telemetry.cpu) + '%') : '—' }}</strong>
-              <small class="chip-sub">{{ telemetry.stats && !telemetry.error ? (telemetry.stats.cpuCount ?? '—') + ' 个计算核心' : telemetry.error ? '状态暂未取得' : telemetry.polling ? '正在读取状态…' : '等待状态采样' }}</small>
             </div>
             <IsleCharts
               kind="donut"
-              :size="50"
-              :stroke-width="5"
+              :size="42"
+              :stroke-width="4.5"
               :percent="telemetry.stats && !telemetry.error && telemetry.cpu != null ? telemetry.percent(telemetry.cpu) : null"
               :color="ISLE_CHART_COLORS.purple"
               aria-label="处理器负载环形仪表"
             />
           </div>
-          <IsleCharts
-            v-if="cpuSparkPoints.length"
-            kind="sparkline"
-            :points="cpuSparkPoints"
-            :min-bound="0"
-            :max-bound="100"
-            :spark-height="30"
-            :color="ISLE_CHART_COLORS.purple"
-            aria-label="处理器最近采样负载趋势"
-          />
+          <div class="vitality-chip-foot">
+            <IsleCharts
+              v-if="cpuSparkPoints.length"
+              kind="sparkline"
+              :points="cpuSparkPoints"
+              :min-bound="0"
+              :max-bound="100"
+              :spark-height="22"
+              :color="ISLE_CHART_COLORS.purple"
+              aria-label="处理器最近采样负载趋势"
+            />
+            <small class="chip-sub">{{ telemetry.stats && !telemetry.error ? (telemetry.stats.cpuCount ?? '—') + ' 核心实时调度' : telemetry.error ? '状态暂未取得' : '等待采样' }}</small>
+          </div>
         </div>
+
         <div class="vitality-chip">
           <div class="vitality-chip-top">
             <div>
-              <span class="chip-label"><Server :size="14" class="chip-icon blue" /> 内存使用</span>
+              <span class="chip-label"><Server :size="13" class="chip-icon blue" /> 内存使用</span>
               <strong class="chip-val">{{ telemetry.stats && !telemetry.error && telemetry.usedMemory != null ? telemetry.percent(telemetry.usedMemory) + '%' : '—' }}</strong>
-              <small class="chip-sub">{{ telemetry.stats && !telemetry.error ? telemetry.bytes(telemetry.stats.memoryUsed) + ' 已用' : telemetry.error ? '状态暂未取得' : telemetry.polling ? '正在读取状态…' : '等待状态采样' }}</small>
             </div>
             <IsleCharts
               kind="donut"
-              :size="50"
-              :stroke-width="5"
+              :size="42"
+              :stroke-width="4.5"
               :percent="telemetry.stats && !telemetry.error && telemetry.usedMemory != null ? telemetry.percent(telemetry.usedMemory) : null"
               :color="ISLE_CHART_COLORS.blue"
               aria-label="统一内存占比仪表"
             />
           </div>
-          <IsleCharts
-            v-if="memSparkPoints.length"
-            kind="sparkline"
-            :points="memSparkPoints"
-            :min-bound="0"
-            :max-bound="100"
-            :spark-height="30"
-            :color="ISLE_CHART_COLORS.blue"
-            aria-label="内存占用最近采样趋势"
-          />
+          <div class="vitality-chip-foot">
+            <IsleCharts
+              v-if="memSparkPoints.length"
+              kind="sparkline"
+              :points="memSparkPoints"
+              :min-bound="0"
+              :max-bound="100"
+              :spark-height="22"
+              :color="ISLE_CHART_COLORS.blue"
+              aria-label="内存占用最近采样趋势"
+            />
+            <small class="chip-sub">{{ telemetry.stats && !telemetry.error ? telemetry.bytes(telemetry.stats.memoryUsed) + ' 已用' : telemetry.error ? '状态暂未取得' : '等待采样' }}</small>
+          </div>
         </div>
+
         <div class="vitality-chip">
           <div class="vitality-chip-top">
             <div>
-              <span class="chip-label"><HardDrive :size="14" class="chip-icon teal" /> 剩余空间</span>
-              <strong class="chip-val">{{ telemetry.stats && !telemetry.error ? telemetry.bytes(telemetry.stats.diskFree) : telemetry.error ? '暂未取得空间数据' : telemetry.polling ? '读取中…' : '等待采样' }}</strong>
-              <small class="chip-sub">Mac 当前存储设备</small>
+              <span class="chip-label"><HardDrive :size="13" class="chip-icon teal" /> 剩余空间</span>
+              <strong class="chip-val">{{ telemetry.stats && !telemetry.error ? telemetry.bytes(telemetry.stats.diskFree) : telemetry.error ? '暂未取得' : '—' }}</strong>
             </div>
             <IsleCharts
               kind="donut"
-              :size="50"
-              :stroke-width="5"
+              :size="42"
+              :stroke-width="4.5"
               :percent="telemetry.stats && !telemetry.error && telemetry.usedDisk != null ? telemetry.percent(telemetry.usedDisk) : null"
               :color="ISLE_CHART_COLORS.teal"
               aria-label="系统存储磁盘占用环形仪表"
             />
           </div>
+          <div class="vitality-chip-foot">
+            <small class="chip-sub">宿主存储卷可用余量</small>
+          </div>
         </div>
+
         <div class="vitality-chip">
-          <span class="chip-label"><Server :size="14" class="chip-icon blue" /> 文件服务内存</span>
-          <strong class="chip-val">{{ telemetry.stats && !telemetry.error && telemetry.stats.coreRssBytes != null ? telemetry.bytes(telemetry.stats.coreRssBytes) : '—' }}</strong>
-          <small class="chip-sub">{{ telemetry.stats && !telemetry.error && telemetry.stats.coreRssBytes != null ? '仅统计核心服务进程' : '暂时无法获取' }}</small>
+          <div class="vitality-chip-top">
+            <div>
+              <span class="chip-label"><Server :size="13" class="chip-icon blue" /> 文件服务内存</span>
+              <strong class="chip-val">{{ telemetry.stats && !telemetry.error && telemetry.stats.coreRssBytes != null ? telemetry.bytes(telemetry.stats.coreRssBytes) : '—' }}</strong>
+            </div>
+          </div>
+          <div class="vitality-chip-foot">
+            <small class="chip-sub">{{ telemetry.stats && !telemetry.error && telemetry.stats.coreRssBytes != null ? '核心守护常驻占用' : '暂时无法获取' }}</small>
+          </div>
         </div>
+
         <div v-if="telemetry.stats?.power?.available" class="vitality-chip">
-          <span class="chip-label"><ShieldCheck :size="14" class="chip-icon teal" /> 供电与 UPS 守护</span>
-          <strong class="chip-val">{{ telemetry.stats.power.onBattery ? '备用供电 ' + (telemetry.stats.power.percent ?? '—') + '%' : (telemetry.stats.power.upsPresent ? '市电 + UPS 就绪' : '市电直供') }}</strong>
-          <small class="chip-sub">{{ telemetry.stats.power.onBattery ? (telemetry.stats.power.lowBattery ? '低电量保护已启动' : '已自动暂停后台高负载任务') : (telemetry.stats.power.deviceName || '断电联动守护已就绪') }}</small>
+          <div class="vitality-chip-top">
+            <div>
+              <span class="chip-label"><ShieldCheck :size="13" class="chip-icon teal" /> 供电守护</span>
+              <strong class="chip-val">{{ telemetry.stats.power.onBattery ? '电池 ' + (telemetry.stats.power.percent ?? '—') + '%' : (telemetry.stats.power.upsPresent ? '市电 + UPS' : '市电直供') }}</strong>
+            </div>
+          </div>
+          <div class="vitality-chip-foot">
+            <small class="chip-sub">{{ telemetry.stats.power.onBattery ? (telemetry.stats.power.lowBattery ? '低电量保护已启动' : '已暂停后台高负载任务') : (telemetry.stats.power.deviceName || '断电守护就绪') }}</small>
+          </div>
         </div>
       </div>
 
@@ -559,7 +590,7 @@ onUnmounted(() => window.removeEventListener("pointerdown", handleOutsideSearchP
             kind="segmented"
             :segments="hostMemorySegments"
             :total="telemetry.stats?.memoryTotal ?? 0"
-            :bar-height="10"
+            :bar-height="8"
             compact-legend
             aria-label="轻屿服务内存、系统其他占用与可用内存比例"
           />
@@ -573,14 +604,13 @@ onUnmounted(() => window.removeEventListener("pointerdown", handleOutsideSearchP
             kind="segmented"
             :segments="hostDiskSegments"
             :total="telemetry.stats?.diskTotal ?? 0"
-            :bar-height="10"
+            :bar-height="8"
             compact-legend
             aria-label="宿主存储已用与可用空间比例"
           />
         </div>
       </div>
 
-      <!-- Optional expandable detailed specs for power users -->
       <div v-if="telemetry.expanded" class="vitality-detail-grid">
         <div class="spec-detail-item">
           <div class="spec-detail-top"><span>CPU 利用率</span><span>{{ telemetry.cpu == null ? '—' : telemetry.percent(telemetry.cpu) + '%' }}</span></div>
@@ -592,7 +622,7 @@ onUnmounted(() => window.removeEventListener("pointerdown", handleOutsideSearchP
               { key: 'cpu-idle', label: '空闲', value: Math.max(0, 100 - telemetry.percent(telemetry.cpu)), color: ISLE_CHART_COLORS.slate },
             ]"
             :total="100"
-            :bar-height="8"
+            :bar-height="7"
             compact-legend
             aria-label="CPU 负载比例"
           />
@@ -604,61 +634,139 @@ onUnmounted(() => window.removeEventListener("pointerdown", handleOutsideSearchP
     </div>
   </section>
 
-  <div class="footnote"><ShieldCheck :size="15" /> <span>所有原片与文件均保存在本地 Mac。</span></div>
+  <div class="footnote"><ShieldCheck :size="14" /> <span>原片与文件均存放于本地 Mac。</span></div>
 </div>
 </template>
 
 <style scoped>
 .vitality-chip {
+  height: 100%;
+  min-height: 116px;
   justify-content: space-between;
   gap: 8px;
 }
 .vitality-chip-top {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 10px;
 }
 .vitality-chip-top > div:first-child {
   display: flex;
   flex-direction: column;
-  gap: 3px;
+  gap: 4px;
+  min-width: 0;
+}
+.vitality-chip-foot {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   min-width: 0;
 }
 .vitality-breakdown-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 14px 18px;
-  padding-top: 14px;
-  border-top: 1px solid color-mix(in srgb, var(--fluid-rim) 35%, transparent);
+  gap: 12px 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--fluid-divider, var(--stroke-subtle));
 }
 .vitality-breakdown-item {
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 6px;
   min-width: 0;
+}
+.overview-member-head-actions {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+}
+.overview-more-menu {
+  position: relative;
+}
+.overview-more-menu > summary {
+  list-style: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-item-fill);
+  color: var(--text-secondary);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  user-select: none;
+  transition: background-color 150ms ease, color 150ms ease, border-color 150ms ease;
+}
+.overview-more-menu > summary::-webkit-details-marker {
+  display: none;
+}
+.overview-more-menu > summary:hover,
+.overview-more-menu[open] > summary {
+  color: var(--text-primary);
+  background: var(--fluid-card-hover);
+  border-color: var(--fluid-card-border-strong);
+}
+.overview-more-popover {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 6px);
+  z-index: 30;
+  min-width: 168px;
+  padding: 5px;
+  border-radius: 12px;
+  border: 1px solid var(--fluid-card-border-strong, var(--fluid-card-border));
+  background: var(--surface-elevated);
+  box-shadow: var(--shadow-float);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.overview-more-popover button {
+  width: 100%;
+  min-height: 32px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12.5px;
+  font-weight: 550;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  text-align: left;
+  cursor: pointer;
+}
+.overview-more-popover button:hover {
+  background: var(--fluid-card-hover);
+  color: var(--accent-primary);
 }
 .overview-quota-charts {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  gap: 10px;
-  margin-top: 10px;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: 8px;
+  margin-top: 8px;
 }
 .overview-quota-chart-card {
-  padding: 10px 12px;
-  border-radius: 12px;
-  border: 1px solid color-mix(in srgb, var(--fluid-card-border, rgba(142, 142, 147, 0.25)) 85%, transparent);
-  background: color-mix(in srgb, var(--fluid-card-item-fill, rgba(255, 255, 255, 0.4)) 70%, transparent);
+  padding: 9px 11px;
+  border-radius: 11px;
+  border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-item-fill);
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 .overview-quota-chart-head {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
   gap: 8px;
-  font-size: 12px;
+  font-size: 11.5px;
 }
 .overview-quota-total {
   color: var(--text-tertiary);
@@ -666,11 +774,21 @@ onUnmounted(() => window.removeEventListener("pointerdown", handleOutsideSearchP
 .overview-quota-chart-body {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
 }
 @media (max-width: 760px) {
   .vitality-breakdown-grid {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
+@media (max-width: 560px) {
+  .vitality-chip {
+    min-height: 110px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .overview-more-menu > summary {
+    transition: none;
   }
 }
 </style>

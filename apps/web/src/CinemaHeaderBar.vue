@@ -1,10 +1,14 @@
 <script setup lang="ts">
-import { ref } from "vue";
-import { Clapperboard, Film, ListChecks, MonitorPlay, Play, RefreshCcw, Search, SlidersHorizontal, Tv, Wand2, X } from "lucide-vue-next";
+import { Clapperboard, Film, ListChecks, MonitorPlay, Play, RefreshCcw, SlidersHorizontal, Tv, Wand2 } from "lucide-vue-next";
 import AppleSelect from "./AppleSelect.vue";
+import IsleButton from "./IsleButton.vue";
 import IsleChip from "./IsleChip.vue";
+import IsleHelpButton from "./IsleHelpButton.vue";
+import IsleActionMenu from "./IsleActionMenu.vue";
+import IslePageHeader from "./IslePageHeader.vue";
+import IsleSearchInput from "./IsleSearchInput.vue";
 
-const props = defineProps<{
+defineProps<{
   admin: boolean;
   query: string;
   view: "films" | "series";
@@ -30,8 +34,6 @@ const emit = defineEmits<{
   (e: "open-scraping-settings"): void;
 }>();
 
-const searchComposing = ref(false);
-
 const watchedOptions = [
   { value: "all", label: "全部状态" },
   { value: "unwatched", label: "只看未看" },
@@ -45,61 +47,66 @@ const sortOptions = [
   { value: "title", label: "名称排序" },
 ];
 
-function onSearchInput(event: Event) {
-  if (searchComposing.value) return;
-  emit("update:query", (event.target as HTMLInputElement).value);
-}
-
-function onSearchEsc(event: KeyboardEvent) {
-  if (searchComposing.value || !props.query) return;
-  event.stopPropagation();
-  emit("update:query", "");
-}
+const cinemaHelpItems = [
+  {
+    title: "播放兼容性与原画直出",
+    body: "默认优先原画直出由本机硬件解码；遇到浏览器暂不支持的封装或音轨时，可一键开启服务端实时转码（需 FFmpeg，绝不改动原片）或下载后使用 IINA / VLC 打开。",
+  },
+  {
+    title: "大屏与外部播放器接入",
+    body: "可通过右上角菜单获取 WebDAV 独立连接参数，在 Apple TV、Infuse 或 VidHub 上满速直连播放 4K 原盘与杜比视界影片。",
+  },
+];
 </script>
 
 <template>
-  <div class="section-heading cinema-header-bar">
-    <div><h2>私人影院</h2><p>选择想看的作品，或者从上次的位置继续观看。</p></div>
-    <div class="cinema-header-actions">
-      <label class="cinema-search">
-        <Search :size="15" />
-        <input
-          :value="query"
-          maxlength="120"
-          type="search"
-          placeholder="搜索电影、剧集或单集…"
-          aria-label="搜索电影、剧集或单集"
-          @compositionstart="searchComposing = true"
-          @compositionend="searchComposing = false; emit('update:query', ($event.target as HTMLInputElement).value)"
-          @input="onSearchInput"
-          @keydown.esc="onSearchEsc"
-        />
-        <button v-if="query" type="button" title="清除搜索" aria-label="清除搜索" @click="emit('update:query', '')"><X :size="14" /></button>
-      </label>
-      <button
+  <IslePageHeader title="私人影院" class="cinema-header-bar">
+    <template #title-extra>
+      <IsleHelpButton title="影院播放与接入说明" :items="cinemaHelpItems" />
+    </template>
+    <template #actions>
+      <IsleSearchInput
+        :model-value="query"
+        placeholder="搜索电影、剧集或单集…"
+        aria-label="搜索电影、剧集或单集"
+        @update:model-value="emit('update:query', $event)"
+      />
+      <IsleButton
         v-if="canBatchTrash && view === 'films' && mode !== 'history'"
-        type="button"
-        class="dl-btn"
-        :class="{ chosen: choosingTrash }"
+        :variant="choosingTrash ? 'tonal' : 'glass'"
+        size="sm"
         :disabled="deleting"
         :title="choosingTrash ? '退出批量选择' : '多选管理影片'"
         :aria-label="choosingTrash ? '退出批量选择' : '多选管理影片'"
         @click="emit('toggle-trash-mode')"
       >
-        <ListChecks :size="15" />{{ choosingTrash ? "退出多选" : "多选" }}
-      </button>
-      <button
+        <template #icon><ListChecks :size="15" /></template>
+        {{ choosingTrash ? "退出多选" : "多选" }}
+      </IsleButton>
+      <IsleButton
         v-if="admin"
-        class="refresh"
+        variant="glass"
+        size="sm"
         :disabled="scanRunning && !scanStatusError"
         title="扫描影视库新增或变更影片"
         aria-label="扫描影视库"
         @click="emit('start-scan')"
       >
-        <RefreshCcw :size="15" :class="{ spinning: scanRunning && !scanStatusError }" />{{ scanRunning && !scanStatusError ? "扫描中…" : "扫描影视库" }}
-      </button>
-    </div>
-  </div>
+        <template #icon>
+          <RefreshCcw :size="15" :class="{ spinning: scanRunning && !scanStatusError }" />
+        </template>
+        {{ scanRunning && !scanStatusError ? "扫描中…" : "扫描影视库" }}
+      </IsleButton>
+      <IsleActionMenu aria-label="更多影院工具与连接">
+        <button type="button" role="menuitem" @click="emit('open-mount-guide')">
+          <MonitorPlay :size="15" /> Apple TV / Infuse 大屏接入
+        </button>
+        <button v-if="admin" type="button" role="menuitem" @click="emit('open-scraping-settings')">
+          <SlidersHorizontal :size="15" /> TMDB 与刮削设置
+        </button>
+      </IsleActionMenu>
+    </template>
+  </IslePageHeader>
 
   <div class="cinema-tools cinema-navigation">
     <div class="cinema-tabs" role="group" aria-label="影视分类与观看记录">
@@ -110,8 +117,8 @@ function onSearchEsc(event: KeyboardEvent) {
       <IsleChip :selected="mode==='history'&&view==='films'" @select="emit('filter', 'history')">观看历史</IsleChip>
       <IsleChip :selected="view==='films'&&mode==='unmatched'" @select="emit('filter', 'unmatched')"><template #icon><Wand2 :size="15" /></template>待匹配</IsleChip>
     </div>
-    <div class="cinema-nav-right">
-      <div v-if="mode !== 'history'" class="cinema-filter-controls" role="group" aria-label="筛选与排序">
+    <div v-if="mode !== 'history'" class="cinema-nav-right">
+      <div class="cinema-filter-controls" role="group" aria-label="筛选与排序">
         <AppleSelect
           :model-value="watchedFilter"
           :options="watchedOptions"
@@ -126,14 +133,6 @@ function onSearchEsc(event: KeyboardEvent) {
           aria-label="影视排序方式"
           @update:model-value="emit('update:sortBy', $event as 'recent' | 'rating' | 'year' | 'title')"
         />
-      </div>
-      <div class="cinema-bridge-inline" role="group" aria-label="大屏连接与管理快捷入口">
-        <button type="button" class="cinema-bridge-link" title="在 Apple TV / Infuse / Mac 上通过 WebDAV 播放" @click="emit('open-mount-guide')">
-          <MonitorPlay :size="14" /> Apple TV / Infuse 大屏接入
-        </button>
-        <button v-if="admin" type="button" class="cinema-bridge-link" title="前往设置中的 TMDB 与刮削服务配置" @click="emit('open-scraping-settings')">
-          <SlidersHorizontal :size="14" /> TMDB 与刮削设置
-        </button>
       </div>
     </div>
   </div>

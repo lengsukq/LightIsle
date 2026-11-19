@@ -29,8 +29,8 @@ const emit = defineEmits<{
     :show-close="!renameBusy"
     @close="emit('close')"
   >
-    <template #icon><Pencil :size="18" /></template>
-    <IsleBanner v-if="renameError" type="error" compact :message="renameError" style="margin-bottom: 12px" />
+    <template #icon><Pencil :size="16" /></template>
+    <IsleBanner v-if="renameError" type="error" compact :message="renameError" style="margin-bottom: 10px" />
     <form id="cinema-rename-form" class="cinema-rename-form" @submit.prevent="emit('submit')">
       <label>
         <span>展示名称</span>
@@ -47,10 +47,35 @@ const emit = defineEmits<{
       </label>
     </form>
     <template #footer>
-      <div style="display:flex;justify-content:flex-end;gap:10px;width:100%">
+      <div style="display:flex;justify-content:flex-end;gap:8px;width:100%">
         <IsleButton variant="glass" :disabled="renameBusy" @click="emit('close')">取消</IsleButton>
         <IsleButton type="submit" form="cinema-rename-form" variant="primary" :loading="renameBusy">保存名称</IsleButton>
       </div>
     </template>
   </IsleModal>
 </template>
+
+<style scoped>
+.cinema-rename-form label {
+  display: grid;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.cinema-rename-form input {
+  width: 100%;
+  height: 35px;
+  box-sizing: border-box;
+  border: 1px solid var(--fluid-card-border);
+  border-radius: 9px;
+  background: var(--fluid-card-item-fill);
+  color: var(--text-primary);
+  padding: 0 11px;
+  font-size: 13px;
+  outline: none;
+}
+.cinema-rename-form input:focus {
+  border-color: var(--accent-primary, #2563eb);
+}
+</style>
