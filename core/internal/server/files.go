@@ -98,6 +98,9 @@ func (a *API) previewFile(w http.ResponseWriter, r *http.Request) {
 		".txt": "text/plain; charset=utf-8", ".md": "text/plain; charset=utf-8",
 		".json": "text/plain; charset=utf-8", ".log": "text/plain; charset=utf-8",
 		".mp4": "video/mp4", ".webm": "video/webm", ".m4v": "video/mp4",
+		".mov": "video/quicktime", ".mkv": "video/x-matroska",
+		".avi": "video/x-msvideo", ".ts": "video/mp2t", ".mts": "video/mp2t",
+		".3gp": "video/3gpp", ".flv": "video/x-flv",
 		".pdf": "application/pdf",
 	}
 	ext := strings.ToLower(filepath.Ext(info.Name()))

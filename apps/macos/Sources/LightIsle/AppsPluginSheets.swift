@@ -136,7 +136,6 @@ struct AppPluginDetailView: View {
             }
 
             runtimeControlSection
-            logsSection
             accessSection
             if app.web.mode != "none" {
                 webLifecycleSection
@@ -144,7 +143,10 @@ struct AppPluginDetailView: View {
             if app.cron != nil {
                 cronSection
             }
-            saveSection
+            if isDirty {
+                saveSection
+            }
+            logsSection
             dataAndDangerSection
         }
         .onAppear {
@@ -391,9 +393,9 @@ struct AppPluginDetailView: View {
         AppleSettingsGroup(title: "家庭成员访问权限") {
             AppleSettingsRow(title: "可见范围", subtitle: "控制 Web 与移动端应用中心对普通成员的展示与网关授权；管理员始终可访问全部应用", icon: "person.2.badge.key.fill", iconTint: .blue) {
                 Picker("可见范围", selection: $policy) {
-                    Text("仅管理员可见 (admin_only)").tag("admin_only")
-                    Text("全体成员可见 (all_members)").tag("all_members")
-                    Text("指定家庭成员 (selected_members)").tag("selected_members")
+                    Text("仅管理员可见").tag("admin_only")
+                    Text("全体成员可见").tag("all_members")
+                    Text("指定家庭成员").tag("selected_members")
                 }
                 .labelsHidden()
                 .frame(width: 240)
@@ -437,8 +439,8 @@ struct AppPluginDetailView: View {
                 IsleGroupSpacing(height: 4).padding(.leading, 14)
                 AppleSettingsRow(title: "生命周期模式", icon: "bolt.horizontal", iconTint: .indigo) {
                     Picker("模式", selection: $webMode) {
-                        Text("按需唤醒 (on-demand)").tag("on-demand")
-                        Text("常驻运行 (persistent)").tag("persistent")
+                        Text("按需唤醒").tag("on-demand")
+                        Text("常驻运行").tag("persistent")
                     }
                     .labelsHidden()
                     .frame(width: 220)

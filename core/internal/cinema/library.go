@@ -475,7 +475,7 @@ func (l *Library) scan(job context.Context, scope []string) {
 		}
 	}
 }
-func (l *Library) Get(id, userID int64) (Film, error) {
+func (l *Library) getWhere(userID int64, whereClause string, arg any) (Film, error) {
 	share, err := l.share()
 	if err != nil {
 		return Film{}, err
@@ -485,11 +485,25 @@ func (l *Library) Get(id, userID int64) (Film, error) {
 	err = l.readDB().QueryRow(`SELECT f.id,f.title,f.path,f.kind,f.series,f.season,f.episode,f.year,f.size,f.modified,
  COALESCE(p.position,0),COALESCE(p.duration,0),COALESCE(p.completed,0),COALESCE(p.updated_at,0),f.probe_status,f.browser_playback,f.container,f.video_codec,f.audio_codec,f.duration_seconds,f.width,f.height,f.captured_at,f.overview,f.rating,f.metadata_source,f.poster_path,f.title_source,f.year_source,f.scrape_state
  FROM films f LEFT JOIN watch_progress p ON p.film_id=f.id AND p.user_id=?
- WHERE f.share=? AND f.id=? AND f.missing_path=''`, userID, share, id).
+ WHERE f.share=? AND `+whereClause+` AND f.missing_path=''`, userID, share, arg).
 		Scan(&f.ID, &f.Title, &f.Path, &f.Kind, &f.Series, &f.Season, &f.Episode, &f.Year, &f.Size, &f.Modified, &f.Position, &f.Duration, &completed, &f.UpdatedAt,
 			&f.ProbeStatus, &f.BrowserPlayback, &f.Container, &f.VideoCodec, &f.AudioCodec, &f.MediaDuration, &f.Width, &f.Height, &f.CapturedAt, &f.Overview, &f.Rating, &f.MetadataSource, &f.PosterURL, &f.TitleSource, &f.YearSource, &f.ScrapeState)
 	decorateLoadedFilm(&f, completed)
 	return f, err
+}
+
+func (l *Library) Get(id, userID int64) (Film, error) {
+	return l.getWhere(userID, "f.id=?", id)
+}
+
+// GetByPath returns the indexed film matching a clean relative path within the
+// current library scope, allowing file-browser entries to upgrade into Cinema.
+func (l *Library) GetByPath(relPath string, userID int64) (Film, error) {
+	cleaned, err := cleanCinemaDirectory(relPath)
+	if err != nil || cleaned == "." {
+		return Film{}, ErrInvalid
+	}
+	return l.getWhere(userID, "f.path=?", cleaned)
 }
 func (l *Library) List(userID int64, kind, query string, limit, offset int) ([]Film, int, error) {
 	return l.ListScoped(userID, kind, query, limit, offset, []string{"."})

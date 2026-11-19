@@ -186,4 +186,18 @@ func TestCinemaProtectedStreamAndUserProgress(t *testing.T) {
 		!strings.Contains(assCaptions.Body.String(), "你好\n世界") || strings.Contains(assCaptions.Body.String(), "{\\an8}") {
 		t.Fatalf("ASS to VTT conversion failed: %d %s", assCaptions.Code, assCaptions.Body.String())
 	}
+	lookupHit := call("GET", "/api/v2/cinema/lookup?path="+found[0].Path, "", cookie)
+	if lookupHit.Code != 200 || !strings.Contains(lookupHit.Body.String(), `"id":`+id) {
+		t.Fatalf("cinema lookup by path failed: %d %s", lookupHit.Code, lookupHit.Body.String())
+	}
+	if miss := call("GET", "/api/v2/cinema/lookup?path=Unindexed/clip.mp4", "", cookie); miss.Code != 404 {
+		t.Fatalf("expected 404 for unindexed lookup, got %d", miss.Code)
+	}
+	if bad := call("GET", "/api/v2/cinema/lookup?path=../secret.mp4", "", cookie); bad.Code != 403 && bad.Code != 400 && bad.Code != 404 {
+		t.Fatalf("expected 400/403/404 for invalid lookup path, got %d", bad.Code)
+	}
+	// viewer has no file grants yet, so cinema lookup must deny access with 403.
+	if viewerDeny := call("GET", "/api/v2/cinema/lookup?path="+found[0].Path, "", viewer); viewerDeny.Code != 403 {
+		t.Fatalf("expected 403 for ungranted viewer cinema lookup, got %d %s", viewerDeny.Code, viewerDeny.Body.String())
+	}
 }

@@ -199,6 +199,12 @@ func TestAccountAndFilesAPI(t *testing.T) {
 	if out := call("GET", "/api/v2/files/preview?path=Photos/code.html", "", "", session, false); out.Code != 415 {
 		t.Fatalf("unsafe HTML preview enabled: %d", out.Code)
 	}
+	if out := call("PUT", "/api/v2/files/content?path=Photos/clip.mov", "movbytes", "", session, true); out.Code != 201 {
+		t.Fatalf("mov upload %d", out.Code)
+	}
+	if out := call("GET", "/api/v2/files/preview?path=Photos/clip.mov", "", "", session, false); out.Code != 200 || !bytes.HasPrefix([]byte(out.Header().Get("Content-Type")), []byte("video/quicktime")) {
+		t.Fatalf("mov preview failed: %d %s", out.Code, out.Header().Get("Content-Type"))
+	}
 	if out := call("DELETE", "/api/v2/files?path=Photos/test.txt", "", "", session, true); out.Code != 200 {
 		t.Fatalf("trash %d", out.Code)
 	}

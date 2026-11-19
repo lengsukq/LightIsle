@@ -383,6 +383,31 @@ func (a *API) cinemaGet(w http.ResponseWriter, r *http.Request) {
 	film.CanWrite = a.canAccess(token(r), film.Path, true, false)
 	jsonReply(w, 200, film)
 }
+
+func (a *API) cinemaLookup(w http.ResponseWriter, r *http.Request) {
+	if !a.cinemaReady(w) {
+		return
+	}
+	user := a.viewerID(w, r)
+	if user == 0 {
+		return
+	}
+	relPath := strings.TrimSpace(r.URL.Query().Get("path"))
+	if relPath == "" {
+		jsonReply(w, 400, map[string]string{"error": "invalid_request"})
+		return
+	}
+	if !a.allowMediaAsset(w, r, relPath, false, "film_not_found") {
+		return
+	}
+	film, err := a.cinema.GetByPath(relPath, user)
+	if err != nil {
+		cinemaError(w, err)
+		return
+	}
+	film.CanWrite = a.canAccess(token(r), film.Path, true, false)
+	jsonReply(w, 200, film)
+}
 func (a *API) cinemaRename(w http.ResponseWriter, r *http.Request) {
 	if !a.cinemaReady(w) {
 		return

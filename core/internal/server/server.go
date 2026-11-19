@@ -268,6 +268,7 @@ func newWithDownloadsAndAPI(webRoot string, store *auth.Store, fileStore files.A
 	mux.HandleFunc("DELETE /api/v2/photos/albums/{id}/items/{assetID}", a.requireAdmin(a.galleryRemoveFromAlbum))
 	mux.HandleFunc("GET /api/v2/cinema", a.requireMedia(a.cinemaList))
 	mux.HandleFunc("GET /api/v2/cinema/status", a.requireMedia(a.cinemaStatus))
+	mux.HandleFunc("GET /api/v2/cinema/lookup", a.requireMedia(a.cinemaLookup))
 	mux.HandleFunc("POST /api/v2/cinema/scan", a.requireAdmin(a.cinemaScan))
 	mux.HandleFunc("GET /api/v2/cinema/{id}", a.requireMedia(a.cinemaGet))
 	mux.HandleFunc("PATCH /api/v2/cinema/{id}", a.requireAdmin(a.cinemaRename))
