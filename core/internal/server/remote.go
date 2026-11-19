@@ -13,6 +13,7 @@ import (
 	"encoding/pem"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math/big"
 	"net"
 	"net/http"
@@ -25,14 +26,19 @@ import (
 )
 
 // Remote never listens on 0.0.0.0 or arbitrary public addresses. The LAN
-// listener binds the selected RFC1918 physical interface, and when Tailscale
-// is active on the Mac, an optional companion listener binds the private
-// 100.64.0.0/10 Tailscale utun address on the exact same port.
+// listener binds the selected RFC1918 physical interface, and companion
+// listeners bind active utun/tailscale VPN or mesh interfaces carrying
+// RFC1918 (10/8, 172.16/12, 192.168/16) or Tailscale CGNAT (100.64/10)
+// IPv4 addresses on the exact same port.
+type companionListener struct {
+	srv *http.Server
+	ln  net.Listener
+}
+
 type Remote struct {
 	srv          *http.Server
 	ln           net.Listener
-	tailscaleSrv *http.Server
-	tailscaleLn  net.Listener
+	companions   []companionListener
 	URL          string
 	TailscaleURL string
 	Fingerprint  string
@@ -44,33 +50,72 @@ func (r *Remote) Stop() {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	if r.tailscaleSrv != nil {
-		_ = r.tailscaleSrv.Shutdown(ctx)
-		_ = r.tailscaleSrv.Close()
+	for _, comp := range r.companions {
+		if comp.srv != nil {
+			_ = comp.srv.Shutdown(ctx)
+			_ = comp.srv.Close()
+		}
+		if comp.ln != nil {
+			_ = comp.ln.Close()
+		}
 	}
-	if r.tailscaleLn != nil {
-		_ = r.tailscaleLn.Close()
+	if r.srv != nil {
+		_ = r.srv.Shutdown(ctx)
+		_ = r.srv.Close()
 	}
-	_ = r.srv.Shutdown(ctx)
-	_ = r.srv.Close()
-	_ = r.ln.Close()
+	if r.ln != nil {
+		_ = r.ln.Close()
+	}
 }
 
-func privateIP() net.IP {
+type ifaceCandidate struct {
+	name string
+	ips  []net.IP
+}
+
+type remoteTargets struct {
+	primaryIP    net.IP
+	tailscaleIP  net.IP
+	companionIPs []net.IP
+}
+
+func isRFC1918IPv4(ip net.IP) bool {
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return false
+	}
+	return ip4[0] == 10 ||
+		(ip4[0] == 172 && ip4[1] >= 16 && ip4[1] <= 31) ||
+		(ip4[0] == 192 && ip4[1] == 168)
+}
+
+func appendUniqueIP(ips []net.IP, candidate net.IP) []net.IP {
+	if candidate == nil {
+		return ips
+	}
+	for _, existing := range ips {
+		if existing.Equal(candidate) {
+			return ips
+		}
+	}
+	return append(ips, candidate)
+}
+
+func upInterfaceCandidates() []ifaceCandidate {
 	faces, err := net.Interfaces()
 	if err != nil {
 		return nil
 	}
-	var fallback net.IP
+	candidates := make([]ifaceCandidate, 0, len(faces))
 	for _, face := range faces {
 		if face.Flags&net.FlagUp == 0 || face.Flags&net.FlagLoopback != 0 {
 			continue
 		}
-		if strings.HasPrefix(face.Name, "utun") || strings.HasPrefix(face.Name, "bridge") ||
-			strings.HasPrefix(face.Name, "vnic") || strings.HasPrefix(face.Name, "awdl") {
+		addrs, err := face.Addrs()
+		if err != nil {
 			continue
 		}
-		addrs, _ := face.Addrs()
+		ips := make([]net.IP, 0, len(addrs))
 		for _, addr := range addrs {
 			var ip net.IP
 			switch a := addr.(type) {
@@ -79,94 +124,113 @@ func privateIP() net.IP {
 			case *net.IPAddr:
 				ip = a.IP
 			}
-			ip = ip.To4()
-			if ip == nil {
+			if ip4 := ip.To4(); ip4 != nil {
+				ips = append(ips, ip4)
+			}
+		}
+		if len(ips) > 0 {
+			candidates = append(candidates, ifaceCandidate{name: face.Name, ips: ips})
+		}
+	}
+	return candidates
+}
+
+func physicalPrivateIP(ifaces []ifaceCandidate) net.IP {
+	var fallback net.IP
+	for _, face := range ifaces {
+		if strings.HasPrefix(face.name, "utun") || strings.HasPrefix(face.name, "tailscale") ||
+			strings.HasPrefix(face.name, "bridge") || strings.HasPrefix(face.name, "vnic") ||
+			strings.HasPrefix(face.name, "awdl") {
+			continue
+		}
+		for _, ip := range face.ips {
+			if !isRFC1918IPv4(ip) {
 				continue
 			}
-			if ip[0] == 10 || ip[0] == 172 && ip[1] >= 16 && ip[1] <= 31 ||
-				ip[0] == 192 && ip[1] == 168 {
-				if face.Name == "en0" || face.Name == "en1" {
-					return ip
-				}
-				if fallback == nil {
-					fallback = ip
-				}
+			if face.name == "en0" || face.name == "en1" {
+				return ip.To4()
+			}
+			if fallback == nil {
+				fallback = ip.To4()
 			}
 		}
 	}
 	return fallback
 }
 
+func selectRemoteIPs(ifaces []ifaceCandidate) remoteTargets {
+	primary := physicalPrivateIP(ifaces)
+	var tsIP net.IP
+	var vpnIPs []net.IP
+	for _, face := range ifaces {
+		if !strings.HasPrefix(face.name, "utun") && !strings.HasPrefix(face.name, "tailscale") {
+			continue
+		}
+		for _, ip := range face.ips {
+			ip4 := ip.To4()
+			if ip4 == nil {
+				continue
+			}
+			if IsTailscaleCGNATIPv4(ip4) {
+				if tsIP == nil {
+					tsIP = ip4
+				}
+				vpnIPs = appendUniqueIP(vpnIPs, ip4)
+			} else if isRFC1918IPv4(ip4) {
+				vpnIPs = appendUniqueIP(vpnIPs, ip4)
+			}
+		}
+	}
+	if primary == nil {
+		if tsIP != nil {
+			primary = tsIP
+		} else if len(vpnIPs) > 0 {
+			primary = vpnIPs[0]
+		}
+	}
+	var companions []net.IP
+	for _, ip := range vpnIPs {
+		if primary != nil && ip.Equal(primary) {
+			continue
+		}
+		companions = appendUniqueIP(companions, ip)
+	}
+	return remoteTargets{
+		primaryIP:    primary,
+		tailscaleIP:  tsIP,
+		companionIPs: companions,
+	}
+}
+
+func privateIP() net.IP {
+	return physicalPrivateIP(upInterfaceCandidates())
+}
+
 func NewRemote(handler http.Handler, store *auth.Store, dir string, port int) (*Remote, error) {
-	if port < 1 || port > 65535 {
-		return nil, errors.New("局域网服务端口无效")
-	}
-	configured, err := store.Configured()
-	if err != nil {
-		return nil, err
-	}
-	if !configured {
-		return nil, errors.New("请先完成本机管理员初始化")
-	}
-	ip := privateIP()
-	tsIP, _ := tailscaleIPv4FromInterfaces()
-	if ip == nil && tsIP == nil {
-		return nil, errors.New("没有可用的局域网或 Tailscale 私有 IPv4 地址")
-	}
-	primaryIP := ip
-	if primaryIP == nil {
-		primaryIP = tsIP
-	}
-	sanIPs := []net.IP{primaryIP}
-	if tsIP != nil && !tsIP.Equal(primaryIP) {
-		sanIPs = append(sanIPs, tsIP)
-	}
-	var dnsSANs []string
-	if tsIP != nil {
-		tsStatus := DetectTailscale(context.Background(), port, true, "")
-		if tsStatus.MagicDNS != "" {
-			dnsSANs = append(dnsSANs, tsStatus.MagicDNS)
-		}
-	}
-	cert, fingerprint, err := certificateWithSANs(dir, sanIPs, dnsSANs)
-	if err != nil {
-		return nil, err
-	}
-	tlsCfg := &tls.Config{
-		Certificates: []tls.Certificate{cert},
-		MinVersion:   tls.VersionTLS13,
-	}
-	ln, err := net.Listen("tcp4", net.JoinHostPort(primaryIP.String(), fmt.Sprint(port)))
-	if err != nil {
-		return nil, fmt.Errorf("无法在局域网地址 %s 上监听统一端口 %d，请检查端口是否被占用：%w", primaryIP.String(), port, err)
-	}
-	srv := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
-	tlsListener := tls.NewListener(ln, tlsCfg)
-	r := &Remote{
-		srv:         srv,
-		ln:          tlsListener,
-		URL:         fmt.Sprintf("https://%s", tlsListener.Addr().String()),
-		Fingerprint: fingerprint,
-	}
-	if tsIP != nil && tsIP.Equal(primaryIP) {
-		r.TailscaleURL = r.URL
-	} else if tsIP != nil {
-		if tsLn, tsErr := net.Listen("tcp4", net.JoinHostPort(tsIP.String(), fmt.Sprint(port))); tsErr == nil {
-			tsTLS := tls.NewListener(tsLn, tlsCfg.Clone())
-			tsSrv := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
-			r.tailscaleLn = tsTLS
-			r.tailscaleSrv = tsSrv
-			r.TailscaleURL = fmt.Sprintf("https://%s", tsTLS.Addr().String())
-			go func() { _ = tsSrv.Serve(tsTLS) }()
-		}
-	}
-	go func() { _ = srv.Serve(tlsListener) }()
-	return r, nil
+	return newRemoteWithTargets(handler, store, dir, port, true, selectRemoteIPs(upInterfaceCandidates()))
 }
 
 // NewRemoteHTTP enables explicit owner-approved LAN HTTP and optional co-bound
-// Tailscale private interface HTTP (WireGuard-encrypted over Tailscale).
+// VPN/mesh private interface HTTP.
 func NewRemoteHTTP(handler http.Handler, store *auth.Store, port int) (*Remote, error) {
+	return newRemoteWithTargets(handler, store, "", port, false, selectRemoteIPs(upInterfaceCandidates()))
+}
+
+func wrapListenerTLS(ln net.Listener, cfg *tls.Config) net.Listener {
+	if cfg == nil {
+		return ln
+	}
+	return tls.NewListener(ln, cfg.Clone())
+}
+
+func newRemoteWithTargets(
+	handler http.Handler,
+	store *auth.Store,
+	dir string,
+	port int,
+	useTLS bool,
+	targets remoteTargets,
+) (*Remote, error) {
 	if port < 1 || port > 65535 {
 		return nil, errors.New("局域网服务端口无效")
 	}
@@ -177,34 +241,66 @@ func NewRemoteHTTP(handler http.Handler, store *auth.Store, port int) (*Remote, 
 	if !configured {
 		return nil, errors.New("请先完成本机管理员初始化")
 	}
-	ip := privateIP()
-	tsIP, _ := tailscaleIPv4FromInterfaces()
-	if ip == nil && tsIP == nil {
+	if targets.primaryIP == nil {
 		return nil, errors.New("没有可用的局域网或 Tailscale 私有 IPv4 地址")
 	}
-	primaryIP := ip
-	if primaryIP == nil {
-		primaryIP = tsIP
-	}
-	ln, err := net.Listen("tcp4", net.JoinHostPort(primaryIP.String(), fmt.Sprint(port)))
-	if err != nil {
-		return nil, fmt.Errorf("无法在局域网地址 %s 上监听统一端口 %d，请检查端口是否被占用：%w", primaryIP.String(), port, err)
-	}
-	srv := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
-	remote := &Remote{srv: srv, ln: ln, URL: "http://" + ln.Addr().String()}
-	if tsIP != nil && tsIP.Equal(primaryIP) {
-		remote.TailscaleURL = remote.URL
-	} else if tsIP != nil {
-		if tsLn, tsErr := net.Listen("tcp4", net.JoinHostPort(tsIP.String(), fmt.Sprint(port))); tsErr == nil {
-			tsSrv := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
-			remote.tailscaleLn = tsLn
-			remote.tailscaleSrv = tsSrv
-			remote.TailscaleURL = "http://" + tsLn.Addr().String()
-			go func() { _ = tsSrv.Serve(tsLn) }()
+
+	var tlsCfg *tls.Config
+	var fingerprint string
+	scheme := "http"
+	if useTLS {
+		scheme = "https"
+		sanIPs := append([]net.IP{targets.primaryIP}, targets.companionIPs...)
+		var dnsSANs []string
+		if targets.tailscaleIP != nil {
+			tsStatus := DetectTailscale(context.Background(), port, true, "")
+			if tsStatus.MagicDNS != "" {
+				dnsSANs = append(dnsSANs, tsStatus.MagicDNS)
+			}
+		}
+		cert, fp, certErr := certificateWithSANs(dir, sanIPs, dnsSANs)
+		if certErr != nil {
+			return nil, certErr
+		}
+		fingerprint = fp
+		tlsCfg = &tls.Config{
+			Certificates: []tls.Certificate{cert},
+			MinVersion:   tls.VersionTLS13,
 		}
 	}
-	go func() { _ = srv.Serve(ln) }()
-	return remote, nil
+
+	ln, err := net.Listen("tcp4", net.JoinHostPort(targets.primaryIP.String(), fmt.Sprint(port)))
+	if err != nil {
+		return nil, fmt.Errorf("无法在局域网地址 %s 上监听统一端口 %d，请检查端口是否被占用：%w", targets.primaryIP.String(), port, err)
+	}
+	primaryLn := wrapListenerTLS(ln, tlsCfg)
+	srv := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
+	r := &Remote{
+		srv:         srv,
+		ln:          primaryLn,
+		URL:         fmt.Sprintf("%s://%s", scheme, primaryLn.Addr().String()),
+		Fingerprint: fingerprint,
+	}
+	if targets.tailscaleIP != nil && targets.tailscaleIP.Equal(targets.primaryIP) {
+		r.TailscaleURL = r.URL
+	}
+
+	for _, compIP := range targets.companionIPs {
+		compRawLn, compErr := net.Listen("tcp4", net.JoinHostPort(compIP.String(), fmt.Sprint(port)))
+		if compErr != nil {
+			slog.Warn("companion remote listener unavailable", "ip", compIP.String(), "port", port, "error", compErr)
+			continue
+		}
+		compLn := wrapListenerTLS(compRawLn, tlsCfg)
+		compSrv := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 30 * time.Second}
+		r.companions = append(r.companions, companionListener{srv: compSrv, ln: compLn})
+		if targets.tailscaleIP != nil && compIP.Equal(targets.tailscaleIP) {
+			r.TailscaleURL = fmt.Sprintf("%s://%s", scheme, compLn.Addr().String())
+		}
+		go func(s *http.Server, l net.Listener) { _ = s.Serve(l) }(compSrv, compLn)
+	}
+	go func() { _ = srv.Serve(primaryLn) }()
+	return r, nil
 }
 
 func certificate(dir string, ip net.IP) (tls.Certificate, string, error) {

@@ -207,3 +207,129 @@ func TestCertificatePersistsFingerprintAndIPSubjectAlternativeName(t *testing.T)
 		t.Fatalf("private key permissions = %v, err=%v", info, err)
 	}
 }
+
+func TestSelectRemoteIPsIncludesUtunPrivateAndExcludesBenchmarkingRange(t *testing.T) {
+	ifaces := []ifaceCandidate{
+		{name: "utun1024", ips: []net.IP{net.ParseIP("198.18.0.1")}},
+		{name: "utun0", ips: []net.IP{net.ParseIP("10.0.111.100")}},
+		{name: "utun1", ips: []net.IP{net.ParseIP("172.16.8.9")}},
+		{name: "utun2", ips: []net.IP{net.ParseIP("192.168.50.10")}},
+		{name: "utun3", ips: []net.IP{net.ParseIP("100.88.12.34")}},
+		{name: "en1", ips: []net.IP{net.ParseIP("192.168.31.59")}},
+	}
+	got := selectRemoteIPs(ifaces)
+	if !got.primaryIP.Equal(net.ParseIP("192.168.31.59")) {
+		t.Fatalf("primaryIP = %v, want 192.168.31.59", got.primaryIP)
+	}
+	if !got.tailscaleIP.Equal(net.ParseIP("100.88.12.34")) {
+		t.Fatalf("tailscaleIP = %v, want 100.88.12.34", got.tailscaleIP)
+	}
+	wantCompanions := []string{"10.0.111.100", "172.16.8.9", "192.168.50.10", "100.88.12.34"}
+	if len(got.companionIPs) != len(wantCompanions) {
+		t.Fatalf("companionIPs = %v, want %v", got.companionIPs, wantCompanions)
+	}
+	for i, want := range wantCompanions {
+		if !got.companionIPs[i].Equal(net.ParseIP(want)) {
+			t.Fatalf("companionIPs[%d] = %v, want %s", i, got.companionIPs[i], want)
+		}
+	}
+
+	utunOnly := selectRemoteIPs([]ifaceCandidate{
+		{name: "utun1024", ips: []net.IP{net.ParseIP("198.18.0.1")}},
+		{name: "utun0", ips: []net.IP{net.ParseIP("10.0.111.100")}},
+	})
+	if !utunOnly.primaryIP.Equal(net.ParseIP("10.0.111.100")) || len(utunOnly.companionIPs) != 0 {
+		t.Fatalf("unexpected utun-only selection: %+v", utunOnly)
+	}
+
+	noPrivate := selectRemoteIPs([]ifaceCandidate{
+		{name: "utun1024", ips: []net.IP{net.ParseIP("198.18.0.1")}},
+		{name: "en0", ips: []net.IP{net.ParseIP("8.8.8.8")}},
+	})
+	if noPrivate.primaryIP != nil {
+		t.Fatalf("expected nil primaryIP for non-private ranges, got %v", noPrivate.primaryIP)
+	}
+}
+
+func TestRemoteCompanionListenersServeHTTPAndTLSWithSANs(t *testing.T) {
+	lanIP := privateIP()
+	if lanIP == nil {
+		t.Skip("No usable private IPv4 interface")
+	}
+	dir := t.TempDir()
+	store, err := auth.Open(filepath.Join(dir, "accounts.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	if err := store.Setup("admin", "CorrectHorseBatteryStaple123"); err != nil {
+		t.Fatal(err)
+	}
+
+	probeLn, err := net.Listen("tcp4", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := probeLn.Addr().(*net.TCPAddr).Port
+	probeLn.Close()
+
+	targets := remoteTargets{
+		primaryIP:    lanIP,
+		companionIPs: []net.IP{net.ParseIP("127.0.0.1")},
+	}
+	handler := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, "companion ok")
+	})
+
+	httpRemote, err := newRemoteWithTargets(handler, store, "", port, false, targets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	client := &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{Proxy: nil}}
+	for _, targetURL := range []string{httpRemote.URL, "http://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(port))} {
+		resp, getErr := client.Get(targetURL)
+		if getErr != nil {
+			httpRemote.Stop()
+			t.Fatalf("HTTP companion GET %s failed: %v", targetURL, getErr)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || string(body) != "companion ok" {
+			httpRemote.Stop()
+			t.Fatalf("unexpected HTTP response from %s: %d %q", targetURL, resp.StatusCode, body)
+		}
+	}
+	httpRemote.Stop()
+
+	tlsRemote, err := newRemoteWithTargets(handler, store, dir, port, true, targets)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tlsRemote.Stop()
+	certBytes, err := os.ReadFile(filepath.Join(dir, "remote-cert.pem"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(certBytes) {
+		t.Fatal("invalid TLS certificate")
+	}
+	tlsClient := &http.Client{Timeout: 2 * time.Second, Transport: &http.Transport{
+		Proxy: nil, TLSClientConfig: &tls.Config{RootCAs: roots, MinVersion: tls.VersionTLS13},
+	}}
+	for _, targetURL := range []string{tlsRemote.URL, "https://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(port))} {
+		resp, getErr := tlsClient.Get(targetURL)
+		if getErr != nil {
+			t.Fatalf("HTTPS companion GET %s failed: %v", targetURL, getErr)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || string(body) != "companion ok" {
+			t.Fatalf("unexpected HTTPS response from %s: %d %q", targetURL, resp.StatusCode, body)
+		}
+	}
+	tlsRemote.Stop()
+	if _, err := tlsClient.Get("https://" + net.JoinHostPort("127.0.0.1", strconv.Itoa(port))); err == nil {
+		t.Fatal("companion listener must stop when Remote.Stop() is called")
+	}
+}

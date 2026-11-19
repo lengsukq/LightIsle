@@ -37,7 +37,7 @@ macOS 磁盘 / 系统服务 / 电源
 - **Flutter 登录保留**：最近一次有效会话经 iOS/macOS Keychain 或 Android Keystore AES-GCM 加密保存，不保存密码；重启须通过原来源/原证书指纹连接并由 NAS 重新验证身份，离线保留、到期/401 失效、退出清除。安全存储失败提示重试，不把凭据回退到明文首选项。
 - 后台 API 必须防护暴力尝试、CSRF（若使用 cookie）、CORS 滥用、会话固定与权限提升。登录接口已有失败限流；Cookie 为 `HttpOnly` + `SameSite=Strict`，跨站写请求还需 `X-LightIsle-Request` 头。
 - 直连 TLS 和本机回环代理声明的 HTTPS 会话使用 `Secure` Cookie。来自局域网的转发头不影响 Cookie 或限流地址。
-- 局域网监听策略必须明确；首次安装、管理员尚未初始化时只提供经过授权的本地设置入口。管理员初始化后 Mac App 默认自动启用受账号认证保护的私有 IPv4 LAN HTTP（绝不绑定 `0.0.0.0`/所有接口），若检测到本机在线 Tailscale `100.64.0.0/10` CGNAT 虚拟组网接口则自动同端口双接口监听并在启用 HTTPS 时将 Tailscale IP 与 MagicDNS 写入自签名证书 SAN；无法绑定或无私有 IP 时显示错误，不回退到公网接口。
+- 局域网监听策略必须明确；首次安装、管理员尚未初始化时只提供经过授权的本地设置入口。管理员初始化后 Mac App 默认自动启用受账号认证保护的私有 IPv4 LAN HTTP（绝不绑定 `0.0.0.0`/所有接口），若检测到本机在线 `utun`/`tailscale` 虚拟组网接口携带 RFC 1918 私有 IPv4（`10.0.0.0/8`、`172.16.0.0/12`、`192.168.0.0/16`）或 Tailscale `100.64.0.0/10` CGNAT 地址，则自动同端口伴随监听并在启用 HTTPS 时将所有伴随 IP 与 MagicDNS 写入自签名证书 SAN；无法绑定或无私有 IP 时显示错误，不回退到公网接口。
 - 异地访问优先推荐内置原生探测的 Tailscale 虚拟组网直连；不默认映射管理端口到公网。
 - **Cloudflare Tunnel 管理（可选，默认关闭）**：Core 可以监督本机已安装的 `cloudflared`（仅探测 Homebrew 白名单路径，不捆绑、不自动下载），将 `127.0.0.1` 上的 Web 服务暴露到公网。边界：不自研穿透协议；免费快速隧道无账号、随机临时域名、仅供测试；命名隧道需要用户自己的 Cloudflare API Token。API Token 只保存在 Mac 钥匙串（`dev.lightisle.tunnel`），经私有 IPC 在 Core 重启后重发，Core 仅在内存持有；Token/隧道 Token 绝不写入日志或审计。公网暴露后仍依赖既有登录限流与会话保护，开启前应确认账号密码强度并考虑在 Cloudflare Access 侧追加访问策略。
 - **WebDAV（可选）**：同一监听器提供逐盘代次挂载。认证使用独立生成、首次显示、只存摘要的 WebDAV 密码（每用户最多 8 条）。Web Cookie 和 CSRF 请求头不提供 WebDAV 授权。认证失败按客户端地址限流。
