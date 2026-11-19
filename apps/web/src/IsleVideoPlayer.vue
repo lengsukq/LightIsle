@@ -128,7 +128,7 @@ const {
       class="player-center-status"
       aria-label="加载中"
     >
-      <Loader2 :size="48" class="spin-icon" />
+      <Loader2 :size="36" class="spin-icon" />
     </div>
     <div
       v-else-if="!isPlaying"
@@ -136,7 +136,7 @@ const {
       title="播放 (空格)"
       @click="togglePlay"
     >
-      <Play :size="40" fill="currentColor" />
+      <Play :size="30" fill="currentColor" />
     </div>
 
     <div v-if="hasError" class="player-error-overlay">
@@ -185,7 +185,7 @@ const {
             title="上一部"
             @click="emit('prev')"
           >
-            <ChevronLeft :size="20" />
+            <ChevronLeft :size="18" />
           </button>
 
           <button
@@ -194,8 +194,8 @@ const {
             :title="isPlaying ? '暂停 (空格)' : '播放 (空格)'"
             @click="togglePlay"
           >
-            <Pause v-if="isPlaying" :size="20" />
-            <Play v-else :size="20" fill="currentColor" />
+            <Pause v-if="isPlaying" :size="18" />
+            <Play v-else :size="18" fill="currentColor" />
           </button>
 
           <button
@@ -205,7 +205,7 @@ const {
             title="下一部"
             @click="emit('next')"
           >
-            <ChevronRight :size="20" />
+            <ChevronRight :size="18" />
           </button>
 
           <button
@@ -214,7 +214,7 @@ const {
             title="后退 10 秒 (←)"
             @click="jump(-10)"
           >
-            <RotateCcw :size="17" />
+            <RotateCcw :size="16" />
             <span class="jump-text">10</span>
           </button>
 
@@ -224,7 +224,7 @@ const {
             title="快进 10 秒 (→)"
             @click="jump(10)"
           >
-            <RotateCw :size="17" />
+            <RotateCw :size="16" />
             <span class="jump-text">10</span>
           </button>
 
@@ -235,8 +235,8 @@ const {
               :title="isMuted ? '取消静音 (M)' : '静音 (M)'"
               @click="toggleMute"
             >
-              <VolumeX v-if="isMuted || volume === 0" :size="19" />
-              <Volume2 v-else :size="19" />
+              <VolumeX v-if="isMuted || volume === 0" :size="17" />
+              <Volume2 v-else :size="17" />
             </button>
             <input
               type="range"
@@ -277,7 +277,7 @@ const {
                 @click="setRate(r)"
               >
                 <span>{{ r }}x</span>
-                <Check v-if="playbackRate === r" :size="14" />
+                <Check v-if="playbackRate === r" :size="13" />
               </button>
             </div>
           </div>
@@ -288,7 +288,7 @@ const {
             title="画中画模式"
             @click="togglePip"
           >
-            <PictureInPicture2 :size="18" />
+            <PictureInPicture2 :size="17" />
           </button>
 
           <button
@@ -297,8 +297,8 @@ const {
             :title="isFullscreen ? '退出全屏 (F)' : '全屏 (F)'"
             @click="toggleFullscreen"
           >
-            <Minimize2 v-if="isFullscreen" :size="18" />
-            <Maximize2 v-else :size="18" />
+            <Minimize2 v-if="isFullscreen" :size="17" />
+            <Maximize2 v-else :size="17" />
           </button>
         </div>
       </div>
@@ -311,13 +311,13 @@ const {
   position: relative;
   width: 100%;
   height: 100%;
-  min-height: 380px;
+  min-height: 340px;
   max-height: 82vh;
   display: flex;
   align-items: center;
   justify-content: center;
   background: #000;
-  border-radius: var(--radius-lg);
+  border-radius: 14px;
   overflow: hidden;
   user-select: none;
   -webkit-user-select: none;
@@ -346,18 +346,18 @@ const {
   top: 50%;
   left: 50%;
   transform: translate(-50%, -50%);
-  width: 72px;
-  height: 72px;
+  width: 60px;
+  height: 60px;
   border-radius: 50%;
-  background: rgba(20, 20, 25, 0.7);
+  background: rgba(18, 22, 30, 0.72);
   border: 1px solid rgba(255, 255, 255, 0.2);
   color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
   pointer-events: none;
   transition: transform 0.15s ease, opacity 0.15s ease;
   z-index: 5;
@@ -369,8 +369,8 @@ const {
 }
 
 .center-play-btn:hover {
-  transform: translate(-50%, -50%) scale(1.08);
-  background: rgba(35, 35, 45, 0.88);
+  transform: translate(-50%, -50%) scale(1.06);
+  background: rgba(30, 36, 48, 0.88);
 }
 
 .center-play-btn:active {
@@ -398,10 +398,10 @@ const {
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
-  color: #ff6b6b;
+  padding: 20px;
+  color: #f87171;
   text-align: center;
-  font-size: 14px;
+  font-size: 13px;
   z-index: 6;
 }
 
@@ -410,25 +410,25 @@ const {
   bottom: 0;
   left: 0;
   right: 0;
-  padding: 14px 18px 12px;
-  background: linear-gradient(to top, rgba(0, 0, 0, 0.88) 0%, rgba(0, 0, 0, 0.45) 70%, transparent 100%);
+  padding: 10px 14px 9px;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.86) 0%, rgba(0, 0, 0, 0.42) 70%, transparent 100%);
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  transition: opacity 0.25s ease, transform 0.25s ease;
+  gap: 7px;
+  transition: opacity 0.22s ease, transform 0.22s ease;
   z-index: 10;
 }
 
 .isle-video-player.controls-hidden .player-transport-bar {
   opacity: 0;
-  transform: translateY(10px);
+  transform: translateY(8px);
   pointer-events: none;
 }
 
 .player-timeline {
   position: relative;
   width: 100%;
-  height: 20px;
+  height: 18px;
   display: flex;
   align-items: center;
   cursor: pointer;
@@ -437,15 +437,15 @@ const {
 .timeline-rail {
   position: relative;
   width: 100%;
-  height: 5px;
-  border-radius: var(--radius-full);
+  height: 4px;
+  border-radius: var(--radius-full, 9999px);
   background: rgba(255, 255, 255, 0.25);
   overflow: visible;
   transition: height 0.15s ease;
 }
 
 .player-timeline:hover .timeline-rail {
-  height: 7px;
+  height: 6px;
 }
 
 .timeline-buffered {
@@ -464,15 +464,15 @@ const {
   top: 0;
   bottom: 0;
   border-radius: inherit;
-  background: var(--accent-primary, #6366f1);
+  background: var(--accent-primary, #3b82f6);
   display: flex;
   align-items: center;
   justify-content: flex-end;
 }
 
 .timeline-thumb {
-  width: 13px;
-  height: 13px;
+  width: 12px;
+  height: 12px;
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.4);
@@ -487,11 +487,11 @@ const {
 
 .timeline-hover-time {
   position: absolute;
-  bottom: 24px;
+  bottom: 22px;
   transform: translateX(-50%);
-  padding: 3px 7px;
-  border-radius: 6px;
-  background: rgba(20, 20, 25, 0.9);
+  padding: 2px 6px;
+  border-radius: 5px;
+  background: rgba(18, 22, 30, 0.92);
   color: #fff;
   font-size: 11px;
   font-family: ui-monospace, monospace;
@@ -503,22 +503,22 @@ const {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  gap: 10px;
 }
 
 .controls-left,
 .controls-right {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .control-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 36px;
-  height: 36px;
+  width: 32px;
+  height: 32px;
   border-radius: 50%;
   border: none;
   background: transparent;
@@ -542,7 +542,7 @@ const {
 
 .jump-text {
   position: absolute;
-  font-size: 9px;
+  font-size: 8.5px;
   font-weight: 700;
   font-family: ui-monospace, monospace;
   margin-top: 1px;
@@ -555,9 +555,9 @@ const {
 }
 
 .volume-slider {
-  width: 68px;
+  width: 64px;
   height: 4px;
-  accent-color: var(--accent-primary, #6366f1);
+  accent-color: var(--accent-primary, #3b82f6);
   cursor: pointer;
   opacity: 0.85;
   transition: opacity 0.15s ease, width 0.15s ease;
@@ -571,10 +571,10 @@ const {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  font-size: 12px;
+  font-size: 11.5px;
   font-family: ui-monospace, SFMono-Regular, monospace;
   color: rgba(255, 255, 255, 0.85);
-  margin-left: 6px;
+  margin-left: 4px;
 }
 
 .time-sep {
@@ -587,25 +587,25 @@ const {
 
 .rate-btn {
   width: auto;
-  padding: 0 10px;
-  border-radius: var(--radius-full);
-  font-size: 12px;
+  padding: 0 9px;
+  border-radius: var(--radius-full, 9999px);
+  font-size: 11.5px;
   font-weight: 600;
 }
 
 .rate-menu {
   position: absolute;
-  bottom: 42px;
+  bottom: 38px;
   right: 0;
   display: flex;
   flex-direction: column;
-  background: rgba(24, 24, 30, 0.94);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 12px;
+  background: rgba(20, 24, 34, 0.95);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 10px;
   padding: 4px;
   backdrop-filter: blur(18px);
   -webkit-backdrop-filter: blur(18px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.42);
   z-index: 20;
 }
 
@@ -613,14 +613,14 @@ const {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  padding: 6px 14px;
+  gap: 10px;
+  padding: 5px 12px;
   border: none;
   background: transparent;
-  color: rgba(255, 255, 255, 0.85);
+  color: rgba(255, 255, 255, 0.86);
   font-size: 12px;
   font-weight: 500;
-  border-radius: 8px;
+  border-radius: 7px;
   cursor: pointer;
 }
 
@@ -630,7 +630,7 @@ const {
 }
 
 .rate-menu-item.active {
-  color: var(--accent-primary, #818cf8);
+  color: var(--accent-primary, #60a5fa);
   font-weight: 600;
 }
 

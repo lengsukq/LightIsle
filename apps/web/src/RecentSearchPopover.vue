@@ -35,41 +35,41 @@ const emit = defineEmits<{
 <style scoped>
 .recent-search-popover {
   position: absolute;
-  top: calc(100% + 6px);
+  top: calc(100% + 5px);
   left: 0;
   right: 0;
-  min-width: 240px;
+  min-width: 230px;
   z-index: 60;
-  padding: 10px 12px;
-  border-radius: 16px;
-  background: color-mix(in srgb, var(--fluid-canvas-top) 88%, var(--surface-glass));
-  backdrop-filter: blur(24px) saturate(185%);
-  -webkit-backdrop-filter: blur(24px) saturate(185%);
+  padding: 9px 11px;
+  border-radius: 12px;
+  background: var(--fluid-card-fill);
+  backdrop-filter: blur(20px) saturate(175%);
+  -webkit-backdrop-filter: blur(20px) saturate(175%);
   border: 1px solid var(--fluid-card-border);
-  box-shadow: 0 14px 36px -8px rgba(0, 0, 0, 0.24), inset 0 1px 0 rgba(255, 255, 255, 0.28);
+  box-shadow: 0 12px 28px -6px rgba(15, 23, 42, 0.16);
   display: grid;
-  gap: 8px;
+  gap: 7px;
 }
 .recent-search-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--text-secondary);
 }
 .recent-search-head span {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
 }
 .recent-search-clear {
   border: 0 !important;
   background: transparent !important;
   box-shadow: none !important;
-  padding: 2px 6px !important;
+  padding: 2px 5px !important;
   min-height: auto !important;
-  font-size: 11.5px;
+  font-size: 11px;
   font-weight: 600;
   color: var(--text-tertiary);
   cursor: pointer;
@@ -80,7 +80,7 @@ const emit = defineEmits<{
 .recent-search-pills {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 5px;
 }
 .recent-search-pill {
   display: inline-flex;
@@ -90,7 +90,7 @@ const emit = defineEmits<{
   background: var(--fluid-card-item-fill);
   overflow: hidden;
   max-width: 100%;
-  transition: border-color 0.16s ease, background-color 0.16s ease;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
 }
 .recent-search-pill:hover {
   border-color: color-mix(in srgb, var(--accent-primary) 38%, var(--fluid-card-border));
@@ -104,16 +104,16 @@ const emit = defineEmits<{
   cursor: pointer;
 }
 .recent-search-term {
-  padding: 4px 4px 4px 10px !important;
-  font-size: 12px;
+  padding: 3px 4px 3px 9px !important;
+  font-size: 11.5px;
   color: var(--text-primary);
-  max-width: 180px;
+  max-width: 170px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .recent-search-del {
-  padding: 4px 7px 4px 3px !important;
+  padding: 3px 6px 3px 3px !important;
   color: var(--text-tertiary);
   display: inline-flex;
   align-items: center;

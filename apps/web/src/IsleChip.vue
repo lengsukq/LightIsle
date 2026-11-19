@@ -70,7 +70,7 @@ function handleRemove(event: MouseEvent) {
       tabindex="-1"
       @click="handleRemove"
     >
-      <X :size="small ? 12 : 14" />
+      <X :size="small ? 12 : 13" />
     </button>
   </button>
 </template>
@@ -80,21 +80,24 @@ function handleRemove(event: MouseEvent) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  min-height: 36px;
-  padding: 6px 14px;
+  gap: 5px;
+  min-height: 32px;
+  padding: 5px 12px;
   border-radius: 9999px;
   background: var(--fluid-card-fill);
   border: 1px solid var(--fluid-card-border);
   color: var(--text-secondary, #64748b);
   font-family: inherit;
-  font-size: 13px;
-  font-weight: 500;
-  letter-spacing: -0.1px;
+  font-size: 12.5px;
+  font-weight: 550;
+  letter-spacing: -0.01em;
   cursor: pointer;
-  box-shadow: var(--fluid-item-card-shadow);
+  box-shadow: 0 1px 2px rgba(34, 29, 23, 0.035);
   transition:
-    transform var(--motion-fast, 150ms) var(--motion-spring, cubic-bezier(0.22, 1, 0.36, 1)),
+    transform 240ms var(--motion-spring, cubic-bezier(0.22, 1, 0.36, 1)),
+    background-color 0.16s ease,
+    border-color 0.16s ease,
+    color 0.16s ease,
     opacity 0.18s ease;
   user-select: none;
   -webkit-tap-highlight-color: transparent;
@@ -103,24 +106,25 @@ function handleRemove(event: MouseEvent) {
 }
 
 .isle-chip:focus-visible {
-  outline: 2px solid var(--accent-primary, #2563eb);
+  outline: 2px solid var(--accent-primary, #1f5162);
   outline-offset: 2px;
 }
 
 .isle-chip:hover:not(.is-disabled) {
   background: var(--fluid-card-hover);
   color: var(--text-primary);
-  border-color: color-mix(in srgb, var(--fluid-rim, #ffffff) 85%, transparent);
+  border-color: var(--fluid-card-border-strong, rgba(34, 29, 23, 0.15));
 }
 
 .isle-chip:active:not(.is-disabled) {
   transform: scale(0.96);
+  transition-duration: 95ms;
 }
 
 .isle-chip.is-small {
-  min-height: 28px;
-  padding: 4px 10px;
-  font-size: 12px;
+  min-height: 26px;
+  padding: 3px 9px;
+  font-size: 11.5px;
   gap: 4px;
 }
 
@@ -130,16 +134,13 @@ function handleRemove(event: MouseEvent) {
 
 .isle-chip.is-selected {
   background: color-mix(in srgb, var(--accent-primary, #2563eb) 12%, var(--fluid-card-top, #ffffff));
-  border-color: var(--accent-primary, #2563eb);
+  border-color: color-mix(in srgb, var(--accent-primary, #2563eb) 42%, var(--fluid-card-border));
   color: var(--accent-primary, #2563eb);
   font-weight: 600;
-  box-shadow:
-    0 2px 10px rgba(37, 99, 235, 0.18),
-    inset 0 1px 1px rgba(255, 255, 255, 0.35);
 }
 
 .isle-chip.is-selected:hover:not(.is-disabled) {
-  background: color-mix(in srgb, var(--accent-primary, #2563eb) 18%, var(--fluid-card-top, #ffffff));
+  background: color-mix(in srgb, var(--accent-primary, #2563eb) 17%, var(--fluid-card-top, #ffffff));
 }
 
 .isle-chip.is-disabled {
@@ -148,7 +149,6 @@ function handleRemove(event: MouseEvent) {
   pointer-events: none;
 }
 
-/* Icon */
 .isle-chip-icon {
   display: inline-flex;
   align-items: center;
@@ -162,13 +162,12 @@ function handleRemove(event: MouseEvent) {
   text-overflow: ellipsis;
 }
 
-/* Remove button */
 .isle-chip-remove-btn {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 18px;
+  height: 18px;
   border-radius: 9999px;
   border: none;
   background: transparent;

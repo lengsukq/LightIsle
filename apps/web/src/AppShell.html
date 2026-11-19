@@ -6,6 +6,7 @@
     <div class="aurora-orb aurora-orb-5"></div>
   </div>
 
+  <Transition name="isle-stage-fade" mode="out-in">
   <AuthScene
     v-if="authChecking || authServiceError || !configured || !user"
     :auth-checking="authChecking"
@@ -35,7 +36,6 @@
       </div>
 
       <nav aria-label="主导航" class="side-nav-sections">
-        <!-- 生活空间：主页概览 / 私人文件 / 时光相册 / 私人影院 / 下载中心 / 应用中心 (apps) -->
         <div class="side-section">
           <span class="side-label">生活空间</span>
           <div class="side-nav side-group-card">
@@ -84,10 +84,13 @@
             <AppleSelect :model-value="rootSelectionValue" :options="rootSelectionOptions" :disabled="rootSwitching" size="sm" aria-label="选择共享目录" @change="handleRootChange" />
           </div>
           <span class="status-pill"><span class="dot" :class="{ off: !!error }"></span>{{ error ? "连接中断" : "轻屿在线" }}</span>
-          <button class="atmosphere-capsule" type="button" @click="cycleAtmosphere" :aria-label="'切换色彩氛围，当前：' + (atmospheres.find(a => a.id === atmosphere)?.name ?? '七彩极光')" :title="'切换色彩氛围（当前：' + (atmospheres.find(a => a.id === atmosphere)?.name ?? '七彩极光') + '）'">
-            <span class="atmosphere-icon">{{ atmospheres.find(a => a.id === atmosphere)?.icon }}</span>
-            <span class="atmosphere-text">{{ atmospheres.find(a => a.id === atmosphere)?.name }}</span>
-          </button>
+          <ThemePickerPopover
+            :theme="theme"
+            :preset="atmosphere"
+            :presets="atmospheres"
+            @select-preset="setAtmosphere"
+            @switch-theme="switchTheme"
+          />
           <button class="circle-action" type="button" @click="switchTheme" :aria-label="theme === 'dark' ? '切换浅色' : '切换深色'">
             <Sun v-if="theme === 'dark'" :size="17" /><Moon v-else :size="17" />
           </button>
@@ -113,7 +116,10 @@
 
       <Transition name="ios-fade" mode="out-in">
         <div v-if="!rootSwitching">
-          <OverviewPage v-show="active === 'overview'" class="isle-tab-pane" :identity="overviewIdentity" :search="overviewSearch" :telemetry="overviewTelemetry" :personal-space="overviewPersonalSpace" :pending="overviewPending" :apps="overviewApps" @update:query="fileSearch = $event" @update:spotlight="searchViaSpotlight = $event" @update:expanded="showHardwareSpecs = $event" @search="runFileSearch" @return-to-files="clearFileSearch" @select-history="applyRecentSearch" @delete-history="deleteRecentSearch" @clear-history="clearRecentSearches" @open-duplicates="jumpToDuplicates" @open-trash="jumpToTrash" @open-similar-photos="jumpToPhotosView('similar')" @refresh="update" @navigate="active = $event" @open-account-settings="active = 'settings'; settingsGroup = 'account'" @open-pending="active = 'settings'; settingsGroup = 'ops'" @open-apps-center="active = 'apps'" @open-app="openHomeApp" @refresh-apps="refreshOverviewApps" />
+          <section v-if="active === 'overview' && homeWorkbenchStageProps" class="isle-tab-pane apps-center">
+            <AppWorkbenchStage v-bind="homeWorkbenchStageProps" v-on="homeWorkbenchStageEvents" />
+          </section>
+          <OverviewPage v-show="active === 'overview' && !homeWorkbenchStageProps" class="isle-tab-pane" :identity="overviewIdentity" :search="overviewSearch" :telemetry="overviewTelemetry" :personal-space="overviewPersonalSpace" :pending="overviewPending" :apps="overviewApps" @update:query="fileSearch = $event" @update:spotlight="searchViaSpotlight = $event" @update:expanded="showHardwareSpecs = $event" @search="runFileSearch" @return-to-files="clearFileSearch" @select-history="applyRecentSearch" @delete-history="deleteRecentSearch" @clear-history="clearRecentSearches" @open-duplicates="jumpToDuplicates" @open-trash="jumpToTrash" @open-similar-photos="jumpToPhotosView('similar')" @refresh="update" @navigate="active = $event" @open-account-settings="active = 'settings'; settingsGroup = 'account'" @open-pending="active = 'settings'; settingsGroup = 'ops'" @open-apps-center="active = 'apps'" @open-app="openHomeApp" @refresh-apps="refreshOverviewApps" />
           <ComputerFilesView v-if="active === 'computer'" class="isle-tab-pane" :admin="user.role === 'admin'" />
           <div v-if="personalRouteError&&['files','photos','cinema'].includes(active)&&!manualRootSection" class="content isle-tab-pane">
             <section class="content-empty root-state-card root-state-offline" role="alert">
@@ -139,7 +145,18 @@
           </div>
           <div v-if="visitedPages.files" v-show="active === 'files' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)" class="content isle-tab-pane">
             <div class="section-heading">
-              <div><h2>文件管理<template v-if="sharedRootName"> · {{ sharedRootName }}</template></h2></div>
+              <div>
+                <h2>
+                  文件管理<template v-if="sharedRootName"> · {{ sharedRootName }}</template>
+                  <IsleHelpButton
+                    title="文件操作与上传说明"
+                    :items="[
+                      { title: '断点续传与同名保护', body: '支持整面板直接拖放上传，单文件上限 32 GiB，中断后自动续传且默认不覆盖同名文件。' },
+                      { title: '高效多选与快捷键', body: '支持按住 Shift 连续区间多选、⌘A / Ctrl+A 全选当前前 50 项，以及右键呼出文件操作菜单。' },
+                    ]"
+                  />
+                </h2>
+              </div>
               <button class="refresh" type="button" @click="showingTrash?loadTrash():loadFiles()" :disabled="showingTrash?trashLoading:filesLoading"><RefreshCcw :size="16" :class="{spinning:(showingTrash&&trashLoading)||(!showingTrash&&filesLoading)}" /> 刷新</button>
             </div>
             <section class="files-panel" :class="{ 'files-panel-dropping': uploadDropActive }" @dragover="dragOverUpload" @dragleave="dragLeaveUpload" @drop="dropUpload">
@@ -180,10 +197,16 @@
                   </div>
                   <div class="file-view-toggle file-icon-pill" role="group" aria-label="文件工具快捷操作">
                     <button v-if="currentFolderCanWrite&&!showingTrash" type="button" :class="{ chosen: createFolderOpen }" title="新建文件夹" aria-label="新建文件夹" @click="createFolderOpen = !createFolderOpen"><FolderPlus :size="15" /></button>
-                    <button v-if="!showingTrash" type="button" title="重复文件清理" aria-label="重复文件清理" @click="showDuplicatesModal = true"><CopyCheck :size="15" /></button>
                     <button type="button" :class="{ chosen: showingTrash }" :title="showingTrash ? '退出回收站' : '回收站（查看与恢复已删文件）'" :aria-label="showingTrash ? '退出回收站' : '回收站'" @click="openTrash"><Trash2 :size="15" /></button>
-                    <button type="button" title="挂载到电脑（WebDAV / SMB 连接向导）" aria-label="挂载到电脑（WebDAV）" @click="jumpToSettingsGroup('files')"><Monitor :size="15" /></button>
                   </div>
+                  <IsleActionMenu aria-label="更多文件工具">
+                    <button v-if="!showingTrash" type="button" role="menuitem" @click="showDuplicatesModal = true">
+                      <CopyCheck :size="15" /> 重复文件清理
+                    </button>
+                    <button type="button" role="menuitem" @click="jumpToSettingsGroup('files')">
+                      <Monitor :size="15" /> WebDAV 挂载向导
+                    </button>
+                  </IsleActionMenu>
                   <IsleButton v-if="currentFolderCanWrite&&!showingTrash" variant="primary" size="md" :disabled="uploadBusy||filesLoading" @click="chooseUploadFiles">
                     <template #icon><UploadCloud :size="16" /></template>{{ uploadBusy ? "正在上传" : "上传文件" }}
                   </IsleButton>
@@ -201,10 +224,10 @@
                 aria-label="文件上传区" @dragover="dragOverUpload" @dragleave="dragLeaveUpload" @drop="dropUpload">
                 <span class="upload-drop-symbol"><UploadCloud :size="18" :stroke-width="1.8"/></span>
                 <div class="upload-drop-content">
-                  <strong>{{uploadDropActive?"释放文件，上传到当前文件夹":"拖放文件至此上传 · 单文件上限 32 GiB，支持断点续传"}}</strong>
+                  <strong>{{uploadDropActive?"释放文件，上传到当前文件夹":"拖放文件至此上传"}}</strong>
                   <label v-if="!searchingFiles" class="upload-conflict-inline" @click.stop>
                     <input v-model="uploadAutoRenameConflicts" type="checkbox" :disabled="uploadBusy" />
-                    <span>同名自动改名另存（不覆盖已有文件）</span>
+                    <span>同名自动改名</span>
                   </label>
                 </div>
                 <button v-if="!uploadBusy" type="button" class="upload-drop-select" @click="chooseUploadFiles">选择文件 <ChevronRight :size="14"/></button>
@@ -331,16 +354,15 @@
                 <button type="button" :disabled="filesLoading" @click="loadFiles(filesPath,true)">{{filesLoading?"加载中…":"加载更多文件"}}</button>
               </div>
             </section>
-            <p class="footnote">支持整面板拖放上传、Shift 连续多选、右键快捷菜单与断点续传；单次批量操作上限 50 项。</p>
           </div>
           <div v-show="active === 'photos' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)" class="isle-tab-pane">
             <PhotosView v-if="visitedPages.photos" v-show="active === 'photos' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)" :key="rootViewKey" :active="active === 'photos'" :admin="user.role==='admin'" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" :root-name="multiRootMode?selectedRoot?.name:undefined" :has-other-roots="multiRootMode&&sharedRoots.length>1" :jump-target="photosJumpTarget" />
           </div>
           <div v-show="active === 'cinema' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)" class="isle-tab-pane">
-            <CinemaView v-if="visitedPages.cinema" v-show="active === 'cinema' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)" :key="rootViewKey" :active="active === 'cinema'" :admin="user.role==='admin'" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" @open-mount-guide="jumpToSettingsGroup('files')" @open-scraping-settings="jumpToSettingsGroup('ops')" />
+            <CinemaView v-if="visitedPages.cinema" v-show="active === 'cinema' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)" :key="rootViewKey" :active="active === 'cinema'" :admin="user.role==='admin'" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" :launch-request="pendingCinemaLaunch" @launch-handled="pendingCinemaLaunch = null" @open-mount-guide="jumpToSettingsGroup('files')" @open-scraping-settings="jumpToSettingsGroup('ops')" />
           </div>
           <div v-if="active === 'downloads'" class="content isle-tab-pane">
-            <div class="section-heading"><div><h2>下载中心</h2><p>支持链接、磁力与种子任务，下载至所选目录。</p></div></div>
+            <div class="section-heading"><div><h2>下载中心</h2></div></div>
             <DownloadsView :active="active === 'downloads'" :api="downloadsApi" />
           </div>
           <div v-if="active === 'apps'" class="content isle-tab-pane">
@@ -351,7 +373,7 @@
           </div>
           <div v-if="active === 'settings'" class="content settings-page isle-tab-pane">
             <div class="section-heading">
-              <div><h2>偏好设置</h2><p>管理账号安全、WebDAV 挂载、文件分享、缓存与存储服务。</p></div>
+              <div><h2>偏好设置</h2></div>
               <IsleButton variant="glass" size="sm" @click="logout"><template #icon><LogOut :size="14" /></template>退出登录</IsleButton>
             </div>
             <nav class="settings-nav" aria-label="设置分类">
@@ -362,12 +384,11 @@
             <Transition name="ios-fade" mode="out-in">
             <div :key="settingsGroup" class="settings-stack">
               <CacheManagementPanel v-if="settingsGroup==='cache'" :is-admin="user.role==='admin'" :active="active==='settings'" />
-              <BetaDiagnosticReport v-if="settingsGroup==='account'" />
 
               <template v-if="settingsGroup==='files'">
                 <DavAccess />
                 <TailscaleGuideCard v-if="user.role==='admin'" />
-                <IsleCard title="我的文件分享" subtitle="分享链接最长 7 天有效，可随时撤销；完整链接仅在创建时展示一次。">
+                <IsleCard title="我的文件分享" subtitle="限时外链最长 7 天有效，可随时撤销。">
                   <template #icon><Folder :size="18" /></template>
                   <template #actions>
                     <IsleButton variant="glass" size="sm" :loading="sharesLoading" :disabled="!rootFeatureContextReady" @click="loadMyShares">
@@ -375,8 +396,8 @@
                     </IsleButton>
                   </template>
                   <p v-if="!rootFeatureContextReady" class="footnote">请先选择一个可访问的共享目录，再管理该目录中的分享。</p>
-                  <IsleEmpty v-else-if="sharesLoaded&&!activeShares.length" compact :icon="Folder" title="暂无有效的分享链接" description="可在「私人文件」页选择文件或文件夹后点击「创建分享链接」。" />
-                  <IsleEmpty v-else-if="!sharesLoaded&&!sharesLoading" compact :icon="Folder" title="点击右上角「查看 / 刷新」加载分享记录" description="仅显示当前共享目录下的有效外链。" />
+                  <IsleEmpty v-else-if="sharesLoaded&&!activeShares.length" compact :icon="Folder" title="暂无有效的分享链接" description="可在「私人文件」页选择文件或文件夹后创建分享链接。" />
+                  <IsleEmpty v-else-if="!sharesLoaded&&!sharesLoading" compact :icon="Folder" title="点击右上角「查看 / 刷新」加载分享记录" />
                   <div v-for="share in activeShares" :key="share.id" class="account-row">
                     <div>
                       <strong class="settings-row-title">
@@ -410,7 +431,7 @@
                   </summary>
                   <div class="disclosure-body">
                     <UploadMaintenance v-if="advancedUploadsOpen" :key="rootViewKey" :root-id="multiRootMode?selectedRootID:undefined" :root-generation="selectedRootGeneration" />
-                    <div v-if="advancedUploadsOpen" style="margin-top:20px;border-top:1px solid var(--stroke-subtle);padding-top:16px">
+                    <div v-if="advancedUploadsOpen" style="margin-top:14px;border-top:1px solid var(--fluid-divider, var(--stroke-subtle));padding-top:12px">
                       <div class="account-heading"><h4>上传暂存自动清理规则</h4></div>
                       <UploadCleanupRules />
                     </div>
@@ -441,7 +462,7 @@
                     <template v-if="advancedDiagnosticsOpen">
                       <OpsDiagnostics />
                       <AuditLogView />
-                      <div style="margin-top:20px;border-top:1px solid var(--stroke-subtle);padding-top:16px">
+                      <div style="margin-top:14px;border-top:1px solid var(--fluid-divider, var(--stroke-subtle));padding-top:12px">
                         <div class="account-heading"><h4>成员容量预占记录</h4></div>
                         <PendingReservations :roots="sharedRoots" :roots-known="rootDiscoveryState==='multi'&&!rootDiscoveryError" @open-storage="settingsGroup='account'" />
                       </div>
@@ -450,12 +471,12 @@
                 </details>
               </template>
 
-              <IsleCard v-if="settingsGroup==='account'" title="缺失媒体记录核对" subtitle="当照片或影片文件被移动或重命名时，在此找回并重新关联原有的收藏、相册和观看进度。">
+              <IsleCard v-if="settingsGroup==='account'" title="缺失媒体记录核对" subtitle="移动或重命名媒体文件后，重新关联收藏与观看进度。">
                 <template #icon><Images :size="18" /></template>
                 <div v-if="user.role==='admin'" class="account-row" style="margin:0">
                   <div>
                     <strong class="settings-row-title">管理员请前往「任务与通知」统一核对</strong>
-                    <small>缺失媒体核对与预约处理已收口至任务中心，避免多处入口重复。</small>
+                    <small>缺失媒体与任务巡检已收口至任务中心。</small>
                   </div>
                   <IsleButton variant="secondary" size="sm" @click="settingsGroup='ops'">前往任务与通知</IsleButton>
                 </div>
@@ -473,14 +494,14 @@
                 </template>
               </IsleCard>
 
-              <IsleCard v-if="settingsGroup==='account'" title="登录设备与会话管理" subtitle="查看当前已登录的终端型号、客户端 IP 与最近活跃时间，支持单设备远程下线。">
+              <IsleCard v-if="settingsGroup==='account'" title="登录设备与会话管理" subtitle="查看已登录终端与最近活跃时间，支持单设备下线。">
                 <template #icon><ShieldCheck :size="18" /></template>
                 <template #actions>
                   <IsleButton variant="glass" size="sm" :loading="sessionsLoading" @click="loadLoginSessions">
                     <template #icon><RefreshCcw :size="14" /></template>{{sessionsLoading?"处理中…":"查看 / 刷新"}}
                   </IsleButton>
                 </template>
-                <IsleEmpty v-if="!sessionsLoaded&&!sessionsLoading" compact :icon="ShieldCheck" title="点击右上角「查看 / 刷新」读取已登录设备" description="可查看已登录终端型号、来源 IP 与最近活跃时间，或单独远程下线指定设备。" />
+                <IsleEmpty v-if="!sessionsLoaded&&!sessionsLoading" compact :icon="ShieldCheck" title="点击右上角「查看 / 刷新」读取已登录设备" />
                 <div v-if="sessionsLoaded&&loginSessions.length>1" class="account-row">
                   <div><strong>退出其他设备</strong><small>只保留当前设备的会话</small></div>
                   <IsleButton variant="danger" size="sm" :disabled="sessionsLoading" @click="revokeLoginSession('others')">全部退出</IsleButton>
@@ -502,7 +523,7 @@
                 <IsleBanner v-if="sessionsMessage" type="info" compact role="status" :message="sessionsMessage" />
               </IsleCard>
 
-              <IsleCard v-if="settingsGroup==='account'" title="修改我的密码" subtitle="修改密码后会退出所有已登录设备，请使用新密码重新登录。">
+              <IsleCard v-if="settingsGroup==='account'" title="修改我的密码" subtitle="修改后将退出所有已登录设备。">
                 <template #icon><ShieldCheck :size="18" /></template>
                 <form class="account-form settings-form-subcard" @submit.prevent="changeOwnPassword">
                   <div class="settings-form-grid-3">
@@ -517,7 +538,7 @@
                 <IsleBanner v-if="passwordError" type="error" compact role="alert" :message="passwordError" style="margin-top:10px" />
               </IsleCard>
 
-              <IsleCard v-if="settingsGroup==='account'&&user.role === 'admin'" title="成员账号与权限管理" subtitle="在此创建家庭成员账号、启停成员、重置密码，并配置共享目录与本机电脑文件访问授权。">
+              <IsleCard v-if="settingsGroup==='account'&&user.role === 'admin'" title="成员账号与权限管理" subtitle="创建家庭成员账号并配置目录访问权限。">
                 <template #icon><Monitor :size="18" /></template>
                 <template #actions>
                   <IsleButton variant="glass" size="sm" @click="loadAccounts"><template #icon><RefreshCcw :size="14" /></template>刷新</IsleButton>
@@ -544,8 +565,12 @@
                   <div v-if="account.role === 'member'" style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
                     <IsleButton variant="tonal" size="sm" :disabled="multiRootMode&&!selectedRootID" @click="editGrants(account)">共享目录权限</IsleButton>
                     <IsleButton variant="tonal" size="sm" @click="editComputerGrants(account)">电脑文件权限</IsleButton>
-                    <IsleButton variant="glass" size="sm" @click="openResetMemberPassword(account)">重置密码</IsleButton>
-                    <IsleButton :variant="account.enabled ? 'danger' : 'tonal'" size="sm" :disabled="memberActionBusy" @click="toggleMemberEnabled(account)">{{ account.enabled ? "停用账号" : "启用账号" }}</IsleButton>
+                    <IsleActionMenu :aria-label="'更多账号操作：' + account.username">
+                      <button type="button" role="menuitem" @click="openResetMemberPassword(account)">重置密码</button>
+                      <button type="button" role="menuitem" :class="{ danger: account.enabled }" :disabled="memberActionBusy" @click="toggleMemberEnabled(account)">
+                        {{ account.enabled ? "停用账号" : "启用账号" }}
+                      </button>
+                    </IsleActionMenu>
                   </div>
                 </div>
                 <div v-if="resetTargetUser" class="grant-details-drawer">
@@ -600,10 +625,11 @@
               </IsleCard>
 
               <UserStoragePanel v-if="settingsGroup==='account'" mode="users" :key="accounts.map(a=>a.id).join('-')" :admin="user.role==='admin'" />
-              <IsleCard v-if="settingsGroup==='account'&&user.role!=='admin'" title="当前用户" :subtitle="user.username + '（普通用户）'">
-                <template #icon><ShieldCheck :size="18" /></template>
-                <p style="margin:0;font-size:13px;color:var(--text-secondary)">家庭成员账号与目录配额由管理员统一创建和维护。</p>
+              <IsleCard v-if="settingsGroup==='account'&&user.role!=='admin'" padding="sm" title="当前用户" :subtitle="user.username + '（普通用户）'">
+                <template #icon><ShieldCheck :size="17" /></template>
+                <p style="margin:0;font-size:12.5px;color:var(--text-secondary)">家庭成员账号与目录配额由管理员统一维护。</p>
               </IsleCard>
+              <BetaDiagnosticReport v-if="settingsGroup==='account'" />
             </div>
             </Transition>
           </div>
@@ -619,54 +645,9 @@
       <template #footer><div style="display:flex;justify-content:flex-end;gap:10px;width:100%"><IsleButton variant="glass" :disabled="fileActionBusy" @click="trashTarget=null">取消</IsleButton><IsleButton variant="danger" :loading="fileActionBusy" @click="removeFile">确认移入</IsleButton></div></template>
     </IsleModal>
     <IsleModal :open="Boolean(previewItem)" :title="previewItem?.name || ''" size="wide" role="dialog" aria-label="文件预览" @close="previewItem=null;showPreviewPlaylist=false">
-      <template #header-actions>
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <template v-if="previewVideoPlaylist.length>1">
-            <IsleButton variant="glass" size="sm" :disabled="!prevPreviewVideo" @click="prevPreviewVideo&&previewFile(prevPreviewVideo)">上一部</IsleButton>
-            <IsleButton variant="glass" size="sm" :disabled="!nextPreviewVideo" @click="nextPreviewVideo&&previewFile(nextPreviewVideo)">下一部</IsleButton>
-            <label style="display:inline-flex;align-items:center;gap:4px;font-size:12px;color:var(--text-secondary)"><input v-model="previewAutoplayNext" type="checkbox"/>自动连播</label>
-            <IsleButton variant="glass" size="sm" @click="showPreviewPlaylist=!showPreviewPlaylist">播放列表 ({{currentPreviewVideoIndex+1}}/{{previewVideoPlaylist.length}})</IsleButton>
-          </template>
-          <template v-else-if="previewImagePlaylist.length>1">
-            <IsleButton variant="glass" size="sm" :disabled="!prevPreviewImage" @click="prevPreviewImage&&previewFile(prevPreviewImage)">上一张</IsleButton>
-            <IsleButton variant="glass" size="sm" :disabled="!nextPreviewImage" @click="nextPreviewImage&&previewFile(nextPreviewImage)">下一张</IsleButton>
-            <span style="font-size:12px;color:var(--text-secondary);font-family:ui-monospace,monospace">({{currentPreviewImageIndex+1}}/{{previewImagePlaylist.length}})</span>
-          </template>
-        </div>
-      </template>
-      <div v-if="showPreviewPlaylist&&previewVideoPlaylist.length>1" class="account-panel" style="margin-bottom:10px;max-height:180px;overflow-y:auto">
-        <div v-for="(videoEntry,idx) in previewVideoPlaylist" :key="videoEntry.path" class="account-row" style="padding:6px 0">
-          <div>
-            <strong>{{idx+1}}. {{videoEntry.name}}</strong>
-            <small v-if="videoEntry.path===previewItem?.path"> · 正在播放</small>
-          </div>
-          <IsleButton variant="glass" size="sm" :disabled="videoEntry.path===previewItem?.path" @click="previewFile(videoEntry)">{{videoEntry.path===previewItem?.path?"当前":"播放"}}</IsleButton>
-        </div>
-      </div>
       <IsleBanner v-if="previewError" type="error" compact :message="previewError" />
       <pre v-else-if="previewItem && /\.(txt|md|json|log|ya?ml|toml|csv|xml|ini|conf|sh|py|ts|js|vue|go|swift|css|html)$/i.test(previewItem.name)" class="preview-text">{{ previewText }}</pre>
-      <IsleImageViewer
-        v-else-if="previewItem && /\.(jpe?g|png|gif|webp|heic|heif)$/i.test(previewItem.name)"
-        :src="previewURL"
-        :alt="previewItem.name"
-        :title="previewItem.name"
-        :has-prev="Boolean(prevPreviewImage)"
-        :has-next="Boolean(nextPreviewImage)"
-        @prev="prevPreviewImage && previewFile(prevPreviewImage)"
-        @next="nextPreviewImage && previewFile(nextPreviewImage)"
-      />
       <iframe v-else-if="previewItem && /\.pdf$/i.test(previewItem.name)" :src="previewURL" :title="previewItem.name" class="preview-video" loading="lazy"></iframe>
-      <IsleVideoPlayer
-        v-else-if="previewItem && /\.(mp4|webm|m4v|mov)$/i.test(previewItem.name)"
-        :key="previewItem.path"
-        :src="previewURL"
-        :title="previewItem.name"
-        :has-prev="Boolean(prevPreviewVideo)"
-        :has-next="Boolean(nextPreviewVideo)"
-        @prev="prevPreviewVideo && previewFile(prevPreviewVideo)"
-        @next="nextPreviewVideo && previewFile(nextPreviewVideo)"
-        @ended="onPreviewVideoEnded"
-      />
       <div v-else-if="previewItem && /\.(mp3|m4a|flac|wav|ogg|aac)$/i.test(previewItem.name)" style="padding: 20px 8px; display: flex; flex-direction: column; align-items: center; gap: 14px">
         <audio :key="previewItem.path" :src="previewURL" controls autoplay style="width: min(100%, 480px)" />
         <small style="color: var(--text-secondary)">{{ bytes(previewItem.size) }}</small>
@@ -677,6 +658,7 @@
         </template>
       </IsleEmpty>
     </IsleModal>
+    <PhotoViewerModal v-bind="fileMediaModalProps" v-on="fileMediaModalEvents" />
     <IsleModal
       :open="Boolean(sharingFile)"
       :title="'限时分享 · ' + (sharingFile?.name || '')"
@@ -741,8 +723,10 @@
       @select-page="active = $event"
       @toggle-more="moreMenuOpen = $event"
       @root-change="handleRootChange"
+      @select-atmosphere="setAtmosphere"
       @cycle-atmosphere="cycleAtmosphere"
       @switch-theme="switchTheme"
       @logout="logout"
     />
   </div>
+  </Transition>

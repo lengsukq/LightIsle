@@ -43,7 +43,7 @@ withDefaults(
     title: '',
     description: '',
     icon: null,
-    iconSize: 36,
+    iconSize: 24,
     compact: false,
     card: false,
   }
@@ -64,54 +64,53 @@ defineSlots<{
   align-items: center;
   justify-content: center;
   text-align: center;
-  padding: 36px 20px;
+  padding: 24px 18px;
   color: var(--text-secondary);
   box-sizing: border-box;
 }
 
 .isle-empty.compact {
-  padding: 18px 12px;
+  padding: 14px 12px;
 }
 
 .isle-empty.card-surface {
-  background: var(--card-bg);
-  border: 1px solid var(--card-border);
-  border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
-  backdrop-filter: blur(var(--blur-md));
-  -webkit-backdrop-filter: blur(var(--blur-md));
+  background: var(--fluid-card-fill);
+  border: 1px solid var(--fluid-card-border);
+  border-radius: 16px;
+  box-shadow: var(--fluid-item-card-shadow);
 }
 
 .isle-empty-icon-wrap {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 56px;
-  height: 56px;
-  border-radius: var(--radius-md);
-  background: rgba(255, 255, 255, 0.05);
-  border: 1px solid var(--border-subtle);
-  color: var(--text-secondary);
-  margin-bottom: 12px;
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--accent-primary) 8%, var(--fluid-card-item-fill));
+  border: 1px solid var(--fluid-card-border);
+  color: var(--accent-primary);
+  margin-bottom: 10px;
   transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 .isle-empty.compact .isle-empty-icon-wrap {
-  width: 40px;
-  height: 40px;
-  margin-bottom: 8px;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  margin-bottom: 6px;
 }
 
 .isle-empty-icon {
-  opacity: 0.8;
+  opacity: 0.9;
 }
 
 .isle-empty-title {
-  font-size: 15px;
-  font-weight: 600;
+  font-size: 14px;
+  font-weight: 650;
   color: var(--text-primary);
   letter-spacing: -0.01em;
-  margin-bottom: 4px;
+  margin-bottom: 3px;
 }
 
 .isle-empty.compact .isle-empty-title {
@@ -119,10 +118,10 @@ defineSlots<{
 }
 
 .isle-empty-desc {
-  font-size: 13px;
+  font-size: 12.5px;
   line-height: 1.5;
   color: var(--text-secondary);
-  max-width: 420px;
+  max-width: 400px;
   margin: 0 auto;
 }
 
@@ -134,12 +133,12 @@ defineSlots<{
 .isle-empty-action {
   display: inline-flex;
   align-items: center;
-  gap: 10px;
-  margin-top: 18px;
+  gap: 8px;
+  margin-top: 12px;
 }
 
 .isle-empty.compact .isle-empty-action {
-  margin-top: 12px;
+  margin-top: 10px;
 }
 
 @media (prefers-reduced-motion: reduce) {

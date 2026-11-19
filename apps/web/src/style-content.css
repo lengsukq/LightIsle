@@ -2,12 +2,13 @@
 .settings-page {
   display: flex;
   flex-direction: column;
-  max-width: 1120px;
+  max-width: 920px;
+  margin: 0 auto;
 }
 .settings-stack {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 12px;
 }
 .settings-stack > .account-panel,
 .settings-stack > .isle-card,
@@ -21,8 +22,8 @@
   flex-wrap: wrap;
 }
 .settings-form-subcard {
-  padding: 16px;
-  border-radius: 16px;
+  padding: 13px 15px;
+  border-radius: 13px;
   background: var(--fluid-card-item-fill);
   border: 1px solid var(--fluid-card-border);
 }
@@ -300,7 +301,7 @@
   background: var(--surface-raised);
   border: 1px solid var(--stroke-subtle);
   border-radius: var(--radius-lg);
-  overflow: hidden;
+  overflow: visible;
   box-shadow: var(--shadow-elevated);
 }
 .files-toolbar {

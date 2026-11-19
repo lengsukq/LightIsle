@@ -3,6 +3,7 @@ import type { Component } from "vue";
 import { LogOut, Moon, MoreHorizontal, Sun, X } from "lucide-vue-next";
 import AppleSelect, { type SelectOption } from "./AppleSelect.vue";
 import type { ShellPage } from "./shellRouteGuard.ts";
+import type { Theme, ThemePresetId, ThemePresetMeta } from "./theme.ts";
 
 export interface NavItemDef {
   key: ShellPage;
@@ -23,15 +24,16 @@ const props = defineProps<{
   rootSwitching: boolean;
   showComputerFilesNav: boolean;
   isAdmin: boolean;
-  atmosphere: string;
-  atmospheres: ReadonlyArray<{ id: string; name: string; icon: string }>;
-  theme: "light" | "dark";
+  atmosphere: ThemePresetId;
+  atmospheres: ReadonlyArray<ThemePresetMeta>;
+  theme: Theme;
 }>();
 
 const emit = defineEmits<{
   (e: "select-page", page: ShellPage): void;
   (e: "toggle-more", open: boolean): void;
   (e: "root-change", value: string | number | boolean | null): void;
+  (e: "select-atmosphere", id: ThemePresetId): void;
   (e: "cycle-atmosphere"): void;
   (e: "switch-theme"): void;
   (e: "logout"): void;
@@ -85,13 +87,28 @@ function visibleOverflowItems() {
             <span>{{ item.title }}</span>
           </button>
         </div>
-        <div class="mobile-more-footer">
-          <button type="button" class="mobile-more-action" @click="emit('cycle-atmosphere')">
-            <span>
-              {{ atmospheres.find(a => a.id === atmosphere)?.icon }}
-              {{ atmospheres.find(a => a.id === atmosphere)?.name }}
+        <div class="mobile-theme-strip" role="radiogroup" aria-label="主题风格">
+          <button
+            v-for="preset in atmospheres"
+            :key="preset.id"
+            type="button"
+            role="radio"
+            :aria-checked="preset.id === atmosphere"
+            class="mobile-theme-chip"
+            :class="{ chosen: preset.id === atmosphere }"
+            @click="emit('select-atmosphere', preset.id)"
+          >
+            <span class="mobile-theme-dots" aria-hidden="true">
+              <span
+                v-for="(hex, idx) in preset.swatches[theme].slice(2)"
+                :key="idx"
+                :style="{ background: hex }"
+              />
             </span>
+            <span>{{ preset.name }}</span>
           </button>
+        </div>
+        <div class="mobile-more-footer">
           <button type="button" class="mobile-more-action" @click="emit('switch-theme')">
             <Sun v-if="theme === 'dark'" :size="15" />
             <Moon v-else :size="15" />
@@ -128,3 +145,44 @@ function visibleOverflowItems() {
     </button>
   </nav>
 </template>
+
+<style scoped>
+.mobile-theme-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.mobile-theme-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 10px;
+  border-radius: var(--radius-pill, 999px);
+  border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-item-fill);
+  color: var(--text-secondary);
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.mobile-theme-chip.chosen {
+  border-color: var(--accent-primary);
+  background: var(--accent-muted);
+  color: var(--accent-primary);
+}
+
+.mobile-theme-dots {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.mobile-theme-dots span {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1px solid rgba(128, 128, 128, 0.25);
+}
+</style>

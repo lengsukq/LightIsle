@@ -44,7 +44,7 @@ body {
 }
 
 .topbar {
-  gap: 12px;
+  gap: 10px;
   flex-wrap: nowrap;
 }
 
@@ -65,14 +65,14 @@ body {
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
   flex-shrink: 0;
   flex-wrap: nowrap;
 }
 
 .topbar .user-name {
-  max-width: 132px;
+  max-width: 128px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -87,7 +87,7 @@ body {
     display: none;
   }
   .shell:has(> .sidebar:not(.dock-collapsed)) .topbar .atmosphere-capsule {
-    padding: 6px 10px;
+    padding: 5px 9px;
   }
 }
 
@@ -99,37 +99,37 @@ body {
     display: none;
   }
   .topbar .atmosphere-capsule {
-    padding: 6px 10px;
+    padding: 5px 9px;
   }
   .shell:has(> .sidebar:not(.dock-collapsed)) .topbar .status-pill,
   .shell:has(> .sidebar:not(.dock-collapsed)) .topbar .user-role {
     display: none;
   }
   .shell:has(> .sidebar:not(.dock-collapsed)) .topbar .user-name {
-    max-width: 96px;
+    max-width: 92px;
   }
 }
 
 @media (min-width: 768px) and (max-width: 960px) {
   .sidebar:not(.dock-collapsed) {
-    width: 212px;
-    margin-left: 12px;
+    width: 204px;
+    margin-left: 10px;
   }
   .topbar .status-pill,
   .topbar .user-role {
     display: none;
   }
   .topbar .user-name {
-    max-width: 92px;
+    max-width: 88px;
   }
 }
 
-/* 3. Structured Two-Row Files Toolbar & Responsive Controls */
+/* 3. Structured Compact Files Toolbar & Responsive Controls */
 .files-toolbar {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 10px;
+  gap: 8px;
 }
 
 .files-toolbar .file-crumbs {
@@ -141,14 +141,14 @@ body {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
 }
 
 .files-toolbar .file-inline-search {
   flex: 1 1 180px;
-  min-width: 150px;
-  max-width: 300px;
+  min-width: 144px;
+  max-width: 280px;
   margin-right: auto;
 }
 
@@ -170,26 +170,26 @@ body {
 }
 
 .section-heading {
-  gap: 12px;
+  gap: 10px;
   flex-wrap: wrap;
 }
 
 .section-heading > div {
   min-width: 0;
-  flex: 1 1 220px;
+  flex: 1 1 200px;
 }
 
 .section-heading p {
-  margin-top: 4px;
-  line-height: 1.5;
+  margin-top: 2px;
+  line-height: 1.45;
 }
 
 /* 5. Tablet & Mobile Responsive Adaptations (< 768px & <= 480px) */
 @media (max-width: 767px) {
   .topbar {
     flex-wrap: nowrap;
-    padding: 8px 12px;
-    min-height: 50px;
+    padding: 6px 12px;
+    min-height: 46px;
     gap: 8px;
   }
   .topbar .breadcrumb {
@@ -206,9 +206,9 @@ body {
   }
   .topbar-root-control {
     padding: 2px 4px;
-    flex: 0 1 150px;
+    flex: 0 1 144px;
     min-width: 0;
-    max-width: 150px;
+    max-width: 144px;
     overflow: hidden;
   }
   .topbar-root-control .apple-select-trigger {
@@ -229,30 +229,30 @@ body {
   }
   .account-heading {
     flex-wrap: wrap;
-    gap: 8px;
+    gap: 6px;
   }
   .dialog-backdrop {
-    padding: 10px;
+    padding: 8px;
     align-items: flex-end;
   }
   .file-batch-bar {
     flex-wrap: wrap;
-    border-radius: 20px;
-    padding: 12px 14px;
-    gap: 8px;
+    border-radius: 16px;
+    padding: 10px 12px;
+    gap: 6px;
   }
 }
 
 @media (max-width: 480px) {
   .topbar-root-control {
-    flex-basis: 128px;
-    max-width: 128px;
+    flex-basis: 124px;
+    max-width: 124px;
   }
   .auth-scene {
-    padding: 16px;
+    padding: 14px;
   }
   .auth-card {
-    padding: 26px 20px;
+    padding: 22px 18px;
   }
   /* Prevent iOS Safari zoom on input focus */
   .auth-card input,
@@ -263,11 +263,11 @@ body {
     font-size: 16px;
   }
   .photo-grid {
-    grid-template-columns: repeat(auto-fill, minmax(110px, 1fr));
-    gap: 6px;
+    grid-template-columns: repeat(auto-fill, minmax(104px, 1fr));
+    gap: 4px;
   }
   .cinema-grid {
-    grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-    gap: 12px;
+    grid-template-columns: repeat(auto-fill, minmax(136px, 1fr));
+    gap: 10px;
   }
 }

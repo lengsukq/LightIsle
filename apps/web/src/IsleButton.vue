@@ -72,7 +72,7 @@ function handleClick(event: MouseEvent) {
     @click="handleClick"
   >
     <span v-if="loading" class="isle-btn-spinner" aria-hidden="true">
-      <Loader2 :size="resolvedSize === 'sm' ? 14 : resolvedSize === 'lg' ? 18 : 16" class="spin-icon" />
+      <Loader2 :size="resolvedSize === 'sm' ? 13 : resolvedSize === 'lg' ? 17 : 15" class="spin-icon" />
     </span>
     <span v-else-if="$slots.icon" class="isle-btn-icon" aria-hidden="true">
       <slot name="icon" />
@@ -96,12 +96,14 @@ function handleClick(event: MouseEvent) {
   gap: 6px;
   border-radius: 9999px;
   font-family: inherit;
-  font-weight: 500;
-  letter-spacing: -0.15px;
+  font-weight: 550;
+  letter-spacing: -0.01em;
   cursor: pointer;
   border: 1px solid transparent;
   transition:
-    transform var(--motion-fast, 150ms) var(--motion-spring, cubic-bezier(0.22, 1, 0.36, 1)),
+    transform 240ms var(--motion-spring, cubic-bezier(0.22, 1, 0.36, 1)),
+    background-color 0.16s ease,
+    border-color 0.16s ease,
     opacity 0.18s ease;
   user-select: none;
   -webkit-tap-highlight-color: transparent;
@@ -111,12 +113,13 @@ function handleClick(event: MouseEvent) {
 }
 
 .isle-btn:focus-visible {
-  outline: 2px solid var(--accent-primary, #2563eb);
+  outline: 2px solid var(--accent-primary, #1f5162);
   outline-offset: 2px;
 }
 
 .isle-btn:active:not(.is-disabled) {
   transform: scale(0.96);
+  transition-duration: 95ms;
 }
 
 .isle-btn.is-full-width {
@@ -131,77 +134,74 @@ function handleClick(event: MouseEvent) {
 
 /* Sizes */
 .isle-btn.size-sm {
-  min-height: 32px;
-  padding: 4px 12px;
-  font-size: 12.5px;
+  min-height: 30px;
+  padding: 4px 11px;
+  font-size: 12px;
   gap: 5px;
 }
 
 .isle-btn.size-md {
-  min-height: 38px;
-  padding: 6px 16px;
-  font-size: 13.5px;
+  min-height: 34px;
+  padding: 5px 14px;
+  font-size: 13px;
   gap: 6px;
 }
 
 .isle-btn.size-lg {
-  min-height: 44px;
-  padding: 8px 20px;
-  font-size: 15px;
-  gap: 8px;
+  min-height: 40px;
+  padding: 7px 18px;
+  font-size: 14px;
+  gap: 7px;
 }
 
 /* Variants */
 .isle-btn.variant-primary {
-  background: linear-gradient(135deg, #1b86ff 0%, var(--accent-primary, #0071e3) 100%);
-  color: #ffffff;
-  border-color: rgba(255, 255, 255, 0.22);
+  background: linear-gradient(180deg, var(--accent-primary-solid-top, #2B677B) 0%, var(--accent-primary-solid, var(--accent-primary, #1F5162)) 100%);
+  color: var(--on-accent-primary, #ffffff);
+  border-color: color-mix(in srgb, var(--accent-primary-solid, var(--accent-primary, #1F5162)) 82%, #000000);
   box-shadow:
-    0 3px 12px color-mix(in srgb, var(--accent-primary, #0071e3) 30%, transparent),
-    inset 0 1px 1px rgba(255, 255, 255, 0.28);
+    0 2px 8px color-mix(in srgb, var(--accent-primary-solid, var(--accent-primary, #1F5162)) 26%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.22);
 }
 
 .isle-btn.variant-primary:hover:not(.is-disabled) {
   filter: brightness(1.06);
-  box-shadow:
-    0 5px 16px color-mix(in srgb, var(--accent-primary, #0071e3) 38%, transparent),
-    inset 0 1px 1px rgba(255, 255, 255, 0.32);
 }
 
 .isle-btn.variant-tonal {
-  background: color-mix(in srgb, var(--accent-primary, #2563eb) 10%, var(--fluid-card-top, rgba(255, 255, 255, 0.8)));
-  color: var(--accent-primary, #2563eb);
-  border-color: color-mix(in srgb, var(--accent-primary, #2563eb) 22%, transparent);
+  background: color-mix(in srgb, var(--accent-primary, #1F5162) 10%, var(--fluid-card-top, #ffffff));
+  color: var(--accent-primary, #1F5162);
+  border-color: color-mix(in srgb, var(--accent-primary, #1F5162) 24%, var(--fluid-card-border));
 }
 
 .isle-btn.variant-tonal:hover:not(.is-disabled) {
-  background: color-mix(in srgb, var(--accent-primary, #2563eb) 16%, var(--fluid-card-top, rgba(255, 255, 255, 0.9)));
-  border-color: color-mix(in srgb, var(--accent-primary, #2563eb) 35%, transparent);
+  background: color-mix(in srgb, var(--accent-primary, #1F5162) 16%, var(--fluid-card-top, #ffffff));
+  border-color: color-mix(in srgb, var(--accent-primary, #1F5162) 38%, var(--fluid-card-border));
 }
 
 .isle-btn.variant-danger {
-  background: color-mix(in srgb, #ef4444 10%, var(--fluid-card-top, rgba(255, 255, 255, 0.8)));
-  color: #ef4444;
-  border-color: color-mix(in srgb, #ef4444 26%, transparent);
+  background: color-mix(in srgb, var(--error, #B94032) 10%, var(--fluid-card-top, #ffffff));
+  color: var(--error, #B94032);
+  border-color: color-mix(in srgb, var(--error, #B94032) 26%, var(--fluid-card-border));
 }
 
 .isle-btn.variant-danger:hover:not(.is-disabled) {
-  background: color-mix(in srgb, #ef4444 18%, var(--fluid-card-top, rgba(255, 255, 255, 0.9)));
-  border-color: color-mix(in srgb, #ef4444 40%, transparent);
+  background: color-mix(in srgb, var(--error, #B94032) 16%, var(--fluid-card-top, #ffffff));
+  border-color: color-mix(in srgb, var(--error, #B94032) 40%, var(--fluid-card-border));
 }
 
 .isle-btn.variant-glass,
 .isle-btn.variant-secondary {
-  background: var(--fluid-card-fill, rgba(255, 255, 255, 0.7));
+  background: var(--fluid-card-fill, #ffffff);
   color: var(--text-primary, #1e293b);
-  border-color: var(--fluid-card-border, rgba(120, 136, 165, 0.2));
-  box-shadow: var(--fluid-item-card-shadow, 0 2px 6px rgba(0, 0, 0, 0.04));
+  border-color: var(--fluid-card-border, rgba(15, 23, 42, 0.1));
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
 
 .isle-btn.variant-glass:hover:not(.is-disabled),
 .isle-btn.variant-secondary:hover:not(.is-disabled) {
-  background: var(--fluid-card-hover, rgba(255, 255, 255, 0.9));
-  border-color: color-mix(in srgb, var(--fluid-rim, #ffffff) 90%, transparent);
+  background: var(--fluid-card-hover, #f8fafc);
+  border-color: var(--fluid-card-border-strong, rgba(15, 23, 42, 0.16));
 }
 
 .isle-btn.variant-ghost {
@@ -216,7 +216,7 @@ function handleClick(event: MouseEvent) {
 }
 
 .isle-btn.is-selected {
-  background: color-mix(in srgb, var(--accent-primary, #2563eb) 18%, var(--fluid-card-top, rgba(255, 255, 255, 0.9)));
+  background: color-mix(in srgb, var(--accent-primary, #2563eb) 14%, var(--fluid-card-top, #ffffff));
   border-color: var(--accent-primary, #2563eb);
   color: var(--accent-primary, #2563eb);
 }
@@ -248,7 +248,8 @@ function handleClick(event: MouseEvent) {
   .isle-btn {
     transition: none;
   }
-  .isle-btn-spinner {
+  .isle-btn-spinner,
+  .spin-icon {
     animation: none;
   }
 }

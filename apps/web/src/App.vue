@@ -39,6 +39,7 @@ import { bindDiagnosticAccount, resetDiagnostics } from "./betaDiagnostics.ts";
 import ConfirmModal from "./ConfirmModal.vue";
 import AuthScene from "./AuthScene.vue";
 import MobileNavDrawer from "./MobileNavDrawer.vue";
+import ThemePickerPopover from "./ThemePickerPopover.vue";
 import { requestAlert, requestConfirm } from "./useConfirmDialog.ts";
 import FileOperationDialog from "./FileOperationDialog.vue";
 import IsleModal from "./IsleModal.vue";
@@ -48,8 +49,12 @@ import IsleBadge from "./IsleBadge.vue";
 import IsleBanner from "./IsleBanner.vue";
 import IsleChip from "./IsleChip.vue";
 import IsleEmpty from "./IsleEmpty.vue";
-import IsleImageViewer from "./IsleImageViewer.vue";
-import IsleVideoPlayer from "./IsleVideoPlayer.vue";
+import IsleHelpButton from "./IsleHelpButton.vue";
+import IsleActionMenu from "./IsleActionMenu.vue";
+import PhotoViewerModal from "./PhotoViewerModal.vue";
+import AppWorkbenchStage from "./AppWorkbenchStage.vue";
+import { useFileMediaLightbox } from "./composables/useFileMediaLightbox.ts";
+import type { Movie } from "./cinemaTypes.ts";
 import { trashPresentationState } from "./filePageState.ts";
 import OpsTaskCenter from "./OpsTaskCenter.vue";
 import AuditLogView from "./AuditLogView.vue";
@@ -461,41 +466,35 @@ const {
   grantUser, grants, grantError, grantNotice, grantPathInput, grantCanWrite, grantBusy,
   fileOperationDialog, fileOperationNotice, newFolderName, trashTarget, fileActionBusy,
   previewItem, previewText, previewError, previewURL,
-  showPreviewPlaylist, previewAutoplayNext, previewVideoPlaylist,
-  currentPreviewVideoIndex, prevPreviewVideo, nextPreviewVideo,
-  previewImagePlaylist, currentPreviewImageIndex, prevPreviewImage, nextPreviewImage,
-  onPreviewVideoEnded,
-  pathSegments,
-  selectedFilesAllWritable, selectedPathsFallback,
+  fileMediaAssets, fileMediaSelected, fileMediaIndex, showFileMediaAt, closeFileMedia, fileEntryForMediaAsset, showPreviewPlaylist,
+  pathSegments, selectedFilesAllWritable, selectedPathsFallback,
   thumbnailKey, thumbnailEligible, fileThumbnailURL, closeFileMenu, markThumbnailFailure,
   canWriteEntry, operateFile, listOperationFolders, commitFileOperation, finishFileOperation,
   editGrants, saveGrant, toggleGrantWrite, removeGrant,
   previewFile, goUp, makeFolder, batchTrash, downloadFile,
   selectFallbackPaths, copySelectedPaths, removeFile, resetFileActionsAndGrantsForRoot,
 } = useFileActionsAndGrants({
-  userRole: () => user.value?.role,
-  selectedRootID: () => selectedRootID.value,
-  rootFeatureContextReady: () => rootFeatureContextReady.value,
-  rootContextEpoch: () => rootContextEpoch.value,
-  currentRootContextKey,
-  filesPath,
-  sharedRootName,
-  currentFolderCanWrite,
-  fileDirectoryLoaded,
-  fileEntries,
-  checkedFiles,
-  filesError,
-  showingTrash,
-  searchingFiles,
-  failedThumbnails,
-  scopedApiPath,
-  scopedMediaPath,
-  rootFetch,
-  jsonGet,
-  jsonWrite,
-  loadFiles,
-  loadTrash,
-  isAbortError,
+  userRole: () => user.value?.role, selectedRootID: () => selectedRootID.value,
+  rootFeatureContextReady: () => rootFeatureContextReady.value, rootContextEpoch: () => rootContextEpoch.value,
+  currentRootContextKey, filesPath, sharedRootName, currentFolderCanWrite, fileDirectoryLoaded, fileEntries,
+  checkedFiles, filesError, showingTrash, searchingFiles, failedThumbnails,
+  scopedApiPath, scopedMediaPath, rootFetch, jsonGet, jsonWrite, loadFiles, loadTrash, isAbortError,
+  onCinemaFilmMatched: (film) => openMatchedCinemaFilm(film),
+});
+
+let cinemaLaunchCounter = 0;
+const pendingCinemaLaunch = ref<{ film: Movie; nonce: number } | null>(null);
+function openMatchedCinemaFilm(film: Movie) {
+  cinemaLaunchCounter += 1;
+  pendingCinemaLaunch.value = { film, nonce: cinemaLaunchCounter };
+  visitedPages.value.cinema = true;
+  active.value = "cinema";
+}
+
+const { modalProps: fileMediaModalProps, modalEvents: fileMediaModalEvents } = useFileMediaLightbox({
+  active: () => active.value === "files", isAdmin: () => user.value?.role === "admin",
+  selected: fileMediaSelected, assets: fileMediaAssets, selectedIndex: fileMediaIndex,
+  showAt: showFileMediaAt, close: closeFileMedia, scopedMediaPath, fileEntryForMediaAsset, downloadFile,
 });
 
 const { stats, error, polling, cpu, usedMemory, usedDisk, diskActivity, update, clear: clearTelemetry, bytes, percent } =
@@ -507,7 +506,7 @@ const {
   pendingMediaOpen, adminPendingMediaOpen,
   togglePendingMedia, togglePendingUploads,
   toggleAdvanced, resetOverviewAndDisclosures, refreshOverviewApps,
-  pendingAppLaunch, openHomeApp, clearPendingAppLaunch,
+  pendingAppLaunch, openHomeApp, clearPendingAppLaunch, homeWorkbenchStageProps, homeWorkbenchStageEvents,
   overviewIdentity, overviewSearch, overviewTelemetry, overviewPersonalSpace, overviewApps, overviewPending,
 } = useOverviewAndDisclosures({
   user, activePage: active, fileSearch, searchViaSpotlight, filesLoading, searchingFiles, recentSearches,
@@ -517,7 +516,7 @@ const {
 
 const {
   theme, atmosphere, atmospheres, sidebarExpanded, moreMenuOpen, fileViewMode,
-  setFileViewMode, createFolderOpen, cycleAtmosphere, switchTheme, toggleSidebar,
+  setFileViewMode, createFolderOpen, setAtmosphere, cycleAtmosphere, switchTheme, toggleSidebar,
 } = useShellAppearance();
 
 watch(createFolderOpen, (openState) => {
@@ -643,6 +642,8 @@ function clearClientSessionState(expiredMessage = "") {
   settingsGroup.value = "account";
   showDuplicatesModal.value = false;
   photosJumpTarget.value = null;
+  pendingCinemaLaunch.value = null;
+  closeFileMedia();
   shareOutcomeWarning.value = false;
   photoBatchOutcomeWarning.value = false;
   moreMenuOpen.value = false;

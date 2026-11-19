@@ -152,7 +152,7 @@ onUnmounted(() => {
                   aria-label="关闭弹框"
                   @click="handleClose"
                 >
-                  <X :size="16" />
+                  <X :size="15" />
                 </button>
               </div>
             </slot>
@@ -176,46 +176,44 @@ onUnmounted(() => {
   position: fixed;
   inset: 0;
   z-index: var(--z-modal, 1300);
-  background: rgba(12, 16, 28, 0.52);
-  -webkit-backdrop-filter: blur(14px) saturate(160%);
-  backdrop-filter: blur(14px) saturate(160%);
+  background: rgba(20, 18, 16, 0.48);
+  -webkit-backdrop-filter: blur(12px) saturate(135%);
+  backdrop-filter: blur(12px) saturate(135%);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 20px;
+  padding: 18px;
 }
 
 .isle-modal-card {
   width: 100%;
-  max-height: min(88vh, 860px);
+  max-height: min(88vh, 840px);
   display: flex;
   flex-direction: column;
   background: var(--fluid-card-fill, var(--surface-elevated));
   border: 1px solid var(--fluid-card-border, var(--stroke-glass));
-  border-radius: var(--radius-lg, 22px);
-  box-shadow:
-    var(--shadow-float, 0 24px 54px rgba(0, 0, 0, 0.28)),
-    0 0 0 1px var(--stroke-subtle, rgba(0, 0, 0, 0.05));
+  border-radius: 20px;
+  box-shadow: var(--shadow-float, 0 22px 46px rgba(34, 29, 23, 0.2));
   color: var(--text-primary);
   overflow: hidden;
   outline: none;
 }
 
 .isle-modal-enter-active {
-  transition: opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: opacity 0.24s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .isle-modal-leave-active {
-  transition: opacity 0.14s cubic-bezier(0.32, 0, 0.67, 0);
+  transition: opacity 0.15s cubic-bezier(0.32, 0, 0.67, 0);
 }
 .isle-modal-enter-active .isle-modal-card {
   transition:
-    opacity 0.22s cubic-bezier(0.22, 1, 0.36, 1),
-    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+    opacity 0.24s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.26s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .isle-modal-leave-active .isle-modal-card {
   transition:
-    opacity 0.14s cubic-bezier(0.32, 0, 0.67, 0),
-    transform 0.14s cubic-bezier(0.32, 0, 0.67, 0);
+    opacity 0.15s cubic-bezier(0.32, 0, 0.67, 0),
+    transform 0.15s cubic-bezier(0.32, 0, 0.67, 0);
 }
 .isle-modal-enter-from,
 .isle-modal-leave-to {
@@ -223,31 +221,31 @@ onUnmounted(() => {
 }
 .isle-modal-enter-from .isle-modal-card {
   opacity: 0;
-  transform: translate3d(0, 8px, 0) scale(0.965);
+  transform: translate3d(0, 10px, 0) scale(0.968);
 }
 .isle-modal-leave-to .isle-modal-card {
   opacity: 0;
-  transform: translate3d(0, 6px, 0) scale(0.98);
+  transform: translate3d(0, 6px, 0) scale(0.985);
 }
 
 .isle-modal-card.size-sm {
-  max-width: 420px;
+  max-width: 400px;
 }
 .isle-modal-card.size-md {
-  max-width: 540px;
+  max-width: 520px;
 }
 .isle-modal-card.size-lg,
 .isle-modal-card.size-wide {
-  max-width: 740px;
+  max-width: 720px;
 }
 
 .isle-modal-header {
-  padding: 18px 22px 14px;
-  border-bottom: 1px solid color-mix(in srgb, var(--fluid-card-border) 45%, transparent);
+  padding: 14px 18px 12px;
+  border-bottom: 1px solid var(--fluid-divider, var(--fluid-card-border));
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
+  gap: 12px;
   flex-shrink: 0;
 }
 
@@ -260,9 +258,9 @@ onUnmounted(() => {
 }
 
 .isle-modal-icon-badge {
-  width: 32px;
-  height: 32px;
-  border-radius: 10px;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
   background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
   color: var(--accent-primary);
   display: flex;
@@ -273,15 +271,15 @@ onUnmounted(() => {
 
 .isle-modal-headings {
   display: grid;
-  gap: 2px;
+  gap: 1px;
   min-width: 0;
 }
 
 .isle-modal-title {
   margin: 0;
-  font-size: 16px;
-  font-weight: 700;
-  letter-spacing: -0.2px;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: -0.01em;
   line-height: 1.35;
   color: var(--text-primary);
   overflow: hidden;
@@ -291,7 +289,7 @@ onUnmounted(() => {
 
 .isle-modal-desc {
   margin: 0;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--text-secondary);
   line-height: 1.4;
 }
@@ -299,50 +297,49 @@ onUnmounted(() => {
 .isle-modal-header-actions {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   flex-shrink: 0;
 }
 
 .isle-modal-close-btn {
-  width: 30px;
-  height: 30px;
+  width: 28px;
+  height: 28px;
   border-radius: 999px;
-  border: 1px solid transparent;
-  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-item-fill);
   color: var(--text-secondary);
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  transition: background 0.16s ease, color 0.16s ease, transform 0.16s var(--motion-spring);
+  transition: background 0.15s ease, color 0.15s ease, transform 0.15s var(--motion-spring);
 }
 .isle-modal-close-btn:hover {
-  background: color-mix(in srgb, var(--text-primary) 12%, transparent);
+  background: var(--fluid-card-hover);
   color: var(--text-primary);
-  transform: scale(1.04);
 }
 .isle-modal-close-btn:active {
-  transform: scale(0.96);
+  transform: scale(0.95);
 }
 
 .isle-modal-body {
-  padding: 20px 22px;
+  padding: 16px 18px;
   min-height: 0;
   overflow-y: auto;
   overflow-x: hidden;
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
 .isle-modal-footer {
-  padding: 14px 22px 18px;
-  border-top: 1px solid color-mix(in srgb, var(--fluid-card-border) 45%, transparent);
+  padding: 12px 18px 14px;
+  border-top: 1px solid var(--fluid-divider, var(--fluid-card-border));
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 8px;
   flex-shrink: 0;
 }
 
@@ -353,7 +350,7 @@ onUnmounted(() => {
   }
   .isle-modal-card {
     max-height: 86vh;
-    border-radius: 24px 24px 0 0;
+    border-radius: 18px 18px 0 0;
     border-bottom: none;
   }
   .isle-modal-enter-from .isle-modal-card,
@@ -361,13 +358,13 @@ onUnmounted(() => {
     transform: translate3d(0, 100%, 0);
   }
   .isle-modal-header {
-    padding: 16px 18px 12px;
+    padding: 14px 16px 10px;
   }
   .isle-modal-body {
-    padding: 16px 18px;
+    padding: 14px 16px;
   }
   .isle-modal-footer {
-    padding: 12px 18px max(16px, env(safe-area-inset-bottom));
+    padding: 10px 16px max(14px, env(safe-area-inset-bottom));
   }
 }
 

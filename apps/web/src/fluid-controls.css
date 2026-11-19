@@ -1,76 +1,89 @@
-/* Buttons and Controls: Tactile embossed pill & capsule surfaces */
+/* Buttons and Controls: Warm Editorial Gallery Surfaces */
 .account-action, .file-actions > button, .create-folder-form button,
-.gallery-modal-actions button, .album-tabs button, .cinema-tabs button, .circle-action {
+.gallery-modal-actions button, .circle-action {
   border: 1px solid var(--fluid-card-border);
   background: var(--fluid-card-fill);
-  border-radius: var(--radius-sm);
-  box-shadow:
-    0 2px 7px rgb(var(--fluid-shadow-rgb) / 0.05),
-    inset 0 1px 0 color-mix(in srgb, var(--fluid-rim) 60%, transparent);
+  border-radius: 9px;
+  box-shadow: var(--fluid-item-card-shadow);
   transition:
-    transform var(--motion-fast) var(--motion-spring),
-    opacity var(--motion-fast) ease;
+    transform 240ms var(--motion-spring),
+    background var(--motion-fast) ease,
+    border-color var(--motion-fast) ease,
+    color var(--motion-fast) ease;
+}
+.circle-action {
+  border-radius: 9999px;
+  width: 32px;
+  height: 32px;
 }
 .refresh {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  min-height: 32px;
-  padding: 5px 13px;
+  gap: 5px;
+  min-height: 30px;
+  padding: 4px 12px;
   border-radius: 9999px;
   border: 1px solid var(--fluid-card-border);
   background: var(--fluid-card-fill);
   color: var(--text-primary);
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 550;
   box-shadow: var(--fluid-item-card-shadow);
   transition:
-    transform var(--motion-fast) var(--motion-spring),
-    opacity var(--motion-fast) ease;
+    transform 240ms var(--motion-spring),
+    background var(--motion-fast) ease,
+    border-color var(--motion-fast) ease,
+    color var(--motion-fast) ease;
 }
 .refresh:hover:not(:disabled) {
   background: var(--fluid-card-hover);
+  border-color: var(--fluid-card-border-strong);
   color: var(--accent-primary);
-  transform: translateY(-1px);
-  box-shadow: var(--fluid-item-hover-shadow);
 }
 .refresh:active:not(:disabled) {
-  transform: scale(0.96);
+  transform: scale(0.965);
+  transition-duration: 95ms;
 }
 .account-action:hover, .file-actions > button:hover, .create-folder-form button:hover,
-.gallery-modal-actions button:hover, .album-tabs button:hover, .cinema-tabs button:hover, .circle-action:hover {
+.gallery-modal-actions button:hover, .circle-action:hover {
   background: var(--fluid-card-hover);
-  transform: translateY(-1.5px);
-  box-shadow: 0 5px 14px rgb(var(--fluid-shadow-rgb) / 0.09);
+  border-color: var(--fluid-card-border-strong);
 }
 .account-action:active, .file-actions > button:active, .create-folder-form button:active,
-.gallery-modal-actions button:active, .album-tabs button:active, .cinema-tabs button:active, .circle-action:active {
-  transform: scale(0.965) translateY(1px);
+.gallery-modal-actions button:active, .circle-action:active {
+  transform: scale(0.968);
+  transition-duration: 95ms;
 }
 
-/* Clear primary affordances */
+/* Primary Affordances — Theme-Adaptive Solid Accent */
 .album-create, .auth-submit {
-  background: linear-gradient(145deg, #1b86ff, var(--accent-primary)) !important;
-  color: #fff !important;
-  border: 1px solid rgba(255, 255, 255, 0.25) !important;
+  background: linear-gradient(155deg, var(--accent-primary-solid-top, var(--accent-primary)) 0%, var(--accent-primary-solid, var(--accent-primary)) 100%) !important;
+  color: var(--on-accent-primary, #fff) !important;
+  border: 1px solid color-mix(in srgb, var(--accent-primary-solid, var(--accent-primary)) 82%, #000000) !important;
   box-shadow:
-    0 4px 14px color-mix(in srgb, var(--accent-primary) 35%, transparent),
-    inset 0 1px 0 rgba(255, 255, 255, 0.35) !important;
+    0 3px 12px color-mix(in srgb, var(--accent-primary-solid, var(--accent-primary)) 24%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.24) !important;
+}
+[data-theme="dark"] .album-create,
+[data-theme="dark"] .auth-submit {
+  background: linear-gradient(155deg, var(--accent-primary-solid-top, var(--accent-primary)) 0%, var(--accent-primary-solid, var(--accent-primary)) 100%) !important;
+  color: var(--on-accent-primary, #F8F6F1) !important;
+  border-color: color-mix(in srgb, var(--accent-primary) 34%, transparent) !important;
 }
 
-/* Unified Fluid Modal & Dialog Backdrop (macOS Sheet & Frosted Glass) */
+/* Unified Modal & Dialog Backdrop */
 .dialog-backdrop {
   position: fixed;
   inset: 0;
   z-index: 99;
   display: grid;
   place-items: center;
-  background: rgba(8, 11, 20, 0.65);
-  -webkit-backdrop-filter: blur(24px) saturate(160%);
-  backdrop-filter: blur(24px) saturate(160%);
+  background: rgba(20, 18, 16, 0.56);
+  -webkit-backdrop-filter: blur(16px) saturate(135%);
+  backdrop-filter: blur(16px) saturate(135%);
   padding: 20px;
-  animation: backdropFadeIn 0.24s ease both;
+  animation: backdropFadeIn 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 @keyframes backdropFadeIn {
@@ -81,7 +94,7 @@
 @keyframes modalZoomIn {
   from {
     opacity: 0;
-    transform: scale(0.94) translateY(14px);
+    transform: scale(0.968) translateY(8px);
   }
   to {
     opacity: 1;
@@ -90,109 +103,127 @@
 }
 
 .task-progress {
-  height: 6px;
-  background: color-mix(in srgb, var(--fluid-rim) 35%, transparent);
+  height: 5px;
+  background: var(--stroke-subtle);
   border-radius: 99px;
   overflow: hidden;
-  margin: 8px 0 4px;
+  margin: 6px 0 4px;
 }
 .task-progress span {
   display: block;
   height: 100%;
-  background: linear-gradient(90deg, var(--accent-primary), #32ade6);
+  background: linear-gradient(90deg, var(--accent-primary), var(--brand-cyan, var(--accent-secondary)));
   border-radius: inherit;
-  transition: width 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: width 0.32s cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 /* Banners, Alerts, and Tabs */
 .scan-banner, .cinema-alert, .error-notice, .album-new {
   border: 1px solid var(--fluid-card-border);
   box-shadow: var(--fluid-item-card-shadow);
-  border-radius: var(--radius-md);
+  border-radius: 13px;
   background: var(--fluid-card-fill);
 }
-.album-tabs button.chosen, .cinema-tabs button.active {
-  background: var(--fluid-card-fill);
+.album-tabs button:not(.isle-chip).chosen, .cinema-tabs button:not(.isle-chip).active {
+  background: var(--fluid-card-top);
   color: var(--accent-primary);
-  box-shadow: var(--fluid-card-shadow);
+  box-shadow: 0 1px 4px rgba(34, 29, 23, 0.08);
   border-color: var(--fluid-card-border);
 }
 
-/* Segmented Control Pill Navigation for Settings */
+/* Gallery Segmented Control Navigation for Settings */
 .settings-nav {
   display: inline-flex;
-  gap: 4px;
-  background: color-mix(in srgb, var(--fluid-card-item-top) 45%, transparent);
+  align-self: flex-start;
+  gap: 3px;
+  background: var(--fluid-card-item-fill);
   padding: 4px;
-  border-radius: 99px;
+  border-radius: 12px;
   border: 1px solid var(--fluid-card-border);
-  box-shadow: var(--fluid-item-card-shadow);
-  margin: 14px 0 22px;
+  margin: 4px 0 16px;
   max-width: 100%;
   overflow-x: auto;
+  scrollbar-width: none;
+}
+.settings-nav::-webkit-scrollbar {
+  display: none;
 }
 .settings-nav button {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  border-radius: 99px;
-  border: none;
+  gap: 6px;
+  min-height: 32px;
+  border-radius: 9px;
+  border: 1px solid transparent;
   background: transparent;
   color: var(--text-secondary);
-  padding: 8px 18px;
-  font-size: 13px;
+  padding: 5px 14px;
+  font-size: 12.5px;
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
   transition:
-    transform var(--motion-fast) var(--motion-spring),
-    opacity var(--motion-fast) ease;
+    transform 220ms var(--motion-spring),
+    background var(--motion-fast) ease,
+    border-color var(--motion-fast) ease,
+    color var(--motion-fast) ease;
 }
 .settings-nav button:hover {
   color: var(--text-primary);
-  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
-  transform: scale(1.02);
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
 }
 .settings-nav button:active {
-  transform: scale(0.97);
+  transform: scale(0.975);
+  transition-duration: 95ms;
 }
 .settings-nav button.active {
-  background: var(--fluid-card-item-top);
+  background: var(--fluid-card-top);
   color: var(--accent-primary);
-  box-shadow: 0 3px 10px rgb(var(--fluid-shadow-rgb) / 0.1);
-  border: 1px solid var(--fluid-card-border);
-  font-weight: 700;
+  box-shadow: 0 1px 4px rgba(34, 29, 23, 0.08);
+  border-color: var(--fluid-card-border);
+  font-weight: 650;
+}
+[data-theme="dark"] .settings-nav button.active {
+  background: color-mix(in srgb, var(--accent-primary) 16%, var(--fluid-card-top));
+  border-color: color-mix(in srgb, var(--accent-primary) 34%, var(--fluid-card-border));
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 .cinema-search {
   background: var(--fluid-card-fill);
   border: 1px solid var(--fluid-card-border);
   box-shadow: var(--fluid-item-card-shadow);
-  border-radius: var(--radius-md);
+  border-radius: 12px;
 }
 
-/* Inputs, Selects & Toggles: Unified with macOS LiquidMenuPicker, .liquidInput() & .toggleStyle(.switch) */
+/* Inputs, Selects & Toggles — Theme-Adaptive Auth Scene */
 .auth-scene {
   background:
-    radial-gradient(ellipse at 15% 15%, color-mix(in srgb, var(--accent-primary) 12%, transparent), transparent 50%),
-    radial-gradient(ellipse at 85% 85%, color-mix(in srgb, #38bdf8 10%, transparent), transparent 50%),
-    linear-gradient(145deg, var(--fluid-canvas-top), var(--fluid-canvas-bottom));
+    radial-gradient(ellipse at 18% 16%, color-mix(in srgb, var(--accent-primary) 10%, transparent), transparent 52%),
+    radial-gradient(ellipse at 84% 84%, color-mix(in srgb, var(--accent-secondary) 8%, transparent), transparent 52%),
+    linear-gradient(165deg, var(--fluid-canvas-top, #F7F5F0) 0%, var(--fluid-canvas-bottom, #EFECE4) 100%);
+}
+[data-theme="dark"] .auth-scene {
+  background:
+    radial-gradient(ellipse at 18% 16%, color-mix(in srgb, var(--accent-primary) 14%, transparent), transparent 52%),
+    radial-gradient(ellipse at 84% 84%, color-mix(in srgb, var(--accent-secondary) 10%, transparent), transparent 52%),
+    linear-gradient(165deg, var(--fluid-canvas-top, #151413) 0%, var(--fluid-canvas-bottom, #0E0E0D) 100%);
 }
 .auth-card input:not([type="checkbox"]),
 .account-form input:not([type="checkbox"]),
 .preview-text {
-  background: var(--fluid-card-item-bottom);
+  background: var(--fluid-card-item-fill);
   border: 1px solid var(--fluid-card-border);
   border-radius: 10px;
-  box-shadow: inset 0 1px 2px rgb(var(--fluid-shadow-rgb) / 0.04), 0 1px 0 rgba(255, 255, 255, 0.5);
+  padding: 9px 12px;
   transition: border-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
 }
 .auth-card input:not([type="checkbox"]):focus,
 .account-form input:not([type="checkbox"]):focus {
   border-color: var(--accent-primary);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary) 18%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary) 16%, transparent);
 }
 
-/* Liquid Glass Menu Select Pill (matching macOS LiquidMenuPicker) */
+/* Menu Select Pill */
 select,
 .account-form select,
 .gallery-modal-footer select,
@@ -204,24 +235,19 @@ select,
   font-size: 12.5px;
   font-weight: 600;
   color: var(--text-primary);
-  padding: 8px 36px 8px 13px !important;
-  border-radius: 10px !important;
+  padding: 7px 34px 7px 11px !important;
+  border-radius: 9px !important;
   border: 1px solid var(--fluid-card-border) !important;
   background-color: var(--fluid-card-top) !important;
   background-image:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 18 18' fill='none'%3E%3Crect width='18' height='18' rx='5' fill='%230071E3' fill-opacity='0.14'/%3E%3Cpath d='M6.5 7.25L9 4.75L11.5 7.25M6.5 10.75L9 13.25L11.5 10.75' stroke='%230071E3' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 18 18' fill='none'%3E%3Crect width='18' height='18' rx='5' fill='%231F5162' fill-opacity='0.12'/%3E%3Cpath d='M6.5 7.25L9 4.75L11.5 7.25M6.5 10.75L9 13.25L11.5 10.75' stroke='%231F5162' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"),
     var(--fluid-card-fill) !important;
   background-repeat: no-repeat, no-repeat !important;
-  background-position: right 8px center, 0 0 !important;
-  background-size: 18px 18px, 100% 100% !important;
-  box-shadow:
-    0 2px 6px rgb(var(--fluid-shadow-rgb) / 0.04),
-    inset 0 1px 0 color-mix(in srgb, var(--fluid-rim) 70%, transparent) !important;
+  background-position: right 7px center, 0 0 !important;
+  background-size: 17px 17px, 100% 100% !important;
+  box-shadow: var(--fluid-item-card-shadow) !important;
   cursor: pointer;
-  transition:
-    transform var(--motion-fast) var(--motion-spring),
-    border-color var(--motion-fast) ease,
-    box-shadow var(--motion-fast) ease;
+  transition: border-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
 }
 [data-theme="dark"] select,
 [data-theme="dark"] .account-form select,
@@ -229,96 +255,91 @@ select,
 [data-theme="dark"] .cinema-dialog footer select,
 [data-theme="dark"] .upload-cleanup-controls select {
   background-image:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 18 18' fill='none'%3E%3Crect width='18' height='18' rx='5' fill='%233898FF' fill-opacity='0.22'/%3E%3Cpath d='M6.5 7.25L9 4.75L11.5 7.25M6.5 10.75L9 13.25L11.5 10.75' stroke='%233898FF' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='18' height='18' viewBox='0 0 18 18' fill='none'%3E%3Crect width='18' height='18' rx='5' fill='%2372BCCB' fill-opacity='0.18'/%3E%3Cpath d='M6.5 7.25L9 4.75L11.5 7.25M6.5 10.75L9 13.25L11.5 10.75' stroke='%2372BCCB' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"),
     var(--fluid-card-fill) !important;
 }
 select:hover:not(:disabled) {
-  transform: translateY(-1px);
-  box-shadow:
-    0 4px 12px rgb(var(--fluid-shadow-rgb) / 0.08),
-    inset 0 1px 0 color-mix(in srgb, var(--fluid-rim) 85%, transparent) !important;
+  border-color: var(--fluid-card-border-strong) !important;
 }
 select:focus {
   outline: none;
   border-color: var(--accent-primary) !important;
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary) 18%, transparent) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary) 16%, transparent) !important;
 }
 
-/* Apple-grade Pill Toggle Switch for Option Checkboxes (matching macOS .toggleStyle(.switch)) */
-input[type="checkbox"]:not(.file-checkbox):not(.isle-checkbox) {
+/* Gallery Pill Toggle Switch */
+input[type="checkbox"]:not(.file-checkbox):not(.isle-checkbox):not(.app-apple-switch):not(.app-sr-input):not(.isle-switch) {
   -webkit-appearance: none;
   appearance: none;
-  width: 38px !important;
-  height: 22px !important;
-  padding: 0 !important;
+  width: 36px;
+  height: 20px;
+  padding: 0;
   margin: 0;
-  border-radius: 999px !important;
-  background: color-mix(in srgb, var(--text-tertiary) 32%, transparent) !important;
-  border: 1px solid color-mix(in srgb, var(--fluid-rim) 40%, transparent) !important;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-tertiary) 32%, transparent);
+  border: 1px solid var(--fluid-card-border);
   position: relative;
   cursor: pointer;
   flex-shrink: 0;
-  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.12) !important;
   transition: background var(--motion-fast) ease, border-color var(--motion-fast) ease;
 }
-input[type="checkbox"]:not(.file-checkbox):not(.isle-checkbox)::after {
+input[type="checkbox"]:not(.file-checkbox):not(.isle-checkbox):not(.app-apple-switch):not(.app-sr-input):not(.isle-switch)::after {
   content: "";
   position: absolute;
-  top: 2px;
+  top: 1.5px;
   left: 2px;
-  width: 16px;
-  height: 16px;
+  width: 15px;
+  height: 15px;
   border-radius: 50%;
   background: #ffffff;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25);
-  transition: transform var(--motion-fast) var(--motion-spring);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
+  transition: transform 220ms var(--motion-spring);
 }
-input[type="checkbox"]:not(.file-checkbox):not(.isle-checkbox):checked {
-  background: linear-gradient(135deg, #34C759, #28B44B) !important;
-  border-color: rgba(255, 255, 255, 0.25) !important;
+input[type="checkbox"]:not(.file-checkbox):not(.isle-checkbox):not(.app-apple-switch):not(.app-sr-input):not(.isle-switch):checked {
+  background: linear-gradient(135deg, #2D8E66, var(--success));
+  border-color: rgba(255, 255, 255, 0.2);
 }
-input[type="checkbox"]:not(.file-checkbox):not(.isle-checkbox):checked::after {
-  transform: translateX(16px);
+input[type="checkbox"]:not(.file-checkbox):not(.isle-checkbox):not(.app-apple-switch):not(.app-sr-input):not(.isle-switch):checked::after {
+  transform: translateX(15px);
 }
 .account-form label:has(> input[type="checkbox"]:not(.isle-checkbox)) {
   flex-direction: row;
   align-items: center;
   justify-content: space-between;
-  padding: 10px 14px;
+  padding: 9px 12px;
   border-radius: 10px;
   background: var(--fluid-card-item-fill);
   border: 1px solid var(--fluid-card-border);
 }
 
-/* Squircle Checkbox for File Rows & Multi-Select Checklists */
+/* Squircle Checkbox */
 .file-checkbox,
 .isle-checkbox {
   -webkit-appearance: none;
   appearance: none;
-  width: 18px !important;
-  height: 18px !important;
+  width: 17px !important;
+  height: 17px !important;
   padding: 0 !important;
   margin: 0;
-  border-radius: 6px !important;
+  border-radius: 5.5px !important;
   border: 1.5px solid color-mix(in srgb, var(--text-tertiary) 55%, transparent) !important;
-  background: var(--fluid-card-item-bottom) !important;
+  background: var(--fluid-card-item-fill) !important;
   display: inline-grid;
   place-items: center;
   cursor: pointer;
   flex-shrink: 0;
-  transition: background var(--motion-fast) ease, border-color var(--motion-fast) ease, transform var(--motion-fast) var(--motion-spring);
+  transition: background var(--motion-fast) ease, border-color var(--motion-fast) ease;
 }
 .file-checkbox:checked,
 .isle-checkbox:checked {
-  background: linear-gradient(135deg, #1b86ff, var(--accent-primary)) !important;
+  background: linear-gradient(140deg, var(--accent-primary-solid-top, var(--accent-primary)), var(--accent-primary-solid, var(--accent-primary))) !important;
   border-color: transparent !important;
-  box-shadow: 0 2px 6px color-mix(in srgb, var(--accent-primary) 35%, transparent) !important;
 }
 .file-checkbox:checked::after,
 .isle-checkbox:checked::after {
   content: "";
-  width: 5px;
-  height: 9px;
+  width: 4.5px;
+  height: 8.5px;
   border: solid #ffffff;
   border-width: 0 2px 2px 0;
   transform: rotate(45deg) translate(-0.5px, -0.5px);
@@ -329,11 +350,11 @@ input[type="checkbox"]:not(.file-checkbox):not(.isle-checkbox):checked::after {
   cursor: not-allowed;
 }
 
-/* Fluid Page, Sub-View & Floating Batch HUD Transitions (compositor-only) */
+/* Silky Page, Tab & Subview Transitions */
 .ios-fade-enter-active {
   transition:
-    opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1),
-    transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+    opacity 0.24s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.24s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .ios-fade-leave-active {
   transition:
@@ -355,54 +376,49 @@ input[type="checkbox"]:not(.file-checkbox):not(.isle-checkbox):checked::after {
 }
 .isle-tab-pane,
 .isle-subview-pane {
-  animation: isleTabReveal 0.18s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: isleTabReveal 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
-.isle-batch-bar-enter-active {
+.isle-batch-bar-enter-active,
+.isle-hud-float-enter-active {
   transition:
-    opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1),
-    transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+    opacity 0.24s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.24s cubic-bezier(0.22, 1, 0.36, 1);
 }
-.isle-batch-bar-leave-active {
+.isle-batch-bar-leave-active,
+.isle-hud-float-leave-active {
   transition:
-    opacity 0.14s cubic-bezier(0.32, 0, 0.67, 0),
-    transform 0.14s cubic-bezier(0.32, 0, 0.67, 0);
+    opacity 0.15s cubic-bezier(0.32, 0, 0.67, 0),
+    transform 0.15s cubic-bezier(0.32, 0, 0.67, 0);
 }
 .isle-batch-bar-enter-from,
 .isle-batch-bar-leave-to {
   opacity: 0;
-  transform: translate3d(0, 18px, 0) scale(0.96);
-}
-
-.isle-hud-float-enter-active {
-  transition:
-    opacity 0.2s cubic-bezier(0.22, 1, 0.36, 1),
-    transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
-}
-.isle-hud-float-leave-active {
-  transition:
-    opacity 0.14s cubic-bezier(0.32, 0, 0.67, 0),
-    transform 0.14s cubic-bezier(0.32, 0, 0.67, 0);
+  transform: translate3d(0, 14px, 0) scale(0.97);
 }
 .isle-hud-float-enter-from,
 .isle-hud-float-leave-to {
   opacity: 0;
-  transform: translate3d(-50%, 18px, 0) scale(0.96);
+  transform: translate3d(-50%, 14px, 0) scale(0.97);
 }
 
-/* Human-centered Sanctuary UI: Spotlight Search & User Capsule */
+/* Compact Spotlight Search & Topbar Capsules */
 .hero-search-bar {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin: 18px 0 20px;
-  padding: 6px 6px 6px 16px;
-  background: color-mix(in srgb, var(--fluid-card-top) 86%, transparent);
+  gap: 8px;
+  margin: 10px 0 10px;
+  padding: 4px 5px 4px 13px;
+  background: var(--fluid-card-item-fill);
   border: 1px solid var(--fluid-card-border);
   border-radius: var(--radius-pill);
   box-shadow: var(--fluid-item-card-shadow);
-  backdrop-filter: blur(14px);
-  max-width: 540px;
+  max-width: 520px;
+  transition: border-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
+}
+.hero-search-bar:focus-within {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary) 14%, transparent);
 }
 .hero-search-bar .search-icon {
   color: var(--text-tertiary);
@@ -414,34 +430,33 @@ input[type="checkbox"]:not(.file-checkbox):not(.isle-checkbox):checked::after {
   border: 0;
   background: transparent;
   color: var(--text-primary);
-  font-size: 13.5px;
+  font-size: 13px;
   outline: 0;
 }
 .hero-search-bar button {
   border: 0;
   border-radius: var(--radius-pill);
-  background: linear-gradient(145deg, #1b86ff, var(--accent-primary));
-  color: #fff;
-  padding: 8px 18px;
-  font-size: 12.5px;
+  background: linear-gradient(145deg, var(--accent-primary-solid-top, var(--accent-primary)), var(--accent-primary-solid, var(--accent-primary)));
+  color: var(--on-accent-primary, #fff);
+  padding: 6px 14px;
+  font-size: 12px;
   font-weight: 600;
-  box-shadow: 0 2px 8px color-mix(in srgb, var(--accent-primary) 35%, transparent);
 }
 .hero-search-bar .back-pill {
-  background: var(--fluid-card-item-fill);
+  background: var(--fluid-card-fill);
   color: var(--text-secondary);
   border: 1px solid var(--fluid-card-border);
   box-shadow: none;
 }
 
-/* Floating Status & Profile Capsule in Topbar */
 .status-pill {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 14px;
+  gap: 6px;
+  height: 32px;
+  padding: 0 11px;
   border-radius: var(--radius-pill);
-  background: var(--fluid-card-item-fill);
+  background: var(--fluid-card-fill);
   border: 1px solid var(--fluid-card-border);
   font-size: 12px;
   font-weight: 550;
@@ -451,46 +466,55 @@ input[type="checkbox"]:not(.file-checkbox):not(.isle-checkbox):checked::after {
 .user-capsule {
   display: inline-flex;
   align-items: center;
-  gap: 9px;
-  padding: 4px 6px 4px 5px;
+  gap: 6px;
+  height: 32px;
+  padding: 2px 5px 2px 4px;
   border-radius: var(--radius-pill);
-  background: var(--fluid-card-item-fill);
+  background: var(--fluid-card-fill);
   border: 1px solid var(--fluid-card-border);
   box-shadow: var(--fluid-item-card-shadow);
 }
+.user-capsule-profile {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+}
 .user-avatar {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
-  background: linear-gradient(135deg, #1b86ff, var(--accent-primary));
-  color: #fff;
-  font-size: 12px;
+  background: linear-gradient(140deg, var(--accent-primary-solid-top, var(--accent-primary)), var(--accent-primary-solid, var(--accent-primary)));
+  color: var(--on-accent-primary, #fff);
+  font-size: 11px;
   font-weight: 700;
   display: grid;
   place-items: center;
-  box-shadow: 0 2px 6px color-mix(in srgb, var(--accent-primary) 35%, transparent);
 }
 .user-meta {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
 }
 .user-name {
-  font-size: 12.5px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-primary);
 }
 .user-role {
   font-size: 10px;
   font-weight: 600;
-  padding: 2px 7px;
+  padding: 1px 6px;
   border-radius: var(--radius-pill);
   background: var(--accent-muted);
   color: var(--accent-primary);
 }
 .logout-btn {
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   border-radius: 50%;
   border: 0;
   background: transparent;
@@ -498,12 +522,11 @@ input[type="checkbox"]:not(.file-checkbox):not(.isle-checkbox):checked::after {
   display: grid;
   place-items: center;
   cursor: pointer;
-  transition: transform var(--motion-fast) var(--motion-spring), background var(--motion-fast) ease, color var(--motion-fast) ease;
+  transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
 }
 .logout-btn:hover {
-  background: var(--accent-muted);
+  background: color-mix(in srgb, var(--error) 12%, transparent);
   color: var(--error);
-  transform: scale(1.08);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -516,6 +539,7 @@ input[type="checkbox"]:not(.file-checkbox):not(.isle-checkbox):checked::after {
   .circle-action,
   .refresh,
   .settings-nav button,
+  .hero-search-bar,
   .logout-btn,
   .ios-fade-enter-active,
   .ios-fade-leave-active,
@@ -526,7 +550,8 @@ input[type="checkbox"]:not(.file-checkbox):not(.isle-checkbox):checked::after {
     transition: none;
   }
   .isle-tab-pane,
-  .isle-subview-pane {
+  .isle-subview-pane,
+  .dialog-backdrop {
     animation: none;
   }
 }

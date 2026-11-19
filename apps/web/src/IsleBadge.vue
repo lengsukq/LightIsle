@@ -45,7 +45,7 @@ defineSlots<{
   align-items: center;
   gap: 5px;
   border-radius: var(--radius-full);
-  font-weight: 500;
+  font-weight: 550;
   line-height: 1;
   white-space: nowrap;
   vertical-align: middle;
@@ -68,7 +68,7 @@ defineSlots<{
 .isle-badge-dot {
   width: 6px;
   height: 6px;
-  border-radius: var(--radius-full);
+  border-radius: 50%;
   background-color: currentColor;
   opacity: 0.9;
   flex-shrink: 0;
@@ -88,61 +88,58 @@ defineSlots<{
 
 /* Variants */
 .isle-badge.badge-neutral {
-  background: rgba(255, 255, 255, 0.08);
+  background: var(--fluid-card-item-fill);
   color: var(--text-secondary);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--fluid-card-border);
 }
 
 .isle-badge.badge-online {
-  background: rgba(16, 185, 129, 0.12);
-  color: #059669;
-  border: 1px solid rgba(16, 185, 129, 0.22);
+  background: color-mix(in srgb, var(--success, #1F7A56) 11%, transparent);
+  color: var(--success, #1F7A56);
+  border: 1px solid color-mix(in srgb, var(--success, #1F7A56) 26%, transparent);
 }
 
 .isle-badge.badge-offline {
-  background: rgba(148, 163, 184, 0.12);
+  background: color-mix(in srgb, var(--text-secondary) 10%, transparent);
   color: var(--text-secondary);
-  border: 1px solid rgba(148, 163, 184, 0.2);
+  border: 1px solid color-mix(in srgb, var(--text-secondary) 22%, transparent);
 }
 
 .isle-badge.badge-warning {
-  background: rgba(245, 158, 11, 0.12);
-  color: #d97706;
-  border: 1px solid rgba(245, 158, 11, 0.25);
+  background: color-mix(in srgb, var(--warning, #B86B19) 12%, transparent);
+  color: var(--warning, #B86B19);
+  border: 1px solid color-mix(in srgb, var(--warning, #B86B19) 28%, transparent);
 }
 
 .isle-badge.badge-danger {
-  background: rgba(239, 68, 68, 0.12);
-  color: #dc2626;
-  border: 1px solid rgba(239, 68, 68, 0.25);
+  background: color-mix(in srgb, var(--error, #B94032) 12%, transparent);
+  color: var(--error, #B94032);
+  border: 1px solid color-mix(in srgb, var(--error, #B94032) 28%, transparent);
 }
 
 .isle-badge.badge-accent {
-  background: rgba(99, 102, 241, 0.12);
-  color: var(--primary-color, #6366f1);
-  border: 1px solid rgba(99, 102, 241, 0.25);
+  background: color-mix(in srgb, var(--accent-primary, #1F5162) 10%, transparent);
+  color: var(--accent-primary, #1F5162);
+  border: 1px solid color-mix(in srgb, var(--accent-primary, #1F5162) 24%, transparent);
 }
 
 .isle-badge.badge-category {
-  background: var(--card-bg);
+  background: var(--fluid-card-fill);
   color: var(--text-primary);
-  border: 1px solid var(--border-subtle);
+  border: 1px solid var(--fluid-card-border);
 }
 
-/* Dark mode adjustments */
-@media (prefers-color-scheme: dark) {
-  .isle-badge.badge-online {
-    color: #34d399;
-    background: rgba(16, 185, 129, 0.16);
-  }
-  .isle-badge.badge-warning {
-    color: #fbbf24;
-    background: rgba(245, 158, 11, 0.16);
-  }
-  .isle-badge.badge-danger {
-    color: #f87171;
-    background: rgba(239, 68, 68, 0.16);
-  }
+:global([data-theme="dark"]) .isle-badge.badge-online {
+  color: #34d399;
+  background: rgba(16, 185, 129, 0.16);
+}
+:global([data-theme="dark"]) .isle-badge.badge-warning {
+  color: #fbbf24;
+  background: rgba(245, 158, 11, 0.16);
+}
+:global([data-theme="dark"]) .isle-badge.badge-danger {
+  color: #f87171;
+  background: rgba(239, 68, 68, 0.16);
 }
 
 @media (prefers-reduced-motion: reduce) {

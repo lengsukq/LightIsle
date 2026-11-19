@@ -258,20 +258,17 @@ onUnmounted(() => {
     role="region"
     :aria-label="title || alt || '图片查看器'"
   >
-    <!-- Loading spinner -->
     <div v-if="!isLoaded && !hasError" class="viewer-loader">
-      <Loader2 :size="32" class="spin-icon" />
+      <Loader2 :size="28" class="spin-icon" />
     </div>
 
-    <!-- Error notice -->
     <div v-if="hasError" class="viewer-error">
       <p>图片加载失败，请检查网络或文件是否完整</p>
       <button type="button" class="viewer-btn" @click="isLoaded = false; hasError = false">
-        <RefreshCw :size="14" /> 重试加载
+        <RefreshCw :size="13" /> 重试加载
       </button>
     </div>
 
-    <!-- Main Viewport Canvas -->
     <div
       class="viewer-stage"
       :class="{
@@ -296,7 +293,6 @@ onUnmounted(() => {
       />
     </div>
 
-    <!-- Navigation buttons -->
     <button
       v-if="hasPrev"
       type="button"
@@ -305,7 +301,7 @@ onUnmounted(() => {
       aria-label="上一张图片"
       @click="emit('prev')"
     >
-      <ChevronLeft :size="28" />
+      <ChevronLeft :size="24" />
     </button>
     <button
       v-if="hasNext"
@@ -315,10 +311,9 @@ onUnmounted(() => {
       aria-label="下一张图片"
       @click="emit('next')"
     >
-      <ChevronRight :size="28" />
+      <ChevronRight :size="24" />
     </button>
 
-    <!-- Floating HUD Toolbar -->
     <div class="viewer-hud" role="toolbar" aria-label="看图控制栏">
       <button
         v-if="allowZoom"
@@ -328,7 +323,7 @@ onUnmounted(() => {
         :disabled="scale <= 1.01"
         @click="zoomOut"
       >
-        <ZoomOut :size="16" />
+        <ZoomOut :size="15" />
       </button>
 
       <span
@@ -348,7 +343,7 @@ onUnmounted(() => {
         :disabled="scale >= viewerMaxScale - 0.05"
         @click="zoomIn"
       >
-        <ZoomIn :size="16" />
+        <ZoomIn :size="15" />
       </button>
 
       <button
@@ -359,7 +354,7 @@ onUnmounted(() => {
         title="1:1 / 适应窗口 (0)"
         @click="toggleActualSize"
       >
-        <Maximize2 :size="15" />
+        <Maximize2 :size="14" />
       </button>
 
       <button
@@ -369,7 +364,7 @@ onUnmounted(() => {
         title="顺时针旋转 90°"
         @click="rotate"
       >
-        <RotateCw :size="15" />
+        <RotateCw :size="14" />
       </button>
     </div>
   </div>
@@ -380,14 +375,14 @@ onUnmounted(() => {
   position: relative;
   width: 100%;
   height: 100%;
-  min-height: 380px;
+  min-height: 340px;
   max-height: 82vh;
   display: flex;
   align-items: center;
   justify-content: center;
   overflow: hidden;
-  background: rgba(0, 0, 0, 0.45);
-  border-radius: var(--radius-lg);
+  background: #070a10;
+  border-radius: 14px;
   user-select: none;
   -webkit-user-select: none;
   touch-action: none;
@@ -422,12 +417,27 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 12px;
-  color: #ff6b6b;
-  font-size: 13px;
+  gap: 10px;
+  color: #f87171;
+  font-size: 12.5px;
   text-align: center;
   z-index: 3;
-  padding: 20px;
+  padding: 18px;
+}
+
+.viewer-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 4px 12px;
+  border-radius: 9999px;
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
 }
 
 .viewer-stage {
@@ -451,7 +461,7 @@ onUnmounted(() => {
   max-width: 96%;
   max-height: 96%;
   object-fit: contain;
-  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1);
   will-change: transform;
 }
 
@@ -459,32 +469,31 @@ onUnmounted(() => {
   transition: none;
 }
 
-/* Navigation buttons */
 .nav-btn {
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
-  width: 44px;
-  height: 44px;
+  width: 38px;
+  height: 38px;
   border-radius: 50%;
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(20, 20, 25, 0.65);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(16, 20, 28, 0.65);
   color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
   transition: background 0.15s ease, transform 0.15s ease, opacity 0.15s ease;
   z-index: 10;
-  opacity: 0.82;
+  opacity: 0.85;
 }
 
 .nav-btn:hover {
-  background: rgba(35, 35, 45, 0.85);
-  transform: translateY(-50%) scale(1.05);
+  background: rgba(30, 36, 48, 0.88);
+  transform: translateY(-50%) scale(1.04);
   opacity: 1;
 }
 
@@ -493,29 +502,28 @@ onUnmounted(() => {
 }
 
 .nav-btn.prev {
-  left: 14px;
+  left: 12px;
 }
 
 .nav-btn.next {
-  right: 14px;
+  right: 12px;
 }
 
-/* Floating Bottom HUD Toolbar */
 .viewer-hud {
   position: absolute;
-  bottom: 16px;
+  bottom: 12px;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
   align-items: center;
-  gap: 4px;
-  padding: 5px 8px;
-  border-radius: var(--radius-full);
-  background: rgba(24, 24, 30, 0.72);
-  border: 1px solid rgba(255, 255, 255, 0.14);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  gap: 3px;
+  padding: 4px 7px;
+  border-radius: var(--radius-full, 9999px);
+  background: rgba(18, 22, 32, 0.76);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
   z-index: 10;
   opacity: 0.92;
   transition: opacity 0.2s ease, transform 0.2s ease;
@@ -529,12 +537,12 @@ onUnmounted(() => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   border-radius: 50%;
   border: none;
   background: transparent;
-  color: rgba(255, 255, 255, 0.85);
+  color: rgba(255, 255, 255, 0.86);
   cursor: pointer;
   transition: background-color 0.15s ease, color 0.15s ease;
 }
@@ -559,8 +567,8 @@ onUnmounted(() => {
 }
 
 .hud-scale-badge {
-  padding: 0 8px;
-  font-size: 11.5px;
+  padding: 0 7px;
+  font-size: 11px;
   font-weight: 600;
   font-family: ui-monospace, SFMono-Regular, monospace;
   color: rgba(255, 255, 255, 0.9);
@@ -574,8 +582,8 @@ onUnmounted(() => {
 
 @media (max-width: 640px) {
   .nav-btn {
-    width: 42px;
-    height: 42px;
+    width: 36px;
+    height: 36px;
   }
   .nav-btn.prev {
     left: 8px;
@@ -584,13 +592,13 @@ onUnmounted(() => {
     right: 8px;
   }
   .viewer-hud {
-    bottom: 10px;
-    gap: 6px;
-    padding: 6px 10px;
+    bottom: 8px;
+    gap: 4px;
+    padding: 4px 8px;
   }
   .hud-btn {
-    width: 40px;
-    height: 40px;
+    width: 34px;
+    height: 34px;
   }
 }
 

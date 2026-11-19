@@ -105,7 +105,7 @@ function updatePosition() {
   const viewportWidth = window.innerWidth;
   const viewportHeight = window.innerHeight;
 
-  const estimatedMenuHeight = Math.min(260, normalizedOptions.value.length * 34 + 16);
+  const estimatedMenuHeight = Math.min(260, normalizedOptions.value.length * 32 + 12);
   const spaceBelow = viewportHeight - rect.bottom - 10;
   const spaceAbove = rect.top - 10;
 
@@ -132,10 +132,10 @@ function updatePosition() {
   };
 
   if (dropUp) {
-    newStyle.bottom = `${Math.round(viewportHeight - rect.top + 5)}px`;
+    newStyle.bottom = `${Math.round(viewportHeight - rect.top + 4)}px`;
     newStyle.top = undefined;
   } else {
-    newStyle.top = `${Math.round(rect.bottom + 5)}px`;
+    newStyle.top = `${Math.round(rect.bottom + 4)}px`;
     newStyle.bottom = undefined;
   }
 
@@ -313,7 +313,7 @@ watch(isOpen, (open) => {
     >
       <span class="apple-select-label-text">{{ displayText }}</span>
       <span class="apple-select-chevron" aria-hidden="true">
-        <ChevronsUpDown :size="size === 'sm' ? 12 : 13.5" :stroke-width="2" />
+        <ChevronsUpDown :size="size === 'sm' ? 12 : 13" :stroke-width="2" />
       </span>
     </button>
 
@@ -347,7 +347,7 @@ watch(isOpen, (open) => {
               @click="selectOption(option)"
             >
               <span class="apple-select-check" aria-hidden="true">
-                <Check v-if="option.value === modelValue" :size="size === 'sm' ? 12 : 13.5" :stroke-width="2.5" />
+                <Check v-if="option.value === modelValue" :size="size === 'sm' ? 12 : 13" :stroke-width="2.5" />
               </span>
               <span class="apple-select-option-label">{{ option.label }}</span>
               <span v-if="option.hint" class="apple-select-option-hint">{{ option.hint }}</span>
@@ -373,55 +373,50 @@ watch(isOpen, (open) => {
   width: 100%;
 }
 
-/* Trigger Button */
 .apple-select-trigger {
   box-sizing: border-box;
   display: inline-flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 6px;
   width: 100%;
   font-family: inherit;
   font-weight: 550;
-  color: var(--text-primary, #1d1d1f);
+  color: var(--text-primary, #181715);
   cursor: pointer;
   user-select: none;
-  background-color: var(--fluid-card-top, rgba(255, 255, 255, 0.72));
-  background-image: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--fluid-card-top, #ffffff) 92%, transparent) 0%,
-    var(--fluid-card-fill, rgba(246, 248, 250, 0.6)) 100%
-  );
-  border: 1px solid var(--fluid-card-border, rgba(0, 0, 0, 0.12));
-  box-shadow:
-    0 1px 2px rgb(var(--fluid-shadow-rgb, 0 0 0) / 0.04),
-    inset 0 1px 0 rgba(255, 255, 255, 0.4);
+  background-color: var(--fluid-card-top, #ffffff);
+  border: 1px solid var(--fluid-card-border, rgba(34, 29, 23, 0.1));
+  box-shadow: 0 1px 2px rgba(34, 29, 23, 0.03);
   transition:
-    transform var(--motion-fast, 0.15s) var(--motion-spring, ease),
-    box-shadow var(--motion-fast, 0.15s) ease,
-    border-color var(--motion-fast, 0.15s) ease,
-    background-color var(--motion-fast, 0.15s) ease;
+    transform 220ms var(--motion-spring, cubic-bezier(0.22, 1, 0.36, 1)),
+    border-color var(--motion-fast, 0.16s) ease,
+    background-color var(--motion-fast, 0.16s) ease;
   outline: none;
 }
 
-/* Sizing */
+.apple-select-trigger:active:not(:disabled) {
+  transform: scale(0.98);
+  transition-duration: 95ms;
+}
+
 .apple-select-wrapper.size-sm .apple-select-trigger {
-  height: 30px;
-  padding: 0 8px 0 10px;
+  height: 28px;
+  padding: 0 8px 0 9px;
   font-size: 12px;
   border-radius: 8px;
 }
 .apple-select-wrapper.size-md .apple-select-trigger {
-  height: 35px;
-  padding: 0 10px 0 12px;
-  font-size: 13px;
-  border-radius: 10px;
+  height: 33px;
+  padding: 0 9px 0 11px;
+  font-size: 12.5px;
+  border-radius: 9px;
 }
 .apple-select-wrapper.size-lg .apple-select-trigger {
-  height: 40px;
-  padding: 0 12px 0 14px;
-  font-size: 14px;
-  border-radius: 12px;
+  height: 38px;
+  padding: 0 11px 0 13px;
+  font-size: 13.5px;
+  border-radius: 10px;
 }
 
 .apple-select-label-text {
@@ -434,7 +429,7 @@ watch(isOpen, (open) => {
 }
 
 .apple-select-trigger.is-placeholder .apple-select-label-text {
-  color: var(--text-secondary, #86868b);
+  color: var(--text-secondary, #635e57);
   font-weight: normal;
 }
 
@@ -442,80 +437,64 @@ watch(isOpen, (open) => {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  color: var(--text-secondary, #86868b);
+  color: var(--text-secondary, #635e57);
   flex-shrink: 0;
-  transition: transform 0.15s ease, color 0.15s ease;
+  transition: color 0.15s ease;
 }
 
-/* Hover & Focus */
 .apple-select-trigger:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--accent-primary, #0071e3) 30%, var(--fluid-card-border, #d1d5db));
-  box-shadow:
-    0 2px 8px rgb(var(--fluid-shadow-rgb, 0 0 0) / 0.08),
-    inset 0 1px 0 rgba(255, 255, 255, 0.6);
-  transform: translateY(-0.5px);
+  border-color: var(--fluid-card-border-strong, rgba(34, 29, 23, 0.16));
+  background-color: var(--fluid-card-hover, #f5f2ea);
 }
 .apple-select-trigger:hover:not(:disabled) .apple-select-chevron {
-  color: var(--accent-primary, #0071e3);
+  color: var(--accent-primary, #1f5162);
 }
 
 .apple-select-trigger:focus-visible {
-  border-color: var(--accent-primary, #0071e3) !important;
-  box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--accent-primary, #0071e3) 24%, transparent) !important;
+  border-color: var(--accent-primary, #1f5162) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary, #1f5162) 18%, transparent) !important;
 }
 
 .apple-select-trigger.is-active {
-  border-color: var(--accent-primary, #0071e3);
-  box-shadow:
-    0 0 0 3px color-mix(in srgb, var(--accent-primary, #0071e3) 20%, transparent);
+  border-color: var(--accent-primary, #1f5162);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary, #1f5162) 16%, transparent);
 }
 
 .apple-select-trigger:disabled {
   opacity: 0.45;
   cursor: not-allowed;
-  transform: none !important;
   box-shadow: none !important;
 }
 
-/* Dark mode adjustments */
-[data-theme="dark"] .apple-select-trigger {
-  background-color: var(--fluid-card-top, rgba(38, 41, 46, 0.8));
-  background-image: linear-gradient(
-    180deg,
-    rgba(255, 255, 255, 0.05) 0%,
-    rgba(0, 0, 0, 0.15) 100%
-  );
-  border: 1px solid var(--fluid-card-border, rgba(255, 255, 255, 0.12));
-  box-shadow:
-    0 1px 2px rgba(0, 0, 0, 0.3),
-    inset 0 1px 0 rgba(255, 255, 255, 0.08);
+:global([data-theme="dark"]) .apple-select-trigger {
+  background-color: var(--fluid-card-top, #1e1d1b);
+  border: 1px solid var(--fluid-card-border, rgba(244, 241, 234, 0.11));
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.28);
 }
-[data-theme="dark"] .apple-select-trigger:hover:not(:disabled) {
-  border-color: color-mix(in srgb, var(--accent-primary, #3898ff) 40%, rgba(255, 255, 255, 0.2));
-  box-shadow:
-    0 3px 12px rgba(0, 0, 0, 0.4),
-    inset 0 1px 0 rgba(255, 255, 255, 0.12);
+
+@media (prefers-reduced-motion: reduce) {
+  .apple-select-trigger,
+  .apple-select-chevron {
+    transition: none;
+  }
 }
 </style>
 
-<!-- Global menu styles because menu is teleported to body -->
 <style>
 .apple-select-menu {
   box-sizing: border-box;
   overflow: hidden;
   border-radius: 12px;
-  padding: 5px;
-  background-color: rgba(255, 255, 255, 0.86);
-  backdrop-filter: blur(28px) saturate(190%);
-  -webkit-backdrop-filter: blur(28px) saturate(190%);
-  border: 1px solid rgba(0, 0, 0, 0.09);
+  padding: 4px;
+  background-color: rgba(255, 253, 249, 0.96);
+  backdrop-filter: blur(22px) saturate(145%);
+  -webkit-backdrop-filter: blur(22px) saturate(145%);
+  border: 1px solid rgba(34, 29, 23, 0.11);
   box-shadow:
-    0 16px 36px -4px rgba(0, 0, 0, 0.16),
-    0 4px 12px rgba(0, 0, 0, 0.06),
-    inset 0 1px 0 rgba(255, 255, 255, 0.8);
+    0 14px 30px -6px rgba(34, 29, 23, 0.15),
+    0 3px 8px rgba(34, 29, 23, 0.06);
   font-family: inherit;
-  color: var(--text-primary, #1d1d1f);
+  color: var(--text-primary, #181715);
   outline: none;
   transform-origin: top center;
 }
@@ -525,13 +504,12 @@ watch(isOpen, (open) => {
 }
 
 [data-theme="dark"] .apple-select-menu {
-  background-color: rgba(32, 35, 40, 0.88);
-  border: 1px solid rgba(255, 255, 255, 0.14);
+  background-color: rgba(29, 28, 26, 0.96);
+  border: 1px solid rgba(244, 241, 234, 0.13);
   box-shadow:
-    0 20px 44px -4px rgba(0, 0, 0, 0.5),
-    0 6px 14px rgba(0, 0, 0, 0.25),
-    inset 0 1px 0 rgba(255, 255, 255, 0.12);
-  color: var(--text-primary, #f5f5f7);
+    0 16px 36px -4px rgba(0, 0, 0, 0.52),
+    0 4px 10px rgba(0, 0, 0, 0.28);
+  color: var(--text-primary, #f4f1ea);
 }
 
 .apple-select-scroll {
@@ -545,44 +523,43 @@ watch(isOpen, (open) => {
   width: 5px;
 }
 .apple-select-scroll::-webkit-scrollbar-thumb {
-  background: rgba(0, 0, 0, 0.2);
+  background: rgba(34, 29, 23, 0.18);
   border-radius: 999px;
 }
 [data-theme="dark"] .apple-select-scroll::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.25);
+  background: rgba(244, 241, 234, 0.22);
 }
 
-/* Options */
 .apple-select-option {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   width: 100%;
   box-sizing: border-box;
-  padding: 6px 10px 6px 6px;
+  padding: 5px 9px 5px 6px;
   border-radius: 7px;
-  font-size: 13px;
+  font-size: 12.5px;
   font-weight: 500;
   line-height: 1.35;
   cursor: pointer;
   user-select: none;
-  transition: background-color 0.12s ease, color 0.12s ease;
+  transition: background-color 0.13s ease, color 0.13s ease;
   position: relative;
 }
 
 .apple-select-menu.size-sm .apple-select-option {
   font-size: 12px;
-  padding: 5px 8px 5px 5px;
+  padding: 4px 8px 4px 5px;
 }
 
 .apple-select-check {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 16px;
-  height: 16px;
+  width: 15px;
+  height: 15px;
   flex-shrink: 0;
-  color: var(--accent-primary, #0071e3);
+  color: var(--accent-primary, #1f5162);
 }
 
 .apple-select-option-label {
@@ -594,25 +571,29 @@ watch(isOpen, (open) => {
 
 .apple-select-option-hint {
   font-size: 11px;
-  color: var(--text-secondary, #86868b);
+  color: var(--text-secondary, #635e57);
   margin-left: 6px;
   flex-shrink: 0;
 }
 
-/* Hover & Selected States */
 .apple-select-option.is-highlighted:not(.is-disabled) {
-  background-color: var(--accent-primary, #0071e3);
+  background-color: var(--accent-primary, #1f5162);
   color: #ffffff !important;
+}
+
+[data-theme="dark"] .apple-select-option.is-highlighted:not(.is-disabled) {
+  background-color: #2c6b80;
+  color: #f8f6f1 !important;
 }
 
 .apple-select-option.is-highlighted:not(.is-disabled) .apple-select-check,
 .apple-select-option.is-highlighted:not(.is-disabled) .apple-select-option-hint {
-  color: rgba(255, 255, 255, 0.9) !important;
+  color: rgba(255, 255, 255, 0.92) !important;
 }
 
 .apple-select-option.is-selected:not(.is-highlighted) {
   font-weight: 600;
-  color: var(--accent-primary, #0071e3);
+  color: var(--accent-primary, #1f5162);
 }
 
 .apple-select-option.is-disabled {
@@ -621,45 +602,45 @@ watch(isOpen, (open) => {
 }
 
 .apple-select-empty {
-  padding: 10px 14px;
+  padding: 8px 12px;
   font-size: 12px;
-  color: var(--text-secondary, #86868b);
+  color: var(--text-secondary, #635e57);
   text-align: center;
 }
 
-/* Animation Transitions */
 .apple-select-down-enter-active,
 .apple-select-up-enter-active {
   transition:
-    opacity 0.15s cubic-bezier(0.16, 1, 0.3, 1),
-    transform 0.15s cubic-bezier(0.16, 1, 0.3, 1);
+    opacity 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .apple-select-down-leave-active,
 .apple-select-up-leave-active {
   transition:
-    opacity 0.1s ease-in,
-    transform 0.1s ease-in;
+    opacity 0.12s cubic-bezier(0.32, 0, 0.67, 0),
+    transform 0.12s cubic-bezier(0.32, 0, 0.67, 0);
 }
 
 .apple-select-down-enter-from {
   opacity: 0;
-  transform: scale(0.96) translateY(-4px);
+  transform: scale(0.96) translateY(-5px);
 }
 .apple-select-down-leave-to {
   opacity: 0;
-  transform: scale(0.97) translateY(-2px);
+  transform: scale(0.98) translateY(-2px);
 }
 
 .apple-select-up-enter-from {
   opacity: 0;
-  transform: scale(0.96) translateY(4px);
+  transform: scale(0.96) translateY(5px);
 }
 .apple-select-up-leave-to {
   opacity: 0;
-  transform: scale(0.97) translateY(2px);
+  transform: scale(0.98) translateY(2px);
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .apple-select-option,
   .apple-select-down-enter-active,
   .apple-select-up-enter-active,
   .apple-select-down-leave-active,

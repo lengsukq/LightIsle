@@ -1,19 +1,23 @@
 import { onMounted, onUnmounted, ref } from "vue";
-import { applyTheme, type Theme } from "./theme.ts";
+import {
+  applyTheme,
+  resolveThemePreset,
+  THEME_PRESETS,
+  type Theme,
+  type ThemePresetId,
+  type ThemePresetMeta,
+} from "./theme.ts";
 
-type Atmosphere = "aurora" | "azure" | "sunset" | "nebula";
+export const atmospheres: ReadonlyArray<ThemePresetMeta> = THEME_PRESETS;
 
-export const atmospheres: ReadonlyArray<{ id: Atmosphere; name: string; icon: string }> = [
-  { id: "aurora", name: "七彩极光", icon: "🌈" },
-  { id: "azure", name: "琉璃晴海", icon: "🌊" },
-  { id: "sunset", name: "落日晚霞", icon: "🌅" },
-  { id: "nebula", name: "幻紫星云", icon: "🌌" },
-];
+const THEME_STORAGE_KEY = "lightisle_theme";
+const PRESET_STORAGE_KEY = "lightisle_theme_preset";
+const LEGACY_ATMOSPHERE_KEY = "lightisle_atmosphere";
 
 /** User appearance preferences do not depend on authentication or NAS APIs. */
 export function useShellAppearance() {
   const theme = ref<Theme>("light");
-  const atmosphere = ref<Atmosphere>("aurora");
+  const atmosphere = ref<ThemePresetId>("warm_gallery");
   const sidebarExpanded = ref(true);
   const moreMenuOpen = ref(false);
   const fileViewMode = ref<"list" | "grid">("list");
@@ -28,24 +32,37 @@ export function useShellAppearance() {
     }
   }
 
-  function applyAtmosphere(value: Atmosphere) {
-    atmosphere.value = value;
-    document.documentElement.dataset.atmosphere = value;
+  function applyAtmosphere(value: ThemePresetId) {
+    const resolved = resolveThemePreset(value);
+    atmosphere.value = resolved;
+    applyTheme(theme.value, resolved);
     try {
-      localStorage.setItem("lightisle_atmosphere", value);
+      localStorage.setItem(PRESET_STORAGE_KEY, resolved);
+      localStorage.setItem(LEGACY_ATMOSPHERE_KEY, resolved);
     } catch {
       // Privacy mode may disable persistent storage.
     }
   }
 
+  function setAtmosphere(value: ThemePresetId) {
+    applyAtmosphere(value);
+  }
+
   function cycleAtmosphere() {
-    const current = atmospheres.findIndex(item => item.id === atmosphere.value);
-    applyAtmosphere(atmospheres[(current + 1) % atmospheres.length].id);
+    const current = atmospheres.findIndex((item) => item.id === atmosphere.value);
+    const next = atmospheres[(current + 1) % atmospheres.length];
+    applyAtmosphere(next.id);
   }
 
   function switchTheme() {
-    theme.value = theme.value === "light" ? "dark" : "light";
-    applyTheme(theme.value);
+    const next: Theme = theme.value === "light" ? "dark" : "light";
+    theme.value = next;
+    applyTheme(next, atmosphere.value);
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, next);
+    } catch {
+      // Privacy mode may disable persistent storage.
+    }
   }
 
   function toggleSidebar() {
@@ -67,14 +84,29 @@ export function useShellAppearance() {
   }
 
   onMounted(() => {
-    theme.value = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
-    applyTheme(theme.value);
+    let initialTheme: Theme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
     try {
-      const saved = localStorage.getItem("lightisle_atmosphere") as Atmosphere | null;
-      applyAtmosphere(saved && atmospheres.some(a => a.id === saved) ? saved : "aurora");
+      const savedTheme = localStorage.getItem(THEME_STORAGE_KEY);
+      if (savedTheme === "light" || savedTheme === "dark") {
+        initialTheme = savedTheme;
+      }
     } catch {
-      applyAtmosphere("aurora");
+      // Fall back to system preference.
     }
+    theme.value = initialTheme;
+
+    let initialPreset: ThemePresetId = "warm_gallery";
+    try {
+      const savedPreset =
+        localStorage.getItem(PRESET_STORAGE_KEY) ??
+        localStorage.getItem(LEGACY_ATMOSPHERE_KEY);
+      initialPreset = resolveThemePreset(savedPreset);
+    } catch {
+      initialPreset = "warm_gallery";
+    }
+    atmosphere.value = initialPreset;
+    applyTheme(initialTheme, initialPreset);
+
     try {
       const savedView = localStorage.getItem("lightisle_file_view_mode");
       if (savedView === "grid" || savedView === "list") fileViewMode.value = savedView;
@@ -93,8 +125,17 @@ export function useShellAppearance() {
 
   onUnmounted(() => window.removeEventListener("keydown", handleDockKeydown));
   return {
-    theme, atmosphere, atmospheres, sidebarExpanded,
-    moreMenuOpen, fileViewMode, setFileViewMode, createFolderOpen,
-    cycleAtmosphere, switchTheme, toggleSidebar,
+    theme,
+    atmosphere,
+    atmospheres,
+    sidebarExpanded,
+    moreMenuOpen,
+    fileViewMode,
+    setFileViewMode,
+    createFolderOpen,
+    setAtmosphere,
+    cycleAtmosphere,
+    switchTheme,
+    toggleSidebar,
   };
 }

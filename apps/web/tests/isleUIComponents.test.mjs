@@ -147,3 +147,26 @@ test('IsleVideoPlayer provides unified transport bar, scrubbing, volume, rate, P
     'useHtmlVideoTransport must clean up fullscreenchange listener on unmount'
   );
 });
+
+test('IslePageHeader provides unified accent-bar heading, title-extra, and actions slots', () => {
+  const source = readFileSync(new URL('../src/IslePageHeader.vue', import.meta.url), 'utf8');
+  assert.match(source, /isle-page-header-bar/, 'IslePageHeader must render gallery accent bar');
+  assert.match(source, /name="title-extra"/, 'IslePageHeader must provide title-extra slot');
+  assert.match(source, /name="actions"/, 'IslePageHeader must provide actions slot');
+});
+
+test('IsleSearchInput provides IME-safe pill search input with clear button and reduced-motion guard', () => {
+  const source = readFileSync(new URL('../src/IsleSearchInput.vue', import.meta.url), 'utf8');
+  assert.match(source, /@compositionstart/, 'IsleSearchInput must guard IME compositionstart');
+  assert.match(source, /@compositionend/, 'IsleSearchInput must handle IME compositionend');
+  assert.match(source, /isle-search-clear/, 'IsleSearchInput must provide clear button');
+  assert.match(source, /prefers-reduced-motion:\s*reduce/, 'IsleSearchInput must respect reduced motion');
+});
+
+test('IsleSegmentedTabs provides accessible tablist with active indicator and dark-mode contrast', () => {
+  const source = readFileSync(new URL('../src/IsleSegmentedTabs.vue', import.meta.url), 'utf8');
+  assert.match(source, /role="tablist"/, 'IsleSegmentedTabs must define role="tablist"');
+  assert.match(source, /role="tab"/, 'IsleSegmentedTabs must define role="tab"');
+  assert.match(source, /is-active/, 'IsleSegmentedTabs must mark active tab');
+  assert.match(source, /prefers-reduced-motion:\s*reduce/, 'IsleSegmentedTabs must respect reduced motion');
+});

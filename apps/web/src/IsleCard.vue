@@ -66,74 +66,75 @@ const props = withDefaults(
   color: var(--text-primary);
   box-sizing: border-box;
   transition:
-    transform var(--motion-normal, 260ms) var(--motion-spring, cubic-bezier(0.22, 1, 0.36, 1)),
-    opacity var(--motion-normal, 260ms) ease;
+    transform var(--motion-fast, 150ms) var(--motion-spring, cubic-bezier(0.22, 1, 0.36, 1)),
+    box-shadow var(--motion-fast, 150ms) ease,
+    border-color var(--motion-fast, 150ms) ease;
 }
 
 /* Variants */
 .isle-card.variant-card {
   background: var(--fluid-card-fill);
   border: 1px solid var(--fluid-card-border);
-  border-radius: var(--radius-lg, 22px);
+  border-radius: var(--radius-lg, 18px);
   box-shadow: var(--fluid-card-shadow);
 }
 
 .isle-card.variant-item {
   background: var(--fluid-card-item-fill);
   border: 1px solid var(--fluid-card-border);
-  border-radius: var(--radius-md, 16px);
+  border-radius: var(--radius-md, 14px);
   box-shadow: var(--fluid-item-card-shadow);
 }
 
 .isle-card.variant-glass {
-  background: var(--fluid-card-fill, rgba(255, 255, 255, 0.65));
-  -webkit-backdrop-filter: blur(16px) saturate(140%);
-  backdrop-filter: blur(16px) saturate(140%);
-  border: 1px solid var(--fluid-card-border, rgba(120, 136, 165, 0.22));
-  border-radius: var(--radius-lg, 22px);
+  background: var(--surface-glass, rgba(255, 255, 255, 0.76));
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  backdrop-filter: blur(18px) saturate(150%);
+  border: 1px solid var(--fluid-card-border);
+  border-radius: var(--radius-lg, 18px);
   box-shadow: var(--fluid-card-shadow);
 }
 
 /* Hover effects */
 .isle-card.is-interactive:hover {
-  transform: translateY(-2px);
+  transform: translateY(-1.5px);
 }
 .isle-card.is-interactive:active {
-  transform: scale(0.985);
+  transform: scale(0.99);
 }
 
 .isle-card.variant-card.is-interactive:hover,
 .isle-card.variant-glass.is-interactive:hover {
   box-shadow: var(--fluid-hover-shadow);
-  border-color: color-mix(in srgb, var(--fluid-rim, #ffffff) 90%, transparent);
+  border-color: var(--fluid-card-border-strong, rgba(15, 23, 42, 0.14));
 }
 
 .isle-card.variant-item.is-interactive:hover {
   box-shadow: var(--fluid-item-hover-shadow);
-  border-color: color-mix(in srgb, var(--fluid-rim, #ffffff) 90%, transparent);
+  border-color: var(--fluid-card-border-strong, rgba(15, 23, 42, 0.14));
 }
 
-/* Paddings */
+/* Paddings — tightened for balanced density */
 .isle-card.padding-none .isle-card-body {
   padding: 0;
 }
 .isle-card.padding-sm {
-  padding: 12px;
+  padding: 10px 12px;
 }
 .isle-card.padding-sm .isle-card-header {
-  margin-bottom: 10px;
+  margin-bottom: 8px;
 }
 .isle-card.padding-md {
-  padding: 18px 20px;
+  padding: 15px 18px;
 }
 .isle-card.padding-md .isle-card-header {
-  margin-bottom: 14px;
+  margin-bottom: 12px;
 }
 .isle-card.padding-lg {
-  padding: 24px 28px;
+  padding: 20px 22px;
 }
 .isle-card.padding-lg .isle-card-header {
-  margin-bottom: 18px;
+  margin-bottom: 14px;
 }
 
 /* Header */
@@ -148,7 +149,7 @@ const props = withDefaults(
 .isle-card-header-main {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
   flex: 1;
 }
@@ -157,12 +158,12 @@ const props = withDefaults(
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 38px;
-  height: 38px;
-  border-radius: var(--radius-sm, 12px);
-  background: color-mix(in srgb, var(--accent-primary, #2563eb) 12%, var(--fluid-card-top, #ffffff));
-  color: var(--accent-primary, #2563eb);
-  border: 1px solid color-mix(in srgb, var(--accent-primary, #2563eb) 20%, transparent);
+  width: 32px;
+  height: 32px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent-primary, #1f5162) 11%, transparent);
+  color: var(--accent-primary, #1f5162);
+  border: 1px solid color-mix(in srgb, var(--accent-primary, #1f5162) 18%, transparent);
   flex-shrink: 0;
 }
 
@@ -173,16 +174,16 @@ const props = withDefaults(
 
 .isle-card-title {
   margin: 0;
-  font-size: 16px;
-  font-weight: 600;
+  font-size: 15px;
+  font-weight: 650;
   letter-spacing: -0.2px;
   color: var(--text-primary);
   line-height: 1.35;
 }
 
 .isle-card-subtitle {
-  margin: 3px 0 0;
-  font-size: 13px;
+  margin: 2px 0 0;
+  font-size: 12.5px;
   color: var(--text-secondary, #64748b);
   line-height: 1.4;
 }
@@ -202,13 +203,13 @@ const props = withDefaults(
 
 /* Footer */
 .isle-card-footer {
-  margin-top: 14px;
-  padding-top: 12px;
-  border-top: 1px solid color-mix(in srgb, var(--fluid-card-border, rgba(120, 136, 165, 0.2)) 60%, transparent);
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--fluid-divider, rgba(15, 23, 42, 0.065));
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 10px;
+  gap: 8px;
   flex-shrink: 0;
 }
 @media (prefers-reduced-motion: reduce) {
