@@ -415,7 +415,11 @@ extension _LightIsleApiFiles on LightIsleApi {
       );
 }
 
-Uri _validatedLightIsleBaseUri(String serverUrl, bool allowInsecureHttp) {
+Uri _validatedLightIsleBaseUri(
+  String serverUrl,
+  bool allowInsecureHttp, {
+  Set<String>? allowedInsecureHttpOrigins,
+}) {
   final parsed = Uri.tryParse(serverUrl.trim());
   if (parsed == null ||
       !parsed.isAbsolute ||
@@ -427,18 +431,32 @@ Uri _validatedLightIsleBaseUri(String serverUrl, bool allowInsecureHttp) {
       (parsed.path.isNotEmpty && parsed.path != '/')) {
     throw ArgumentError('服务器地址无效，请检查协议、主机名和端口。');
   }
-  if (parsed.scheme == 'http' && !_isLoopbackHost(parsed.host)) {
-    if (!allowInsecureHttp || !_isPrivateHost(parsed.host)) {
-      throw ArgumentError(
-        '此服务器地址不允许使用未加密连接。请使用 HTTPS；连接局域网服务器时，可在设置中明确允许未加密连接。',
-      );
-    }
-  }
-  return Uri(
+  final canonical = Uri(
     scheme: parsed.scheme.toLowerCase(),
     host: parsed.host,
     port: parsed.hasPort ? parsed.port : null,
   );
+  if (canonical.scheme == 'http' &&
+      !InsecureHttpAllowlist.isLoopbackHost(canonical.host)) {
+    final privateAllowed =
+        allowInsecureHttp &&
+        InsecureHttpAllowlist.isPrivateHost(canonical.host);
+    final exactOrigin = InsecureHttpAllowlist.normalizeOrigin(canonical.origin);
+    final allowlisted =
+        exactOrigin != null &&
+        (allowedInsecureHttpOrigins != null
+            ? allowedInsecureHttpOrigins
+                .map(InsecureHttpAllowlist.normalizeOrigin)
+                .contains(exactOrigin)
+            : (allowInsecureHttp &&
+                InsecureHttpAllowlist.instance.contains(exactOrigin)));
+    if (!privateAllowed && !allowlisted) {
+      throw ArgumentError(
+        '此服务器地址不允许使用未加密连接。请使用 HTTPS；如确认需通过公网明文 HTTP 连接，请在「连接安全设置」中将该地址加入白名单。',
+      );
+    }
+  }
+  return canonical;
 }
 
 String? _normalizeLightIsleCertificateFingerprint(String? value) {
@@ -448,35 +466,6 @@ String? _normalizeLightIsleCertificateFingerprint(String? value) {
     throw ArgumentError('服务器证书指纹格式无效，请检查后重试。');
   }
   return normalized;
-}
-
-bool _isLoopbackHost(String host) {
-  final normalized = host.toLowerCase().replaceFirst(RegExp(r'\.$'), '');
-  if (normalized == 'localhost' || normalized.endsWith('.localhost')) {
-    return true;
-  }
-  final address = InternetAddress.tryParse(normalized);
-  return address?.isLoopback ?? false;
-}
-
-bool _isPrivateHost(String host) {
-  final address = InternetAddress.tryParse(host);
-  if (address == null) return false;
-  final bytes = address.rawAddress;
-  if (address.type == InternetAddressType.IPv4) {
-    final first = bytes[0];
-    final second = bytes[1];
-    return first == 10 ||
-        (first == 172 && second >= 16 && second <= 31) ||
-        (first == 192 && second == 168) ||
-        (first == 169 && second == 254);
-  }
-  if (address.type == InternetAddressType.IPv6) {
-    final first = bytes[0];
-    final second = bytes[1];
-    return (first & 0xfe) == 0xfc || (first == 0xfe && (second & 0xc0) == 0x80);
-  }
-  return false;
 }
 
 Stream<List<int>> _exactLengthStream(

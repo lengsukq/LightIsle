@@ -6,114 +6,125 @@ class IsleFloatingRailDock extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    final palette = IslePalette.of(context);
-    final isOpaque = IsleLayout.opaqueNavigation(context);
-    final shape = IsleShapes.hero(
+    final style = IsleThemeStyle.of(context);
+    final isDark = style.dark;
+    final palette = style.palette;
+    final isOpaque = IsleLayout.opaqueNavigation(context) ||
+        style.preset.surfaceMaterial == IsleSurfaceMaterial.flatHairline ||
+        style.preset.surfaceMaterial == IsleSurfaceMaterial.neoBrutal;
+    final shape = style.shapeFor(
+      IsleRadius.card,
       side: BorderSide(
-        color: IsleGlass.rimBorderColor(isDark, isGlass: true),
-        width: 1.0,
+        color: style.rimBorderColor(isGlass: !isOpaque),
+        width: style.effectiveBorderWidth(),
       ),
     );
-    final innerShape = IsleShapes.hero();
+    final innerShape = style.shapeFor(IsleRadius.card);
+    final topAlpha = style.prefersGlassSurface
+        ? (isDark ? 0.72 : 0.82)
+        : (isDark ? 0.90 : 0.94);
+    final bottomAlpha = style.prefersGlassSurface
+        ? (isDark ? 0.62 : 0.72)
+        : (isDark ? 0.84 : 0.88);
+
+    final dockBody = IntrinsicHeight(
+      child: Container(
+        decoration: ShapeDecoration(
+          shape: shape,
+          color: isOpaque ? palette['cardTop'] : null,
+          gradient: isOpaque
+              ? null
+              : LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [
+                    palette['cardTop'].withValues(alpha: topAlpha),
+                    palette['cardBottom'].withValues(alpha: bottomAlpha),
+                  ],
+                ),
+          shadows: IsleLayout.opaqueNavigation(context)
+              ? const []
+              : style.cardShadows(),
+        ),
+        child: child,
+      ),
+    );
 
     return RepaintBoundary(
       child: Padding(
         padding: const EdgeInsets.only(
-          left: 16,
-          top: 12,
-          bottom: 16,
-          right: 12,
+          left: 12,
+          top: 10,
+          bottom: 12,
+          right: 8,
         ),
         child: ClipPath(
           clipper: ShapeBorderClipper(shape: innerShape),
-          child: IsleGlassBackdrop(
-            blur: IsleGlass.sigmaRegular,
-            child: IntrinsicHeight(
-              child: Container(
-                decoration: ShapeDecoration(
-                  shape: shape,
-                  color: isOpaque ? palette['cardTop'] : null,
-                  gradient: isOpaque
-                      ? null
-                      : LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: isDark
-                              ? [
-                                  const Color(0xff242a3d)
-                                      .withValues(alpha: 0.78),
-                                  const Color(0xff141826)
-                                      .withValues(alpha: 0.68),
-                                ]
-                              : [
-                                  Colors.white.withValues(alpha: 0.82),
-                                  const Color(0xfff5f8fd)
-                                      .withValues(alpha: 0.68),
-                                ],
-                        ),
-                  shadows: isOpaque ? const [] : IsleShadows.floating(isDark),
-                ),
-                child: child,
-              ),
-            ),
-          ),
+          child: isOpaque
+              ? dockBody
+              : IsleGlassBackdrop(blur: IsleGlass.sigmaRegular, child: dockBody),
         ),
       ),
     );
   }
 }
 
-/// iOS Liquid Glass bottom navigation dock with luminous specular top rim
-/// and frosted backdrop blur.
+/// Bottom navigation dock adapting to the active [IsleThemeStyle].
 class IsleFloatingBottomNavDock extends StatelessWidget {
   const IsleFloatingBottomNavDock({super.key, required this.child});
   final Widget child;
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    final palette = IslePalette.of(context);
-    final isOpaque = IsleLayout.opaqueNavigation(context);
-    final topBorderColor = isDark
-        ? Colors.white.withValues(alpha: 0.16)
-        : Colors.white.withValues(alpha: 0.85);
+    final style = IsleThemeStyle.of(context);
+    final isDark = style.dark;
+    final palette = style.palette;
+    final isOpaque = IsleLayout.opaqueNavigation(context) ||
+        style.preset.surfaceMaterial == IsleSurfaceMaterial.flatHairline ||
+        style.preset.surfaceMaterial == IsleSurfaceMaterial.neoBrutal;
+    final topBorderColor = style.rimBorderColor(isGlass: !isOpaque);
+    final topAlpha = style.prefersGlassSurface
+        ? (isDark ? 0.74 : 0.82)
+        : (isDark ? 0.92 : 0.95);
+    final bottomAlpha = style.prefersGlassSurface
+        ? (isDark ? 0.64 : 0.74)
+        : (isDark ? 0.88 : 0.90);
 
     return RepaintBoundary(
       child: ClipRect(
         child: IsleGlassBackdrop(
-          blur: IsleGlass.sigmaRegular,
+          blur: isOpaque ? 0 : IsleGlass.sigmaRegular,
           child: Container(
             decoration: BoxDecoration(
-              color: isOpaque ? palette['cardTop'] : null,
+              color: isOpaque ? palette['chrome'] : null,
               gradient: isOpaque
                   ? null
                   : LinearGradient(
                       begin: Alignment.topCenter,
                       end: Alignment.bottomCenter,
-                      colors: isDark
-                          ? [
-                              const Color(0xff202536).withValues(alpha: 0.82),
-                              const Color(0xff121520).withValues(alpha: 0.74),
-                            ]
-                          : [
-                              Colors.white.withValues(alpha: 0.84),
-                              const Color(0xfff4f7fc).withValues(alpha: 0.72),
-                            ],
+                      colors: [
+                        palette['cardTop'].withValues(alpha: topAlpha),
+                        palette['cardBottom'].withValues(alpha: bottomAlpha),
+                      ],
                     ),
               border: Border(
-                top: BorderSide(color: topBorderColor, width: 0.75),
+                top: BorderSide(
+                  color: topBorderColor,
+                  width: style.effectiveBorderWidth(),
+                ),
               ),
-              boxShadow: isOpaque
+              boxShadow: IsleLayout.opaqueNavigation(context) ||
+                      style.preset.surfaceMaterial ==
+                          IsleSurfaceMaterial.flatHairline ||
+                      style.preset.surfaceMaterial ==
+                          IsleSurfaceMaterial.neoBrutal
                   ? const []
                   : [
                       BoxShadow(
-                        color: isDark
-                            ? Colors.black.withValues(alpha: 0.35)
-                            : const Color(0xff0f172a).withValues(alpha: 0.06),
-                        blurRadius: 24,
+                        color: palette['shadow'].withValues(
+                          alpha: isDark ? 0.34 : 0.06,
+                        ),
+                        blurRadius: 18,
                         offset: const Offset(0, -4),
                       ),
                     ],
@@ -135,7 +146,7 @@ class IsleFloatingBottomNavDock extends StatelessWidget {
   }
 }
 
-/// Status and severity badge pill with iOS capsule aesthetic
+/// Status and severity badge pill with crisp capsule border.
 class IsleBadgePill extends StatelessWidget {
   const IsleBadgePill({super.key, required this.label, this.color, this.icon});
 
@@ -148,20 +159,20 @@ class IsleBadgePill extends StatelessWidget {
     final effectiveColor = color ?? Theme.of(context).colorScheme.primary;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 8.5, vertical: 3),
       decoration: BoxDecoration(
-        color: effectiveColor.withValues(alpha: isDark ? 0.20 : 0.12),
+        color: effectiveColor.withValues(alpha: isDark ? 0.18 : 0.10),
         borderRadius: IsleRadius.brPill,
         border: Border.all(
-          color: effectiveColor.withValues(alpha: isDark ? 0.35 : 0.25),
-          width: 0.8,
+          color: effectiveColor.withValues(alpha: isDark ? 0.34 : 0.22),
+          width: 0.9,
         ),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
           if (icon != null) ...[
-            Icon(icon, size: 12, color: effectiveColor),
+            Icon(icon, size: 11.5, color: effectiveColor),
             const SizedBox(width: 4),
           ],
           Text(
@@ -170,7 +181,7 @@ class IsleBadgePill extends StatelessWidget {
               fontSize: 11,
               fontWeight: FontWeight.w700,
               color: effectiveColor,
-              letterSpacing: 0.2,
+              letterSpacing: 0.1,
             ),
           ),
         ],
@@ -187,8 +198,8 @@ class IsleResponsiveGrid extends StatelessWidget {
     required this.children,
     this.minItemWidth = 300,
     this.maxColumns = 3,
-    this.spacing = 10,
-    this.runSpacing = 10,
+    this.spacing = 12,
+    this.runSpacing = 12,
   });
 
   final List<Widget> children;
@@ -225,8 +236,8 @@ class IsleResponsiveGrid extends StatelessWidget {
   }
 }
 
-/// Unified secondary page AppBar with frosted Liquid Glass backdrop and automatic
-/// macOS traffic-light clearance so scrolling content never collides with titles.
+/// Unified secondary page AppBar with warm frosted parchment backdrop and
+/// automatic macOS traffic-light clearance.
 class IsleAppBar extends StatelessWidget implements PreferredSizeWidget {
   const IsleAppBar({
     super.key,
@@ -235,7 +246,7 @@ class IsleAppBar extends StatelessWidget implements PreferredSizeWidget {
     this.leading,
     this.automaticallyImplyLeading = true,
     this.bottom,
-    this.toolbarHeight = 52,
+    this.toolbarHeight = 50,
     this.centerTitle = false,
     this.foregroundColor,
     this.backgroundColor,
@@ -259,10 +270,12 @@ class IsleAppBar extends StatelessWidget implements PreferredSizeWidget {
   Widget build(BuildContext context) {
     final isMac = defaultTargetPlatform == TargetPlatform.macOS;
     final canPop = ModalRoute.of(context)?.canPop ?? false;
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
-    final isOpaque = IsleLayout.opaqueNavigation(context);
+    final style = IsleThemeStyle.of(context);
+    final palette = style.palette;
+    final isDark = style.dark;
+    final isOpaque = IsleLayout.opaqueNavigation(context) ||
+        style.preset.surfaceMaterial == IsleSurfaceMaterial.flatHairline ||
+        style.preset.surfaceMaterial == IsleSurfaceMaterial.neoBrutal;
 
     Widget? effectiveLeading = leading;
     double? effectiveLeadingWidth;
@@ -273,28 +286,27 @@ class IsleAppBar extends StatelessWidget implements PreferredSizeWidget {
           mainAxisSize: MainAxisSize.min,
           children: [const SizedBox(width: 78), effectiveLeading],
         );
-        effectiveLeadingWidth = 78 + 48;
+        effectiveLeadingWidth = 78 + 44;
       } else if (automaticallyImplyLeading && canPop) {
         effectiveLeading = const Row(
           mainAxisSize: MainAxisSize.min,
           children: [SizedBox(width: 78), BackButton()],
         );
-        effectiveLeadingWidth = 78 + 48;
+        effectiveLeadingWidth = 78 + 44;
       } else if (!canPop) {
         effectiveLeading = const SizedBox(width: 78);
         effectiveLeadingWidth = 78;
       }
     }
 
-    final hairlineColor = isDark
-        ? Colors.white.withValues(alpha: 0.09)
-        : const Color(0xff0f172a).withValues(alpha: 0.06);
+    final hairlineColor = style.rimBorderColor();
+    final hairlineHeight = style.effectiveBorderWidth();
 
     final effectiveBottom =
         bottom ??
         PreferredSize(
-          preferredSize: const Size.fromHeight(1.0),
-          child: Container(height: 0.6, color: hairlineColor),
+          preferredSize: Size.fromHeight(hairlineHeight),
+          child: Container(height: hairlineHeight, color: hairlineColor),
         );
 
     return AppBar(
@@ -302,8 +314,8 @@ class IsleAppBar extends StatelessWidget implements PreferredSizeWidget {
           ? DefaultTextStyle.merge(
               style: const TextStyle(
                 fontSize: 16,
-                fontWeight: FontWeight.w700,
-                letterSpacing: -0.25,
+                fontWeight: FontWeight.w800,
+                letterSpacing: -0.3,
               ),
               child: title!,
             )
@@ -341,8 +353,8 @@ class IsleAppBar extends StatelessWidget implements PreferredSizeWidget {
               color:
                   backgroundColor ??
                   (isOpaque
-                      ? colors.surface
-                      : IsleGlass.regularTint(isDark, colors.surface)),
+                      ? palette['chrome']
+                      : IsleGlass.regularTint(isDark, palette['chrome'])),
             ),
           ),
         ),
@@ -361,9 +373,6 @@ class _IslePopCoordinatorScope extends InheritedWidget {
       host != oldWidget.host;
 }
 
-/// Hosts a single [ModalRoute] [PopEntry] for a multi-tab shell so visible
-/// descendants using [IsleChildPopScope] intercept Back cleanly without double
-/// invocation or interference from offstage tabs.
 class IslePopScopeHost extends StatefulWidget {
   const IslePopScopeHost({
     super.key,
@@ -462,9 +471,6 @@ class _IslePopScopeHostState extends State<IslePopScopeHost>
   }
 }
 
-/// Coordinates Back handling with an enclosing [IslePopScopeHost] when mounted
-/// inside a multi-tab shell (ignoring inactive offstage tabs), and falls back
-/// to [PopScope] when presented standalone.
 class IsleChildPopScope extends StatefulWidget {
   const IsleChildPopScope({
     super.key,
@@ -482,6 +488,7 @@ class IsleChildPopScope extends StatefulWidget {
 }
 
 class _IsleChildPopScopeState extends State<IsleChildPopScope> {
+  _IslePopCoordinatorScope? _scope;
   _IslePopScopeHostState? _host;
   bool _tickerEnabled = true;
 
@@ -498,9 +505,9 @@ class _IsleChildPopScopeState extends State<IsleChildPopScope> {
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
-    final nextHost = context
-        .dependOnInheritedWidgetOfExactType<_IslePopCoordinatorScope>()
-        ?.host;
+    _scope = context
+        .dependOnInheritedWidgetOfExactType<_IslePopCoordinatorScope>();
+    final nextHost = _scope?.host;
     final nextTicker = TickerMode.valuesOf(context).enabled;
     if (nextHost != _host) {
       _host?._unregisterChild(this);

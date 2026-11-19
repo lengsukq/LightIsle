@@ -730,6 +730,7 @@ typedef ServerLatencyProber = Future<ServerLatencyResult> Function(
 Future<ServerLatencyResult> probeServerLatency(
   String serverUrl, {
   String? certificateFingerprint,
+  Set<String>? allowedInsecureHttpOrigins,
   Duration timeout = const Duration(seconds: 5),
 }) async {
   final trimmed = serverUrl.trim();
@@ -742,6 +743,7 @@ Future<ServerLatencyResult> probeServerLatency(
     api = LightIsleApi(
       trimmed,
       allowInsecureHttp: true,
+      allowedInsecureHttpOrigins: allowedInsecureHttpOrigins,
       certificateFingerprint: pin,
       requestTimeout: timeout,
     );

@@ -46,25 +46,35 @@ class _IsleMobilePageTransitionsBuilder extends PageTransitionsBuilder {
   }
 }
 
-/// Damped micro-scale + fade route transition tailored for desktop targets.
+/// Editorial gallery vertical lift + damped micro-scale + silk fade route
+/// transition tailored for desktop targets.
 class IsleDesktopPageTransitionsBuilder extends PageTransitionsBuilder {
   const IsleDesktopPageTransitionsBuilder();
 
   static final Animatable<double> _enterFade = CurveTween(
-    curve: IsleMotion.curve,
+    curve: const Interval(0.0, 0.78, curve: Curves.easeOut),
   );
+  static final Animatable<Offset> _enterSlide = Tween<Offset>(
+    begin: const Offset(0, 0.016),
+    end: Offset.zero,
+  ).chain(CurveTween(curve: IsleMotion.gentleSpring));
   static final Animatable<double> _enterScale = Tween<double>(
-    begin: 0.985,
+    begin: 0.986,
     end: 1.0,
-  ).chain(CurveTween(curve: IsleMotion.spring));
+  ).chain(CurveTween(curve: IsleMotion.gentleSpring));
+
+  static final Animatable<Offset> _exitSlide = Tween<Offset>(
+    begin: Offset.zero,
+    end: const Offset(0, -0.008),
+  ).chain(CurveTween(curve: IsleMotion.silk));
   static final Animatable<double> _exitScale = Tween<double>(
     begin: 1.0,
-    end: 0.992,
-  ).chain(CurveTween(curve: IsleMotion.curve));
+    end: 0.990,
+  ).chain(CurveTween(curve: IsleMotion.silk));
   static final Animatable<double> _exitFade = Tween<double>(
     begin: 1.0,
-    end: 0.92,
-  ).chain(CurveTween(curve: IsleMotion.curve));
+    end: 0.90,
+  ).chain(CurveTween(curve: IsleMotion.silk));
 
   @override
   Widget buildTransitions<T>(
@@ -79,15 +89,21 @@ class IsleDesktopPageTransitionsBuilder extends PageTransitionsBuilder {
     }
     return ColoredBox(
       color: Colors.transparent,
-      child: ScaleTransition(
-        scale: secondaryAnimation.drive(_exitScale),
-        child: FadeTransition(
-          opacity: secondaryAnimation.drive(_exitFade),
+      child: SlideTransition(
+        position: secondaryAnimation.drive(_exitSlide),
+        child: ScaleTransition(
+          scale: secondaryAnimation.drive(_exitScale),
           child: FadeTransition(
-            opacity: animation.drive(_enterFade),
-            child: ScaleTransition(
-              scale: animation.drive(_enterScale),
-              child: child,
+            opacity: secondaryAnimation.drive(_exitFade),
+            child: FadeTransition(
+              opacity: animation.drive(_enterFade),
+              child: SlideTransition(
+                position: animation.drive(_enterSlide),
+                child: ScaleTransition(
+                  scale: animation.drive(_enterScale),
+                  child: child,
+                ),
+              ),
             ),
           ),
         ),
@@ -102,6 +118,12 @@ class _IsleAdaptivePageRoute<T> extends MaterialPageRoute<T> {
     super.settings,
     super.fullscreenDialog,
   });
+
+  @override
+  Duration get transitionDuration => IsleMotion.routeEnter;
+
+  @override
+  Duration get reverseTransitionDuration => IsleMotion.routeExit;
 
   @override
   Widget buildTransitions(
@@ -154,3 +176,136 @@ Future<T?> pushIslePage<T>(
     fullscreenDialog: fullscreenDialog,
   ),
 );
+
+class _IsleDialogRoute<T> extends DialogRoute<T> {
+  _IsleDialogRoute({
+    required super.context,
+    required super.builder,
+    super.themes,
+    super.barrierColor,
+    super.barrierDismissible,
+    super.barrierLabel,
+    super.useSafeArea,
+    super.settings,
+    super.anchorPoint,
+    super.traversalEdgeBehavior,
+  });
+
+  @override
+  Duration get transitionDuration => IsleMotion.modalEnter;
+
+  @override
+  Duration get reverseTransitionDuration => IsleMotion.modalExit;
+
+  @override
+  Widget buildTransitions(
+    BuildContext context,
+    Animation<double> animation,
+    Animation<double> secondaryAnimation,
+    Widget child,
+  ) {
+    if (IsleMotion.reducedMotion(context)) {
+      return child;
+    }
+    return AnimatedBuilder(
+      animation: animation,
+      child: child,
+      builder: (context, dialogChild) {
+        final isReverse = animation.status == AnimationStatus.reverse;
+        final t = animation.value.clamp(0.0, 1.0);
+        final progress = isReverse
+            ? Curves.easeOutCubic.transform(t)
+            : IsleMotion.gentleSpring.transform(t);
+        final opacity = isReverse
+            ? Curves.easeOut.transform(t)
+            : const Interval(0.0, 0.72, curve: Curves.easeOut).transform(t);
+        final scale = isReverse
+            ? (0.968 + 0.032 * progress)
+            : (0.945 + 0.055 * progress);
+        final dy = isReverse
+            ? (1.0 - progress) * 4.0
+            : (1.0 - progress) * 10.0;
+        return Opacity(
+          opacity: opacity.clamp(0.0, 1.0),
+          child: Transform.translate(
+            offset: Offset(0, dy),
+            child: Transform.scale(scale: scale, child: dialogChild),
+          ),
+        );
+      },
+    );
+  }
+}
+
+/// Presents a Warm Editorial Gallery dialog with poised spring-scale & vertical
+/// lift entrance, crisp fade-down exit, and automatic reduced-motion bypass.
+Future<T?> showIsleDialog<T>({
+  required BuildContext context,
+  required WidgetBuilder builder,
+  bool barrierDismissible = true,
+  Color? barrierColor,
+  String? barrierLabel,
+  bool useSafeArea = true,
+  bool useRootNavigator = true,
+  RouteSettings? routeSettings,
+  Offset? anchorPoint,
+  TraversalEdgeBehavior? traversalEdgeBehavior,
+}) {
+  final themes = InheritedTheme.capture(
+    from: context,
+    to: Navigator.of(context, rootNavigator: useRootNavigator).context,
+  );
+  return Navigator.of(context, rootNavigator: useRootNavigator).push<T>(
+    _IsleDialogRoute<T>(
+      context: context,
+      builder: builder,
+      barrierColor: barrierColor ?? const Color(0x70141210),
+      barrierDismissible: barrierDismissible,
+      barrierLabel: barrierLabel,
+      useSafeArea: useSafeArea,
+      settings: routeSettings,
+      themes: themes,
+      anchorPoint: anchorPoint,
+      traversalEdgeBehavior:
+          traversalEdgeBehavior ?? TraversalEdgeBehavior.closedLoop,
+    ),
+  );
+}
+
+/// Presents a modal bottom sheet tuned with Warm Editorial Gallery spring physics
+/// and automatic reduced-motion compliance.
+Future<T?> showIsleModalSheet<T>({
+  required BuildContext context,
+  required WidgetBuilder builder,
+  Color? backgroundColor,
+  bool isScrollControlled = false,
+  bool useSafeArea = false,
+  bool isDismissible = true,
+  bool enableDrag = true,
+  bool? showDragHandle,
+  ShapeBorder? shape,
+  BoxConstraints? constraints,
+}) {
+  final reduced = IsleMotion.reducedMotion(context);
+  return showModalBottomSheet<T>(
+    context: context,
+    builder: builder,
+    backgroundColor: backgroundColor,
+    barrierColor: const Color(0x66141210),
+    isScrollControlled: isScrollControlled,
+    useSafeArea: useSafeArea,
+    isDismissible: isDismissible,
+    enableDrag: enableDrag,
+    showDragHandle: showDragHandle,
+    shape: shape,
+    constraints: constraints,
+    sheetAnimationStyle: reduced
+        ? AnimationStyle.noAnimation
+        : const AnimationStyle(
+            duration: IsleMotion.modalEnter,
+            reverseDuration: IsleMotion.modalExit,
+            curve: IsleMotion.gentleSpring,
+            reverseCurve: IsleMotion.exitCurve,
+          ),
+  );
+}

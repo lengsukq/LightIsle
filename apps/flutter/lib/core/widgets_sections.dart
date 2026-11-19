@@ -2,34 +2,34 @@ part of 'widgets.dart';
 
 enum IsleSectionTheme {
   overview(
-    label: '概览',
+    label: '仪表盘',
     icon: Icons.space_dashboard_rounded,
-    color: Color(0xff0071e3),
-    gradient: [Color(0xff2589ff), Color(0xff0066cc)],
+    color: Color(0xff1f5162), // Deep Mineral Teal
+    gradient: [Color(0xff2c6c80), Color(0xff18414f)],
   ),
   files(
     label: '文件',
     icon: Icons.folder_rounded,
-    color: Color(0xff0ea5e9),
-    gradient: [Color(0xff38bdf8), Color(0xff0284c7)],
+    color: Color(0xffb86b19), // Warm Ochre Amber
+    gradient: [Color(0xffd4822a), Color(0xff9c5711)],
   ),
   photos(
     label: '图库',
     icon: Icons.photo_library_rounded,
-    color: Color(0xffec4899),
-    gradient: [Color(0xfff472b6), Color(0xffdb2777)],
+    color: Color(0xffb53858), // Terracotta Rose
+    gradient: [Color(0xffcf4c6d), Color(0xff942945)],
   ),
   cinema(
     label: '影视',
     icon: Icons.movie_rounded,
-    color: Color(0xfff97316),
-    gradient: [Color(0xfffb923c), Color(0xffea580c)],
+    color: Color(0xffc9472c), // Cinema Vermilion
+    gradient: [Color(0xffe05d40), Color(0xffa6341d)],
   ),
   settings(
     label: '设置',
     icon: Icons.settings_rounded,
-    color: Color(0xff8b5cf6),
-    gradient: [Color(0xffa78bfa), Color(0xff7c3aed)],
+    color: Color(0xff5e4b7a), // Muted Plum Slate
+    gradient: [Color(0xff796399), Color(0xff493961)],
   );
 
   const IsleSectionTheme({
@@ -45,7 +45,9 @@ enum IsleSectionTheme {
   final List<Color> gradient;
 }
 
-/// Bento Vitality Gauge card matching macOS LiquidHealthGauge and Web Bento.
+/// Tactile Gallery Bento Stat Card with warm recessed progress track and
+/// tabular display typography. Shares identical height whether [progress] is
+/// provided or null when [footer] is absent.
 class IsleBentoStatCard extends StatelessWidget {
   const IsleBentoStatCard({
     super.key,
@@ -80,6 +82,7 @@ class IsleBentoStatCard extends StatelessWidget {
 
     return IsleSurface(
       onTap: onTap,
+      tint: color,
       radius: IsleRadius.item,
       padding: IsleSpace.cardPaddingCompact,
       margin: EdgeInsets.zero,
@@ -99,8 +102,16 @@ class IsleBentoStatCard extends StatelessWidget {
                 child: Text(
                   title,
                   style: theme.textTheme.labelMedium?.copyWith(
+                    fontSize: 12.5,
+                    height: 1.25,
                     color: colors.onSurfaceVariant,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 0.1,
+                  ),
+                  strutStyle: const StrutStyle(
+                    fontSize: 12.5,
+                    height: 1.25,
+                    forceStrutHeight: true,
                   ),
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
@@ -108,88 +119,133 @@ class IsleBentoStatCard extends StatelessWidget {
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
-            children: [
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      value,
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w700,
-                        letterSpacing: -0.3,
+          const SizedBox(height: 10),
+          ConstrainedBox(
+            constraints: const BoxConstraints(minHeight: 38),
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.center,
+              children: [
+                Expanded(
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        value,
+                        style: theme.textTheme.titleMedium?.copyWith(
+                          fontSize: 16,
+                          height: 1.25,
+                          fontWeight: FontWeight.w800,
+                          letterSpacing: -0.35,
+                          fontFeatures: const [FontFeature.tabularFigures()],
+                        ),
+                        strutStyle: const StrutStyle(
+                          fontSize: 16,
+                          height: 1.25,
+                          forceStrutHeight: true,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      detail,
-                      style: theme.textTheme.bodySmall?.copyWith(
-                        color: colors.onSurfaceVariant.withValues(alpha: 0.85),
-                        fontSize: 12,
-                        height: 1.25,
+                      const SizedBox(height: 2),
+                      Text(
+                        detail,
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: colors.onSurfaceVariant.withValues(alpha: 0.88),
+                          fontSize: 12,
+                          height: 1.25,
+                        ),
+                        strutStyle: const StrutStyle(
+                          fontSize: 12,
+                          height: 1.25,
+                          forceStrutHeight: true,
+                        ),
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
                       ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ],
+                    ],
+                  ),
                 ),
-              ),
-              if (trailingChart != null) ...[
-                const SizedBox(width: 8),
-                trailingChart!,
+                if (trailingChart != null) ...[
+                  const SizedBox(width: 8),
+                  trailingChart!,
+                ],
               ],
-            ],
+            ),
           ),
-          const SizedBox(height: 8),
+          const SizedBox(height: 9),
           if (footer != null)
             footer!
           else if (progress == null)
-            const SizedBox(height: 4)
+            const SizedBox(height: 5)
           else
-            ClipRRect(
-              borderRadius: IsleRadius.brPill,
-              child: Stack(
-                children: [
-                  Container(
-                    height: 4,
-                    color: colors.surfaceContainerHighest.withValues(
-                      alpha: isDark ? 0.40 : 0.55,
-                    ),
-                  ),
-                  TweenAnimationBuilder<double>(
-                    tween: Tween<double>(
-                      begin: 0.0,
-                      end: progress!.clamp(0.0, 1.0),
-                    ),
-                    duration: IsleMotion.reveal,
-                    curve: IsleMotion.curve,
-                    builder: (context, animatedProgress, _) =>
-                        FractionallySizedBox(
-                          widthFactor: animatedProgress,
-                          child: Container(
-                            height: 4,
-                            decoration: BoxDecoration(
-                              borderRadius: IsleRadius.brPill,
-                              gradient:
-                                  gradient != null && gradient!.length >= 2
-                                  ? LinearGradient(colors: gradient!)
-                                  : null,
-                              color: gradient == null || gradient!.length < 2
-                                  ? color.withValues(
-                                      alpha: isDark ? 0.88 : 0.82,
-                                    )
-                                  : null,
-                            ),
+            Builder(
+              builder: (context) {
+                final style = IsleThemeStyle.of(context);
+                final isSharp = style.preset.cornerStyle == IsleCornerStyle.sharp;
+                final isBrutal =
+                    style.preset.surfaceMaterial == IsleSurfaceMaterial.neoBrutal;
+                final barRadius = isSharp
+                    ? BorderRadius.circular(2)
+                    : IsleRadius.brPill;
+                final barHeight = isBrutal ? 7.0 : 5.0;
+                return Container(
+                  decoration: isBrutal
+                      ? BoxDecoration(
+                          borderRadius: barRadius,
+                          border: Border.all(
+                            color: style.rimBorderColor(),
+                            width: 1.2,
+                          ),
+                        )
+                      : null,
+                  child: ClipRRect(
+                    borderRadius: barRadius,
+                    child: Stack(
+                      children: [
+                        Container(
+                          height: barHeight,
+                          color: colors.surfaceContainerHighest.withValues(
+                            alpha: isDark ? 0.45 : 0.65,
                           ),
                         ),
+                        TweenAnimationBuilder<double>(
+                          tween: Tween<double>(
+                            begin: 0.0,
+                            end: progress!.clamp(0.0, 1.0),
+                          ),
+                          duration: IsleMotion.reveal,
+                          curve: IsleMotion.curve,
+                          builder: (context, animatedProgress, _) =>
+                              FractionallySizedBox(
+                                widthFactor: animatedProgress,
+                                child: Container(
+                                  height: barHeight,
+                                  decoration: BoxDecoration(
+                                    borderRadius: barRadius,
+                                    gradient:
+                                        !isBrutal &&
+                                            gradient != null &&
+                                            gradient!.length >= 2
+                                        ? LinearGradient(colors: gradient!)
+                                        : null,
+                                    color:
+                                        isBrutal ||
+                                            gradient == null ||
+                                            gradient!.length < 2
+                                        ? color.withValues(
+                                            alpha: isDark ? 0.92 : 0.88,
+                                          )
+                                        : null,
+                                  ),
+                                ),
+                              ),
+                        ),
+                      ],
+                    ),
                   ),
-                ],
-              ),
+                );
+              },
             ),
         ],
       ),
@@ -197,45 +253,112 @@ class IsleBentoStatCard extends StatelessWidget {
   }
 }
 
-/// Clean Inset Section Header for Grouped Lists and Settings.
+/// Editorial Section Header with warm vertical pigment bar, optional inline `?`
+/// help trigger beside the title, and trailing action slot.
 class IsleSectionHeader extends StatelessWidget {
   const IsleSectionHeader({
     super.key,
     required this.title,
     this.action,
     this.padding,
+    this.accentColor,
+    this.helpTitle,
+    this.helpBody,
+    this.helpItems = const [],
   });
 
   final String title;
   final Widget? action;
   final EdgeInsetsGeometry? padding;
+  final Color? accentColor;
+  final String? helpTitle;
+  final String? helpBody;
+  final List<IsleHelpItem> helpItems;
 
   @override
   Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
     final compact =
         MediaQuery.sizeOf(context).width < IsleLayout.compactPageWidth;
     final effectivePadding =
         padding ??
         (compact
-            ? const EdgeInsets.fromLTRB(2, 12, 2, 6)
-            : const EdgeInsets.fromLTRB(4, 16, 4, 8));
+            ? const EdgeInsets.fromLTRB(2, 14, 2, 7)
+            : const EdgeInsets.fromLTRB(2, 18, 2, 9));
+    final style = IsleThemeStyle.of(context);
+    final barColor = accentColor ?? scheme.primary.withValues(alpha: 0.72);
+    final hasHelp =
+        (helpBody != null && helpBody!.trim().isNotEmpty) ||
+        helpItems.isNotEmpty;
+    final Widget marker = switch (style.preset.surfaceMaterial) {
+      IsleSurfaceMaterial.flatHairline => Container(
+        width: 8,
+        height: 8,
+        color: barColor,
+      ),
+      IsleSurfaceMaterial.neoBrutal => Container(
+        width: 10,
+        height: 10,
+        decoration: BoxDecoration(
+          color: barColor,
+          borderRadius: BorderRadius.circular(2.5),
+          border: Border.all(color: style.rimBorderColor(), width: 1.5),
+        ),
+      ),
+      IsleSurfaceMaterial.terminalGlow => Text(
+        '//',
+        style: TextStyle(
+          fontFamily: 'monospace',
+          fontSize: 12.5,
+          fontWeight: FontWeight.w800,
+          color: barColor,
+        ),
+      ),
+      IsleSurfaceMaterial.frostedGlass || IsleSurfaceMaterial.paperEmbossed =>
+        Container(
+          width: 3,
+          height: 13,
+          decoration: BoxDecoration(
+            color: barColor,
+            borderRadius: IsleRadius.brPill,
+          ),
+        ),
+    };
     return Padding(
       padding: effectivePadding,
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           Flexible(
-            child: Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-                letterSpacing: 0.25,
-                color: Theme.of(context).colorScheme.onSurfaceVariant
-                    .withValues(alpha: 0.85),
-              ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                marker,
+                const SizedBox(width: 7),
+                Flexible(
+                  child: Text(
+                    title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontSize: compact ? 13.5 : 14,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.1,
+                      color: scheme.onSurface.withValues(alpha: 0.90),
+                    ),
+                  ),
+                ),
+                if (hasHelp) ...[
+                  const SizedBox(width: 3),
+                  IsleHelpButton.compact(
+                    title: helpTitle ?? title,
+                    body: helpBody,
+                    items: helpItems,
+                    accentColor: accentColor,
+                  ),
+                ],
+              ],
             ),
           ),
           ?action,
@@ -251,7 +374,7 @@ class IsleAnimatedEntrance extends StatefulWidget {
     super.key,
     required this.child,
     this.delay = Duration.zero,
-    this.offset = const Offset(0, 8),
+    this.offset = const Offset(0, 10),
   });
 
   final Widget child;
@@ -272,15 +395,17 @@ class _IsleAnimatedEntranceState extends State<IsleAnimatedEntrance>
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(vsync: this, duration: IsleMotion.normal);
+    _controller = AnimationController(vsync: this, duration: IsleMotion.reveal);
     _fadeAnimation = CurvedAnimation(
       parent: _controller,
-      curve: const Interval(0.0, 0.85, curve: Curves.easeOut),
+      curve: const Interval(0.0, 0.80, curve: Curves.easeOut),
     );
     _slideAnimation = Tween<Offset>(
       begin: widget.offset,
       end: Offset.zero,
-    ).animate(CurvedAnimation(parent: _controller, curve: IsleMotion.spring));
+    ).animate(
+      CurvedAnimation(parent: _controller, curve: IsleMotion.gentleSpring),
+    );
 
     if (widget.delay == Duration.zero) {
       _controller.forward();
@@ -288,6 +413,18 @@ class _IsleAnimatedEntranceState extends State<IsleAnimatedEntrance>
       _delayTimer = Timer(widget.delay, () {
         if (mounted) _controller.forward();
       });
+    }
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (IsleMotion.reducedMotion(context)) {
+      _delayTimer?.cancel();
+      _delayTimer = null;
+      if (_controller.isAnimating || _controller.value < 1.0) {
+        _controller.value = 1.0;
+      }
     }
   }
 
@@ -315,8 +452,7 @@ class _IsleAnimatedEntranceState extends State<IsleAnimatedEntrance>
 }
 
 /// Spring-damped reveal & collapse wrapper for search bars, selection toolbars,
-/// and disclosure blocks. Smoothly interpolates both height and opacity on
-/// open and close, unmounting the child once collapse completes.
+/// and contextual banners.
 class IsleAnimatedExpand extends StatelessWidget {
   const IsleAnimatedExpand({
     super.key,
@@ -338,9 +474,9 @@ class IsleAnimatedExpand extends StatelessWidget {
     }
     return AnimatedSwitcher(
       duration: duration,
-      reverseDuration: const Duration(milliseconds: 180),
-      switchInCurve: IsleMotion.spring,
-      switchOutCurve: Curves.easeOutCubic,
+      reverseDuration: const Duration(milliseconds: 185),
+      switchInCurve: IsleMotion.gentleSpring,
+      switchOutCurve: IsleMotion.exitCurve,
       layoutBuilder: (currentChild, previousChildren) => Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -349,7 +485,7 @@ class IsleAnimatedExpand extends StatelessWidget {
       transitionBuilder: (inner, animation) => ClipRect(
         child: SizeTransition(
           sizeFactor: animation,
-          alignment: Alignment.topCenter,
+          alignment: alignment,
           child: FadeTransition(opacity: animation, child: inner),
         ),
       ),
@@ -360,8 +496,8 @@ class IsleAnimatedExpand extends StatelessWidget {
   }
 }
 
-/// Non-overlapping sub-view switcher for in-page mode transitions (e.g.,
-/// Dashboard <-> Files, Grid <-> List, Cinema/Photos sub-channels).
+/// Non-overlapping editorial sub-view switcher for in-page mode, folder, and
+/// collection transitions with asymmetric incoming lift and clean outgoing fade.
 class IsleModeSwitcher extends StatelessWidget {
   const IsleModeSwitcher({
     super.key,
@@ -378,36 +514,57 @@ class IsleModeSwitcher extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final currentKey = ValueKey<Object>(modeKey);
     if (IsleMotion.reducedMotion(context)) {
-      return KeyedSubtree(key: ValueKey(modeKey), child: child);
+      return KeyedSubtree(key: currentKey, child: child);
     }
     return AnimatedSwitcher(
       duration: duration,
-      switchInCurve: IsleMotion.tabEnterInterval,
-      switchOutCurve: IsleMotion.tabExitInterval,
+      reverseDuration: const Duration(milliseconds: 155),
+      switchInCurve: const Interval(
+        0.18,
+        1.0,
+        curve: IsleMotion.gentleSpring,
+      ),
+      switchOutCurve: Curves.easeOutCubic,
       layoutBuilder: (currentChild, previousChildren) => Stack(
         alignment: alignment,
         children: <Widget>[...previousChildren, ?currentChild],
       ),
-      transitionBuilder: (child, animation) => FadeTransition(
-        opacity: animation,
-        child: ScaleTransition(
-          scale: Tween<double>(
-            begin: IsleMotion.tabScaleBegin,
-            end: 1.0,
-          ).animate(animation),
-          child: child,
-        ),
-      ),
-      child: KeyedSubtree(key: ValueKey(modeKey), child: child),
+      transitionBuilder: (switchedChild, animation) {
+        final isIncoming = switchedChild.key == currentKey;
+        if (!isIncoming) {
+          return FadeTransition(
+            opacity: animation,
+            child: ScaleTransition(
+              scale: Tween<double>(begin: 0.993, end: 1.0).animate(animation),
+              child: switchedChild,
+            ),
+          );
+        }
+        return FadeTransition(
+          opacity: animation,
+          child: SlideTransition(
+            position: Tween<Offset>(
+              begin: const Offset(0, IsleMotion.tabVerticalLift),
+              end: Offset.zero,
+            ).animate(animation),
+            child: ScaleTransition(
+              scale: Tween<double>(
+                begin: IsleMotion.tabScaleBegin,
+                end: 1.0,
+              ).animate(animation),
+              child: switchedChild,
+            ),
+          ),
+        );
+      },
+      child: KeyedSubtree(key: currentKey, child: child),
     );
   }
 }
 
-/// Zero-overlap, two-stage fluid tab switcher:
-/// Outgoing tab fades out rapidly in [IsleMotion.tabExitInterval] (0..32%)
-/// while incoming tab glides in with [IsleMotion.tabEnterInterval] (16..100%),
-/// preventing double-text ghosting and rapid-tap opacity jumps.
+/// Zero-overlap, two-stage fluid tab switcher.
 class IsleFluidTabSwitcher extends StatefulWidget {
   const IsleFluidTabSwitcher({
     super.key,
@@ -510,14 +667,12 @@ class _IsleFluidTabSwitcherState extends State<IsleFluidTabSwitcher>
         return;
       }
       final activeOpacity = _enterAnim.value.clamp(0.0, 1.0);
-      // If a rapid switch occurs before the active tab is visually settled
-      // (< 25% entered), avoid snapping a dimly-faded outgoing tab back to 1.0.
       _awaitingSettle = true;
       if (_controller.isAnimating && activeOpacity < 0.25) {
         _previousIndex = null;
         _outgoingStartOpacity = 1.0;
         _currentIndex = widget.index;
-        _controller.forward(from: 0.16);
+        _controller.forward(from: 0.20);
       } else {
         _outgoingStartOpacity = _controller.isAnimating ? activeOpacity : 1.0;
         _previousIndex = _currentIndex;
@@ -568,7 +723,10 @@ class _IsleFluidTabSwitcherState extends State<IsleFluidTabSwitcher>
           final slideAnim = (settled || !isCurrent)
               ? const AlwaysStoppedAnimation<Offset>(Offset.zero)
               : Tween<Offset>(
-                  begin: Offset(IsleMotion.tabSlideDistance * direction, 0),
+                  begin: Offset(
+                    IsleMotion.tabSlideDistance * 0.65 * direction,
+                    0.008,
+                  ),
                   end: Offset.zero,
                 ).animate(_enterAnim);
           final scaleAnim = settled
@@ -581,7 +739,7 @@ class _IsleFluidTabSwitcherState extends State<IsleFluidTabSwitcher>
               : isPrevious
               ? Tween<double>(
                   begin: 1.0,
-                  end: IsleMotion.tabScaleBegin,
+                  end: 0.992,
                 ).animate(_exitAnim)
               : const AlwaysStoppedAnimation<double>(1.0);
 

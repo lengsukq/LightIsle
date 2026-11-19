@@ -5,12 +5,26 @@ extension _ClientShellChrome on _ClientShellState {
       defaultTargetPlatform == TargetPlatform.iOS ||
       defaultTargetPlatform == TargetPlatform.android;
 
+  Color _activeSectionColor(BuildContext context) {
+    final palette = IslePalette.of(context);
+    if (_showingDashboardFiles && _index == 0) {
+      return palette['brandAmber'];
+    }
+    return switch (_index) {
+      0 => palette['accentPrimary'],
+      1 => palette['brandRose'],
+      2 => palette['brandTerracotta'],
+      _ => palette['brandViolet'],
+    };
+  }
+
   Widget _taskButton({bool unified = false}) => ListenableBuilder(
     listenable: _uploadCenter,
     builder: (context, _) {
       final scheme = Theme.of(context).colorScheme;
+      final palette = IslePalette.of(context);
       final unfinished = _uploadCenter.unfinished;
-      final touchMin = (!unified && _isMobileTouchPlatform) ? 44.0 : 34.0;
+      final touchMin = (!unified && _isMobileTouchPlatform) ? 42.0 : 32.0;
       return Tooltip(
         message: '传输任务（未结束 $unfinished）',
         child: ConstrainedBox(
@@ -24,23 +38,28 @@ extension _ClientShellChrome on _ClientShellState {
                   builder: (_) => UploadTaskCenterPage(center: _uploadCenter),
                 ),
               ),
-              child: Container(
-                constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+              child: AnimatedContainer(
+                duration: IsleMotion.reducedMotion(context)
+                    ? Duration.zero
+                    : IsleMotion.quick,
+                curve: IsleMotion.silk,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4.5),
                 decoration: IsleDecorations.capsuleControl(
                   context,
                   selected: unfinished > 0,
+                  accent: palette['brandAmber'],
                 ),
                 child: Badge(
                   isLabelVisible: unfinished > 0,
                   label: Text('$unfinished'),
-                  backgroundColor: scheme.primary,
-                  textColor: scheme.onPrimary,
+                  backgroundColor: palette['brandAmber'],
+                  textColor: Colors.white,
                   child: Icon(
                     Icons.swap_vert_rounded,
-                    size: 19,
+                    size: 18,
                     color: unfinished > 0
-                        ? scheme.primary
+                        ? palette['brandAmber']
                         : scheme.onSurfaceVariant,
                   ),
                 ),
@@ -54,11 +73,12 @@ extension _ClientShellChrome on _ClientShellState {
 
   Widget _accountButton({bool unified = false}) {
     final scheme = Theme.of(context).colorScheme;
+    final palette = IslePalette.of(context);
     final rawName = widget.identity['username']?.toString().trim() ?? '';
     final initial = rawName.isNotEmpty
         ? rawName.characters.first.toUpperCase()
         : '';
-    final touchMin = (!unified && _isMobileTouchPlatform) ? 44.0 : 34.0;
+    final touchMin = (!unified && _isMobileTouchPlatform) ? 42.0 : 32.0;
 
     return Tooltip(
       message: '设置与账号${rawName.isNotEmpty ? '（$rawName）' : ''}',
@@ -70,31 +90,42 @@ extension _ClientShellChrome on _ClientShellState {
             borderRadius: IsleRadius.brPill,
             onTap: () => _select(3),
             child: Container(
-              constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
-              padding: const EdgeInsets.all(5),
-              decoration: IsleDecorations.capsuleControl(context),
+              constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+              padding: const EdgeInsets.all(4.5),
+              decoration: IsleDecorations.capsuleControl(
+                context,
+                selected: _index == 3,
+                accent: palette['brandViolet'],
+              ),
               child: initial.isNotEmpty
                   ? Container(
-                      width: 22,
-                      height: 22,
+                      width: 21,
+                      height: 21,
                       alignment: Alignment.center,
                       decoration: BoxDecoration(
-                        color: scheme.primary.withValues(alpha: 0.16),
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            scheme.primary.withValues(alpha: 0.22),
+                            palette['brandAmber'].withValues(alpha: 0.18),
+                          ],
+                        ),
                         shape: BoxShape.circle,
                       ),
                       child: Text(
                         initial,
                         style: TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          color: scheme.primary,
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w800,
+                          color: scheme.onSurface,
                           height: 1.1,
                         ),
                       ),
                     )
                   : Icon(
                       Icons.person_rounded,
-                      size: 19,
+                      size: 18,
                       color: scheme.onSurfaceVariant,
                     ),
             ),
@@ -106,7 +137,7 @@ extension _ClientShellChrome on _ClientShellState {
 
   Widget _buildRouteErrorView() => Center(
     child: Padding(
-      padding: const EdgeInsets.all(24),
+      padding: const EdgeInsets.all(20),
       child: IsleEmptyStateCard(
         _personalRouteError!,
         icon: Icons.storage_rounded,
@@ -148,18 +179,23 @@ extension _ClientShellChrome on _ClientShellState {
       );
     }
     final scheme = Theme.of(context).colorScheme;
-    final dark = Theme.of(context).brightness == Brightness.dark;
+    final style = IsleThemeStyle.of(context);
+    final palette = style.palette;
+    final dark = style.dark;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Container(
           padding: const EdgeInsets.fromLTRB(12, 6, 14, 6),
           decoration: BoxDecoration(
-            color: scheme.surface.withValues(alpha: dark ? 0.50 : 0.68),
+            color: style.preset.surfaceMaterial == IsleSurfaceMaterial.neoBrutal ||
+                    style.preset.surfaceMaterial == IsleSurfaceMaterial.flatHairline
+                ? palette['chrome']
+                : palette['chrome'].withValues(alpha: dark ? 0.72 : 0.88),
             border: Border(
               bottom: BorderSide(
-                color: IsleGlass.rimBorderColor(dark),
-                width: 0.6,
+                color: style.rimBorderColor(),
+                width: style.effectiveBorderWidth(),
               ),
             ),
           ),
@@ -170,22 +206,27 @@ extension _ClientShellChrome on _ClientShellState {
                 label: '返回仪表盘',
                 icon: Icons.arrow_back_ios_new_rounded,
                 compact: true,
+                accent: palette['brandAmber'],
                 onPressed: () => _updateState(() {
                   _showingDashboardFiles = false;
                   _fileEntryOverride = null;
                 }),
               ),
               const SizedBox(width: 10),
-              Icon(Icons.folder_open_rounded, size: 16, color: scheme.primary),
+              Icon(
+                Icons.folder_open_rounded,
+                size: 16,
+                color: palette['brandAmber'],
+              ),
               const SizedBox(width: 6),
               Expanded(
                 child: Text(
-                  '文件管理 · ${widget.api.selectedRoot?.name ?? (_admin ? '默认目录' : '个人存储')}',
+                  '文件工作台 · ${widget.api.selectedRoot?.name ?? (_admin ? '默认目录' : '个人存储')}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: Theme.of(context).textTheme.labelMedium?.copyWith(
                     color: scheme.onSurfaceVariant,
-                    fontWeight: FontWeight.w600,
+                    fontWeight: FontWeight.w700,
                   ),
                 ),
               ),
@@ -199,11 +240,15 @@ extension _ClientShellChrome on _ClientShellState {
 
   Widget _rootPicker({required bool showName, bool unified = false}) {
     final scheme = Theme.of(context).colorScheme;
+    final palette = IslePalette.of(context);
     final selectedName =
         widget.api.selectedRoot?.name ?? (_admin ? '默认目录' : '个人存储');
     final surface = Container(
-      constraints: const BoxConstraints(minHeight: 34),
-      padding: EdgeInsets.symmetric(horizontal: showName ? 11 : 8, vertical: 5),
+      constraints: const BoxConstraints(minHeight: 32),
+      padding: EdgeInsets.symmetric(
+        horizontal: showName ? 10.5 : 8,
+        vertical: 4.5,
+      ),
       decoration: IsleDecorations.capsuleControl(
         context,
         danger: _rootsError != null,
@@ -213,19 +258,28 @@ extension _ClientShellChrome on _ClientShellState {
         children: [
           if (_rootsLoading)
             const SizedBox.square(
-              dimension: 15,
+              dimension: 14,
               child: CircularProgressIndicator(strokeWidth: 1.8),
             )
           else
-            Icon(
-              _rootsError != null
-                  ? Icons.sync_problem_rounded
-                  : Icons.storage_rounded,
-              size: 16.5,
-              color: _rootsError != null
-                  ? scheme.error
-                  : scheme.onSurfaceVariant,
+            Container(
+              width: 7,
+              height: 7,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                color: _rootsError != null
+                    ? scheme.error
+                    : palette['brandSage'],
+              ),
             ),
+          const SizedBox(width: 6),
+          Icon(
+            _rootsError != null
+                ? Icons.sync_problem_rounded
+                : Icons.storage_rounded,
+            size: 15,
+            color: _rootsError != null ? scheme.error : scheme.onSurfaceVariant,
+          ),
           if (showName) ...[
             const SizedBox(width: 6),
             ConstrainedBox(
@@ -235,9 +289,9 @@ extension _ClientShellChrome on _ClientShellState {
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  fontSize: 12.5,
-                  letterSpacing: -0.2,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 12,
+                  letterSpacing: -0.15,
                 ),
               ),
             ),
@@ -245,7 +299,7 @@ extension _ClientShellChrome on _ClientShellState {
             Icon(
               _admin ? Icons.expand_more_rounded : Icons.refresh_rounded,
               color: scheme.onSurfaceVariant.withValues(alpha: 0.8),
-              size: 16,
+              size: 15,
             ),
           ],
         ],
@@ -310,24 +364,34 @@ extension _ClientShellChrome on _ClientShellState {
     required double textScale,
   }) {
     final scheme = Theme.of(context).colorScheme;
-    final dark = Theme.of(context).brightness == Brightness.dark;
+    final style = IsleThemeStyle.of(context);
+    final palette = style.palette;
+    final dark = style.dark;
+    final isOpaque = IsleLayout.opaqueNavigation(context) ||
+        style.preset.surfaceMaterial == IsleSurfaceMaterial.flatHairline ||
+        style.preset.surfaceMaterial == IsleSurfaceMaterial.neoBrutal;
     final compact = availableWidth < 720 || textScale > 1.45;
+    final sectionColor = _activeSectionColor(context);
+    final activeTitle = _showingDashboardFiles && _index == 0
+        ? '文件管理'
+        : _ClientShellState._labels[_index];
+
     return PreferredSize(
       preferredSize: const Size.fromHeight(52),
       child: RepaintBoundary(
         child: IsleGlassBackdrop(
-          blur: IsleGlass.sigmaRegular,
+          blur: isOpaque ? 0 : IsleGlass.sigmaRegular,
           child: Container(
             key: const ValueKey('macUnifiedToolbar'),
             height: 52,
             decoration: BoxDecoration(
-              color: IsleLayout.opaqueNavigation(context)
-                  ? scheme.surface
-                  : IsleGlass.regularTint(dark, scheme.surface),
+              color: isOpaque
+                  ? palette['chrome']
+                  : IsleGlass.regularTint(dark, palette['chrome']),
               border: Border(
                 bottom: BorderSide(
-                  color: IsleGlass.rimBorderColor(dark),
-                  width: 0.6,
+                  color: style.rimBorderColor(),
+                  width: style.effectiveBorderWidth(),
                 ),
               ),
             ),
@@ -344,7 +408,7 @@ extension _ClientShellChrome on _ClientShellState {
                     onPressed: () =>
                         _updateState(() => _railExpanded = !_railExpanded),
                     visualDensity: VisualDensity.compact,
-                    iconSize: 20,
+                    iconSize: 19,
                     style: IconButton.styleFrom(
                       foregroundColor: scheme.onSurfaceVariant,
                       hoverColor: scheme.onSurface.withValues(alpha: 0.06),
@@ -357,7 +421,7 @@ extension _ClientShellChrome on _ClientShellState {
                   ),
                 if (canExtendRail) const SizedBox(width: 4),
                 const IsleBrandMark(size: 20),
-                const SizedBox(width: 8),
+                const SizedBox(width: 9),
                 Expanded(
                   child: GestureDetector(
                     behavior: HitTestBehavior.opaque,
@@ -373,20 +437,75 @@ extension _ClientShellChrome on _ClientShellState {
                     ),
                     child: SizedBox(
                       height: 52,
-                      child: Align(
-                        alignment: Alignment.centerLeft,
-                        child: Text(
-                          compact
-                              ? _ClientShellState._labels[_index]
-                              : '轻屿  /  ${_ClientShellState._labels[_index]}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: Theme.of(context).textTheme.labelLarge
-                              ?.copyWith(
-                                fontWeight: FontWeight.w600,
-                                color: scheme.onSurface.withValues(alpha: 0.88),
+                      child: Row(
+                        children: [
+                          if (!compact) ...[
+                            Text(
+                              '轻屿',
+                              style: Theme.of(context).textTheme.labelLarge
+                                  ?.copyWith(
+                                    fontSize: 13.5,
+                                    fontWeight: FontWeight.w800,
+                                    letterSpacing: -0.2,
+                                    color: scheme.onSurface,
+                                  ),
+                            ),
+                            Padding(
+                              padding: const EdgeInsets.symmetric(horizontal: 7),
+                              child: AnimatedContainer(
+                                duration: IsleMotion.reducedMotion(context)
+                                    ? Duration.zero
+                                    : IsleMotion.quick,
+                                curve: IsleMotion.silk,
+                                width: 4.5,
+                                height: 4.5,
+                                decoration: BoxDecoration(
+                                  shape: BoxShape.circle,
+                                  color: sectionColor,
+                                ),
                               ),
-                        ),
+                            ),
+                          ],
+                          Flexible(
+                            child: AnimatedSwitcher(
+                              duration: IsleMotion.reducedMotion(context)
+                                  ? Duration.zero
+                                  : IsleMotion.fast,
+                              switchInCurve: IsleMotion.gentleSpring,
+                              switchOutCurve: IsleMotion.exitCurve,
+                              layoutBuilder: (currentChild, previousChildren) =>
+                                  Stack(
+                                    alignment: Alignment.centerLeft,
+                                    children: <Widget>[
+                                      ...previousChildren,
+                                      ?currentChild,
+                                    ],
+                                  ),
+                              transitionBuilder: (child, anim) => FadeTransition(
+                                opacity: anim,
+                                child: SlideTransition(
+                                  position: Tween<Offset>(
+                                    begin: const Offset(0, 0.16),
+                                    end: Offset.zero,
+                                  ).animate(anim),
+                                  child: child,
+                                ),
+                              ),
+                              child: Text(
+                                activeTitle,
+                                key: ValueKey<String>(activeTitle),
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context).textTheme.labelLarge
+                                    ?.copyWith(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w700,
+                                      color: sectionColor,
+                                    ),
+                              ),
+                            ),
+                          ),
+                        ],
                       ),
                     ),
                   ),
@@ -480,114 +599,168 @@ extension _ClientShellChrome on _ClientShellState {
     child: content,
   );
 
-  Widget _buildRailDock(BuildContext context, {required bool extendedRail}) =>
-      IsleFloatingRailDock(
-        child: NavigationRailTheme(
-          data: NavigationRailThemeData(
-            backgroundColor: Colors.transparent,
-            indicatorColor: Theme.of(context).colorScheme.primary
-                .withValues(alpha: 0.16),
-            indicatorShape: IsleShapes.md(),
-            selectedIconTheme: IconThemeData(
-              color: Theme.of(context).colorScheme.primary,
+  Widget _buildRailDock(BuildContext context, {required bool extendedRail}) {
+    final activeTone = _activeSectionColor(context);
+    final palette = IslePalette.of(context);
+    final showCompanionFilesOrb =
+        MediaQuery.sizeOf(context).height >= 540 && !extendedRail;
+
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        IsleFloatingRailDock(
+          child: NavigationRailTheme(
+            data: NavigationRailThemeData(
+              backgroundColor: Colors.transparent,
+              indicatorColor: activeTone.withValues(alpha: 0.15),
+              indicatorShape: IsleShapes.sm(),
+              selectedIconTheme: IconThemeData(
+                size: 20.5,
+                color: activeTone,
+              ),
+              unselectedIconTheme: IconThemeData(
+                size: 19.5,
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+              selectedLabelTextStyle: Theme.of(context).textTheme.labelMedium
+                  ?.copyWith(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: activeTone,
+                  ),
+              unselectedLabelTextStyle: Theme.of(context).textTheme.labelMedium
+                  ?.copyWith(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w500,
+                    color: Theme.of(context).colorScheme.onSurfaceVariant,
+                  ),
             ),
-            selectedLabelTextStyle: Theme.of(context).textTheme.labelMedium
-                ?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  color: Theme.of(context).colorScheme.primary,
-                ),
-            unselectedLabelTextStyle: Theme.of(context).textTheme.labelMedium
-                ?.copyWith(
-                  fontWeight: FontWeight.w500,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-          ),
-          child: AnimatedSize(
-            duration: IsleMotion.reducedMotion(context)
-                ? Duration.zero
-                : IsleMotion.normal,
-            curve: IsleMotion.curve,
-            alignment: Alignment.centerLeft,
-            child: NavigationRail(
-              selectedIndex: _index,
-              extended: extendedRail,
-              minWidth: 72,
-              minExtendedWidth: 190,
-              labelType: NavigationRailLabelType.none,
-              onDestinationSelected: _select,
-              destinations: List.generate(
-                _ClientShellState._labels.length,
-                (i) => NavigationRailDestination(
-                  icon: Icon(_ClientShellState._sectionThemes[i].icon),
-                  label: Text(_ClientShellState._labels[i]),
+            child: AnimatedSize(
+              duration: IsleMotion.reducedMotion(context)
+                  ? Duration.zero
+                  : IsleMotion.normal,
+              curve: IsleMotion.curve,
+              alignment: Alignment.centerLeft,
+              child: NavigationRail(
+                selectedIndex: _index,
+                extended: extendedRail,
+                minWidth: 64,
+                minExtendedWidth: 184,
+                labelType: NavigationRailLabelType.none,
+                onDestinationSelected: _select,
+                destinations: List.generate(
+                  _ClientShellState._labels.length,
+                  (i) => NavigationRailDestination(
+                    icon: Icon(_ClientShellState._sectionThemes[i].icon),
+                    label: Text(_ClientShellState._labels[i]),
+                  ),
                 ),
               ),
             ),
           ),
         ),
-      );
+        if (showCompanionFilesOrb)
+          Padding(
+            padding: const EdgeInsets.only(left: 4),
+            child: Tooltip(
+              message: '直达文件工作台',
+              child: Material(
+                color: Colors.transparent,
+                child: InkWell(
+                  borderRadius: IsleRadius.brPill,
+                  onTap: _openDashboardFiles,
+                  child: Container(
+                    width: 44,
+                    height: 44,
+                    decoration: IsleDecorations.capsuleControl(
+                      context,
+                      selected: _showingDashboardFiles && _index == 0,
+                      accent: palette['brandAmber'],
+                    ),
+                    child: Icon(
+                      Icons.folder_rounded,
+                      size: 19,
+                      color: _showingDashboardFiles && _index == 0
+                          ? palette['brandAmber']
+                          : Theme.of(context).colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
 
   Widget _buildBottomNavDock(
     BuildContext context, {
     required double maxWidth,
     required double textScale,
-  }) => IsleFloatingBottomNavDock(
-    child: NavigationBarTheme(
-      data: NavigationBarThemeData(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        indicatorColor: Theme.of(context).colorScheme.primary
-            .withValues(alpha: 0.14),
-        indicatorShape: const StadiumBorder(),
-        iconTheme: WidgetStateProperty.resolveWith((states) {
-          if (states.contains(WidgetState.selected)) {
+  }) {
+    final style = IsleThemeStyle.of(context);
+    final activeTone = _activeSectionColor(context);
+    final indicatorShape = style.preset.cornerStyle == IsleCornerStyle.sharp
+        ? style.shapeFor(IsleRadius.sm)
+        : style.preset.surfaceMaterial == IsleSurfaceMaterial.neoBrutal
+        ? StadiumBorder(
+            side: BorderSide(color: style.rimBorderColor(), width: 1.5),
+          )
+        : const StadiumBorder();
+    return IsleFloatingBottomNavDock(
+      child: NavigationBarTheme(
+        data: NavigationBarThemeData(
+          backgroundColor: Colors.transparent,
+          elevation: 0,
+          indicatorColor: activeTone.withValues(alpha: 0.15),
+          indicatorShape: indicatorShape,
+          iconTheme: WidgetStateProperty.resolveWith((states) {
+            if (states.contains(WidgetState.selected)) {
+              return IconThemeData(size: 20.5, color: activeTone);
+            }
             return IconThemeData(
-              size: 22,
-              color: Theme.of(context).colorScheme.primary,
+              size: 19.5,
+              color: Theme.of(context).colorScheme.onSurfaceVariant
+                  .withValues(alpha: 0.78),
             );
-          }
-          return IconThemeData(
-            size: 21,
-            color: Theme.of(context).colorScheme.onSurfaceVariant
-                .withValues(alpha: 0.72),
-          );
-        }),
-        labelTextStyle: WidgetStateProperty.resolveWith((states) {
-          if (states.contains(WidgetState.selected)) {
+          }),
+          labelTextStyle: WidgetStateProperty.resolveWith((states) {
+            if (states.contains(WidgetState.selected)) {
+              return Theme.of(context).textTheme.labelSmall?.copyWith(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: activeTone,
+              );
+            }
             return Theme.of(context).textTheme.labelSmall?.copyWith(
-              fontSize: 11.5,
-              fontWeight: FontWeight.w600,
-              color: Theme.of(context).colorScheme.primary,
+              fontSize: 10.5,
+              fontWeight: FontWeight.w500,
+              color: Theme.of(context).colorScheme.onSurfaceVariant
+                  .withValues(alpha: 0.78),
             );
-          }
-          return Theme.of(context).textTheme.labelSmall?.copyWith(
-            fontSize: 11,
-            fontWeight: FontWeight.w500,
-            color: Theme.of(context).colorScheme.onSurfaceVariant
-                .withValues(alpha: 0.72),
-          );
-        }),
-      ),
-      child: NavigationBar(
-        height: 52,
-        labelBehavior: maxWidth < 360 && textScale > 1.4
-            ? NavigationDestinationLabelBehavior.alwaysHide
-            : NavigationDestinationLabelBehavior.alwaysShow,
-        selectedIndex: _index,
-        onDestinationSelected: _select,
-        destinations: List.generate(
-          _ClientShellState._labels.length,
-          (i) => NavigationDestination(
-            tooltip: _ClientShellState._labels[i],
-            icon: Icon(_ClientShellState._sectionThemes[i].icon),
-            selectedIcon: Icon(
-              _ClientShellState._sectionThemes[i].icon,
-              color: Theme.of(context).colorScheme.primary,
+          }),
+        ),
+        child: NavigationBar(
+          height: 50,
+          labelBehavior: maxWidth < 360 && textScale > 1.4
+              ? NavigationDestinationLabelBehavior.alwaysHide
+              : NavigationDestinationLabelBehavior.alwaysShow,
+          selectedIndex: _index,
+          onDestinationSelected: _select,
+          destinations: List.generate(
+            _ClientShellState._labels.length,
+            (i) => NavigationDestination(
+              tooltip: _ClientShellState._labels[i],
+              icon: Icon(_ClientShellState._sectionThemes[i].icon),
+              selectedIcon: Icon(
+                _ClientShellState._sectionThemes[i].icon,
+                color: activeTone,
+              ),
+              label: _ClientShellState._labels[i],
             ),
-            label: _ClientShellState._labels[i],
           ),
         ),
       ),
-    ),
-  );
+    );
+  }
 }

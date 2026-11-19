@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 
+import 'core/insecure_http_allowlist.dart';
 import 'core/lightisle_api.dart';
 import 'core/isle_cache_manager.dart';
 import 'core/background_photo_backup_session.dart';
@@ -37,7 +38,10 @@ void main() {
   runApp(const LightIsleApp());
 }
 
-ThemeData isleTheme(Brightness brightness) => buildIsleTheme(brightness);
+ThemeData isleTheme(
+  Brightness brightness, {
+  IsleThemePresetId presetId = IsleThemePresetId.warmGallery,
+}) => buildIsleTheme(brightness, presetId: presetId);
 
 class LightIsleApp extends StatefulWidget {
   const LightIsleApp({
@@ -47,6 +51,7 @@ class LightIsleApp extends StatefulWidget {
     this.latencyProber,
     this.restoreApiFactory,
     this.photoBackupSession,
+    this.themeController,
   });
   @visibleForTesting
   final SecureSessionStore? sessionStore;
@@ -58,6 +63,8 @@ class LightIsleApp extends StatefulWidget {
   final LightIsleApi Function(Map<String, dynamic>)? restoreApiFactory;
   @visibleForTesting
   final BackgroundPhotoBackupSession? photoBackupSession;
+  @visibleForTesting
+  final IsleThemeController? themeController;
   @override
   State<LightIsleApp> createState() => _LightIsleAppState();
 }
@@ -98,7 +105,7 @@ class _LightIsleAppState extends State<LightIsleApp>
       if (sources.length == 1) {
         chosen = sources.single;
       } else {
-        chosen = await showDialog<OfflinePhotoSource>(
+        chosen = await showIsleDialog<OfflinePhotoSource>(
           context: context,
           builder: (dialogContext) => SimpleDialog(
             title: const Text('选择离线照片所在的硬盘'),
@@ -140,6 +147,9 @@ class _LightIsleAppState extends State<LightIsleApp>
       widget.photoBackupSession ?? BackgroundPhotoBackupSession();
   late final _sessionStore = widget.sessionStore ?? SecureSessionStore();
   late final _historyStore = widget.historyStore ?? LoginHistoryStore();
+  late final bool _ownsThemeController = widget.themeController == null;
+  late final IsleThemeController _themeController =
+      widget.themeController ?? IsleThemeController();
   bool _restoring = true;
   String? _restoreError;
   Map<String, dynamic>? _offlineSnapshot;
@@ -156,6 +166,9 @@ class _LightIsleAppState extends State<LightIsleApp>
     super.initState();
     configureLightIsleImageCache();
     WidgetsBinding.instance.addObserver(this);
+    if (!_themeController.loaded) {
+      unawaited(_themeController.load());
+    }
     unawaited(_restoreSession());
     // Present a complete branded frame rather than a white login flash.
     _startupFadeTimer = Timer(const Duration(milliseconds: 1100), () {
@@ -287,6 +300,7 @@ class _LightIsleAppState extends State<LightIsleApp>
     });
     LightIsleApi? api;
     try {
+      await InsecureHttpAllowlist.instance.load();
       final snapshot = await _sessionStore.read();
       if (!mounted || transition != _sessionTransition || snapshot == null) {
         return;
@@ -519,18 +533,36 @@ class _LightIsleAppState extends State<LightIsleApp>
     _sessionTransition++;
     _restoringApi?.close();
     _api?.close();
+    if (_ownsThemeController) {
+      _themeController.dispose();
+    }
     super.dispose();
   }
 
   @override
-  Widget build(BuildContext context) => MaterialApp(
-    navigatorKey: _navigator,
-    title: '轻屿 LightIsle',
-    debugShowCheckedModeBanner: false,
-    theme: isleTheme(Brightness.light),
-    darkTheme: isleTheme(Brightness.dark),
-    highContrastTheme: buildIsleTheme(Brightness.light, highContrast: true),
-    highContrastDarkTheme: buildIsleTheme(Brightness.dark, highContrast: true),
+  Widget build(BuildContext context) => IsleThemeScope(
+    controller: _themeController,
+    child: ListenableBuilder(
+      listenable: _themeController,
+      builder: (context, _) {
+        final presetId = _themeController.presetId;
+        return MaterialApp(
+          navigatorKey: _navigator,
+          title: '轻屿 LightIsle',
+          debugShowCheckedModeBanner: false,
+          themeMode: _themeController.themeMode,
+          theme: isleTheme(Brightness.light, presetId: presetId),
+          darkTheme: isleTheme(Brightness.dark, presetId: presetId),
+          highContrastTheme: buildIsleTheme(
+            Brightness.light,
+            presetId: presetId,
+            highContrast: true,
+          ),
+          highContrastDarkTheme: buildIsleTheme(
+            Brightness.dark,
+            presetId: presetId,
+            highContrast: true,
+          ),
     scrollBehavior: const MaterialScrollBehavior().copyWith(
       physics: const BouncingScrollPhysics(
         parent: AlwaysScrollableScrollPhysics(),
@@ -564,8 +596,8 @@ class _LightIsleAppState extends State<LightIsleApp>
                 ignoring: !_startupOpaque,
                 child: AnimatedOpacity(
                   opacity: _startupOpaque ? 1 : 0,
-                  duration: const Duration(milliseconds: 450),
-                  curve: Curves.easeInOutCubic,
+                  duration: const Duration(milliseconds: 460),
+                  curve: IsleMotion.silk,
                   child: _showStartup
                       ? StartupCurtain(exiting: !_startupOpaque)
                       : const SizedBox.shrink(),
@@ -578,34 +610,137 @@ class _LightIsleAppState extends State<LightIsleApp>
     },
     localizationsDelegates: GlobalMaterialLocalizations.delegates,
     supportedLocales: const [Locale('zh'), Locale('en')],
-    home: _restoring || _restoreError != null
-        ? _SessionReconnectPage(
-            busy: _restoring,
-            message: _restoreError,
-            onRetry: _restoreSession,
-            onUseAnotherAccount: _useAnotherAccount,
-            onBrowseOfflinePhotos: _offlineSnapshot?['offlineAccountId'] is int
-                ? _browseOfflinePhotos
-                : null,
-          )
-        : _identity == null
-        ? LoginPage(
-            onSignedIn: _signedIn,
-            expired: _expired,
-            notice: _sessionNotice,
-            historyStore: _historyStore,
-            latencyProber: widget.latencyProber,
-          )
-        : ClientShell(
-            key: ObjectKey(_api),
-            api: _api!,
-            identity: _identity!,
-            onLogout: _logout,
-            historyStore: _historyStore,
-            latencyProber: widget.latencyProber,
-            onSwitchAccount: _signedIn,
+    home: _IsleStageEntrance(
+      stageKey: _restoring || _restoreError != null
+          ? 'stage:reconnect'
+          : _identity == null
+          ? 'stage:login'
+          : ObjectKey(_api),
+      child: _restoring || _restoreError != null
+          ? _SessionReconnectPage(
+              busy: _restoring,
+              message: _restoreError,
+              onRetry: _restoreSession,
+              onUseAnotherAccount: _useAnotherAccount,
+              onBrowseOfflinePhotos: _offlineSnapshot?['offlineAccountId'] is int
+                  ? _browseOfflinePhotos
+                  : null,
+            )
+          : _identity == null
+          ? LoginPage(
+              onSignedIn: _signedIn,
+              expired: _expired,
+              notice: _sessionNotice,
+              historyStore: _historyStore,
+              latencyProber: widget.latencyProber,
+            )
+          : ClientShell(
+              key: ObjectKey(_api),
+              api: _api!,
+              identity: _identity!,
+              onLogout: _logout,
+              historyStore: _historyStore,
+              latencyProber: widget.latencyProber,
+              onSwitchAccount: _signedIn,
+            ),
           ),
+        );
+      },
+    ),
   );
+}
+
+/// Non-overlapping gallery entrance wrapper for top-level Auth / Reconnect /
+/// Shell transitions. Never keeps a previous stage mounted (preventing disposed
+/// API access) and removes all transform wrappers once settled.
+class _IsleStageEntrance extends StatefulWidget {
+  const _IsleStageEntrance({required this.stageKey, required this.child});
+
+  final Object stageKey;
+  final Widget child;
+
+  @override
+  State<_IsleStageEntrance> createState() => _IsleStageEntranceState();
+}
+
+class _IsleStageEntranceState extends State<_IsleStageEntrance>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+  late final Animation<double> _fade;
+  late final Animation<double> _scale;
+  late final Animation<Offset> _slide;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: IsleMotion.authSwitch,
+      value: 1.0,
+    )..addStatusListener((status) {
+      if (status == AnimationStatus.completed && mounted) {
+        setState(() {});
+      }
+    });
+    _fade = CurvedAnimation(
+      parent: _controller,
+      curve: const Interval(0.0, 0.76, curve: Curves.easeOut),
+    );
+    _scale = Tween<double>(begin: 0.988, end: 1.0).animate(
+      CurvedAnimation(parent: _controller, curve: IsleMotion.gentleSpring),
+    );
+    _slide = Tween<Offset>(begin: const Offset(0, 10), end: Offset.zero).animate(
+      CurvedAnimation(parent: _controller, curve: IsleMotion.gentleSpring),
+    );
+  }
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    if (IsleMotion.reducedMotion(context) &&
+        (_controller.isAnimating || _controller.value < 1.0)) {
+      _controller.value = 1.0;
+    }
+  }
+
+  @override
+  void didUpdateWidget(covariant _IsleStageEntrance oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.stageKey != widget.stageKey) {
+      if (IsleMotion.reducedMotion(context)) {
+        if (_controller.isAnimating || _controller.value < 1.0) {
+          _controller.value = 1.0;
+        }
+      } else {
+        _controller.forward(from: 0.0);
+      }
+    }
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (IsleMotion.reducedMotion(context) ||
+        (!_controller.isAnimating && _controller.value >= 1.0)) {
+      return widget.child;
+    }
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, stageChild) => Opacity(
+        opacity: _fade.value.clamp(0.0, 1.0),
+        child: Transform.translate(
+          offset: _slide.value,
+          child: Transform.scale(scale: _scale.value, child: stageChild),
+        ),
+      ),
+      child: widget.child,
+    );
+  }
 }
 
 class _SessionReconnectPage extends StatelessWidget {

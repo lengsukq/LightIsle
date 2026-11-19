@@ -554,7 +554,7 @@ class _ClientShellState extends State<ClientShell> with WidgetsBindingObserver {
                       )
                     : AppBar(
                         backgroundColor: Colors.transparent,
-                        toolbarHeight: rail ? 46 : 50,
+                        toolbarHeight: rail ? 44 : 48,
                         flexibleSpace: RepaintBoundary(
                           child: IsleGlassBackdrop(
                             blur: IsleGlass.sigmaRegular,
@@ -573,7 +573,7 @@ class _ClientShellState extends State<ClientShell> with WidgetsBindingObserver {
                                       Theme.of(context).brightness ==
                                           Brightness.dark,
                                     ),
-                                    width: 0.6,
+                                    width: 1.0,
                                   ),
                                 ),
                               ),
@@ -583,8 +583,8 @@ class _ClientShellState extends State<ClientShell> with WidgetsBindingObserver {
                         title: Row(
                           children: [
                             if (!rail) ...[
-                              const IsleBrandMark(size: 27),
-                              const SizedBox(width: 10),
+                              const IsleBrandMark(size: 24),
+                              const SizedBox(width: 8),
                               Flexible(
                                 child: Text(
                                   constraints.maxWidth >= 610
@@ -593,13 +593,17 @@ class _ClientShellState extends State<ClientShell> with WidgetsBindingObserver {
                                   maxLines: 1,
                                   overflow: TextOverflow.ellipsis,
                                   style: Theme.of(context).textTheme.titleMedium
-                                      ?.copyWith(fontWeight: FontWeight.w700),
+                                      ?.copyWith(
+                                        fontSize: 15.5,
+                                        fontWeight: FontWeight.w700,
+                                      ),
                                 ),
                               ),
                             ],
                             if (rail && canExtendRail)
                               IconButton(
                                 tooltip: extendedRail ? '收起侧栏' : '展开侧栏',
+                                visualDensity: VisualDensity.compact,
                                 onPressed: () => setState(
                                   () => _railExpanded = !_railExpanded,
                                 ),
@@ -607,6 +611,7 @@ class _ClientShellState extends State<ClientShell> with WidgetsBindingObserver {
                                   extendedRail
                                       ? Icons.menu_open_rounded
                                       : Icons.menu_rounded,
+                                  size: 20,
                                 ),
                               ),
                           ],

@@ -8,6 +8,7 @@ import 'package:crypto/crypto.dart';
 
 import 'api_models.dart';
 import 'beta_diagnostics.dart';
+import 'insecure_http_allowlist.dart';
 import 'root_api_paths.dart';
 import 'user_facing_error.dart';
 export 'api_models.dart'
@@ -26,7 +27,8 @@ const int _fileVerificationChunkBytes = 4 << 20;
 /// Session state is sent only as the `lightisle_session`
 /// cookie to this API's origin. Plain HTTP is accepted for loopback addresses;
 /// private LAN addresses require [allowInsecureHttp]. Public HTTP URLs are
-/// rejected even when that option is enabled.
+/// rejected unless the exact origin is present in [allowedInsecureHttpOrigins]
+/// (or in [InsecureHttpAllowlist.instance] when [allowInsecureHttp] is true).
 class LightIsleApi {
   final _diagnostics = BetaDiagnostics();
 
@@ -68,10 +70,15 @@ class LightIsleApi {
     String serverUrl, {
     HttpClient? httpClient,
     bool allowInsecureHttp = false,
+    Set<String>? allowedInsecureHttpOrigins,
     Duration requestTimeout = const Duration(seconds: 45),
     String? certificateFingerprint,
     this.securityContext,
-  }) : _baseUri = _validatedLightIsleBaseUri(serverUrl, allowInsecureHttp),
+  }) : _baseUri = _validatedLightIsleBaseUri(
+         serverUrl,
+         allowInsecureHttp,
+         allowedInsecureHttpOrigins: allowedInsecureHttpOrigins,
+       ),
        _certificateFingerprint = _normalizeLightIsleCertificateFingerprint(
          certificateFingerprint,
        ),

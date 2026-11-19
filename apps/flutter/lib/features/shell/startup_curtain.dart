@@ -4,8 +4,8 @@ import 'package:flutter/material.dart';
 
 import '../../core/isle_theme.dart';
 
-/// Elegant sanctuary opening experience matching the macOS & iOS sanctuary branding,
-/// with fluid halo ripples, staggered typography, and a refined shimmer indicator.
+/// Warm Editorial Gallery opening curtain with terracotta & mineral celadon
+/// concentric halos, sculpted emblem vessel, and warm shimmer bar.
 class StartupCurtain extends StatefulWidget {
   const StartupCurtain({super.key, this.exiting = false});
 
@@ -36,23 +36,23 @@ class _StartupCurtainState extends State<StartupCurtain>
     super.initState();
     _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 1000),
+      duration: const Duration(milliseconds: 960),
     );
 
-    _logoScale = Tween<double>(begin: 0.82, end: 1.0).animate(
+    _logoScale = Tween<double>(begin: 0.88, end: 1.0).animate(
       CurvedAnimation(
         parent: _controller,
-        curve: const Interval(0.0, 0.58, curve: Curves.easeOutBack),
+        curve: const Interval(0.0, 0.62, curve: IsleMotion.gentleSpring),
       ),
     );
     _logoOpacity = Tween<double>(begin: 0.0, end: 1.0).animate(
       CurvedAnimation(
         parent: _controller,
-        curve: const Interval(0.0, 0.38, curve: Curves.easeOut),
+        curve: const Interval(0.0, 0.36, curve: Curves.easeOut),
       ),
     );
 
-    _ripple1Scale = Tween<double>(begin: 0.70, end: 1.25).animate(
+    _ripple1Scale = Tween<double>(begin: 0.74, end: 1.20).animate(
       CurvedAnimation(
         parent: _controller,
         curve: const Interval(0.05, 0.75, curve: Curves.easeOutCubic),
@@ -60,8 +60,8 @@ class _StartupCurtainState extends State<StartupCurtain>
     );
     _ripple1Opacity =
         TweenSequence<double>([
-          TweenSequenceItem(tween: Tween(begin: 0.0, end: 0.40), weight: 35),
-          TweenSequenceItem(tween: Tween(begin: 0.40, end: 0.15), weight: 65),
+          TweenSequenceItem(tween: Tween(begin: 0.0, end: 0.32), weight: 35),
+          TweenSequenceItem(tween: Tween(begin: 0.32, end: 0.10), weight: 65),
         ]).animate(
           CurvedAnimation(
             parent: _controller,
@@ -69,7 +69,7 @@ class _StartupCurtainState extends State<StartupCurtain>
           ),
         );
 
-    _ripple2Scale = Tween<double>(begin: 0.85, end: 1.08).animate(
+    _ripple2Scale = Tween<double>(begin: 0.86, end: 1.06).animate(
       CurvedAnimation(
         parent: _controller,
         curve: const Interval(0.12, 0.85, curve: Curves.easeOutCubic),
@@ -77,8 +77,8 @@ class _StartupCurtainState extends State<StartupCurtain>
     );
     _ripple2Opacity =
         TweenSequence<double>([
-          TweenSequenceItem(tween: Tween(begin: 0.0, end: 0.55), weight: 45),
-          TweenSequenceItem(tween: Tween(begin: 0.55, end: 0.25), weight: 55),
+          TweenSequenceItem(tween: Tween(begin: 0.0, end: 0.44), weight: 45),
+          TweenSequenceItem(tween: Tween(begin: 0.44, end: 0.18), weight: 55),
         ]).animate(
           CurvedAnimation(
             parent: _controller,
@@ -92,11 +92,11 @@ class _StartupCurtainState extends State<StartupCurtain>
         curve: const Interval(0.20, 0.62, curve: Curves.easeOut),
       ),
     );
-    _titleSlide = Tween<Offset>(begin: const Offset(0, 14), end: Offset.zero)
+    _titleSlide = Tween<Offset>(begin: const Offset(0, 10), end: Offset.zero)
         .animate(
           CurvedAnimation(
             parent: _controller,
-            curve: const Interval(0.20, 0.68, curve: Curves.easeOutCubic),
+            curve: const Interval(0.20, 0.70, curve: IsleMotion.gentleSpring),
           ),
         );
 
@@ -106,11 +106,11 @@ class _StartupCurtainState extends State<StartupCurtain>
         curve: const Interval(0.35, 0.75, curve: Curves.easeOut),
       ),
     );
-    _sloganSlide = Tween<Offset>(begin: const Offset(0, 10), end: Offset.zero)
+    _sloganSlide = Tween<Offset>(begin: const Offset(0, 8), end: Offset.zero)
         .animate(
           CurvedAnimation(
             parent: _controller,
-            curve: const Interval(0.35, 0.80, curve: Curves.easeOutCubic),
+            curve: const Interval(0.35, 0.82, curve: IsleMotion.gentleSpring),
           ),
         );
 
@@ -137,23 +137,23 @@ class _StartupCurtainState extends State<StartupCurtain>
   }
 
   List<Widget> _buildAmbientGlows({
-    required Color primary,
-    required Color cyan,
+    required Color terracotta,
+    required Color mineral,
     required bool isDark,
   }) => [
     Positioned(
       top: -80,
       left: -60,
-      width: 340,
-      height: 340,
+      width: 320,
+      height: 320,
       child: IgnorePointer(
         child: DecoratedBox(
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             gradient: RadialGradient(
               colors: [
-                primary.withValues(alpha: isDark ? 0.16 : 0.12),
-                primary.withValues(alpha: 0.0),
+                terracotta.withValues(alpha: isDark ? 0.11 : 0.09),
+                terracotta.withValues(alpha: 0.0),
               ],
             ),
           ),
@@ -163,16 +163,16 @@ class _StartupCurtainState extends State<StartupCurtain>
     Positioned(
       bottom: -90,
       right: -60,
-      width: 360,
-      height: 360,
+      width: 340,
+      height: 340,
       child: IgnorePointer(
         child: DecoratedBox(
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             gradient: RadialGradient(
               colors: [
-                cyan.withValues(alpha: isDark ? 0.14 : 0.10),
-                cyan.withValues(alpha: 0.0),
+                mineral.withValues(alpha: isDark ? 0.10 : 0.07),
+                mineral.withValues(alpha: 0.0),
               ],
             ),
           ),
@@ -185,7 +185,7 @@ class _StartupCurtainState extends State<StartupCurtain>
     required ThemeData theme,
     required IslePalette palette,
     required Color primary,
-    required Color cyan,
+    required Color terracotta,
     required bool isDark,
     required bool highContrast,
     required bool disableAnimations,
@@ -193,13 +193,13 @@ class _StartupCurtainState extends State<StartupCurtain>
     final logoScaleVal = disableAnimations ? 1.0 : _logoScale.value;
     final logoOpacityVal = disableAnimations ? 1.0 : _logoOpacity.value;
     final r1ScaleVal = disableAnimations ? 1.0 : _ripple1Scale.value;
-    final r1OpacityVal = disableAnimations ? 0.18 : _ripple1Opacity.value;
+    final r1OpacityVal = disableAnimations ? 0.14 : _ripple1Opacity.value;
     final r2ScaleVal = disableAnimations ? 1.0 : _ripple2Scale.value;
-    final r2OpacityVal = disableAnimations ? 0.30 : _ripple2Opacity.value;
+    final r2OpacityVal = disableAnimations ? 0.22 : _ripple2Opacity.value;
 
     return SizedBox(
-      width: 220,
-      height: 220,
+      width: 176,
+      height: 176,
       child: Stack(
         alignment: Alignment.center,
         children: [
@@ -207,23 +207,15 @@ class _StartupCurtainState extends State<StartupCurtain>
             Transform.scale(
               scale: r1ScaleVal,
               child: Container(
-                width: 172,
-                height: 172,
+                width: 142,
+                height: 142,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   border: Border.all(
-                    color: primary.withValues(
-                      alpha: (r1OpacityVal * 0.55).clamp(0.0, 1.0),
+                    color: terracotta.withValues(
+                      alpha: (r1OpacityVal * 0.46).clamp(0.0, 1.0),
                     ),
-                    width: 1.2,
-                  ),
-                  gradient: RadialGradient(
-                    colors: [
-                      primary.withValues(
-                        alpha: (r1OpacityVal * 0.15).clamp(0.0, 1.0),
-                      ),
-                      Colors.transparent,
-                    ],
+                    width: 1.0,
                   ),
                 ),
               ),
@@ -232,23 +224,15 @@ class _StartupCurtainState extends State<StartupCurtain>
             Transform.scale(
               scale: r2ScaleVal,
               child: Container(
-                width: 142,
-                height: 142,
+                width: 118,
+                height: 118,
                 decoration: BoxDecoration(
                   shape: BoxShape.circle,
                   border: Border.all(
-                    color: cyan.withValues(
-                      alpha: (r2OpacityVal * 0.52).clamp(0.0, 1.0),
+                    color: primary.withValues(
+                      alpha: (r2OpacityVal * 0.42).clamp(0.0, 1.0),
                     ),
                     width: 1.0,
-                  ),
-                  gradient: RadialGradient(
-                    colors: [
-                      cyan.withValues(
-                        alpha: (r2OpacityVal * 0.18).clamp(0.0, 1.0),
-                      ),
-                      Colors.transparent,
-                    ],
                   ),
                 ),
               ),
@@ -258,42 +242,26 @@ class _StartupCurtainState extends State<StartupCurtain>
             child: Transform.scale(
               scale: logoScaleVal,
               child: Container(
-                width: 118,
-                height: 118,
+                width: 98,
+                height: 98,
                 decoration: ShapeDecoration(
-                  shape: IsleShapes.squircle(
-                    36,
+                  shape: IsleThemeStyle.of(context).shapeFor(
+                    28,
                     side: BorderSide(
                       color: highContrast
                           ? theme.colorScheme.outline
-                          : IsleGlass.rimBorderColor(isDark, isGlass: true),
-                      width: highContrast ? 1.5 : 1.1,
+                          : IsleThemeStyle.of(context).rimBorderColor(),
+                      width: highContrast
+                          ? 1.5
+                          : IsleThemeStyle.of(context).effectiveBorderWidth(),
                     ),
                   ),
-                  gradient: LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [
-                      palette['cardTop'].withValues(
-                        alpha: isDark ? 0.92 : 0.98,
-                      ),
-                      Color.lerp(
-                        palette['cardBottom'],
-                        primary,
-                        isDark ? 0.10 : 0.04,
-                      )!,
-                    ],
+                  color: palette['cardTop'].withValues(
+                    alpha: isDark ? 0.95 : 0.99,
                   ),
-                  shadows: [
-                    BoxShadow(
-                      color: primary.withValues(alpha: isDark ? 0.28 : 0.15),
-                      blurRadius: 34,
-                      spreadRadius: 2,
-                    ),
-                    ...IsleShadows.floating(isDark),
-                  ],
+                  shadows: IsleThemeStyle.of(context).cardShadows(hovered: true),
                 ),
-                child: const Center(child: IsleBrandMark(size: 78)),
+                child: const Center(child: IsleBrandMark(size: 62)),
               ),
             ),
           ),
@@ -306,7 +274,7 @@ class _StartupCurtainState extends State<StartupCurtain>
     required ThemeData theme,
     required IslePalette palette,
     required Color primary,
-    required Color cyan,
+    required Color terracotta,
     required bool isDark,
     required bool highContrast,
     required bool disableAnimations,
@@ -325,59 +293,58 @@ class _StartupCurtainState extends State<StartupCurtain>
           theme: theme,
           palette: palette,
           primary: primary,
-          cyan: cyan,
+          terracotta: terracotta,
           isDark: isDark,
           highContrast: highContrast,
           disableAnimations: disableAnimations,
         ),
-        const SizedBox(height: 18),
+        const SizedBox(height: 16),
         Opacity(
           opacity: titleOpacityVal.clamp(0.0, 1.0),
           child: Transform.translate(
             offset: titleSlideVal,
             child: Text(
               '轻屿 LightIsle',
-              style: theme.textTheme.headlineMedium?.copyWith(
+              style: theme.textTheme.headlineSmall?.copyWith(
                 fontWeight: FontWeight.w800,
-                letterSpacing: -0.7,
+                letterSpacing: -0.65,
               ),
             ),
           ),
         ),
-        const SizedBox(height: 8),
+        const SizedBox(height: 6),
         Opacity(
           opacity: sloganOpacityVal.clamp(0.0, 1.0),
           child: Transform.translate(
             offset: sloganSlideVal,
             child: Text(
               '让每一份珍藏，自在归屿',
-              style: theme.textTheme.bodyMedium?.copyWith(
+              style: theme.textTheme.bodySmall?.copyWith(
+                fontSize: 13,
                 color: theme.colorScheme.onSurfaceVariant,
-                letterSpacing: 0.3,
-                fontWeight: FontWeight.w500,
+                letterSpacing: 0.4,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ),
         ),
-        const SizedBox(height: 32),
+        const SizedBox(height: 24),
         Opacity(
           opacity: shimmerOpacityVal.clamp(0.0, 1.0),
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 9),
+            padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 8),
             decoration: BoxDecoration(
-              color: isDark
-                  ? Colors.white.withValues(alpha: 0.06)
-                  : Colors.white.withValues(alpha: 0.72),
+              color: palette['cardTop'].withValues(alpha: isDark ? 0.80 : 0.92),
               borderRadius: IsleRadius.brPill,
               border: Border.all(
-                color: IsleGlass.rimBorderColor(isDark, isGlass: true),
-                width: 0.8,
+                color: IsleGlass.rimBorderColor(isDark),
+                width: 1.0,
               ),
             ),
             child: _SanctuaryShimmerBar(
               position: shimmerPosVal,
               primaryColor: primary,
-              highlightColor: cyan,
+              highlightColor: terracotta,
               isDark: isDark,
               disableAnimations: disableAnimations,
             ),
@@ -393,7 +360,7 @@ class _StartupCurtainState extends State<StartupCurtain>
     final isDark = theme.brightness == Brightness.dark;
     final palette = IslePalette.of(context);
     final primary = theme.colorScheme.primary;
-    final cyan = palette['brandCyan'];
+    final terracotta = palette['brandTerracotta'];
     final disableAnimations = IsleMotion.reducedMotion(context);
     final highContrast = MediaQuery.highContrastOf(context);
 
@@ -406,33 +373,41 @@ class _StartupCurtainState extends State<StartupCurtain>
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
-          colors: [
-            palette['canvasTop'],
-            Color.lerp(palette['canvasBottom'], primary, isDark ? 0.14 : 0.07)!,
-          ],
+          colors: [palette['canvasTop'], palette['canvasBottom']],
         ),
       ),
       child: Stack(
         fit: StackFit.expand,
         children: [
           if (!highContrast)
-            ..._buildAmbientGlows(primary: primary, cyan: cyan, isDark: isDark),
+            ..._buildAmbientGlows(
+              terracotta: terracotta,
+              mineral: primary,
+              isDark: isDark,
+            ),
           SafeArea(
             child: Center(
-              child: AnimatedScale(
-                scale: widget.exiting && !disableAnimations ? 1.05 : 1.0,
-                duration: const Duration(milliseconds: 450),
-                curve: Curves.easeOutCubic,
-                child: AnimatedBuilder(
-                  animation: _controller,
-                  builder: (context, _) => _buildCurtainContent(
-                    theme: theme,
-                    palette: palette,
-                    primary: primary,
-                    cyan: cyan,
-                    isDark: isDark,
-                    highContrast: highContrast,
-                    disableAnimations: disableAnimations,
+              child: AnimatedSlide(
+                offset: widget.exiting && !disableAnimations
+                    ? const Offset(0, -0.016)
+                    : Offset.zero,
+                duration: const Duration(milliseconds: 440),
+                curve: IsleMotion.silk,
+                child: AnimatedScale(
+                  scale: widget.exiting && !disableAnimations ? 1.024 : 1.0,
+                  duration: const Duration(milliseconds: 440),
+                  curve: IsleMotion.silk,
+                  child: AnimatedBuilder(
+                    animation: _controller,
+                    builder: (context, _) => _buildCurtainContent(
+                      theme: theme,
+                      palette: palette,
+                      primary: primary,
+                      terracotta: terracotta,
+                      isDark: isDark,
+                      highContrast: highContrast,
+                      disableAnimations: disableAnimations,
+                    ),
                   ),
                 ),
               ),
@@ -461,8 +436,8 @@ class _SanctuaryShimmerBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const width = 120.0;
-    const height = 3.5;
+    const width = 108.0;
+    const height = 3.0;
     const radius = 2.0;
 
     return Semantics(
@@ -472,7 +447,7 @@ class _SanctuaryShimmerBar extends StatelessWidget {
         height: height,
         decoration: BoxDecoration(
           borderRadius: BorderRadius.circular(radius),
-          color: primaryColor.withValues(alpha: isDark ? 0.16 : 0.08),
+          color: primaryColor.withValues(alpha: isDark ? 0.18 : 0.12),
         ),
         child: ClipRRect(
           borderRadius: BorderRadius.circular(radius),
