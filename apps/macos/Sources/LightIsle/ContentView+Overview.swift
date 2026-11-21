@@ -364,23 +364,12 @@ extension ContentView {
                         icon: "arrow.up",
                         sparklineValues: telemetry.metricHistory.map(\.upload)
                     )
-                    if let pwr = telemetry.powerSnapshot, pwr.available {
-                        LiquidHealthGauge(
-                            title: "供电与 UPS",
-                            valueText: pwr.statusLabel,
-                            subtext: pwr.detailLabel,
-                            progress: pwr.percent >= 0 ? Double(pwr.percent) / 100.0 : nil,
-                            tint: pwr.onBattery ? .orange : .green,
-                            icon: pwr.onBattery ? "bolt.batteryblock.fill" : "powerplug"
-                        )
-                    }
                 }
                 if let volumeSnapshot = overviewVolumeChartSnapshot(from: m) {
                     overviewVolumeDistributionCard(volumeSnapshot)
                 }
             }
         }
-        .onAppear { model.refreshPowerSnapshotIfNeeded() }
     }
 
     private func overviewVolumeChartSnapshot(from metrics: HostMetrics?) -> (title: String, subtitle: String, total: UInt64, free: UInt64, rootID: String?, generation: UInt64?)? {
