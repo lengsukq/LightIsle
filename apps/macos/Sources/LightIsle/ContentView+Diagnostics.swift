@@ -2,8 +2,8 @@ import SwiftUI
 import AppKit
 
 extension ContentView {
-    var processMonitorView: some View {
-        let processes = (model.metrics?.processes ?? []).sorted { first, second in
+    func processMonitorView(metrics: HostMetrics?) -> some View {
+        let processes = (metrics?.processes ?? []).sorted { first, second in
             let firstValue = processSortByMemory ? first.rssBytes.map(Double.init) : first.cpuPercent
             let secondValue = processSortByMemory ? second.rssBytes.map(Double.init) : second.cpuPercent
             switch (firstValue, secondValue) {
@@ -95,8 +95,8 @@ extension ContentView {
 
     /// volume.device is a partition BSD name ("disk4s1"); counters are keyed
     /// by the whole disk ("disk4").
-    func diskActivity(for device: String) -> String? {
-        guard let io = model.metrics?.diskIo, !io.isEmpty else { return nil }
+    func diskActivity(for device: String, in metrics: HostMetrics?) -> String? {
+        guard let io = metrics?.diskIo, !io.isEmpty else { return nil }
         let whole = device.split(separator: "s").first.map(String.init) ?? device
         guard let entry = io.first(where: { $0.device == whole }),
               let read = entry.readBps, let write = entry.writeBps,
@@ -113,24 +113,24 @@ extension ContentView {
 
     func syncThresholdDraft() {
         guard let threshold = model.storageThreshold else { return }
-        if thresholdFreeMiBText.isEmpty {
+        if drafts.thresholdFreeMiBText.isEmpty {
             let gib = Double(threshold.freeMiB) / 1024.0
-            thresholdFreeMiBText = gib == gib.rounded() ? String(Int(gib)) : String(format: "%.1f", gib)
+            drafts.thresholdFreeMiBText = gib == gib.rounded() ? String(Int(gib)) : String(format: "%.1f", gib)
         }
-        if thresholdPercentText.isEmpty {
-            thresholdPercentText = String(threshold.percent)
+        if drafts.thresholdPercentText.isEmpty {
+            drafts.thresholdPercentText = String(threshold.percent)
         }
     }
 
     func applyThresholdDraft() {
-        guard let (miB, percentage) = NativeFormValidation.threshold(gib: thresholdFreeMiBText, percent: thresholdPercentText,
+        guard let (miB, percentage) = NativeFormValidation.threshold(gib: drafts.thresholdFreeMiBText, percent: drafts.thresholdPercentText,
                 priorMiB: model.storageThreshold?.freeMiB ?? 2048, priorPercent: model.storageThreshold?.percent ?? 5) else {
-            draftError = "请输入有效阈值：剩余空间 0–1024 GiB、百分比为 0–50 的整数，两项不能同时为 0。"
-            pendingDraftSaves.remove(.threshold); saveBeforeLeaving = false
+            drafts.draftError = "请输入有效阈值：剩余空间 0–1024 GiB、百分比为 0–50 的整数，两项不能同时为 0。"
+            drafts.pendingSaves.remove(.threshold); drafts.saveBeforeLeaving = false
             return
         }
-        guard model.state == .online else { draftError = "核心服务未就绪，阈值尚未保存。"; pendingDraftSaves.remove(.threshold); saveBeforeLeaving = false; return }
-        draftError = nil
+        guard model.state == .online else { drafts.draftError = "核心服务未就绪，阈值尚未保存。"; drafts.pendingSaves.remove(.threshold); drafts.saveBeforeLeaving = false; return }
+        drafts.draftError = nil
         model.applyStorageThreshold(StorageThreshold(freeMiB: miB, percent: percentage))
     }
 

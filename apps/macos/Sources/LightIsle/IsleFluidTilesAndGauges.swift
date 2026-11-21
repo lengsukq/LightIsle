@@ -61,7 +61,7 @@ struct LiquidHealthGauge: View {
                     .frame(width: 26, height: 26).background(tint.opacity(0.14), in: RoundedRectangle(cornerRadius: 7, style: .continuous))
                 Text(title).font(.system(size: 12, weight: .medium)).foregroundStyle(IsleTheme.secondaryText)
                 Spacer(minLength: 0)
-                IsleDetailInfo(title: title, rows: [("当前读数", valueText), ("说明", subtext), ("数据来源", "本机最新采样；未取得读数时显示等待采样")])
+                IsleDetailInfo(title: title, rows: [("当前读数", valueText), ("说明", subtext), ("数据来源", "本机实时采样；首次打开时自动读取")])
             }
 
             HStack(alignment: .center, spacing: 12) {

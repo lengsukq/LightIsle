@@ -117,7 +117,7 @@ extension AppModel {
             prefersTunnelMode = TunnelPersistencePolicy.preferredMode()
             remoteError = nil
             sharedFolderPath = nil
-            metricHistory = []
+            hostMetrics.metricHistory = []
             initializing = false
             initializationError = nil
             backupSchedule = nil
@@ -222,7 +222,7 @@ extension AppModel {
         remoteAddress = nil
         remoteFingerprint = nil
         isConfigured = nil
-        metrics = nil
+        hostMetrics.metrics = nil
         backupStatus = nil
         backupError = nil
         backupInventoryLoading = false
@@ -442,7 +442,7 @@ extension AppModel {
         sharedFolderPath = scenario == "offline" || scenario == "empty" ? nil : "/Volumes/家庭资料/LightIsle"
         offlineSharedFolderPath = scenario == "offline" ? "/Volumes/家庭资料/LightIsle" : nil
         firstAdminUsername = "管理员"
-        metrics = scenario == "loading" || scenario == "empty" ? nil : HostMetrics(
+        let previewMetrics = scenario == "loading" || scenario == "empty" ? nil : HostMetrics(
             hostname: "家里的 Mac", architecture: "arm64", cpuCount: 12, cpuPercent: 8.4,
             memoryTotal: 51_539_607_552, memoryUsed: 18_253_611_008,
             diskTotal: 1_000_000_000_000, diskFree: 622_000_000_000,
@@ -450,7 +450,8 @@ extension AppModel {
                       HostVolume(name: "家庭资料", mount: "/Volumes/家庭资料", device: "disk9s1", filesystem: "APFS", total: 4_000_000_000_000, free: 2_400_000_000_000, readOnly: false)],
             networkDownBps: 245_000, networkUpBps: 83_000, diskIo: nil, corePid: nil, coreRssBytes: 26_214_400,
             processes: nil, processesAvailable: false)
-        lastMetricsAt = metrics == nil ? nil : Date()
+        hostMetrics.metrics = previewMetrics
+        hostMetrics.lastMetricsAt = previewMetrics == nil ? nil : Date()
         storageThreshold = StorageThreshold(freeMiB: 2048, percent: 5)
         managedDisks = scenario == "empty" ? [] : [ManagedDisk(id: "preview-disk", name: "家庭资料", mount: "/Volumes/家庭资料", parent: "preview", filesystem: "APFS", protocolName: "USB", smart: "未知（设计预览）", total: 4_000_000_000_000, free: 2_400_000_000_000, readOnly: false, mounted: scenario != "offline", external: true, identity: "")]
         activeAlerts = scenario == "offline" ? [CorePersistentAlert(code: "storage_offline", severity: "warning", message: "家庭资料磁盘未连接。请检查供电与数据线，然后重新连接原目录。", active: true, acknowledged: false)] : []

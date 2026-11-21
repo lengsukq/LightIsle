@@ -89,8 +89,19 @@ struct SmbSharingSectionView: View {
                     .labelsHidden()
                     .toggleStyle(.switch)
                     .disabled(model.state != .online || model.smbBusy || model.smbState?.remoteManageReady != true)
-                    IsleIconButton(icon: "arrow.clockwise", help: "刷新 SMB 服务、端口监听与共享列表") {
-                        model.refreshSMBState()
+                    if (model.smbState?.shares ?? []).contains(where: { $0.needsRestore == true || ($0.shared && $0.syncedInMacOS == false && $0.pathExists) }) {
+                        Button("恢复共享权限") {
+                            model.reconcileSMBShares(userInitiated: true)
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                        .disabled(model.state != .online || model.smbBusy || model.smbState?.remoteManageReady != true)
+                    }
+                    IsleIconButton(icon: "arrow.clockwise", help: "刷新并巡检恢复 SMB 共享状态") {
+                        if model.smbState?.remoteManageReady == true {
+                            model.reconcileSMBShares(userInitiated: true)
+                        } else {
+                            model.refreshSMBState()
+                        }
                     }
                     .disabled(model.state != .online || model.smbBusy)
                 }
@@ -168,8 +179,7 @@ struct SmbSharingSectionView: View {
                 variant: .borderless,
                 help: "复制 SMB 地址"
             ) {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(url, forType: .string)
+                PasteboardHelper.copy(url)
                 showNotice("已复制 \(url)")
             }
         }
@@ -217,9 +227,19 @@ struct SmbSharingSectionView: View {
                                 .clipShape(Capsule())
                         }
                         if !share.pathExists {
-                            Text("路径离线或不存在")
+                            Text("磁盘离线 · 重连后自动恢复")
                                 .font(.system(size: 10, weight: .medium))
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(Color.orange.opacity(0.14))
                                 .foregroundStyle(IsleTheme.warningText)
+                                .clipShape(Capsule())
+                        } else if share.needsRestore == true || (share.shared && share.syncedInMacOS == false) {
+                            Text("待恢复系统共享权限")
+                                .font(.system(size: 10, weight: .medium))
+                                .padding(.horizontal, 6).padding(.vertical, 2)
+                                .background(Color.orange.opacity(0.14))
+                                .foregroundStyle(IsleTheme.warningText)
+                                .clipShape(Capsule())
                         }
                     }
                     Text(share.path)

@@ -15,7 +15,7 @@ extension AppModel {
             try pipe.write(contentsOf: Data((line + "\n").utf8))
             return true
         } catch {
-            tunnelAPIError = "无法发送隧道命令：\(error.localizedDescription)"
+            tunnelAPIError = UserFacingErrorMapper.coreIPCCommandError(action: "隧道控制命令")
             return false
         }
     }
@@ -34,7 +34,7 @@ extension AppModel {
             try pipe.write(contentsOf: Data((command + "\n").utf8))
             return true
         } catch {
-            frpError = "无法发送 FRP 操作：\(error.localizedDescription)"
+            frpError = UserFacingErrorMapper.coreIPCCommandError(action: "FRP 操作")
             return false
         }
     }
@@ -151,7 +151,12 @@ extension AppModel {
     func stopTunnel() {
         tunnelAPIError = nil
         TunnelPersistencePolicy.recordStop()
-        try? TunnelSecretVault.removeManualRunToken()
+        do {
+            try TunnelSecretVault.removeManualRunToken()
+        } catch {
+            tunnelAPIError = (error as? LocalizedError)?.errorDescription
+                ?? "隧道已停止，但无法从本机钥匙串清除手动运行 Token，现有文件未受影响。请解锁钥匙串后重试。"
+        }
         prefersTunnelMode = .off
         tunnelAutoRestoreAttempted = true
         writeTunnelIPC("tunnel off")
@@ -163,13 +168,18 @@ extension AppModel {
             let command = try TunnelWireCodec.manualTokenCommand(token)
             tunnelAPIError = nil
             if writeTunnelIPC(command) {
-                try? TunnelSecretVault.saveManualRunToken(token)
-                TunnelPersistencePolicy.recordManualStart()
-                prefersTunnelMode = .manual
+                do {
+                    try TunnelSecretVault.saveManualRunToken(token)
+                    TunnelPersistencePolicy.recordManualStart()
+                    prefersTunnelMode = .manual
+                } catch {
+                    prefersTunnelMode = .off
+                    tunnelAPIError = "隧道已临时启动，但无法将手动 Token 保存到本机钥匙串（重启后将不会自动恢复），现有数据未受影响。请检查钥匙串解锁状态后重新保存。"
+                }
                 tunnelAutoRestoreAttempted = true
             }
         } catch {
-            tunnelAPIError = "隧道 Token 格式不正确。"
+            tunnelAPIError = "隧道 Token 格式不正确，未启动隧道，现有配置未受影响。请检查复制内容是否完整。"
         }
     }
 
@@ -210,7 +220,8 @@ extension AppModel {
         do {
             try tunnelCredential.forget()
         } catch {
-            tunnelAPIError = "无法从 macOS 钥匙串删除隧道 API Token，请解锁钥匙串后重试：\(error.localizedDescription)"
+            tunnelAPIError = (error as? LocalizedError)?.errorDescription
+                ?? "无法从 macOS 钥匙串删除隧道 API Token，原有配置仍保留。请解锁钥匙串后重试。"
             return
         }
         tunnelAPITokenConfigured = false
@@ -390,8 +401,28 @@ extension AppModel {
     }
 
     func autoRestoreTunnelIfReady() {
-        guard let current = tunnelState else { return }
-        let manualToken = TunnelSecretVault.loadManualRunToken()
+        guard let current = tunnelState, !tunnelAutoRestoreAttempted else { return }
+        let target = TunnelPersistencePolicy.preferredTarget()
+        guard target.mode != .off else { return }
+
+        if target.mode == .manual {
+            Task { @MainActor [weak self] in
+                let manualToken = await Task.detached(priority: .utility) {
+                    TunnelSecretVault.loadManualRunToken()
+                }.value
+                guard let self, let latest = self.tunnelState else { return }
+                self.completeAutoRestoreTunnel(current: latest, target: target, manualToken: manualToken)
+            }
+            return
+        }
+        completeAutoRestoreTunnel(current: current, target: target, manualToken: nil)
+    }
+
+    private func completeAutoRestoreTunnel(
+        current: TunnelState,
+        target: TunnelPersistenceTarget,
+        manualToken: String?
+    ) {
         let apiReady = tunnelAPITokenConfigured || !tunnelAccounts.isEmpty
         guard TunnelPersistencePolicy.shouldAutoRestore(
             coreOnline: state == .online,
@@ -403,7 +434,6 @@ extension AppModel {
             manualTokenAvailable: manualToken != nil
         ) else { return }
 
-        let target = TunnelPersistencePolicy.preferredTarget()
         switch target.mode {
         case .off:
             return

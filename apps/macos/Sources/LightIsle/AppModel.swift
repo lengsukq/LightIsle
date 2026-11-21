@@ -68,6 +68,7 @@ final class AppModel: ObservableObject {
     let rootManagement = NativeRootsModel(enabled: true)
     let personalSpaces = NativeSpacesModel()
     let appsCenter = NativeAppsModel()
+    let hostMetrics = HostMetricsStore()
     let externalVolumeCoordinator = ExternalVolumePermissionCoordinator()
 
     @Published var state: CoreState = .offline {
@@ -121,18 +122,17 @@ final class AppModel: ObservableObject {
     }
     @Published var selectedSidebarPage: SidebarPage = .overview
     @Published var activeAlerts: [CorePersistentAlert] = []
-    @Published var lastMetricsAt: Date?
     @Published var administratorSaveSucceeded = false
     @Published var administratorResetSucceeded = false
     var diagnosticsVisible = false
 
     @Published var reindexRequestMessage: String?
 
-    @Published var keepAwakeWhileServing = UserDefaults.standard.bool(forKey: "lightisle.keepAwakeWhileServing")
+    @Published var keepAwakeWhileServing = UserDefaults.standard.bool(forKey: AppPreferenceKeys.keepAwakeWhileServing)
     @Published var isLightweightMode = false
     @Published var autoLightweightOnLock = LightweightModePolicy.autoOnLock()
     @Published var loginItemError: String?
-    @Published var nativeAlertsEnabled = UserDefaults.standard.bool(forKey: "lightisle.nativeAlertsEnabled")
+    @Published var nativeAlertsEnabled = UserDefaults.standard.bool(forKey: AppPreferenceKeys.nativeAlertsEnabled)
     @Published var nativeAlertError: String?
     var alertAuthorizationPending = false
     let nativeAlertCoordinator = NativeAlertCoordinator()
@@ -170,11 +170,6 @@ final class AppModel: ObservableObject {
     @Published var isConfigured: Bool?
     @Published var initializationError: String?
     @Published var initializing = false
-    @Published var metrics: HostMetrics?
-    @Published var metricHistory: [MetricHistoryPoint] = []
-    @Published var powerSnapshot: NativePowerSnapshot?
-    var lastPowerPollAt = Date.distantPast
-    var powerPollTask: Task<Void, Never>?
     @Published var backupStatus: NASBackupStatus?
     @Published var backupError: String?
     @Published var backupInventory: NASBackupInventory?
@@ -220,7 +215,7 @@ final class AppModel: ObservableObject {
 
     static let defaultLocalPort = 16666
     var preferredLocalPort: Int {
-        let value = UserDefaults.standard.integer(forKey: "lightisle.localPort")
+        let value = UserDefaults.standard.integer(forKey: AppPreferenceKeys.localPort)
         return (1024...65535).contains(value) ? value : Self.defaultLocalPort
     }
 
@@ -228,7 +223,7 @@ final class AppModel: ObservableObject {
     static let defaultThumbnailCacheMiB = 1024
 
     var preferredThumbnailCacheMiB: Int {
-        let value = UserDefaults.standard.integer(forKey: "lightisle.thumbnailCacheMiB")
+        let value = UserDefaults.standard.integer(forKey: AppPreferenceKeys.thumbnailCacheMiB)
         return Self.thumbnailCacheOptions.contains(value) ? value : Self.defaultThumbnailCacheMiB
     }
 

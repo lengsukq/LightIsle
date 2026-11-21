@@ -1,9 +1,10 @@
 import Foundation
+import os
 import Security
 
 /// Consolidated non-biometric host credential payload stored as a single
 /// JSON object in `dev.lightisle.host-secrets`.
-struct HostSecretsRecord: Codable, Equatable {
+struct HostSecretsRecord: Codable, Equatable, Sendable {
     var tmdbToken: String?
     var tiandituKey: String?
     var notifyChannels: NotifyChannelConfig?
@@ -32,6 +33,11 @@ struct HostSecretsRecord: Codable, Equatable {
 /// Manages a single consolidated device-local Keychain item (`dev.lightisle.host-secrets`)
 /// with process-lifetime in-memory caching, non-secret presence flags in `UserDefaults`,
 /// ACL-preserving `SecItemUpdate` writes, and one-shot attribute-probed legacy migration.
+///
+/// Why `@unchecked Sendable`: holds non-`Sendable` Foundation `UserDefaults`
+/// (documented thread-safe by Apple) and `HostKeychainBackend` alongside
+/// process-lifetime cache state; every access to mutable cache fields and
+/// `backend` is serialized by `lock` (`NSLock`) via `withLock`.
 final class HostSecretVaultStore: @unchecked Sendable {
     static let service = "dev.lightisle.host-secrets"
     static let account = "v1"
@@ -567,28 +573,33 @@ final class HostSecretVaultStore: @unchecked Sendable {
 /// Process-wide access point for consolidated host secrets, plus a scoped test
 /// override so standalone Swift checks never touch the user's real Keychain.
 enum HostSecretVault {
-    private static let lock = NSLock()
-    private static var overrideStore: HostSecretVaultStore?
     private static let sharedStore = HostSecretVaultStore()
+    #if DEBUG
+    private static let overrideStore = OSAllocatedUnfairLock<HostSecretVaultStore?>(initialState: nil)
+    #endif
 
     static var current: HostSecretVaultStore {
-        lock.lock()
-        defer { lock.unlock() }
-        return overrideStore ?? sharedStore
+        #if DEBUG
+        if let override = overrideStore.withLock({ $0 }) {
+            return override
+        }
+        #endif
+        return sharedStore
     }
 
+    #if DEBUG
     static func withTestingStore<T>(_ store: HostSecretVaultStore, _ body: () throws -> T) rethrows -> T {
-        lock.lock()
-        let previous = overrideStore
-        overrideStore = store
-        lock.unlock()
+        let previous = overrideStore.withLock { current -> HostSecretVaultStore? in
+            let prev = current
+            current = store
+            return prev
+        }
         defer {
-            lock.lock()
-            overrideStore = previous
-            lock.unlock()
+            overrideStore.withLock { $0 = previous }
         }
         return try body()
     }
+    #endif
 }
 
 /// Compatibility facade for Cloudflare Tunnel API and manual run tokens,

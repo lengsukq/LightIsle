@@ -8,6 +8,7 @@ struct AutomationScriptsCenterView: View {
     @State private var viewingRunsTask: NativeAutomationTask?
     @State private var deletingTask: NativeAutomationTask?
     @State private var copiedPromptNotice = false
+    @State private var copiedPromptTask: Task<Void, Never>?
     @State private var delayedRunRefresh: Task<Void, Never>?
 
     private var enabledCount: Int {
@@ -79,6 +80,8 @@ struct AutomationScriptsCenterView: View {
             }
         }
         .onDisappear {
+            copiedPromptTask?.cancel()
+            copiedPromptTask = nil
             delayedRunRefresh?.cancel()
             delayedRunRefresh = nil
         }
@@ -460,12 +463,13 @@ struct AutomationScriptsCenterView: View {
         2. 邮件 mode 支持 builtin、content（自定义 HTML 片段替换内置边框中间内容）和 custom（完整 HTML），引用同目录 file；安全占位符只有 {{task.name}}、{{task.id}}、{{run.state}}、{{run.message}}、{{run.finishedAt}}、{{run.exitCode}}。
         3. 创建或修改完成后，提醒用户在 LightIsle Mac 端「应用与容器 → 本机定时脚本」点击「刷新脚本」并按需启用。
         """
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(spec, forType: .string)
+        PasteboardHelper.copy(spec)
         copiedPromptNotice = true
         appsCenter.message = "已复制本机定时脚本与邮件模板规范到剪贴板。"
-        Task { @MainActor in
+        copiedPromptTask?.cancel()
+        copiedPromptTask = Task { @MainActor in
             try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
             copiedPromptNotice = false
         }
     }
@@ -576,12 +580,13 @@ private struct AutomationTaskEditorSheet: View {
                 HStack(spacing: 14) {
                     ForEach(channelOptions, id: \.id) { channel in
                         let configured = appsCenter.configuredChannels.contains(channel.id)
+                        let selected = selectedChannels.contains(channel.id)
                         Toggle(
                             configured ? channel.label : "\(channel.label)（未配置）",
                             isOn: binding(for: channel.id, in: $selectedChannels)
                         )
                         .toggleStyle(.checkbox)
-                        .disabled(!configured)
+                        .disabled(!configured && !selected)
                     }
                 }
             }

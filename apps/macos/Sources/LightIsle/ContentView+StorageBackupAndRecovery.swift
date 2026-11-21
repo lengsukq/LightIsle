@@ -169,9 +169,38 @@ extension ContentView {
                 IsleGroupSpacing(height: 4).padding(.leading, 14)
             }
 
-            upgradePreflightView
-            metadataRollbackView
             storageTimeMachineContent
+
+            AppleSettingsGroup(
+                title: "高级排障与升级检查",
+                footer: "仅在升级版本前核查数据库或需要回退已恢复的账号配置时展开；日常备份无需操作。"
+            ) {
+                DisclosureGroup(
+                    isExpanded: Binding(
+                        get: {
+                            showBackupAdvancedTools
+                                || model.backupStatus?.restoredMetadata != nil
+                                || model.metadataActivationMessage != nil
+                        },
+                        set: { showBackupAdvancedTools = $0 }
+                    )
+                ) {
+                    VStack(alignment: .leading, spacing: 18) {
+                        upgradePreflightView
+                        metadataRollbackView
+                    }
+                    .padding(14)
+                } label: {
+                    HStack(spacing: 8) {
+                        Image(systemName: "wrench.and.screwdriver")
+                            .foregroundStyle(IsleTheme.secondaryText)
+                        Text("Beta 升级预检与元数据隔离回退")
+                            .font(.system(size: 13, weight: .medium))
+                    }
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 10)
+                }
+            }
         }
     }
     var storageTimeMachineContent: some View {

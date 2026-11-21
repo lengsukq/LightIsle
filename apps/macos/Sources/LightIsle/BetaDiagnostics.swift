@@ -195,11 +195,11 @@ struct BetaDiagnosticControls: View {
     }
 
     private func enableDebug() {
-        do {
-            guard let writer = model.coreCommands else { throw CocoaError(.fileWriteUnknown) }
-            try writer.write(contentsOf: Data("diagnostics debug\n".utf8))
+        if model.requestDiagnosticsDebug() {
             notice = "已请求开启调试记录，30 分钟后自动结束。"
-        } catch { notice = "无法发送调试指令，请确认 Core 仍在运行。" }
+        } else {
+            notice = "无法发送调试指令，现有数据未受影响。请确认轻屿核心服务正在运行后重试。"
+        }
     }
 }
 

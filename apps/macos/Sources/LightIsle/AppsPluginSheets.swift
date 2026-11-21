@@ -327,8 +327,7 @@ struct AppPluginDetailView: View {
                     .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                     Button(copiedLogBanner ? "已复制" : "复制日志") {
                         let text = logs?.webOutput ?? ""
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(text, forType: .string)
+                        PasteboardHelper.copy(text)
                         copiedLogBanner = true
                         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                             copiedLogBanner = false
@@ -493,12 +492,14 @@ struct AppPluginDetailView: View {
                     Toggle("超时", isOn: $notifyTimeout).toggleStyle(.checkbox)
                 }
             }
-            if !appsCenter.configuredChannels.isEmpty {
+            let visibleChannels = Array(Set(appsCenter.configuredChannels).union(selectedChannels)).sorted()
+            if !visibleChannels.isEmpty {
                 IsleGroupSpacing(height: 4).padding(.leading, 14)
                 AppleSettingsRow(title: "发送通知渠道", icon: "paperplane", iconTint: .indigo) {
                     HStack(spacing: 12) {
-                        ForEach(appsCenter.configuredChannels, id: \.self) { ch in
-                            Toggle(ch, isOn: Binding(
+                        ForEach(visibleChannels, id: \.self) { ch in
+                            let configured = appsCenter.configuredChannels.contains(ch)
+                            Toggle(configured ? ch : "\(ch)（未配置）", isOn: Binding(
                                 get: { selectedChannels.contains(ch) },
                                 set: { on in
                                     if on { selectedChannels.insert(ch) }
@@ -506,6 +507,7 @@ struct AppPluginDetailView: View {
                                 }
                             ))
                             .toggleStyle(.checkbox)
+                            .disabled(!configured && !selectedChannels.contains(ch))
                         }
                     }
                 }

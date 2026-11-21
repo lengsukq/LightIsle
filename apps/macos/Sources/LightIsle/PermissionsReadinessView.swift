@@ -62,6 +62,7 @@ struct PermissionsReadinessView: View {
     @State private var auditItems: [StoragePermissionAuditItem] = []
     @State private var isAuditing = false
     @State private var repairingItemID: String?
+    @State private var notificationRefreshTask: Task<Void, Never>?
     @State private var actionFeedback: String?
     @State private var actionFeedbackIsError = false
     @State private var notificationAuthStatus: UNAuthorizationStatus = .notDetermined
@@ -109,6 +110,10 @@ struct PermissionsReadinessView: View {
         }
         .onChange(of: model.sharedFolderPath) { _, _ in
             Task { await runFullAudit() }
+        }
+        .onDisappear {
+            notificationRefreshTask?.cancel()
+            notificationRefreshTask = nil
         }
     }
 
@@ -303,8 +308,7 @@ struct PermissionsReadinessView: View {
                     if !item.isHealthy && item.online {
                         Button("复制修复命令") {
                             let cmd = StoragePermissionHelper.manualRepairCommand(forPath: item.path)
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(cmd, forType: .string)
+                            PasteboardHelper.copy(cmd)
                             actionFeedbackIsError = false
                             actionFeedback = "已复制「\(item.name)」的终端赋权命令，可在系统终端粘贴执行。"
                         }
@@ -439,8 +443,10 @@ struct PermissionsReadinessView: View {
                         get: { model.nativeAlertsEnabled },
                         set: { newValue in
                             model.setNativeAlertsEnabled(newValue)
-                            Task {
+                            notificationRefreshTask?.cancel()
+                            notificationRefreshTask = Task {
                                 try? await Task.sleep(for: .milliseconds(400))
+                                guard !Task.isCancelled else { return }
                                 await refreshNotificationPermission()
                             }
                         }
@@ -641,7 +647,7 @@ struct PermissionsReadinessView: View {
         defer { repairingItemID = nil }
 
         let targetURL = URL(fileURLWithPath: item.path, isDirectory: true)
-        let initialProbe = StoragePermissionHelper.probeDirectoryReadWrite(at: targetURL)
+        let initialProbe = await StoragePermissionHelper.probeDirectoryReadWriteAsync(at: targetURL)
         let access = await StoragePermissionHelper.requestReadWriteAccess(
             forPath: item.path,
             reason: "需要获取并验证「\(item.name)」及其所属整盘的读写权限，以确保目录添加、用户空间分配和跨目录数据迁移不会因权限不足而失败。",

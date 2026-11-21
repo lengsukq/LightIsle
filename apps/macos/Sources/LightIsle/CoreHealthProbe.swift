@@ -2,17 +2,16 @@ import Foundation
 
 /// Probes only the parent-owned loopback listener, independent of disk and
 /// optional IPC operations. Never follows a redirect or uses a system proxy.
-final class CoreHealthProbe: NSObject, URLSessionTaskDelegate, @unchecked Sendable {
-    private var session: URLSession!
+final class CoreHealthProbe: Sendable {
+    private let session: URLSession
 
-    override init() {
-        super.init()
+    init() {
         let config = URLSessionConfiguration.ephemeral
         config.connectionProxyDictionary = [:]
         config.timeoutIntervalForRequest = 3
         config.timeoutIntervalForResource = 5
         config.requestCachePolicy = .reloadIgnoringLocalCacheData
-        session = URLSession(configuration: config, delegate: self, delegateQueue: nil)
+        session = URLSession(configuration: config, delegate: NoRedirectDelegate(), delegateQueue: nil)
     }
 
     func check(_ endpoint: URL) async -> Bool {
@@ -34,14 +33,18 @@ final class CoreHealthProbe: NSObject, URLSessionTaskDelegate, @unchecked Sendab
 
     func close() { session.invalidateAndCancel() }
 
-    func urlSession(_ session: URLSession, task: URLSessionTask,
-                    willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
-                    completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
-        completionHandler(nil)
-    }
+    deinit { session.invalidateAndCancel() }
 
     private struct Health: Decodable {
         let status: String
         let application: String
+    }
+}
+
+private final class NoRedirectDelegate: NSObject, URLSessionTaskDelegate {
+    func urlSession(_ session: URLSession, task: URLSessionTask,
+                    willPerformHTTPRedirection response: HTTPURLResponse, newRequest request: URLRequest,
+                    completionHandler: @escaping @Sendable (URLRequest?) -> Void) {
+        completionHandler(nil)
     }
 }

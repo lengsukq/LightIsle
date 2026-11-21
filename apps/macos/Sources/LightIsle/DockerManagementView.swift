@@ -5,7 +5,7 @@ import AppKit
 // Web API. Container lifecycle controls can grant effective root inside a VM.
 struct DockerManagementView: View {
     @EnvironmentObject var edits: ManagementEdits
-    @ObservedObject var appsCenter = AppModel.shared.appsCenter
+    @ObservedObject var appsCenter: NativeAppsModel
     @State var mirrorBaseline: [String] = []
     @State var draftTab: DockerDetail?
     @State var showTabConfirmation = false
@@ -30,10 +30,10 @@ struct DockerManagementView: View {
     @State var runningOperation = false
     @State var message: String?
     @State var problem: String?
-    @AppStorage("lightisle.docker.mirrorPreset") var preset = "one-ms"
-    @AppStorage("lightisle.docker.customMirror") var customMirror = ""
-    @AppStorage("lightisle.docker.useCustomMirror") var useCustomMirror = false
-    @AppStorage("lightisle.docker.applyColima") var applyColima = false
+    @AppStorage(AppPreferenceKeys.dockerMirrorPreset) var preset = "one-ms"
+    @AppStorage(AppPreferenceKeys.dockerCustomMirror) var customMirror = ""
+    @AppStorage(AppPreferenceKeys.dockerUseCustomMirror) var useCustomMirror = false
+    @AppStorage(AppPreferenceKeys.dockerApplyColima) var applyColima = false
     @State var mirrorTesting = false
     @State var mirrorTestResult: String?
     @State var imageReference = ""
@@ -50,6 +50,21 @@ struct DockerManagementView: View {
     @State var importedComposeName = ""
     @State var newVolumeName = ""
     @State var newNetworkName = ""
+    @State private var hasDockerCLI = false
+    @State private var showDeveloperExtensions = false
+
+    private var isDeveloperExtensionSection: Bool {
+        appsCenter.workspaceSection == .automation || appsCenter.workspaceSection == .mcp
+    }
+
+    private var primaryWorkspaceBinding: Binding<AppsAndContainersSection> {
+        Binding(
+            get: { isDeveloperExtensionSection ? .plugins : appsCenter.workspaceSection },
+            set: { next in
+                appsCenter.workspaceSection = next
+            }
+        )
+    }
 
     var mirror: String {
         useCustomMirror ? customMirror :
@@ -69,18 +84,41 @@ struct DockerManagementView: View {
                 containerDetailView(for: live)
                     .transition(.isleRoute(isSubroute: true, reduceMotion: reduceMotion))
             } else {
-                LiquidSegmentedPicker(
-                    title: "应用与容器模式",
-                    selection: $appsCenter.workspaceSection,
-                    options: AppsAndContainersSection.allCases.map {
-                        LiquidMenuOption(value: $0, label: $0.rawValue, icon: $0.icon)
-                    },
-                    style: .tabs
-                )
+                if isDeveloperExtensionSection {
+                    HStack(spacing: 10) {
+                        Button {
+                            appsCenter.workspaceSection = .plugins
+                        } label: {
+                            Label("返回应用与容器", systemImage: "chevron.left")
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        LiquidSegmentedPicker(
+                            title: "开发者扩展",
+                            selection: $appsCenter.workspaceSection,
+                            options: [
+                                LiquidMenuOption(value: AppsAndContainersSection.automation, label: AppsAndContainersSection.automation.rawValue, icon: AppsAndContainersSection.automation.icon),
+                                LiquidMenuOption(value: AppsAndContainersSection.mcp, label: AppsAndContainersSection.mcp.rawValue, icon: AppsAndContainersSection.mcp.icon)
+                            ],
+                            style: .tabs
+                        )
+                        Spacer()
+                    }
+                } else {
+                    LiquidSegmentedPicker(
+                        title: "应用与容器模式",
+                        selection: primaryWorkspaceBinding,
+                        options: [
+                            LiquidMenuOption(value: AppsAndContainersSection.plugins, label: AppsAndContainersSection.plugins.rawValue, icon: AppsAndContainersSection.plugins.icon),
+                            LiquidMenuOption(value: AppsAndContainersSection.docker, label: AppsAndContainersSection.docker.rawValue, icon: AppsAndContainersSection.docker.icon)
+                        ],
+                        style: .tabs
+                    )
+                }
                 Group {
                     switch appsCenter.workspaceSection {
                     case .plugins:
                         AppsPluginCenterView(appsCenter: appsCenter, selectedAppID: $selectedPluginAppID)
+                        developerExtensionsDisclosure
                     case .automation:
                         AutomationScriptsCenterView(appsCenter: appsCenter)
                     case .mcp:
@@ -108,15 +146,13 @@ struct DockerManagementView: View {
                                 .padding(.horizontal, 4)
                                 .transition(reduceMotion ? .opacity : .opacity.combined(with: .move(edge: .top)))
                         }
+                        developerExtensionsDisclosure
                         IsleQuickJumpBar(items: [
                             IsleQuickJumpItem("外部依赖（Homebrew）", icon: "shippingbox", tint: .orange, help: "检查 Docker CLI / FFmpeg / Smartmontools 等本机依赖状态") {
                                 AppModel.shared.navigate(to: .dependencies)
                             },
                             IsleQuickJumpItem("轻应用与插件", icon: "square.grid.2x2.fill", tint: IsleFluidPalette.brandIndigo, help: "浏览免容器按需唤醒的本地轻应用") {
                                 appsCenter.workspaceSection = .plugins
-                            },
-                            IsleQuickJumpItem("AI Agent (MCP)", icon: "cpu.fill", tint: .purple, help: "开启或调试 AI Agent MCP 工具接口") {
-                                appsCenter.workspaceSection = .mcp
                             }
                         ])
                     }
@@ -130,7 +166,16 @@ struct DockerManagementView: View {
                 appsCenter.workspaceSection = .docker
                 detail = chosen
             }
-            mirrorBaseline = mirrorFields; trackEdits(); if !AppModel.shared.isPresentationPreview { refresh(); appsCenter.refresh() }
+            mirrorBaseline = mirrorFields
+            trackEdits()
+            if !AppModel.shared.isPresentationPreview {
+                let cliFound = await Task.detached(priority: .utility) {
+                    DockerLocalRuntime.executable() != nil
+                }.value
+                hasDockerCLI = cliFound
+                refresh()
+                appsCenter.refresh()
+            }
         }
         .onChange(of: appsCenter.workspaceSection) { _, next in
             selectedPluginAppID = nil
@@ -166,12 +211,57 @@ struct DockerManagementView: View {
         }
     }
 
+    private var developerExtensionsDisclosure: some View {
+        AppleSettingsGroup(
+            title: "开发者扩展（可选）",
+            footer: "面向熟悉本机脚本或外部 AI Agent 的进阶用户；普通家庭日常使用无需配置。"
+        ) {
+            DisclosureGroup(isExpanded: $showDeveloperExtensions) {
+                VStack(spacing: 0) {
+                    AppleSettingsRow(
+                        title: "本机定时脚本（Automation）",
+                        subtitle: "查看与启停 automation/scripts 中的本机定时任务（\(appsCenter.automationTasks.count) 个任务）",
+                        icon: "clock.arrow.trianglehead.counterclockwise.rotate.90",
+                        iconTint: .orange
+                    ) {
+                        Button("打开定时脚本") {
+                            appsCenter.workspaceSection = .automation
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                    }
+                    IsleGroupSpacing(height: 4).padding(.leading, 14)
+                    AppleSettingsRow(
+                        title: "AI Agent 调试与 MCP 服务",
+                        subtitle: appsCenter.mcp.mcpEnabled ? "本机 MCP 接口已开启，可查看接入配置与调试工具" : "默认关闭，按需为 Claude / Cursor 等外部 Agent 提供只读与受控工具",
+                        icon: "cpu.fill",
+                        iconTint: .purple,
+                        showsDivider: false
+                    ) {
+                        Button("打开 MCP 控制台") {
+                            appsCenter.workspaceSection = .mcp
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                    }
+                }
+                .padding(.top, 4)
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: "wrench.and.screwdriver")
+                        .foregroundStyle(IsleTheme.secondaryText)
+                    Text("展开开发者扩展：定时脚本与 AI Agent (MCP)")
+                        .font(.system(size: 13, weight: .medium))
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 10)
+            }
+        }
+    }
+
     private var engineSection: some View {
         VStack(alignment: .leading, spacing: 20) {
             AppleSettingsGroup(title: "Docker 引擎与容器", footer: "仅支持当前 Mac 上安装的 Docker Desktop 或 Colima。不会随 LightIsle 启动虚拟机，也不会在退出时停止第三方容器。") {
-                let hasCLI = !AppModel.shared.isPresentationPreview && DockerLocalRuntime.executable() != nil
                 AppleSettingsRow(title: "本机 Docker CLI", subtitle: "用于检测并操作当前选中的本地容器上下文", icon: "shippingbox.fill", iconTint: .blue) {
-                    StatusBadge(isOnline: hasCLI, text: hasCLI ? "已检测到" : "尚未安装")
+                    StatusBadge(isOnline: hasDockerCLI, text: hasDockerCLI ? "已检测到" : "尚未安装")
                 }
                 IsleGroupSpacing(height: 4).padding(.leading, 14)
                 AppleSettingsRow(title: "运行环境", subtitle: "切换后自动重新读取对应引擎的容器与存储快照", icon: "laptopcomputer", iconTint: .teal) {

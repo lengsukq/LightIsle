@@ -262,6 +262,6 @@ struct IsleSparkline: View {
         .frame(height: height)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(accessibilityLabel)
-        .accessibilityValue(latestValueText ?? (values.last.map { String(format: "%.1f", $0) } ?? "等待采样"))
+        .accessibilityValue(latestValueText ?? (values.last.map { String(format: "%.1f", $0) } ?? "读取中"))
     }
 }

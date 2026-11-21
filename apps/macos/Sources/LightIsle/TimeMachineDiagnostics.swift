@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 // Local, read-only diagnostics. Never invokes tmutil commands that change
 // destinations, exclusions, backup schedules or the user's files.
@@ -114,12 +115,29 @@ struct TimeMachineDiagnostics: Sendable {
             process.terminationHandler = nil
             return (-1, Data())
         }
+        let outputBuffer = OSAllocatedUnfairLock(initialState: Data())
+        let readerDone = DispatchSemaphore(value: 0)
+        let readHandle = stdout.fileHandleForReading
+        DispatchQueue.global(qos: .utility).async {
+            var collected = Data()
+            while true {
+                let chunk = readHandle.availableData
+                if chunk.isEmpty { break }
+                if collected.count < 128 * 1024 {
+                    collected.append(chunk.prefix(128 * 1024 - collected.count))
+                }
+            }
+            let snapshot = collected
+            outputBuffer.withLock { $0 = snapshot }
+            readerDone.signal()
+        }
         if completed.wait(timeout: .now() + 5) == .timedOut {
             process.terminationHandler = nil
             if process.isRunning { process.terminate() }
             return (-1, Data())
         }
-        let output = stdout.fileHandleForReading.readDataToEndOfFile()
-        return (process.terminationStatus, Data(output.prefix(128 * 1024)))
+        _ = readerDone.wait(timeout: .now() + 1)
+        let output = outputBuffer.withLock { $0 }
+        return (process.terminationStatus, output)
     }
 }

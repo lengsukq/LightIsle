@@ -3,19 +3,22 @@ import Security
 
 /// Typed errors raised when validating or persisting non-biometric host
 /// secrets in the consolidated login Keychain entry (`dev.lightisle.host-secrets`).
-enum HostSecretVaultError: LocalizedError, Equatable {
+enum HostSecretVaultError: LocalizedError, Equatable, Sendable {
     case invalidInput
     case keychainError(OSStatus)
 
     var errorDescription: String? {
         switch self {
         case .invalidInput:
-            return "凭据内容无效或编码失败，未写入钥匙串。"
+            return "凭据内容无效或编码失败，现有数据未受影响。请核对输入内容后重试。"
         case .keychainError(let code):
             if code == errSecAuthFailed || code == errSecUserCanceled {
-                return "钥匙串访问被拒绝或已取消。"
+                return "你取消或拒绝了钥匙串授权，现有凭据与数据未受影响。如需修改请重试并在系统弹窗中允许访问。"
             }
-            return "钥匙串访问失败（状态码 \(code)）。"
+            if code == errSecInteractionNotAllowed {
+                return "macOS 登录钥匙串当前处于锁定状态，现有凭据与数据未受影响。请解锁钥匙串后重试。"
+            }
+            return "无法访问 macOS 登录钥匙串，现有凭据与数据未受影响。请确认系统钥匙串已解锁后重试。"
         }
     }
 }
@@ -51,6 +54,7 @@ final class SystemHostKeychainBackend: HostKeychainBackend {
     }
 }
 
+#if DEBUG
 /// Thread-unsafe (locked by caller) in-memory Keychain test double that records
 /// every query, tracks per-item identity (verifying ACL preservation when no
 /// delete happens), and allows fault injection during migration or reads.
@@ -199,3 +203,4 @@ final class InMemoryHostKeychainBackend: HostKeychainBackend {
         }
     }
 }
+#endif

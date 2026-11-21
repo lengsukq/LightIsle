@@ -25,6 +25,8 @@ struct NativeSMBSharePoint: Decodable, Equatable, Identifiable {
     let rootName: String?
     let exposesPersonalDirs: Bool
     let pathExists: Bool
+    let syncedInMacOS: Bool?
+    let needsRestore: Bool?
 
     var id: String { recordName }
 }

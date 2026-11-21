@@ -75,25 +75,27 @@ extension PersonalSpacesManagementView {
     }
 
     var unregisteredVolumesBanner: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            ForEach(unregisteredExternalVolumes) { vol in
-                ViewThatFits(in: .horizontal) {
-                    HStack(spacing: 10) {
-                        unregisteredVolumeHeader(vol)
-                        Spacer()
-                        unregisteredVolumeButtons(vol)
-                    }
-                    VStack(alignment: .leading, spacing: 8) {
-                        unregisteredVolumeHeader(vol)
-                        HStack(spacing: 8) {
+        HostMetricsObserver(store: appModel.hostMetrics) { _ in
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(unregisteredExternalVolumes) { vol in
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 10) {
+                            unregisteredVolumeHeader(vol)
+                            Spacer()
                             unregisteredVolumeButtons(vol)
+                        }
+                        VStack(alignment: .leading, spacing: 8) {
+                            unregisteredVolumeHeader(vol)
+                            HStack(spacing: 8) {
+                                unregisteredVolumeButtons(vol)
+                            }
                         }
                     }
                 }
             }
+            .padding(10)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(IsleFluidPalette.brandCyan.opacity(0.1)))
         }
-        .padding(10)
-        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(IsleFluidPalette.brandCyan.opacity(0.1)))
     }
 
     private func unregisteredVolumeHeader(_ vol: HostVolume) -> some View {

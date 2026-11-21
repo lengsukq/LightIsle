@@ -215,7 +215,7 @@ struct MediaTypeInfo {
     let fileExtension: String
 
     static let photoExtensions: Set<String> = [
-        "heic", "heif", "jpg", "jpeg", "png", "tif", "tiff", "gif", "webp", "bmp",
+        "heic", "heif", "jpg", "jpeg", "png", "tif", "tiff", "gif", "webp", "avif", "bmp",
         "dng", "cr2", "cr3", "arw", "nef", "raf", "rw2", "orf", "pef",
     ]
     static let videoExtensions: Set<String> = ["mp4", "mov", "m4v"]

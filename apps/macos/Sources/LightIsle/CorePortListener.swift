@@ -74,7 +74,9 @@ struct CorePortListener: Equatable, Sendable {
               info.pbi_start_tvsec > 0, info.pbi_status != SZOMB else { return nil }
         var path = [CChar](repeating: 0, count: 4096)
         guard proc_pidpath(pid, &path, UInt32(path.count)) > 0 else { return nil }
-        return Self(port: port, pid: pid, executable: String(cString: path),
+        let nulIndex = path.firstIndex(of: 0) ?? path.count
+        let executable = String(decoding: path[..<nulIndex].map(UInt8.init(bitPattern:)), as: UTF8.self)
+        return Self(port: port, pid: pid, executable: executable,
                     startSeconds: info.pbi_start_tvsec, startMicroseconds: info.pbi_start_tvusec)
     }
 }

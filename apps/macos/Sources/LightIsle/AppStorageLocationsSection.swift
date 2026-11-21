@@ -5,12 +5,6 @@ struct AppStorageLocationsSection: View {
     @ObservedObject var appsCenter: NativeAppsModel
     @State private var confirmRemoveExternal = false
 
-    private static let byteFormatter: ByteCountFormatter = {
-        let f = ByteCountFormatter()
-        f.countStyle = .file
-        return f
-    }()
-
     private var storage: NativeAppStorageSnapshot? {
         appsCenter.appStorage
     }
@@ -342,9 +336,9 @@ struct AppStorageLocationsSection: View {
 
     private func formatFreeSpace(_ loc: NativeAppStorageLocation) -> String? {
         guard let free = loc.freeBytes, free > 0 else { return nil }
-        let freeText = Self.byteFormatter.string(fromByteCount: Int64(min(free, UInt64(Int64.max))))
+        let freeText = IsleFormatters.fileSize(free)
         if let total = loc.totalBytes, total > 0 {
-            let totalText = Self.byteFormatter.string(fromByteCount: Int64(min(total, UInt64(Int64.max))))
+            let totalText = IsleFormatters.fileSize(total)
             return "余 \(freeText) / \(totalText)"
         }
         return "余 \(freeText)"

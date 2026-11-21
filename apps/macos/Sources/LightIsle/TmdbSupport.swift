@@ -13,8 +13,8 @@ enum TmdbSecretVault {
         HostSecretVault.current.loadTmdbToken()
     }
 
-    static func remove() {
-        try? HostSecretVault.current.removeTmdbToken()
+    static func remove() throws {
+        try HostSecretVault.current.removeTmdbToken()
     }
 }
 

@@ -11,7 +11,7 @@ extension AppModel {
         do {
             try coreCommands?.write(contentsOf: Data("disk list\n".utf8))
         } catch {
-            diskManagementError = "无法读取磁盘状态：\(error.localizedDescription)"
+            diskManagementError = UserFacingErrorMapper.coreIPCCommandError(action: "磁盘状态读取")
         }
     }
 
@@ -20,6 +20,11 @@ extension AppModel {
         sendCoreCommandLine("stats summary\ndisk list\nalerts status\n", context: "volume.refresh")
         rootManagement.refresh()
         personalSpaces.refresh()
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(750))
+            guard let self, self.state == .online else { return }
+            self.reconcileSMBShares()
+        }
     }
 
     func preauthorizeVolumeReadWrite(mountPath: String, volumeName: String) {
@@ -88,7 +93,7 @@ extension AppModel {
             }
         } catch {
             diskOperationPending = false
-            diskManagementError = "发送操作失败：\(error.localizedDescription)"
+            diskManagementError = UserFacingErrorMapper.coreIPCCommandError(action: "磁盘操作请求")
         }
     }
 
@@ -97,7 +102,7 @@ extension AppModel {
         do {
             try coreCommands?.write(contentsOf: Data(("disk smart " + disk.id + "\n").utf8))
         } catch {
-            diskManagementError = "无法读取健康信息：\(error.localizedDescription)"
+            diskManagementError = UserFacingErrorMapper.coreIPCCommandError(action: "硬盘健康信息读取")
         }
     }
 
@@ -136,7 +141,7 @@ extension AppModel {
         do {
             try pipe.write(contentsOf: Data(("disk smart report " + payload.base64URLEncodedString + "\n").utf8))
         } catch {
-            elevationMessage = "无法发送 SMART 结果：\(error.localizedDescription)"
+            elevationMessage = UserFacingErrorMapper.coreIPCCommandError(action: "SMART 检测结果回传")
         }
     }
 
@@ -157,7 +162,7 @@ extension AppModel {
         do {
             try pipe.write(contentsOf: Data(("alerts threshold " + data.base64URLEncodedString + "\n").utf8))
         } catch {
-            diskManagementError = "无法保存告警阈值：\(error.localizedDescription)"
+            diskManagementError = UserFacingErrorMapper.coreIPCCommandError(action: "空间告警阈值保存")
         }
     }
 }

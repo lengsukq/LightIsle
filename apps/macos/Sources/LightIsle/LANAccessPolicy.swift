@@ -39,6 +39,7 @@ enum LANAccessPolicy {
     // and an explicit user "off" must never be silently overridden.
     static func canRetryAfterNetworkChange(_ error: String) -> Bool {
         error.contains("没有可用的局域网私有 IPv4 地址") ||
+            error.contains("没有可用的局域网或 Tailscale 私有 IPv4 地址") ||
             error.contains("can't assign requested address") ||
             error.contains("Cannot assign requested address")
     }

@@ -10,12 +10,6 @@ struct AppsPluginCenterView: View {
     @State private var deletingApp: NativePublicApp?
     @State private var selectedInstallLocationID = ""
 
-    private static let memoryFormatter: ByteCountFormatter = {
-        let f = ByteCountFormatter()
-        f.countStyle = .memory
-        return f
-    }()
-
     private var selectedApp: NativePublicApp? {
         guard let selectedAppID else { return nil }
         return appsCenter.apps.first(where: { $0.id == selectedAppID })
@@ -535,7 +529,7 @@ struct AppsPluginCenterView: View {
                 compactMetaChip(icon: nil, text: ":\(port)")
             }
             if let rss = app.web.rssBytes, rss > 0 {
-                compactMetaChip(icon: nil, text: Self.memoryFormatter.string(fromByteCount: rss))
+                compactMetaChip(icon: nil, text: IsleFormatters.memorySize(rss))
             }
             if let cron = app.cron, cron.enabled {
                 compactMetaChip(icon: "clock", text: cron.cron)

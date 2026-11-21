@@ -121,18 +121,7 @@ extension AppModel {
     private func applyHostMetricsReading(_ reading: HostMetrics) {
         nativeAlertCoordinator.checkLowDiskSpace(reading.volumes ?? [], enabled: nativeAlertsEnabled)
         guard samplesManagementUI else { return }
-        if metrics != reading { metrics = reading }
-        lastMetricsAt = Date()
-        metricHistory.append(MetricHistoryPoint(
-            time: Date(),
-            cpu: reading.cpuPercent ?? 0,
-            memory: Double(reading.memoryUsed) / Double(max(reading.memoryTotal, 1)) * 100,
-            download: reading.networkDownBps ?? 0,
-            upload: reading.networkUpBps ?? 0
-        ))
-        if metricHistory.count > 120 {
-            metricHistory.removeFirst(metricHistory.count - 120)
-        }
+        hostMetrics.recordMetrics(reading)
     }
 
     func consume(_ bytes: Data) {
@@ -151,14 +140,12 @@ extension AppModel {
             applySubsystemIPC(channel)
         case .computerFiles(let signal):
             applyComputerFilesIPC(signal)
-        case .export:
-            break
         case .admin(let signal):
             applyAdminIPC(signal)
         case .disksError(let raw):
             diskOperationPending = false
             diskOperationDeadline?.cancel()
-            diskManagementError = "磁盘操作未完成：\(raw)。请刷新并核对硬盘状态。"
+            diskManagementError = UserFacingErrorMapper.diskError(from: raw)
         case .alertsThresholdError(let code):
             if code == "invalid_storage_threshold" {
                 diskManagementError = "告警阈值无效：绝对剩余空间与百分比不能同时为 0。"
@@ -299,8 +286,8 @@ extension AppModel {
             sendCoreCommandLine("backup status\n", context: "backup.status")
         case .error(let raw):
             backupInventoryLoading = false
-            backupError = raw
-            notifyImportantEvent("backup-failure", title: "轻屿备份操作失败", message: "备份或恢复操作未完成，请在本机存储页面查看错误。")
+            backupError = UserFacingErrorMapper.backupError(from: raw)
+            notifyImportantEvent("backup-failure", title: "轻屿备份操作失败", message: "备份或恢复操作未完成，原有数据未受影响。请在本机存储页面查看具体说明。")
         }
     }
 
@@ -359,8 +346,6 @@ extension AppModel {
                path.hasPrefix("/"), path.utf8.count <= 4096 {
                 offlineSharedFolderPath = path
             }
-        case .accessRevoked, .forgot, .forgetError, .forgetWarning:
-            break
         case .error(let error):
             sharedFolderError = error
             sharedFolderPath = nil

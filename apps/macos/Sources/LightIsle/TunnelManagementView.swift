@@ -261,7 +261,14 @@ struct TunnelManagementView: View {
                             guard let zone = model.tunnelZones.first(where: { $0.id == selectedZoneID }) else { return }
                             let zoneName = zone.name
                             let host = hostnameDraft.trimmingCharacters(in: .whitespaces)
-                            let fullHostname = host.contains(".") ? host : "\(host).\(zoneName)"
+                            let fullHostname: String
+                            if host == "@" {
+                                fullHostname = zoneName
+                            } else if host.contains(".") {
+                                fullHostname = host
+                            } else {
+                                fullHostname = "\(host).\(zoneName)"
+                            }
                             pendingHostname = fullHostname
                             model.bindHostname(fullHostname, zoneID: selectedZoneID, service: serviceDraft)
                         }
@@ -340,8 +347,11 @@ struct TunnelManagementView: View {
     /// Match an ingress hostname back to the configured zone by suffix.
     private func selectedZoneRecordID(_ hostname: String) -> String? {
         let lower = hostname.lowercased()
-        for zone in model.tunnelZones where lower == zone.name || lower.hasSuffix("." + zone.name) {
-            return zone.id
+        for zone in model.tunnelZones {
+            let zoneLower = zone.name.lowercased()
+            if lower == zoneLower || lower.hasSuffix("." + zoneLower) {
+                return zone.id
+            }
         }
         return model.tunnelZones.first?.id
     }

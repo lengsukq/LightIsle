@@ -53,7 +53,7 @@ struct LightIsleApp: App {
                 Group {
                     Button("概览") { model.navigate(to: .overview) }
                         .keyboardShortcut(SidebarPage.overview.shortcut, modifiers: .command)
-                    Button("数据与存储") { model.navigate(to: .storage) }
+                    Button("存储") { model.navigate(to: .storage) }
                         .keyboardShortcut(SidebarPage.storage.shortcut, modifiers: .command)
                     Button("网络与连接") { model.navigate(to: .services) }
                         .keyboardShortcut(SidebarPage.services.shortcut, modifiers: .command)
@@ -65,12 +65,12 @@ struct LightIsleApp: App {
                         .keyboardShortcut(SidebarPage.settings.shortcut, modifiers: .command)
                     Divider()
                     Menu("空间与工具快捷直达") {
-                        Button("私人文件") { model.navigate(to: .files) }
-                            .keyboardShortcut(SidebarPage.files.shortcut, modifiers: .command)
-                        Button("时光相册") { model.navigate(to: .photos) }
-                            .keyboardShortcut(SidebarPage.photos.shortcut, modifiers: .command)
-                        Button("私人影院") { model.navigate(to: .cinema) }
-                            .keyboardShortcut(SidebarPage.cinema.shortcut, modifiers: .command)
+                        Button("私人文件（Web）") { model.openUserWeb(page: "files") }
+                            .disabled(model.state != .online)
+                        Button("时光相册（Web）") { model.openUserWeb(page: "photos") }
+                            .disabled(model.state != .online)
+                        Button("私人影院（Web）") { model.openUserWeb(page: "cinema") }
+                            .disabled(model.state != .online)
                         Divider()
                         Button("外部依赖") { model.navigate(to: .dependencies) }
                             .keyboardShortcut(SidebarPage.dependencies.shortcut, modifiers: .command)
@@ -90,6 +90,7 @@ private struct LightIsleMenu: View {
     @EnvironmentObject private var model: AppModel
     @Environment(\.openWindow) private var openWindow
     @State private var copiedAddress = false
+    @State private var copiedAddressTask: Task<Void, Never>?
 
     var body: some View {
         Text("轻屿 NAS · \(model.state.label)")
@@ -113,11 +114,12 @@ private struct LightIsleMenu: View {
             .disabled(model.state != .online)
         if let shareURL = model.remoteAddress ?? model.endpoint?.absoluteString, model.state == .online {
             Button(copiedAddress ? "✓ 已复制访问地址" : (model.remoteAddress != nil ? "复制局域网访问地址" : "复制本机访问地址")) {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(shareURL, forType: .string)
+                PasteboardHelper.copy(shareURL)
                 copiedAddress = true
-                Task { @MainActor in
+                copiedAddressTask?.cancel()
+                copiedAddressTask = Task { @MainActor in
                     try? await Task.sleep(for: .milliseconds(1800))
+                    guard !Task.isCancelled else { return }
                     copiedAddress = false
                 }
             }

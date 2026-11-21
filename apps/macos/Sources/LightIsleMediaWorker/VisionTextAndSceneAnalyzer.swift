@@ -91,9 +91,18 @@ enum VisionTextAndSceneAnalyzer {
 
         let handler = VNImageRequestHandler(cgImage: image, options: [:])
         // Execute independent Vision requests resiliently so one unsupported
-        // model revision in a VM never discards OCR results.
-        try? handler.perform([ocrRequest])
-        try? handler.perform([classifyRequest, animalRequest])
+        // model revision in a VM never discards OCR results, while logging
+        // failures to stderr instead of silently swallowing them.
+        do {
+            try handler.perform([ocrRequest])
+        } catch {
+            VisionWorkerDiagnostics.logFailure(stage: "ocr", error: error)
+        }
+        do {
+            try handler.perform([classifyRequest, animalRequest])
+        } catch {
+            VisionWorkerDiagnostics.logFailure(stage: "scene-classify", error: error)
+        }
 
         let ocrText = extractOCRText(from: ocrRequest.results ?? [])
         let ocrTokens = ocrText.map(tokenizeNaturalLanguage) ?? []

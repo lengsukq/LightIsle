@@ -37,7 +37,7 @@ extension AppModel {
     }
 
     private func modelVolumeIsCurrent(_ volume: HostVolume) -> Bool {
-        metrics?.volumes?.contains(where: {
+        hostMetrics.metrics?.volumes?.contains(where: {
             $0.mount == volume.mount && $0.device == volume.device && $0.filesystem == volume.filesystem
         }) == true
     }

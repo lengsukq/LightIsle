@@ -28,7 +28,7 @@ struct PersonalSpacesManagementView: View {
     @State private var editingQuotaGiB: [String: String] = [:]
 
     var unregisteredExternalVolumes: [HostVolume] {
-        guard let volumes = appModel.metrics?.volumes else { return [] }
+        guard let volumes = appModel.hostMetrics.metrics?.volumes else { return [] }
         return volumes.filter { vol in
             guard StorageVolumeSelection.canChooseOnVolume(mount: vol.mount, readOnly: vol.readOnly) else { return false }
             let isDiskImage = appModel.managedDisks.contains { disk in
@@ -42,7 +42,6 @@ struct PersonalSpacesManagementView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 18) {
-            dataArchitectureCard
             userManagementCard
             if let entry = spaces.selectedEntry {
                 selectedUserDetailSection(for: entry)
@@ -142,48 +141,10 @@ struct PersonalSpacesManagementView: View {
         showingSwitchRootSheet = true
     }
 
-    private var dataArchitectureCard: some View {
-        AppleSettingsGroup(
-            title: "1. 存储目录管理（默认主目录与多目录空间池）",
-            footer: "互不嵌套的目录均可作为独立存储空间；添加或切换目录时直接校验整盘与目录读写权限，获取失败将视为添加失败。"
-        ) {
-            AppleSettingsRow(
-                title: "已登记的存储目录与整盘权限",
-                subtitle: "管理默认主目录与外置扩展目录，确保后续用户空间分配与跨目录迁移顺畅可靠。",
-                icon: "externaldrive.fill.badge.checkmark",
-                iconTint: IsleFluidPalette.brandCyan
-            ) {
-                HStack(spacing: 8) {
-                    IsleStatusPill(
-                        text: "在线目录 \(spaces.onlineRoots.count) 个",
-                        tone: spaces.onlineRoots.isEmpty ? .warning : .success,
-                        showDot: true
-                    )
-                    Button("+ 添加存储目录…") {
-                        appModel.rootManagement.addFolder(preferVolumes: true)
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
-                    .disabled(!appModel.canAddOrSwitchStorageRoot)
-                    IsleIconButton(
-                        icon: "arrow.triangle.swap",
-                        help: "切换默认主目录…"
-                    ) {
-                        appModel.rootManagement.selectFolderAndSwitch(preferVolumes: true)
-                    }
-                    .disabled(!appModel.canAddOrSwitchStorageRoot)
-                }
-            }
-            if !spaces.onlineRoots.isEmpty {
-                IsleGroupSpacing(height: 4).padding(.leading, 14)
-                PersonalSpacesPoolDistributionView(spaces: spaces)
-            }
-        }
-    }
-
     private var userManagementCard: some View {
         AppleSettingsGroup(
-            title: "2. 用户空间管理（目录分配、配额与旧目录迁移到新目录）",
-            footer: "管理每位用户可使用的存储目录、独立配额，并支持将旧目录中的数据一键迁移到新目录。"
+            title: "用户空间管理（目录分配、配额与旧目录迁移到新目录）",
+            footer: "管理每位用户可使用的存储目录、独立配额，并支持将旧目录中的数据一键迁移到新目录。新增或切换物理硬盘请在「存储 → 存储位置」中管理。"
         ) {
             VStack(alignment: .leading, spacing: 14) {
                 HStack(spacing: 10) {

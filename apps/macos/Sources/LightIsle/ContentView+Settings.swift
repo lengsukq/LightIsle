@@ -92,20 +92,29 @@ extension ContentView {
         }
     }
     @ViewBuilder var settingsGroups: some View {
-        if settingsDetail == .permissions { PermissionsReadinessView(model: model) }
-        if settingsDetail == .general { settingsGroup0 }
-        if settingsDetail == .general { settingsGroup1 }
-        if settingsDetail == .notifications { settingsGroup2 }
-        if settingsDetail == .media { settingsGroup3 }
-        if settingsDetail == .media { settingsGroup4 }
-        if settingsDetail == .notifications { settingsGroup5 }
-        if settingsDetail == .security { settingsGroup6 }
-        if settingsDetail == .general { settingsGroup7 }
-        if settingsDetail == .media { settingsGroup8 }
-        if settingsDetail == .security { settingsGroup9 }
-        if settingsDetail == .general { settingsGroup10 }
+        switch settingsDetail {
+        case .permissions:
+            PermissionsReadinessView(model: model)
+        case .general:
+            generalStartupAndSleepSection
+            generalLightweightModeSection
+            generalNetworkPortSection
+            generalAboutSection
+        case .media:
+            mediaTmdbServiceSection
+            mediaMapServiceSection
+            mediaThumbnailCacheSection
+        case .notifications:
+            systemNotificationsSection
+            outboundNotificationChannelsSection
+        case .security:
+            computerFilesAndAdminResetSection
+            touchIDCredentialVaultSection
+        case .tools, .none:
+            EmptyView()
+        }
     }
-    var settingsGroup0: some View {
+    var generalStartupAndSleepSection: some View {
         VStack(alignment: .leading, spacing: 20) {
             AppleSettingsGroup(preferenceSection: .general, title: "NAS 常驻与系统登录", footer: "关闭最后一个窗口只收起管理界面，Go Core 继续运行；只有 ⌘Q 或菜单栏退出才停止 NAS。登录项需 macOS 已登录，空闲防睡眠不阻止主动睡眠、断电或 FileVault 解锁。") {
                 AppleSettingsRow(title: "登录 Mac 时自动打开轻屿", icon: "person.crop.circle.badge.checkmark", iconTint: .blue) {
@@ -133,7 +142,7 @@ extension ContentView {
 
         }
     }
-    var settingsGroup1: some View {
+    var generalLightweightModeSection: some View {
         VStack(alignment: .leading, spacing: 20) {
             AppleSettingsGroup(preferenceSection: .general, title: "轻量模式", footer: "轻量模式会关闭管理窗口、释放页面与图表缓存，并减少状态查询；NAS、远程访问及后台任务继续运行。点击菜单栏的轻屿图标可恢复正常模式。锁屏自动切换仅在轻屿已运行时生效，解锁后不会自行弹出窗口。") {
                 AppleSettingsRow(title: "锁屏时自动进入轻量模式", subtitle: "默认开启；关闭后仍可从菜单栏手动切换。", icon: "lock.display", iconTint: .indigo) {
@@ -158,7 +167,7 @@ extension ContentView {
 
         }
     }
-    var settingsGroup2: some View {
+    var systemNotificationsSection: some View {
         VStack(alignment: .leading, spacing: 20) {
             AppleSettingsGroup(preferenceSection: .notifications, title: "macOS 故障通知", footer: "默认关闭，开启后需经系统授权。仅发送 NAS 核心异常、备份操作失败、共享目录离线等事件；同类事件会限频，不上传任何文件信息。") {
                 AppleSettingsRow(title: "重要事件系统通知", icon: "bell.badge", iconTint: .orange) {
@@ -178,7 +187,7 @@ extension ContentView {
 
         }
     }
-    var settingsGroup3: some View {
+    var mediaTmdbServiceSection: some View {
         VStack(alignment: .leading, spacing: 20) {
             AppleSettingsGroup(preferenceSection: .media, title: "TMDB 自动刮削", footer: "配置后服务器会自动为影片与剧集补全标题、海报与简介。Token 只保存在本机钥匙串并经私有通道下发给 Core（仅内存），不会写入服务器磁盘或出现在 Web/移动端。可在 [themoviedb.org](https://www.themoviedb.org/settings/api) 免费申请 Read Access Token (v4)。") {
                 AppleSettingsRow(title: "配置状态", icon: "film.stack", iconTint: .purple) {
@@ -200,11 +209,11 @@ extension ContentView {
                 IsleGroupSpacing(height: 4).padding(.leading, 14)
                 AppleSettingsRow(title: "TMDB Read Access Token", subtitle: "输入后点击保存；不会在界面上回显已保存的 Token。", icon: "key.fill", iconTint: .indigo) {
                     HStack(spacing: 8) {
-                        SecureField("粘贴 Token…", text: $tmdbTokenDraft).liquidInput().font(.system(size: 12, design: .monospaced))
-                        Button("取消") { tmdbTokenDraft = "" }.buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        SecureField("粘贴 Token…", text: $drafts.tmdbToken).liquidInput().font(.system(size: 12, design: .monospaced))
+                        Button("取消") { drafts.tmdbToken = "" }.buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         Button("保存") { saveMediaDraft(.tmdb) }
                             .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
-                            .disabled(tmdbTokenDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .disabled(drafts.tmdbToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         if model.tmdbTokenConfigured || model.hasSavedTmdbToken {
                             Button("清除") { model.clearTmdbToken() }
                                 .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
@@ -233,7 +242,7 @@ extension ContentView {
 
         }
     }
-    var settingsGroup4: some View {
+    var mediaMapServiceSection: some View {
         VStack(alignment: .leading, spacing: 20) {
             AppleSettingsGroup(preferenceSection: .media, title: "天地图 · 照片地图底图", footer: "管理员统一配置后，手机和 Web 无需填写 Key。Key 只保存在本机钥匙串，并经私有通道交给 Core 代理地图瓦片请求；客户端不会获得 Key。请先从[天地图开发者控制台](https://console.tianditu.gov.cn/api/key)申请 Key，使用需遵守其服务条款。") {
                 AppleSettingsRow(title: "服务状态", icon: "map", iconTint: .blue) {
@@ -253,11 +262,11 @@ extension ContentView {
                 IsleGroupSpacing(height: 4).padding(.leading, 14)
                 AppleSettingsRow(title: "天地图 API Key", subtitle: "Key 不会回显，也不会传给移动端。", icon: "key.fill", iconTint: .indigo) {
                     HStack(spacing: 8) {
-                        SecureField("粘贴天地图 Key…", text: $tiandituKeyDraft).liquidInput().font(.system(size: 12, design: .monospaced))
-                        Button("取消") { tiandituKeyDraft = "" }.buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        SecureField("粘贴天地图 Key…", text: $drafts.tiandituKey).liquidInput().font(.system(size: 12, design: .monospaced))
+                        Button("取消") { drafts.tiandituKey = "" }.buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         Button("保存") { saveMediaDraft(.map) }
                             .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
-                            .disabled(tiandituKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            .disabled(drafts.tiandituKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                         if model.mapKeyConfigured || model.hasSavedMapKey {
                             Button("清除") { model.clearMapKey() }
                                 .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
@@ -373,19 +382,14 @@ extension ContentView {
         }
     }
 
-    var settingsGroup6: some View {
+    var computerFilesAndAdminResetSection: some View {
         VStack(alignment: .leading, spacing: 20) {
             AppleSettingsGroup(preferenceSection: .security, title: "电脑文件只读访问", footer: "开启后管理员可在轻屿中浏览和下载 Mac 当前允许读取的文件，也可授权其他成员。整机授权可能包含私人文件；系统隐私权限仍然生效。关闭后成员授权会保留但暂停。") {
                 AppleSettingsRow(title: "允许访问电脑文件", subtitle: "此开关只能在 Mac 上更改", icon: "desktopcomputer", iconTint: .blue) {
                     Toggle("", isOn: Binding(
                         get: { model.computerFilesEnabled == true },
                         set: { value in
-                            guard model.state == .online, let commands = model.coreCommands else { return }
-                            do {
-                                try commands.write(contentsOf: Data("computer-files \(value ? "on" : "off")\n".utf8))
-                            } catch {
-                                model.computerFilesError = "无法连接轻屿服务，请重试。"
-                            }
+                            model.setComputerFilesEnabled(value)
                         }
                     ))
                     .labelsHidden()
@@ -421,8 +425,7 @@ extension ContentView {
                                 variant: .borderless,
                                 help: "复制管理员用户名"
                             ) {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(username, forType: .string)
+                                PasteboardHelper.copy(username)
                                 showNotice("已复制管理员用户名")
                             }
                         }
@@ -431,16 +434,17 @@ extension ContentView {
                 }
 
                 AppleSettingsRow(title: "新密码", icon: "key.horizontal.fill", iconTint: .indigo) {
-                    LiquidSecureField(prompt: "至少 12 位", text: $resetAdminPassword)
+                    LiquidSecureField(prompt: "至少 12 位", text: $drafts.resetAdminPassword)
                         .frame(width: settingsControlWidth)
                 }
                 IsleGroupSpacing(height: 4).padding(.leading, 14)
 
                 AppleSettingsRow(title: "确认新密码", icon: "checkmark.shield.fill", iconTint: .teal) {
-                    LiquidSecureField(prompt: "再次输入", text: $resetAdminConfirmation) {
+                    LiquidSecureField(prompt: "再次输入", text: $drafts.resetAdminConfirmation) {
                         if model.state == .online, model.isConfigured == true,
-                           !model.resettingAdmin, resetAdminPassword.utf8.count >= 12,
-                           resetAdminPassword == resetAdminConfirmation {
+                           !model.resettingAdmin,
+                           AccountInputValidator.validatePassword(drafts.resetAdminPassword).isValid,
+                           drafts.resetAdminPassword == drafts.resetAdminConfirmation {
                             savePasswordDraft()
                         }
                     }
@@ -450,7 +454,12 @@ extension ContentView {
 
                 AppleSettingsRow(title: "重置管理员密码") {
                     HStack(spacing: 10) {
-                        if !resetAdminConfirmation.isEmpty && resetAdminPassword != resetAdminConfirmation {
+                        let pwdStatus = AccountInputValidator.validatePassword(drafts.resetAdminPassword)
+                        if !drafts.resetAdminPassword.isEmpty, !pwdStatus.isValid, let hint = pwdStatus.message {
+                            Text(hint)
+                                .font(.caption)
+                                .foregroundStyle(IsleTheme.warningText)
+                        } else if !drafts.resetAdminConfirmation.isEmpty && drafts.resetAdminPassword != drafts.resetAdminConfirmation {
                             Text("两次密码不一致")
                                 .font(.caption)
                                 .foregroundStyle(IsleTheme.errorText)
@@ -460,16 +469,14 @@ extension ContentView {
                         }
                         .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
                         .disabled(model.state != .online || model.isConfigured != true ||
-                            model.resettingAdmin || resetAdminPassword.utf8.count < 12 ||
-                            resetAdminPassword != resetAdminConfirmation)
+                            model.resettingAdmin || !pwdStatus.isValid ||
+                            drafts.resetAdminPassword != drafts.resetAdminConfirmation)
                     }
                 }
             }
-
-            // Group 2: 本机服务端口
         }
     }
-    var settingsGroup7: some View {
+    var generalNetworkPortSection: some View {
         VStack(alignment: .leading, spacing: 20) {
             AppleSettingsGroup(
                 preferenceSection: .general,
@@ -478,12 +485,12 @@ extension ContentView {
             ) {
                 AppleSettingsRow(title: "访问端口", subtitle: "默认 16666，本机和其他设备使用相同端口。", icon: "network", iconTint: .orange) {
                     HStack(spacing: 8) {
-                        TextField("16666", text: $localPortText)
+                        TextField("16666", text: $drafts.localPortText)
                             .liquidInput()
                             .frame(width: 90)
-                            .onSubmit { _ = model.saveLocalPort(localPortText) }
+                            .onSubmit { _ = model.saveLocalPort(drafts.localPortText) }
                         Button("保存") {
-                            if model.saveLocalPort(localPortText) {
+                            if model.saveLocalPort(drafts.localPortText) {
                                 showNotice("已保存。重新打开 LightIsle 后，所有设备会使用新端口")
                             }
                         }
@@ -508,8 +515,7 @@ extension ContentView {
                                 variant: .borderless,
                                 help: "复制本机访问地址"
                             ) {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(target.absoluteString, forType: .string)
+                                PasteboardHelper.copy(target.absoluteString)
                                 showNotice("已复制访问地址")
                             }
                         }
@@ -517,13 +523,11 @@ extension ContentView {
                 }
             }
             .onAppear {
-                if localPortText.isEmpty { localPortText = String(model.preferredLocalPort) }
+                if drafts.localPortText.isEmpty { drafts.localPortText = String(model.preferredLocalPort) }
             }
-
-            // Group 3: 相册智能缓存
         }
     }
-    var settingsGroup8: some View {
+    var mediaThumbnailCacheSection: some View {
         VStack(alignment: .leading, spacing: 20) {
             AppleSettingsGroup(
                 preferenceSection: .media,
@@ -558,11 +562,9 @@ extension ContentView {
                     }
                 }
             }
-
-            // Group 4: Touch ID 凭据保护
         }
     }
-    var settingsGroup9: some View {
+    var touchIDCredentialVaultSection: some View {
         VStack(alignment: .leading, spacing: 20) {
             AppleSettingsGroup(
                 preferenceSection: .security,
@@ -570,13 +572,13 @@ extension ContentView {
                 footer: "将轻屿管理员凭据安全保存在受 Secure Enclave 和 Touch ID 硬件保护的 Mac 钥匙串中。"
             ) {
                 AppleSettingsRow(title: "管理员账号", icon: "person.crop.circle", iconTint: .blue) {
-                    TextField("用户名", text: $vaultUsername)
+                    TextField("用户名", text: $drafts.vaultUsername)
                         .liquidInput()
                         .frame(width: settingsControlWidth)
                 }
                 IsleGroupSpacing(height: 4).padding(.leading, 14)
                 AppleSettingsRow(title: "当前密码", icon: "lock.shield.fill", iconTint: .indigo) {
-                    SecureField("密码", text: $vaultPassword)
+                    SecureField("密码", text: $drafts.vaultPassword)
                         .liquidInput()
                         .frame(width: settingsControlWidth)
                 }
@@ -588,7 +590,7 @@ extension ContentView {
                         }
                         .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
                         .disabled(model.state != .online || model.verifyingAdmin ||
-                            vaultUsername.isEmpty || vaultPassword.isEmpty)
+                            drafts.vaultUsername.isEmpty || drafts.vaultPassword.isEmpty)
 
                         Button("Touch ID 查看") { model.unlockAdministratorWithTouchID() }
                             .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
@@ -610,15 +612,25 @@ extension ContentView {
                     }
                 }
             }
-
-            // Group 5: 关于
         }
     }
-    var settingsGroup10: some View {
+    private var bundleVersionLabel: String {
+        let short = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let build = (Bundle.main.object(forInfoDictionaryKey: "CFBundleVersion") as? String)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let version = (short?.isEmpty == false ? short! : "dev")
+        if let build, !build.isEmpty, build != version {
+            return "\(version) (\(build) · Apple Silicon)"
+        }
+        return "\(version) (Apple Silicon)"
+    }
+
+    var generalAboutSection: some View {
         VStack(alignment: .leading, spacing: 20) {
             AppleSettingsGroup(preferenceSection: .general, title: "关于轻屿") {
                 AppleSettingsRow(title: "应用版本", icon: "info.circle.fill", iconTint: .blue) {
-                    Text("0.1.0-dev (Apple Silicon)")
+                    Text(bundleVersionLabel)
                         .font(.system(size: 12))
                         .foregroundStyle(IsleTheme.secondaryText)
                 }

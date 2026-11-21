@@ -180,36 +180,53 @@ struct ManagementScrollMemory: NSViewRepresentable {
     func updateNSView(_ view: ObserverView, context: Context) {
         view.configure(route: route, store: store, onScroll: onScroll)
     }
+    static func dismantleNSView(_ view: ObserverView, coordinator: ()) {
+        view.detach()
+    }
     final class ObserverView: NSView {
-        private var token: NSObjectProtocol?
         private weak var clip: NSClipView?
         private var route = ""
         private var store: ManagementScrollStore?
         private var onScroll: (() -> Void)?
         private var lastOrigin = CGPoint.zero
-        override func viewDidMoveToWindow() { super.viewDidMoveToWindow(); attach() }
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if window == nil {
+                detach()
+            } else {
+                attach()
+            }
+        }
         func configure(route: String, store: ManagementScrollStore, onScroll: @escaping () -> Void) {
             let changed = self.route != route
             self.route = route; self.store = store; self.onScroll = onScroll
             attach()
             if changed { restore() }
         }
+        func detach() {
+            NotificationCenter.default.removeObserver(self, name: NSView.boundsDidChangeNotification, object: nil)
+            clip = nil
+        }
         private func attach() {
             guard let next = enclosingScrollView?.contentView, next !== clip else { return }
-            if let token { NotificationCenter.default.removeObserver(token) }
+            NotificationCenter.default.removeObserver(self, name: NSView.boundsDidChangeNotification, object: nil)
             clip = next
             next.postsBoundsChangedNotifications = true
-            token = NotificationCenter.default.addObserver(forName: NSView.boundsDidChangeNotification, object: next, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated {
-                    guard let self, let clip = self.clip else { return }
-                    let origin = clip.bounds.origin
-                    guard abs(self.lastOrigin.x - origin.x) > 0.5 || abs(self.lastOrigin.y - origin.y) > 0.5 else { return }
-                    self.lastOrigin = origin
-                    self.store?.offsets[self.route] = origin
-                    self.onScroll?()
-                }
-            }
+            NotificationCenter.default.addObserver(
+                self,
+                selector: #selector(handleBoundsChanged(_:)),
+                name: NSView.boundsDidChangeNotification,
+                object: next
+            )
             restore()
+        }
+        @objc private func handleBoundsChanged(_ notification: Notification) {
+            guard let clip else { return }
+            let origin = clip.bounds.origin
+            guard abs(lastOrigin.x - origin.x) > 0.5 || abs(lastOrigin.y - origin.y) > 0.5 else { return }
+            lastOrigin = origin
+            store?.offsets[route] = origin
+            onScroll?()
         }
         private func restore() {
             let point = store?.offsets[route] ?? .zero
@@ -218,6 +235,6 @@ struct ManagementScrollMemory: NSViewRepresentable {
                 clip.scroll(to: point); self.enclosingScrollView?.reflectScrolledClipView(clip)
             }
         }
-        deinit { if let token { NotificationCenter.default.removeObserver(token) } }
+        deinit { NotificationCenter.default.removeObserver(self) }
     }
 }

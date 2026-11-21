@@ -16,14 +16,6 @@ enum CoreIPCDomainEvent: Equatable {
         case error
     }
 
-    enum ExportSignal: Equatable {
-        case started
-        case history(String)
-        case historyError(String)
-        case succeeded(String)
-        case failed(String)
-    }
-
     enum AdminSignal: Equatable {
         case account(String)
         case verified
@@ -67,18 +59,13 @@ enum CoreIPCDomainEvent: Equatable {
     enum LegacyShareSignal: Equatable {
         case enabled(String)
         case path(String)
-        case accessRevoked(Bool?)
         case statusOnline(Bool)
         case offlinePath(String)
-        case forgot(String)
-        case forgetError(String)
-        case forgetWarning(String)
         case error(String)
     }
 
     case subsystem(SubsystemChannel)
     case computerFiles(ComputerFilesSignal)
-    case export(ExportSignal)
     case admin(AdminSignal)
     case disksError(String)
     case alertsThresholdError(String)
@@ -97,7 +84,7 @@ enum CoreIPCDomainEvent: Equatable {
 
     static func decode(_ line: String) -> Self? {
         if let sub = decodeSubsystemOrComputerFiles(line) { return sub }
-        if let exp = decodeExportOrAdmin(line) { return exp }
+        if let admin = decodeAdminOrDiskErrors(line) { return admin }
         if let net = decodeTunnelNotifyBackupSMB(line) { return net }
         if let share = decodeSetupRemoteOrShare(line) { return share }
         return nil
@@ -113,13 +100,7 @@ enum CoreIPCDomainEvent: Equatable {
         return nil
     }
 
-    private static func decodeExportOrAdmin(_ line: String) -> Self? {
-        if line == "LIGHTISLE_EXPORT_STARTED" { return .export(.started) }
-        if let raw = payload(in: line, after: "LIGHTISLE_EXPORT_HISTORY ") { return .export(.history(raw)) }
-        if let raw = payload(in: line, after: "LIGHTISLE_EXPORT_HISTORY_ERROR ") { return .export(.historyError(raw)) }
-        if let raw = payload(in: line, after: "LIGHTISLE_EXPORT_OK ") { return .export(.succeeded(raw)) }
-        if let raw = payload(in: line, after: "LIGHTISLE_EXPORT_ERROR ") { return .export(.failed(raw)) }
-
+    private static func decodeAdminOrDiskErrors(_ line: String) -> Self? {
         if let raw = payload(in: line, after: "LIGHTISLE_ADMIN_ACCOUNT ") { return .admin(.account(raw)) }
         if line == "LIGHTISLE_ADMIN_VERIFIED" { return .admin(.verified) }
         if line == "LIGHTISLE_ADMIN_VERIFY_FAILED" { return .admin(.verifyFailed) }
@@ -170,126 +151,47 @@ enum CoreIPCDomainEvent: Equatable {
 
         if let raw = payload(in: line, after: "LIGHTISLE_SHARE_ON ") { return .legacyShare(.enabled(raw)) }
         if let raw = payload(in: line, after: "LIGHTISLE_SHARE_PATH ") { return .legacyShare(.path(raw)) }
-        if let raw = payload(in: line, after: "LIGHTISLE_SHARE_ACCESS_REVOKED ") {
-            let revoked: Bool? = raw == "1" ? true : (raw == "0" ? false : nil)
-            return .legacyShare(.accessRevoked(revoked))
-        }
         if line == "LIGHTISLE_SHARE_STATUS 0" { return .legacyShare(.statusOnline(false)) }
         if line == "LIGHTISLE_SHARE_STATUS 1" { return .legacyShare(.statusOnline(true)) }
         if let raw = payload(in: line, after: "LIGHTISLE_SHARE_OFFLINE_PATH ") { return .legacyShare(.offlinePath(raw)) }
-        if let raw = payload(in: line, after: "LIGHTISLE_SHARE_FORGOT ") { return .legacyShare(.forgot(raw)) }
-        if let raw = payload(in: line, after: "LIGHTISLE_SHARE_FORGET_ERROR ") { return .legacyShare(.forgetError(raw)) }
-        if let raw = payload(in: line, after: "LIGHTISLE_SHARE_FORGET_WARNING ") { return .legacyShare(.forgetWarning(raw)) }
         if let raw = payload(in: line, after: "LIGHTISLE_SHARE_ERROR ") { return .legacyShare(.error(raw)) }
         return nil
     }
 }
 
-/// Pure user-facing message builders for legacy share, admin, init, and notify
+/// Pure user-facing message builders for admin, init, and notify
 /// IPC error codes, extracted from `AppModel+CoreOutputConsumer` for testability.
 enum CoreIPCDomainMessages {
     static func adminResetError(for code: String) -> String {
         switch code {
         case "invalid_password":
-            return "新密码不符合长度或格式要求。"
+            return "新密码不符合长度或格式要求，原管理员密码未更改。请输入至少 12 位有效密码后重试。"
         case "admin_missing":
-            return "未找到可用的首任管理员。"
+            return "未找到可重置的首任管理员账号，现有数据未受影响。请先完成初始化或重新启动轻屿后重试。"
         default:
-            return "修改管理员密码失败，请检查 Go 服务日志。"
+            return "管理员密码未能更新，原有账号与数据未受影响。请确认轻屿服务正在运行后重试。"
         }
     }
 
     static func notifyConfigError(for reason: String?) -> String {
         switch reason {
         case "invalid_notify_config":
-            return "通知通道配置无效：Bark 服务器需为 http(s) 源（不带路径），Webhook 需为完整 http(s) 地址。"
+            return "通知通道配置无效，原有设置未受影响。请确认 Bark 服务器为 http(s) 源（不带路径）、Webhook 为完整 http(s) 地址后重试。"
         case "notify_private_target_rejected":
-            return "目标地址位于内网/本机回环。自建 Bark/Webhook 需勾选“允许内网目标”。"
+            return "目标地址位于内网或本机回环，未保存新配置。若使用自建 Bark/Webhook，请先勾选“允许内网目标”后重试。"
         default:
-            return "通知通道配置失败：\(reason ?? "未知错误")"
+            return "通知通道配置未能生效，现有数据未受影响。请检查渠道地址与凭据格式后重试。"
         }
     }
 
     static func initError(for code: String) -> (alreadyConfigured: Bool, message: String) {
         switch code {
         case "already_configured":
-            return (true, "管理员已经初始化，请登录 Web 使用。")
+            return (true, "管理员账号已完成初始化，无需重复创建。请直接打开 Web 空间登录使用。")
         case "invalid_credentials":
-            return (false, "用户名格式或密码长度不符合要求。")
+            return (false, "用户名格式或密码长度不符合要求，未创建账号。请按提示调整后重试。")
         default:
-            return (false, "初始化失败，请检查 Go 服务日志。")
+            return (false, "管理员初始化未能完成，本机数据未受影响。请确认轻屿核心服务已就绪后重试，必要时可重启应用。")
         }
-    }
-
-    static func storageSelectionTransitionMessage(
-        newPath: String,
-        previousRoot: String?,
-        accessRevoked: Bool?
-    ) -> String {
-        if let old = previousRoot {
-            switch accessRevoked {
-            case true:
-                return "已切换至 \(newPath)。旧目录 \(old) 内的文件仍保留；旧成员文件授权和公开分享链接已撤销，授权记录保存在本机，新目录仍需重新授权。用户、登录会话和 WebDAV 凭据保留。"
-            case false:
-                return "已重新连接同一物理目录：\(newPath)。目录授权保留，文件未搬迁。"
-            case nil:
-                return "已切换至 \(newPath)。旧目录文件未搬迁；授权状态未得到确认，请检查成员授权和分享链接后再使用。"
-            }
-        }
-        switch accessRevoked {
-        case true:
-            return "已启用 NAS 存储目录：\(newPath)。旧成员文件授权和公开分享链接已撤销，授权记录保存在本机；新目录需重新授权。"
-        case nil:
-            return "已启用 NAS 存储目录：\(newPath)。授权状态未得到确认，请检查成员授权和分享链接后再使用。"
-        case false:
-            return "已启用 NAS 存储目录：\(newPath)"
-        }
-    }
-
-    static func shareForgetErrorMessage(for error: String) -> String {
-        if error.contains("legacy_share_access_revoked_root_config_uncertain") {
-            return "旧成员文件授权和公开分享链接已撤销，但本机目录配置落盘结果不确定。请停止文件操作，完全退出并重启轻屿，核对当前共享目录后再继续。"
-        }
-        if error.contains("legacy_share_access_revoked_root_switch_failed") {
-            return "旧成员文件授权和公开分享链接已撤销，但本机目录切换未能完成；旧离线绑定仍保留。请检查 Core 状态后再重试。"
-        }
-        if error.contains("legacy_share_access_revocation_uncertain") {
-            return "旧授权撤销结果无法确认，目录切换未继续。请暂停共享并重启轻屿，检查成员授权和公开分享链接后再操作。"
-        }
-        if error.contains("shared_directory_transition_busy") {
-            return "仍有旧目录请求或后台任务正在结束。原绑定保留，请稍后重试。"
-        }
-        if error.contains("shared_directory_save_uncertain_restart_required") {
-            return "目录配置持久化结果不确定。请停止文件操作，完全退出后重启 LightIsle，并检查当前实际共享目录。"
-        }
-        return "清理失败或当前存在进行中任务：\(error)。原绑定仍保留。"
-    }
-
-    static func pendingStorageSelectionErrorMessage(for error: String) -> String {
-        if error.contains("shared_directory_save_uncertain_restart_required") {
-            return "存储目录配置落盘结果不确定。请停止文件操作，完全退出并重新启动轻屿，检查当前共享路径和磁盘身份后再继续。"
-        }
-        if error.contains("legacy_share_access_revoked_root_config_uncertain") {
-            return "旧成员文件授权和公开分享链接已撤销，但新目录配置落盘结果不确定。请停止文件操作，完全退出并重启轻屿，核对当前共享目录后再继续授权。"
-        }
-        if error.contains("legacy_share_access_revoked_root_switch_failed") {
-            return "旧成员文件授权和公开分享链接已撤销，但新目录未能切换。原目录文件仍保留，请检查 Core 和当前路径后再重新授权。"
-        }
-        if error.contains("legacy_share_access_revocation_uncertain") {
-            return "旧授权撤销结果无法确认，切换未继续。请暂停文件共享并重启轻屿，检查成员授权和分享链接后再操作。"
-        }
-        if error.contains("shared_directory_transition_busy") {
-            return "仍有旧目录请求或后台任务正在结束。请稍后重试切换。"
-        }
-        if error.contains("shared_directory_busy") {
-            return "当前目录还有未完成上传。请先完成上传，或在 Web 管理设置中取消未完成上传后，再切换存储目录。"
-        }
-        if error.contains("root_registry_overlap") {
-            return "所选目录与已登记的其他 NAS 存储根相同或重叠。请选一个独立文件夹，或通过多硬盘管理使用已登记的目录；原目录未切换。"
-        }
-        if error.contains("drive_operation_busy") {
-            return "正在执行磁盘操作、文件传输、备份或媒体扫描。请等待任务结束后再切换存储目录。"
-        }
-        return "更改存储目录失败：\(error)。当前运行中的原目录未被切换。"
     }
 }

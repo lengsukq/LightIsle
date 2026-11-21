@@ -91,8 +91,7 @@ struct SudoersGuideView: View {
                         .font(.system(size: 12, design: .monospaced)).textSelection(.enabled)
                     HStack {
                         Button(copied ? "已复制" : "复制规则") {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(rule, forType: .string)
+                            PasteboardHelper.copy(rule)
                             copied = true
                         }
                         .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))

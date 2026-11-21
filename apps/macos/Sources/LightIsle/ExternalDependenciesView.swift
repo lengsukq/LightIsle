@@ -123,7 +123,7 @@ struct ExternalDependenciesView: View {
                     subtitle: "选择官方版本，校验 SHA-256 后按需安装。这里不重复下载或替换已运行的 frpc。",
                     icon: "network", iconTint: .teal
                 ) {
-                    Button("打开 FRP 设置") { navigate(.services) }
+                    Button("打开 FRP 设置") { AppModel.shared.navigateToConnectionDetail(.frp) }
                         .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                 }
                 IsleGroupSpacing(height: 4).padding(.leading, 44)
@@ -132,7 +132,7 @@ struct ExternalDependenciesView: View {
                     subtitle: "只连接与管理用户已有的容器引擎，不在 LightIsle 中安装运行时。",
                     icon: "shippingbox", iconTint: .indigo
                 ) {
-                    Button("打开 Docker 管理") { navigate(.containers) }
+                    Button("打开 Docker 管理") { AppModel.shared.navigateToAppsSection(.docker) }
                         .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                 }
             }
@@ -270,8 +270,7 @@ struct ExternalDependenciesView: View {
     }
 
     private func copyGuideCommand(_ command: String) {
-        NSPasteboard.general.clearContents()
-        if NSPasteboard.general.setString(command, forType: .string) {
+        if PasteboardHelper.copy(command) {
             copiedGuideCommand = command
         }
     }

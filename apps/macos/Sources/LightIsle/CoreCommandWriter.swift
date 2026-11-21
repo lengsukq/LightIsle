@@ -3,6 +3,12 @@ import Foundation
 
 /// Owns one child generation's stdin. Disk or Core stalls cannot block AppKit,
 /// and a partial nonblocking write is completed before the next command.
+///
+/// Why `@unchecked Sendable`: wraps non-`Sendable` `FileHandle` and
+/// `DispatchSourceWrite` alongside a bounded write buffer. Every read/write of
+/// mutable queue state and every dispatch-source state transition (`resume`,
+/// `suspend`, `cancel`) is serialized by `lock`, and `report` is only invoked
+/// after releasing `lock` to prevent re-entrancy deadlocks.
 final class CoreCommandWriter: @unchecked Sendable {
     private let handle: FileHandle
     private let source: DispatchSourceWrite
@@ -31,58 +37,62 @@ final class CoreCommandWriter: @unchecked Sendable {
 
     func write(contentsOf data: Data) throws {
         guard !data.isEmpty else { return }
-        lock.lock()
-        defer { lock.unlock() }
-        guard !closed, pending.count < 96, data.count <= 128 * 1024 - bytes else {
-            reportLocked()
-            throw CocoaError(.fileWriteUnknown)
+        var shouldReport = false
+        let rejected = lock.withLock { () -> Bool in
+            guard !closed, pending.count < 96, data.count <= 128 * 1024 - bytes else {
+                shouldReport = markReportedLocked()
+                return true
+            }
+            pending.append(data)
+            bytes += data.count
+            if !active {
+                active = true
+                source.resume()
+            }
+            return false
         }
-        pending.append(data)
-        bytes += data.count
-        if !active {
-            active = true
-            source.resume()
-        }
+        if shouldReport { report() }
+        if rejected { throw CocoaError(.fileWriteUnknown) }
     }
 
     private func drain() {
-        lock.lock()
-        defer { lock.unlock() }
-        guard !closed else { return }
-        while let data = pending.first {
-            let written = data.withUnsafeBytes {
-                Darwin.write(handle.fileDescriptor, $0.baseAddress?.advanced(by: offset), data.count - offset)
+        let shouldReport = lock.withLock { () -> Bool in
+            guard !closed else { return false }
+            while let data = pending.first {
+                let written = data.withUnsafeBytes {
+                    Darwin.write(handle.fileDescriptor, $0.baseAddress?.advanced(by: offset), data.count - offset)
+                }
+                if written < 0 {
+                    if errno == EINTR { continue }
+                    if errno == EAGAIN { return false }
+                    let notify = markReportedLocked()
+                    closeLocked()
+                    return notify
+                }
+                if written == 0 { return false }
+                offset += written
+                if offset == data.count {
+                    pending.removeFirst()
+                    bytes -= data.count
+                    offset = 0
+                }
             }
-            if written < 0 {
-                if errno == EINTR { continue }
-                if errno == EAGAIN { return }
-                reportLocked()
-                closeLocked()
-                return
-            }
-            if written == 0 { return }
-            offset += written
-            if offset == data.count {
-                pending.removeFirst()
-                bytes -= data.count
-                offset = 0
-            }
+            reported = false
+            active = false
+            source.suspend()
+            return false
         }
-        reported = false
-        active = false
-        source.suspend()
+        if shouldReport { report() }
     }
 
-    private func reportLocked() {
-        guard !reported else { return }
+    private func markReportedLocked() -> Bool {
+        guard !reported else { return false }
         reported = true
-        report()
+        return true
     }
 
     func close() {
-        lock.lock()
-        defer { lock.unlock() }
-        closeLocked()
+        lock.withLock { closeLocked() }
     }
 
     private func closeLocked() {

@@ -65,8 +65,7 @@ extension ContentView {
                                 variant: .borderless,
                                 help: "复制临时域名"
                             ) {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(url, forType: .string)
+                                PasteboardHelper.copy(url)
                                 showNotice("已复制临时域名")
                             }
                         }
@@ -83,16 +82,16 @@ extension ContentView {
                 IsleGroupSpacing(height: 4).padding(.leading, 14)
                 AppleSettingsRow(title: "高级：运行已有隧道 Token", subtitle: "已通过 Cloudflare 控制台创建的隧道，可直接粘贴其 Token 启动。", icon: "authenticator", iconTint: .purple) {
                     HStack(spacing: 8) {
-                        SecureField("粘贴隧道 Token", text: $manualTunnelToken)
+                        SecureField("粘贴隧道 Token", text: $drafts.manualTunnelToken)
                             .liquidInput()
                             .frame(width: 210)
                             .font(.system(size: 11, design: .monospaced))
                         Button("启动") {
-                            model.runTunnelWithToken(manualTunnelToken)
-                            manualTunnelToken = ""
+                            model.runTunnelWithToken(drafts.manualTunnelToken)
+                            drafts.manualTunnelToken = ""
                         }
                         .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                        .disabled(manualTunnelToken.trimmingCharacters(in: .whitespaces).count < 16 || model.state != .online)
+                        .disabled(drafts.manualTunnelToken.trimmingCharacters(in: .whitespaces).count < 16 || model.state != .online)
                     }
                 }
                 if let error = model.tunnelState?.error, !error.isEmpty {
@@ -247,15 +246,9 @@ extension ContentView {
                         .disabled(model.state != .online ||
                                   model.frpState?.installed != true ||
                                   model.frpState?.status == "installing")
-                        if model.frpState?.status == "running" || model.frpState?.status == "restarting" {
-                            Button(model.frpState?.status == "restarting" ? "取消重试" : "停止") { model.stopFRP() }
+                        if model.frpState?.status == "restarting" {
+                            Button("取消重试") { model.stopFRP() }
                                 .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                        } else {
-                            Button("启动") { model.startFRP() }
-                                .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
-                                .disabled(model.state != .online ||
-                                          model.frpState?.installed != true ||
-                                          model.frpState?.status == "installing")
                         }
                         IsleIconButton(
                             icon: "arrow.clockwise",

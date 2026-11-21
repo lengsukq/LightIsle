@@ -1,7 +1,9 @@
 import Foundation
 import Darwin
 
-struct NativeTailscaleSnapshot: Equatable {
+struct NativeTailscaleSnapshot: Equatable, Sendable {
+    static let empty = NativeTailscaleSnapshot(installed: false, connected: false, interfaceName: "", ipv4: "")
+
     let installed: Bool
     let connected: Bool
     let interfaceName: String
@@ -27,7 +29,7 @@ struct NativePowerSnapshot: Equatable, Sendable {
     let lowBattery: Bool
 
     var statusLabel: String {
-        guard available else { return "等待采样" }
+        guard available else { return "检测中" }
         if onBattery {
             return percent > 0 ? "备用供电 \(percent)%" : "备用电源供电"
         }
@@ -167,7 +169,8 @@ enum TailscaleAndUPSDetector {
                         0,
                         NI_NUMERICHOST
                     ) == 0 {
-                        let ip = String(cString: hostname)
+                        let nulIndex = hostname.firstIndex(of: 0) ?? hostname.count
+                        let ip = String(decoding: hostname[..<nulIndex].map(UInt8.init(bitPattern:)), as: UTF8.self)
                         if isCGNATIPv4(ip) {
                             foundIface = name
                             foundIP = ip

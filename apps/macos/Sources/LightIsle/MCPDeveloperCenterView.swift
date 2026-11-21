@@ -12,8 +12,8 @@ struct MCPDeveloperCenterView: View {
 
     // MCP Inspector State
     @State private var inspectorMode = "tools/call"
-    @State private var selectedTool = "lightisle_get_environment"
-    @State private var selectedURI = "lightisle://specs/plugin-v2"
+    @State private var selectedTool = ""
+    @State private var selectedURI = ""
     @State private var toolArgsJSON = "{}"
     @State private var rawRPCJSON = """
     {
@@ -30,47 +30,6 @@ struct MCPDeveloperCenterView: View {
     @State private var probePath = "/"
     @State private var probeRole = "admin"
     @State private var probeBody = ""
-
-    private static let allTools: [(id: String, label: String, sampleArgs: String)] = [
-        ("lightisle_get_health", "[系统] lightisle_get_health · 服务状态与版本", "{}"),
-        ("lightisle_get_system", "[系统] lightisle_get_system · Mac CPU/内存实时状态", "{}"),
-        ("lightisle_get_network_info", "[系统] lightisle_get_network_info · 本机网络与网关", "{}"),
-        ("lightisle_clear_cache", "[系统] lightisle_clear_cache · 清理缩略图与瓦片缓存", "{\n  \"categories\": [\"all\"]\n}"),
-        ("lightisle_get_audit_history", "[审计] lightisle_get_audit_history · 查询操作与 MCP 审计", "{\n  \"limit\": 20\n}"),
-        ("lightisle_list_disks", "[磁盘] lightisle_list_disks · 物理磁盘与挂载状态", "{}"),
-        ("lightisle_list_roots", "[存储] lightisle_list_roots · 存储根与 generation", "{}"),
-        ("lightisle_get_my_storage", "[存储] lightisle_get_my_storage · 当前账号存储配额", "{}"),
-        ("lightisle_list_files", "[文件] lightisle_list_files · 分页列出目录条目", "{\n  \"rootId\": \"main\",\n  \"path\": \".\",\n  \"limit\": 50\n}"),
-        ("lightisle_create_folder", "[文件] lightisle_create_folder · 新建文件夹", "{\n  \"rootId\": \"main\",\n  \"generation\": 1,\n  \"path\": \"AgentFolder\"\n}"),
-        ("lightisle_move_to_trash", "[文件] lightisle_move_to_trash · 安全移入回收站", "{\n  \"rootId\": \"main\",\n  \"generation\": 1,\n  \"path\": \"AgentFolder/old.txt\"\n}"),
-        ("lightisle_list_trash", "[文件] lightisle_list_trash · 查看回收站条目", "{\n  \"rootId\": \"main\"\n}"),
-        ("lightisle_get_photo_status", "[相册] lightisle_get_photo_status · 照片索引状态", "{\n  \"rootId\": \"main\"\n}"),
-        ("lightisle_get_cinema_status", "[影视] lightisle_get_cinema_status · 影视索引状态", "{\n  \"rootId\": \"main\"\n}"),
-        ("lightisle_list_downloads", "[下载] lightisle_list_downloads · 下载任务列表", "{}"),
-        ("lightisle_list_members", "[成员] lightisle_list_members · 家庭成员列表", "{}"),
-        ("lightisle_list_automation_tasks", "[自动化] lightisle_list_automation_tasks · 本机脚本列表", "{}"),
-        ("lightisle_trigger_automation_task", "[自动化] lightisle_trigger_automation_task · 立即运行脚本", "{\n  \"taskId\": \"daily-report\"\n}"),
-        ("lightisle_list_tasks", "[任务] lightisle_list_tasks · 后台任务进度", "{}"),
-        ("lightisle_list_alerts", "[告警] lightisle_list_alerts · 活跃系统告警", "{}"),
-        ("lightisle_get_environment", "[插件] lightisle_get_environment · 读取运行环境", "{}"),
-        ("lightisle_list_managed_apps", "[应用] lightisle_list_managed_apps · 轻应用状态列表", "{}"),
-        ("lightisle_control_managed_app", "[应用] lightisle_control_managed_app · 启停/唤醒/重启", "{\n  \"appId\": \"network-pulse\",\n  \"action\": \"restart\"\n}"),
-        ("lightisle_list_apps", "[插件] lightisle_list_apps · 列出已安装插件", "{}"),
-        ("lightisle_scaffold_app", "[插件] lightisle_scaffold_app · 创建插件脚手架", "{\n  \"id\": \"demo-tool\",\n  \"name\": \"调试示例插件\",\n  \"mode\": \"static\"\n}"),
-        ("lightisle_validate_and_reload", "[插件] lightisle_validate_and_reload · 校验并热重载", "{\n  \"id\": \"network-pulse\"\n}"),
-        ("lightisle_read_plugin_file", "[插件] lightisle_read_plugin_file · 读取插件文件", "{\n  \"id\": \"network-pulse\",\n  \"path\": \"plugin.json\"\n}"),
-        ("lightisle_write_plugin_file", "[插件] lightisle_write_plugin_file · 写入插件文件", "{\n  \"id\": \"demo-tool\",\n  \"path\": \"ui/index.html\",\n  \"content\": \"<!doctype html><html><body>Hello MCP</body></html>\"\n}"),
-        ("lightisle_app_action", "[插件] lightisle_app_action · 启停/唤醒/执行Cron", "{\n  \"id\": \"network-pulse\",\n  \"action\": \"reload\"\n}"),
-        ("lightisle_get_app_logs", "[插件] lightisle_get_app_logs · 获取插件日志与状态", "{\n  \"id\": \"network-pulse\",\n  \"limit\": 10\n}"),
-        ("lightisle_probe_app", "[插件] lightisle_probe_app · 发送网关 HTTP 探针", "{\n  \"id\": \"network-pulse\",\n  \"method\": \"GET\",\n  \"path\": \"/\"\n}")
-    ]
-
-    private static let allResources: [(uri: String, label: String)] = [
-        ("lightisle://specs/mcp-security", "lightisle://specs/mcp-security · 管理控制与安全审计规范"),
-        ("lightisle://specs/plugin-v2", "lightisle://specs/plugin-v2 · 多语言轻应用规范"),
-        ("lightisle://specs/ui-theme", "lightisle://specs/ui-theme · Liquid Glass 视觉规范"),
-        ("lightisle://specs/automation-v1", "lightisle://specs/automation-v1 · 定时脚本与邮件规范")
-    ]
 
     private var effectiveLocalCommand: String {
         let trimmed = appsCenter.mcp.command.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -150,6 +109,21 @@ struct MCPDeveloperCenterView: View {
             if probeAppID.isEmpty, let first = appsCenter.apps.first?.id {
                 probeAppID = first
             }
+            syncSelectedCatalogItems()
+            if appsCenter.connected && appsCenter.mcp.mcpEnabled && appsCenter.discoveredMCPTools.isEmpty {
+                appsCenter.refreshMCPCatalog()
+            }
+        }
+        .onChange(of: appsCenter.mcp.mcpEnabled) { _, enabled in
+            if enabled && appsCenter.connected && appsCenter.discoveredMCPTools.isEmpty {
+                appsCenter.refreshMCPCatalog()
+            }
+        }
+        .onChange(of: appsCenter.discoveredMCPTools) { _, _ in
+            syncSelectedCatalogItems()
+        }
+        .onChange(of: appsCenter.discoveredMCPResources) { _, _ in
+            syncSelectedCatalogItems()
         }
         .onChange(of: appsCenter.apps) { _, list in
             if probeAppID.isEmpty, let first = list.first?.id {
@@ -161,6 +135,10 @@ struct MCPDeveloperCenterView: View {
                 copiedResetTask?.cancel()
                 copiedBanner = nil
             }
+        }
+        .onDisappear {
+            copiedResetTask?.cancel()
+            copiedResetTask = nil
         }
     }
 
@@ -381,10 +359,54 @@ struct MCPDeveloperCenterView: View {
     }
 
     private var mcpInspectorSection: some View {
-        AppleSettingsGroup(
+        let tools = appsCenter.discoveredMCPTools
+        let resources = appsCenter.discoveredMCPResources
+        let catalogReady = !tools.isEmpty || !resources.isEmpty
+
+        return AppleSettingsGroup(
             title: "MCP 交互式调试器 (MCP Inspector)",
-            footer: "Unified Management MCP v2.0 提供 89 项受审工具与 4 项规范资源；控制台快捷预设 \(Self.allTools.count) 项高频工具与 \(Self.allResources.count) 项规范资源（可通过 Raw JSON-RPC 调用全部工具），直接在轻屿内发送请求并查看耗时。"
+            footer: "工具与规范资源清单直接向本机 MCP 网关动态请求（tools/list 与 resources/list），与后端保持单一事实来源，无静态漂移。"
         ) {
+            AppleSettingsRow(
+                title: "动态工具与资源目录",
+                subtitle: !appsCenter.connected
+                    ? "轻屿核心服务未连接，请等待服务在线后刷新。"
+                    : (!appsCenter.mcp.mcpEnabled
+                        ? "请先开启上方「AI Agent (MCP) 服务」开关，再同步动态工具目录。"
+                        : (catalogReady
+                            ? "已从本机网关同步 \(tools.count) 项工具与 \(resources.count) 项资源"
+                            : "尚未同步网关清单，请点击右侧刷新按钮拉取 tools/list 与 resources/list。")),
+                icon: "arrow.triangle.2.circlepath.circle.fill",
+                iconTint: catalogReady ? .green : .orange
+            ) {
+                HStack(spacing: 8) {
+                    if appsCenter.mcpCatalogLoading {
+                        ProgressView().controlSize(.small)
+                    }
+                    if appsCenter.connected && !appsCenter.mcp.mcpEnabled {
+                        Button("开启服务并同步") {
+                            appsCenter.setMCPConfig(mcpEnabled: true)
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                        .disabled(appsCenter.busy)
+                    } else {
+                        Button(appsCenter.mcpCatalogLoading ? "同步中…" : "刷新目录") {
+                            appsCenter.refreshMCPCatalog()
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        .disabled(!appsCenter.connected || appsCenter.busy || appsCenter.mcpCatalogLoading)
+                    }
+                }
+            }
+            if let catalogError = appsCenter.mcpCatalogError {
+                IsleGroupSpacing(height: 4).padding(.leading, 14)
+                AppleSettingsRow(title: "目录同步提示", icon: "exclamationmark.triangle", iconTint: .orange) {
+                    Text(catalogError)
+                        .font(.caption)
+                        .foregroundStyle(IsleTheme.warningText)
+                }
+            }
+            IsleGroupSpacing(height: 4).padding(.leading, 14)
             AppleSettingsRow(title: "调用方式", icon: "play.rectangle.on.rectangle.fill", iconTint: .blue) {
                 Picker("调用方式", selection: $inspectorMode) {
                     Text("调用工具 (tools/call)").tag("tools/call")
@@ -400,16 +422,22 @@ struct MCPDeveloperCenterView: View {
             if inspectorMode == "tools/call" {
                 IsleGroupSpacing(height: 4).padding(.leading, 14)
                 AppleSettingsRow(title: "选择 MCP 工具", icon: "wrench.and.screwdriver.fill", iconTint: .purple) {
-                    Picker("工具", selection: $selectedTool) {
-                        ForEach(Self.allTools, id: \.id) { item in
-                            Text(item.label).tag(item.id)
+                    if tools.isEmpty {
+                        Text("暂无已同步工具，请先开启 MCP 并点击「刷新目录」")
+                            .font(.caption)
+                            .foregroundStyle(IsleTheme.secondaryText)
+                    } else {
+                        Picker("工具", selection: $selectedTool) {
+                            ForEach(tools) { item in
+                                Text(item.displayLabel).tag(item.id)
+                            }
                         }
-                    }
-                    .labelsHidden()
-                    .frame(minWidth: 0, idealWidth: 280, maxWidth: 360)
-                    .onChange(of: selectedTool) { _, next in
-                        if let found = Self.allTools.first(where: { $0.id == next }) {
-                            toolArgsJSON = found.sampleArgs
+                        .labelsHidden()
+                        .frame(minWidth: 0, idealWidth: 280, maxWidth: 360)
+                        .onChange(of: selectedTool) { _, next in
+                            if let found = tools.first(where: { $0.id == next }) {
+                                toolArgsJSON = found.sampleArgsJSON
+                            }
                         }
                     }
                 }
@@ -424,13 +452,19 @@ struct MCPDeveloperCenterView: View {
             } else if inspectorMode == "resources/read" {
                 IsleGroupSpacing(height: 4).padding(.leading, 14)
                 AppleSettingsRow(title: "选择 MCP 资源 URI", icon: "book.closed.fill", iconTint: .indigo) {
-                    Picker("资源 URI", selection: $selectedURI) {
-                        ForEach(Self.allResources, id: \.uri) { res in
-                            Text(res.label).tag(res.uri)
+                    if resources.isEmpty {
+                        Text("暂无已同步资源，请先开启 MCP 并点击「刷新目录」")
+                            .font(.caption)
+                            .foregroundStyle(IsleTheme.secondaryText)
+                    } else {
+                        Picker("资源 URI", selection: $selectedURI) {
+                            ForEach(resources) { res in
+                                Text(res.displayLabel).tag(res.uri)
+                            }
                         }
+                        .labelsHidden()
+                        .frame(minWidth: 0, idealWidth: 280, maxWidth: 360)
                     }
-                    .labelsHidden()
-                    .frame(minWidth: 0, idealWidth: 280, maxWidth: 360)
                 }
             } else if inspectorMode == "raw" {
                 IsleGroupSpacing(height: 4).padding(.leading, 14)
@@ -456,7 +490,7 @@ struct MCPDeveloperCenterView: View {
                         runMCPDebug()
                     }
                     .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
-                    .disabled(appsCenter.busy)
+                    .disabled(appsCenter.busy || (inspectorMode == "tools/call" && selectedTool.isEmpty) || (inspectorMode == "resources/read" && selectedURI.isEmpty))
                 }
             }
 
@@ -638,6 +672,19 @@ struct MCPDeveloperCenterView: View {
         .disabled(appsCenter.busy || probeAppID.isEmpty)
     }
 
+    private func syncSelectedCatalogItems() {
+        let tools = appsCenter.discoveredMCPTools
+        if !tools.isEmpty, !tools.contains(where: { $0.id == selectedTool }) {
+            let first = tools[0]
+            selectedTool = first.id
+            toolArgsJSON = first.sampleArgsJSON
+        }
+        let resources = appsCenter.discoveredMCPResources
+        if !resources.isEmpty, !resources.contains(where: { $0.uri == selectedURI }) {
+            selectedURI = resources[0].uri
+        }
+    }
+
     private func runMCPDebug() {
         switch inspectorMode {
         case "tools/call":
@@ -676,8 +723,7 @@ struct MCPDeveloperCenterView: View {
     }
 
     private func copyText(_ text: String, notice: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
+        PasteboardHelper.copy(text)
         copiedBanner = notice
         copiedResetTask?.cancel()
         copiedResetTask = Task { @MainActor in

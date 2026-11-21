@@ -1,6 +1,5 @@
 import AppKit
 import Foundation
-import LocalAuthentication
 
 @MainActor
 extension AppModel {
@@ -52,36 +51,29 @@ extension AppModel {
     func resetAdministratorPassword(newPassword: String) {
         administratorResetSucceeded = false
         guard state == .online, isConfigured == true, !resettingAdmin else { return }
-        guard newPassword.utf8.count >= 12, newPassword.utf8.count <= 256,
-              newPassword.trimmingCharacters(in: .whitespacesAndNewlines) == newPassword else {
-            resetAdminMessage = "新密码至少 12 位、最多 256 字节，且不能以空格开头或结尾。"
+        let validation = AccountInputValidator.validatePassword(newPassword)
+        guard validation.isValid else {
+            resetAdminMessage = validation.message ?? "新密码至少 12 位，且不能以空格开头或结尾。"
             return
         }
         resettingAdmin = true
         resetAdminMessage = nil
         Task {
-            let context = LAContext()
-            var policyError: NSError?
-            guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &policyError) else {
-                resetAdminMessage = "macOS 无法执行设备所有者验证，请检查系统登录密码或 Touch ID 设置。"
-                resettingAdmin = false
-                return
-            }
             do {
-                let approved = try await context.evaluatePolicy(
-                    .deviceOwnerAuthentication,
-                    localizedReason: "验证 Mac 登录密码或 Touch ID，以重置轻屿管理员密码"
-                )
-                guard approved, state == .online, let pipe = coreCommands else {
+                try await DeviceOwnerAuth.authenticate(reason: "验证 Mac 登录密码或 Touch ID，以重置轻屿管理员密码")
+                guard state == .online, let pipe = coreCommands else {
                     resettingAdmin = false
-                    resetAdminMessage = "认证已取消或本地服务不可用。"
+                    resetAdminMessage = "本地服务暂不可用，管理员密码未更改。请确认轻屿运行正常后重试。"
                     return
                 }
                 let payload = try JSONSerialization.data(withJSONObject: ["password": newPassword])
                 try pipe.write(contentsOf: Data(("admin reset " + payload.base64URLEncodedString + "\n").utf8))
+            } catch let authError as DeviceOwnerAuth.AuthError {
+                resettingAdmin = false
+                resetAdminMessage = authError.errorDescription
             } catch {
                 resettingAdmin = false
-                resetAdminMessage = "设备验证取消或失败，管理员密码未更改。"
+                resetAdminMessage = UserFacingErrorMapper.coreIPCCommandError(action: "重置管理员密码", dataSafeNote: "原管理员密码未更改")
             }
         }
     }
@@ -89,9 +81,12 @@ extension AppModel {
     func initializeAdministrator(username: String, password: String) {
         guard isConfigured == false, !initializing, state == .online else { return }
         let trimmed = username.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.range(of: "^[A-Za-z0-9_.-]{3,32}$", options: .regularExpression) != nil,
-              password.utf8.count >= 12, password.utf8.count <= 256 else {
-            initializationError = "用户名需为 3–32 位英数字或 . _ -；密码至少 12 位。"
+        let usernameStatus = AccountInputValidator.validateUsername(trimmed)
+        let passwordStatus = AccountInputValidator.validatePassword(password)
+        guard usernameStatus.isValid, passwordStatus.isValid else {
+            initializationError = usernameStatus.isValid
+                ? (passwordStatus.message ?? "密码至少 12 位。")
+                : (usernameStatus.message ?? "用户名需为 3–32 位英数字或 . _ -。")
             return
         }
         let payload = ["username": trimmed, "password": password]

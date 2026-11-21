@@ -6,7 +6,7 @@ import Foundation
 /// Core over its private stdin pipe after every restart. It is never written to
 /// UserDefaults, SQLite, logs, or remote clients; the Core keeps it in memory
 /// only, the same model as the TMDB and Cloudflare tokens.
-struct NotifyChannelConfig: Codable, Equatable {
+struct NotifyChannelConfig: Codable, Equatable, Sendable {
     var barkServer: String = ""
     var barkKey: String = ""
     var webhookURL: String = ""
@@ -38,14 +38,14 @@ enum NotifySecretVault {
         HostSecretVault.current.loadNotifyChannels()
     }
 
-    static func remove() {
-        try? HostSecretVault.current.removeNotifyChannels()
+    static func remove() throws {
+        try HostSecretVault.current.removeNotifyChannels()
     }
 }
 
 // MARK: - IPC payload models (mirroring the Go notify package)
 
-struct NotifyStats: Decodable, Equatable {
+struct NotifyStats: Decodable, Equatable, Sendable {
     let configured: Bool
     let queued: Int
     let dropped: UInt64

@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 /// On-demand SMART elevation, owned by the Mac App because only it can
 /// present the macOS authorization dialog (the Go core runs unprivileged and
@@ -116,20 +117,31 @@ enum SmartElevation {
             return ProcessOutcome(output: nil, error: error.localizedDescription)
         }
         let deadline = DispatchTime.now() + timeout
-        var outputData = Data()
-        var errorData = Data()
+        let stdoutBuffer = OSAllocatedUnfairLock(initialState: Data())
+        let stderrBuffer = OSAllocatedUnfairLock(initialState: Data())
         let group = DispatchGroup()
         let queue = DispatchQueue.global(qos: .userInitiated)
         group.enter()
-        queue.async { outputData = readAll(stdout.fileHandleForReading, upTo: 1 << 20) ; group.leave() }
+        queue.async {
+            let data = readAll(stdout.fileHandleForReading, upTo: 1 << 20)
+            stdoutBuffer.withLock { $0 = data }
+            group.leave()
+        }
         group.enter()
-        queue.async { errorData = readAll(stderr.fileHandleForReading, upTo: 16 << 10) ; group.leave() }
-        _ = group.wait(timeout: deadline)
+        queue.async {
+            let data = readAll(stderr.fileHandleForReading, upTo: 16 << 10)
+            stderrBuffer.withLock { $0 = data }
+            group.leave()
+        }
+        let timedOut = group.wait(timeout: deadline) == .timedOut
         // Hard stop at the deadline; an escalated dialog waits for the user.
-        if process.isRunning && DispatchTime.now() >= deadline {
+        if timedOut && process.isRunning {
             process.terminate()
         }
         process.waitUntilExit()
+        _ = group.wait(timeout: .now() + 1)
+        let outputData = stdoutBuffer.withLock { $0 }
+        let errorData = stderrBuffer.withLock { $0 }
 
         let truncatedError = String(data: errorData, encoding: .utf8) ?? ""
         if process.terminationStatus == 0 {

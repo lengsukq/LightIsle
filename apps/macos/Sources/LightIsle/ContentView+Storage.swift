@@ -65,51 +65,52 @@ extension ContentView {
         }
     }
     var storageSummary: some View {
-        let root = model.rootManagement.defaultRoot
-        let isOnline = root?.online ?? (model.sharedFolderPath != nil)
-        let defaultPath = root?.path ?? model.sharedFolderPath
-        let matchedVolume: HostVolume? = {
-            guard let volumes = model.metrics?.volumes,
-                  let mount = StorageVolumeSelection.matchingMount(for: defaultPath, mounts: volumes.map(\.mount)) else { return nil }
-            return volumes.first(where: { $0.mount == mount })
-        }()
-        return LiquidCard {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .center, spacing: 12) {
-                    IsleHeaderIconBadge(icon: "externaldrive.fill", tint: IsleFluidPalette.brandCyan, size: 42)
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 8) {
-                            Text(isOnline ? (root?.name ?? model.sharedFolderName) : "默认存储尚未就绪")
-                                .font(.system(size: 17, weight: .semibold))
-                            IsleStatusPill(
-                                text: isOnline ? "在线" : (root?.online == false ? "已离线" : "未设置"),
-                                tone: isOnline ? .success : .warning,
-                                showDot: true
-                            )
+        HostMetricsObserver(store: model.hostMetrics) { telemetry in
+            let root = model.rootManagement.defaultRoot
+            let isOnline = root?.online ?? (model.sharedFolderPath != nil)
+            let defaultPath = root?.path ?? model.sharedFolderPath
+            let matchedVolume: HostVolume? = {
+                guard let volumes = telemetry.metrics?.volumes,
+                      let mount = StorageVolumeSelection.matchingMount(for: defaultPath, mounts: volumes.map(\.mount)) else { return nil }
+                return volumes.first(where: { $0.mount == mount })
+            }()
+            LiquidCard {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(alignment: .center, spacing: 12) {
+                        IsleHeaderIconBadge(icon: "externaldrive.fill", tint: IsleFluidPalette.brandCyan, size: 42)
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 8) {
+                                Text(isOnline ? (root?.name ?? model.sharedFolderName) : "默认存储尚未就绪")
+                                    .font(.system(size: 17, weight: .semibold))
+                                IsleStatusPill(
+                                    text: isOnline ? "在线" : (root?.online == false ? "已离线" : "未设置"),
+                                    tone: isOnline ? .success : .warning,
+                                    showDot: true
+                                )
+                            }
+                            Text(defaultPath ?? "请登记专用文件夹并设为默认 NAS 存储")
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundStyle(IsleTheme.secondaryText)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                                .textSelection(.enabled)
                         }
-                        Text(defaultPath ?? "请登记专用文件夹并设为默认 NAS 存储")
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundStyle(IsleTheme.secondaryText)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                            .textSelection(.enabled)
-                    }
-                    Spacer(minLength: 8)
-                    if let path = defaultPath, isOnline {
-                        IsleIconButton(
-                            icon: "folder",
-                            help: "在访达中打开默认存储目录"
-                        ) {
-                            NSWorkspace.shared.open(URL(fileURLWithPath: path))
+                        Spacer(minLength: 8)
+                        if let path = defaultPath, isOnline {
+                            IsleIconButton(
+                                icon: "folder",
+                                help: "在访达中打开默认存储目录"
+                            ) {
+                                NSWorkspace.shared.open(URL(fileURLWithPath: path))
+                            }
                         }
+                        Button("管理存储位置") {
+                            requestLocalNavigation { storageDetail = .locations }
+                        }
+                        .buttonStyle(LiquidButtonStyle(variant: isOnline ? .secondary : .prominent, size: .small))
+                        IsleDetailInfo(title: "存储位置", rows: storagePreviewRows(metrics: telemetry.metrics))
                     }
-                    Button("管理存储位置") {
-                        requestLocalNavigation { storageDetail = .locations }
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: isOnline ? .secondary : .prominent, size: .small))
-                    IsleDetailInfo(title: "存储位置", rows: storagePreviewRows)
-                }
-                if let volume = matchedVolume, volume.total > 0 {
+                    if let volume = matchedVolume, volume.total > 0 {
                     let used = volume.total - min(volume.free, volume.total)
                     let ratio = Double(used) / Double(max(volume.total, 1))
                     let slices = IsleStorageChartBuilder.volumeSlices(
@@ -172,13 +173,17 @@ extension ContentView {
                         model.navigateToSettingsDetail(.permissions)
                     }
                 ])
+                }
             }
         }
     }
     var storagePreviewRows: [(String, String)] {
+        storagePreviewRows(metrics: model.hostMetrics.metrics)
+    }
+    func storagePreviewRows(metrics: HostMetrics?) -> [(String, String)] {
         let defaultPath = model.rootManagement.defaultRoot?.path
         var rows = [("完整路径", defaultPath ?? "尚未设置")]
-        if let volumes = model.metrics?.volumes,
+        if let volumes = metrics?.volumes,
            let mount = StorageVolumeSelection.matchingMount(for: defaultPath, mounts: volumes.map(\.mount)),
            let volume = volumes.first(where: { $0.mount == mount }) {
             rows += [("所在卷", volume.name), ("可用容量", formatBytes(volume.free)), ("总容量", formatBytes(volume.total))]
@@ -341,7 +346,8 @@ extension ContentView {
                 RootManagementView(model: model.rootManagement)
             }
 
-            if let volumes = model.metrics?.volumes, !volumes.isEmpty {
+            HostMetricsObserver(store: model.hostMetrics) { telemetry in
+                if let volumes = telemetry.metrics?.volumes, !volumes.isEmpty {
                 // Disk images (including our own LightIsle installer DMG) are
                 // mounted volumes, not eligible NAS disks. Prefer the actual
                 // diskutil protocol over volume names, since a real physical
@@ -443,7 +449,7 @@ extension ContentView {
                                 }
                                 .font(.caption)
                             }
-                            if let activity = diskActivity(for: volume.device) {
+                            if let activity = diskActivity(for: volume.device, in: telemetry.metrics) {
                                 HStack(spacing: 6) {
                                     Image(systemName: "arrow.triangle.swap")
                                         .foregroundStyle(IsleTheme.secondaryText)
@@ -529,6 +535,7 @@ extension ContentView {
                     }
                 }
             }
+            }
 
             IsleQuickJumpBar(items: [
                 IsleQuickJumpItem("个人空间与配额", icon: "person.2.fill", tint: .purple, help: "查看或调整成员专属目录及配额") {
@@ -553,13 +560,13 @@ extension ContentView {
             AppleSettingsGroup(title: "低空间告警阈值", footer: "剩余空间低于绝对值或总容量的百分比之一时发出告警并通知；两个条件任一满足即触发。适用于 NAS 存储卷。") {
                 AppleSettingsRow(title: "告警阈值", icon: "exclamationmark.triangle", iconTint: .orange) {
                     HStack(spacing: 8) {
-                        TextField("剩余 GiB", text: $thresholdFreeMiBText)
+                        TextField("剩余 GiB", text: $drafts.thresholdFreeMiBText)
                             .liquidInput()
                             .frame(width: 76)
                             .font(.system(size: 12, design: .monospaced))
                         Text("GiB 或")
                             .font(.caption).foregroundStyle(IsleTheme.secondaryText)
-                        TextField("百分比", text: $thresholdPercentText)
+                        TextField("百分比", text: $drafts.thresholdPercentText)
                             .liquidInput()
                             .frame(width: 58)
                             .font(.system(size: 12, design: .monospaced))
@@ -583,42 +590,44 @@ extension ContentView {
             }
             .onChange(of: model.storageThreshold) { _, _ in syncThresholdDraft() }
 
-            AppleSettingsGroup(title: "宿主 Mac 磁盘体征") {
-                if let m = model.metrics, m.diskTotal > 0 {
-                    let clampedFree = min(m.diskFree, m.diskTotal)
-                    let used = m.diskTotal - clampedFree
-                    let ratio = Double(used) / Double(m.diskTotal)
-                    let systemSlices = IsleStorageChartBuilder.volumeSlices(total: m.diskTotal, free: clampedFree)
-                    AppleSettingsRow(
-                        title: "系统盘空间构成",
-                        subtitle: "总容量 \(formatBytes(m.diskTotal)) · 剩余 \(formatBytes(clampedFree))",
-                        icon: "chart.pie.fill",
-                        iconTint: ratio > 0.88 ? .orange : .teal
-                    ) {
-                        IsleDonutGauge(
-                            progress: ratio,
-                            centerText: "\(Int(round(ratio * 100)))%",
-                            centerSubtext: "已用",
-                            tint: ratio > 0.88 ? .orange : .teal,
-                            size: 52,
-                            lineWidth: 5.5,
-                            accessibilityLabel: "宿主系统盘占用比例"
-                        )
-                    }
-                    VStack(alignment: .leading, spacing: 8) {
-                        IsleSegmentedBar(
-                            slices: systemSlices,
-                            total: Double(m.diskTotal),
-                            barHeight: 10,
-                            showsLegend: true,
-                            accessibilityTitle: "宿主 Mac 系统盘空间构成"
-                        )
-                    }
-                    .padding(.horizontal, 16)
-                    .padding(.bottom, 14)
-                } else {
-                    AppleSettingsRow(title: "系统盘信息", icon: "info.circle", iconTint: .indigo) {
-                        Text("正在采样…").font(.caption).foregroundStyle(IsleTheme.secondaryText)
+            HostMetricsObserver(store: model.hostMetrics) { telemetry in
+                AppleSettingsGroup(title: "宿主 Mac 磁盘体征") {
+                    if let m = telemetry.metrics, m.diskTotal > 0 {
+                        let clampedFree = min(m.diskFree, m.diskTotal)
+                        let used = m.diskTotal - clampedFree
+                        let ratio = Double(used) / Double(m.diskTotal)
+                        let systemSlices = IsleStorageChartBuilder.volumeSlices(total: m.diskTotal, free: clampedFree)
+                        AppleSettingsRow(
+                            title: "系统盘空间构成",
+                            subtitle: "总容量 \(formatBytes(m.diskTotal)) · 剩余 \(formatBytes(clampedFree))",
+                            icon: "chart.pie.fill",
+                            iconTint: ratio > 0.88 ? .orange : .teal
+                        ) {
+                            IsleDonutGauge(
+                                progress: ratio,
+                                centerText: "\(Int(round(ratio * 100)))%",
+                                centerSubtext: "已用",
+                                tint: ratio > 0.88 ? .orange : .teal,
+                                size: 52,
+                                lineWidth: 5.5,
+                                accessibilityLabel: "宿主系统盘占用比例"
+                            )
+                        }
+                        VStack(alignment: .leading, spacing: 8) {
+                            IsleSegmentedBar(
+                                slices: systemSlices,
+                                total: Double(m.diskTotal),
+                                barHeight: 10,
+                                showsLegend: true,
+                                accessibilityTitle: "宿主 Mac 系统盘空间构成"
+                            )
+                        }
+                        .padding(.horizontal, 16)
+                        .padding(.bottom, 14)
+                    } else {
+                        AppleSettingsRow(title: "系统盘信息", icon: "info.circle", iconTint: .indigo) {
+                            Text("正在采样…").font(.caption).foregroundStyle(IsleTheme.secondaryText)
+                        }
                     }
                 }
             }

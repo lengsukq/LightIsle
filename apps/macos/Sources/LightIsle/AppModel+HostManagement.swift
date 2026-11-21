@@ -13,6 +13,68 @@ extension AppModel {
         if samplesManagementUI { refreshMetrics() }
     }
 
+    func setComputerFilesEnabled(_ enabled: Bool) {
+        guard state == .online else {
+            computerFilesError = "轻屿服务尚未就绪，未变更设置。请等待核心服务在线后重试。"
+            return
+        }
+        computerFilesError = nil
+        sendCoreCommandLine("computer-files \(enabled ? "on" : "off")\n", context: "computer-files.toggle")
+    }
+
+    func requestDiagnosticsDebug() -> Bool {
+        guard state == .online, let writer = coreCommands else { return false }
+        do {
+            try writer.write(contentsOf: Data("diagnostics debug\n".utf8))
+            return true
+        } catch {
+            NSLog("LightIsle Core IPC write failed (diagnostics.debug): %@", error.localizedDescription)
+            return false
+        }
+    }
+
+    func refreshMetrics() {
+        guard state == .online else { return }
+        // Keep alerts, disk warnings and share status alive without retaining
+        // the dashboard sample every three seconds while the UI is unloaded.
+        if !samplesManagementUI {
+            if Date().timeIntervalSince(lastAlertPollAt) >= 60 {
+                lastAlertPollAt = Date()
+                sendCoreCommandLine("stats summary\nalerts status\n", context: "metrics.background.alerts")
+            }
+            if Date().timeIntervalSince(lastShareStatusPollAt) >= 60 {
+                lastShareStatusPollAt = Date()
+                sendCoreCommandLine("share status\n", context: "metrics.background.share")
+                rootManagement.refresh()
+            }
+            return
+        }
+        sendCoreCommandLine(diagnosticsVisible ? "stats\n" : "stats summary\n", context: "metrics.stats")
+        sendCoreCommandLine("backup status\nbackup schedule status\n", context: "metrics.backup")
+        refreshPowerSnapshotIfNeeded()
+        if Date().timeIntervalSince(lastAlertPollAt) >= 60 {
+            lastAlertPollAt = Date()
+            sendCoreCommandLine("alerts status\n", context: "metrics.alerts")
+        }
+        if Date().timeIntervalSince(lastShareStatusPollAt) >= 30 {
+            lastShareStatusPollAt = Date()
+            sendCoreCommandLine("share status\nsmb status\n", context: "metrics.shareAndSMB")
+            rootManagement.refresh()
+        }
+    }
+
+    /// Reads `pmset -g batt` off the main thread so SwiftUI `body` evaluation
+    /// never blocks UI scrolling on a synchronous child process.
+    func refreshPowerSnapshotIfNeeded(force: Bool = false) {
+        hostMetrics.refreshPowerSnapshotIfNeeded(isPreview: isPresentationPreview, force: force)
+    }
+
+    /// Probes Tailscale binary + network interfaces off the main thread so
+    /// SwiftUI `body` evaluation never invokes `getifaddrs` / `fileExists` synchronously.
+    func refreshTailscaleStatusIfNeeded(force: Bool = false) {
+        hostMetrics.refreshTailscaleStatusIfNeeded(isPreview: isPresentationPreview, force: force)
+    }
+
     func rebuildMediaIndexes() {
         guard state == .online, !activatingMetadata, backupStatus?.running != true else {
             reindexRequestMessage = "数据库恢复或备份期间不能重新扫描。"
@@ -29,7 +91,7 @@ extension AppModel {
     func setNativeAlertsEnabled(_ enabled: Bool) {
         guard enabled else {
             nativeAlertsEnabled = false
-            UserDefaults.standard.set(false, forKey: "lightisle.nativeAlertsEnabled")
+            UserDefaults.standard.set(false, forKey: AppPreferenceKeys.nativeAlertsEnabled)
             nativeAlertError = nil
             return
         }
@@ -41,7 +103,7 @@ extension AppModel {
             self.alertAuthorizationPending = false
             self.nativeAlertsEnabled = allowed
             self.nativeAlertError = allowed ? nil : "macOS 未授权轻屿发送通知，请在系统设置 → 通知中检查。"
-            UserDefaults.standard.set(allowed, forKey: "lightisle.nativeAlertsEnabled")
+            UserDefaults.standard.set(allowed, forKey: AppPreferenceKeys.nativeAlertsEnabled)
         }
     }
 
@@ -56,13 +118,13 @@ extension AppModel {
             loginItemError = nil
             objectWillChange.send()
         } catch {
-            loginItemError = "登录项更改未成功：\(error.localizedDescription)。请在系统设置 → 通用 → 登录项检查。"
+            loginItemError = "未能更新「登录时自动启动」设置，现有数据未受影响。请在「系统设置 → 通用 → 登录项」手动确认。"
         }
     }
 
     func setKeepAwakeWhileServing(_ enabled: Bool) {
         keepAwakeWhileServing = enabled
-        UserDefaults.standard.set(enabled, forKey: "lightisle.keepAwakeWhileServing")
+        UserDefaults.standard.set(enabled, forKey: AppPreferenceKeys.keepAwakeWhileServing)
         servicePresence.updateSleepPolicy(serviceOnline: state == .online, keepAwake: enabled)
     }
 
@@ -82,8 +144,7 @@ extension AppModel {
     }
 
     private func releaseManagementCaches() {
-        metrics = nil
-        metricHistory.removeAll(keepingCapacity: false)
+        hostMetrics.releaseCaches()
         if !backupInventoryLoading { backupInventory = nil }
         if !metadataRollbacksLoading { metadataRollbacks = nil }
         if !upgradePreflightChecking { upgradePreflight = nil }
@@ -119,20 +180,7 @@ extension AppModel {
     }
 
     func openAutomationScripts() {
-        guard let dataDir = NativeMetadataRecovery.privateMetadataDirectory else { return }
-        let automation = URL(fileURLWithPath: dataDir, isDirectory: true).appendingPathComponent("automation", isDirectory: true)
-        let scripts = automation.appendingPathComponent("scripts", isDirectory: true)
-        let candidates = [scripts, automation, URL(fileURLWithPath: dataDir, isDirectory: true)]
-        for candidate in candidates {
-            if (try? candidate.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true {
-                NSWorkspace.shared.open(candidate)
-                return
-            }
-        }
-        let alert = NSAlert()
-        alert.messageText = "脚本目录尚未创建"
-        alert.informativeText = "请先启动轻屿，或从自动化页面刷新。路径：\n\(scripts.path)"
-        alert.runModal()
+        appsCenter.openAutomationScriptsDirectory()
     }
 
     func checkUpgradePreflight() {
@@ -163,7 +211,7 @@ extension AppModel {
             portError = "端口必须是 1024–65535 之间的整数。"
             return false
         }
-        UserDefaults.standard.set(value, forKey: "lightisle.localPort")
+        UserDefaults.standard.set(value, forKey: AppPreferenceKeys.localPort)
         portError = nil
         return true
     }
@@ -204,7 +252,7 @@ extension AppModel {
         guard Self.thumbnailCacheOptions.contains(value) else {
             return false
         }
-        UserDefaults.standard.set(value, forKey: "lightisle.thumbnailCacheMiB")
+        UserDefaults.standard.set(value, forKey: AppPreferenceKeys.thumbnailCacheMiB)
         return true
     }
 

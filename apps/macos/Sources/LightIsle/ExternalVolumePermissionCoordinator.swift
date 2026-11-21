@@ -10,7 +10,7 @@ final class ExternalVolumePermissionCoordinator {
         let isEligibleExternalWritable: Bool
     }
 
-    private static let mutedKeysDefaultsKey = "lightisle.mutedExternalVolumePromptKeys"
+    private static let mutedKeysDefaultsKey = AppPreferenceKeys.mutedExternalVolumePromptKeys
 
     private weak var appModel: AppModel?
     private var mountObserver: NSObjectProtocol?
@@ -82,7 +82,7 @@ final class ExternalVolumePermissionCoordinator {
                 let root = self.pendingAuditQueue.removeFirst()
                 guard let appModel = self.appModel, appModel.state == .online else { continue }
                 let rootURL = URL(fileURLWithPath: root.path, isDirectory: true)
-                let probe = StoragePermissionHelper.probeDirectoryReadWrite(at: rootURL)
+                let probe = await StoragePermissionHelper.probeDirectoryReadWriteAsync(at: rootURL)
                 if !probe.isWritable {
                     let access = await StoragePermissionHelper.requestReadWriteAccess(
                         forPath: root.path,
@@ -95,6 +95,9 @@ final class ExternalVolumePermissionCoordinator {
                     }
                 }
                 _ = await self.verifyDaemonAccessWhenIdle(path: root.path)
+                if let mountRoot = StoragePermissionHelper.externalVolumeMountPath(forPath: root.path) {
+                    appModel.reconcileSMBShares(mountPath: mountRoot)
+                }
             }
         }
     }
@@ -130,8 +133,27 @@ final class ExternalVolumePermissionCoordinator {
         let matchingRoots = appModel.rootManagement.roots.filter {
             $0.path == mountPath || $0.path.hasPrefix(mountPath + "/")
         }
-        if !matchingRoots.isEmpty {
-            auditOnlineExternalRootsIfNeeded(appModel.rootManagement.roots)
+        let matchingSMBShares = (appModel.smbState?.shares ?? []).filter {
+            $0.path == mountPath || $0.path.hasPrefix(mountPath + "/")
+        }
+        if !matchingRoots.isEmpty || !matchingSMBShares.isEmpty {
+            if !matchingRoots.isEmpty {
+                auditOnlineExternalRootsIfNeeded(appModel.rootManagement.roots)
+            }
+            for share in matchingSMBShares where share.rootId == nil || share.rootId?.isEmpty == true {
+                if FileManager.default.fileExists(atPath: share.path) {
+                    let shareURL = URL(fileURLWithPath: share.path, isDirectory: true)
+                    let probe = await StoragePermissionHelper.probeDirectoryReadWriteAsync(at: shareURL)
+                    if !probe.isWritable {
+                        _ = await StoragePermissionHelper.requestReadWriteAccess(
+                            forPath: share.path,
+                            reason: "检测到外置硬盘上的 SMB 共享目录「\(share.smbName)」重新接入，需要恢复目录读写权限后重新激活 SMB 共享。",
+                            initialProbe: probe
+                        )
+                    }
+                }
+            }
+            appModel.reconcileSMBShares(mountPath: mountPath)
             return
         }
 

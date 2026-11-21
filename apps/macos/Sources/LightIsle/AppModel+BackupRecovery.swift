@@ -1,6 +1,5 @@
 import AppKit
 import Foundation
-import LocalAuthentication
 
 private struct NASMetadataRollbackResult: Decodable {
     let schemaVersion: Int
@@ -11,57 +10,6 @@ private struct NASMetadataRollbackResult: Decodable {
 @MainActor
 extension AppModel {
     // MARK: - Backup and metadata recovery
-
-    func refreshMetrics() {
-        guard state == .online else { return }
-        // Keep alerts, disk warnings and share status alive without retaining
-        // the dashboard sample every three seconds while the UI is unloaded.
-        if !samplesManagementUI {
-            if Date().timeIntervalSince(lastAlertPollAt) >= 60 {
-                lastAlertPollAt = Date()
-                sendCoreCommandLine("stats summary\nalerts status\n", context: "metrics.background.alerts")
-            }
-            if Date().timeIntervalSince(lastShareStatusPollAt) >= 60 {
-                lastShareStatusPollAt = Date()
-                sendCoreCommandLine("share status\n", context: "metrics.background.share")
-                rootManagement.refresh()
-            }
-            return
-        }
-        sendCoreCommandLine(diagnosticsVisible ? "stats\n" : "stats summary\n", context: "metrics.stats")
-        sendCoreCommandLine("backup status\nbackup schedule status\n", context: "metrics.backup")
-        refreshPowerSnapshotIfNeeded()
-        if Date().timeIntervalSince(lastAlertPollAt) >= 60 {
-            lastAlertPollAt = Date()
-            sendCoreCommandLine("alerts status\n", context: "metrics.alerts")
-        }
-        if Date().timeIntervalSince(lastShareStatusPollAt) >= 30 {
-            lastShareStatusPollAt = Date()
-            sendCoreCommandLine("share status\nsmb status\n", context: "metrics.shareAndSMB")
-            rootManagement.refresh()
-        }
-    }
-
-    /// Reads `pmset -g batt` off the main thread so SwiftUI `body` evaluation
-    /// never blocks UI scrolling on a synchronous child process.
-    func refreshPowerSnapshotIfNeeded(force: Bool = false) {
-        guard !isPresentationPreview, powerPollTask == nil else { return }
-        let now = Date()
-        if !force && powerSnapshot != nil && now.timeIntervalSince(lastPowerPollAt) < 15 {
-            return
-        }
-        lastPowerPollAt = now
-        powerPollTask = Task { @MainActor [weak self] in
-            let next = await Task.detached(priority: .utility) {
-                TailscaleAndUPSDetector.currentPowerSnapshot()
-            }.value
-            guard let self else { return }
-            self.powerPollTask = nil
-            if self.powerSnapshot != next {
-                self.powerSnapshot = next
-            }
-        }
-    }
 
     private var timeMachineRoots: [TimeMachineDiagnostics.Root] {
         rootManagement.roots.map {
@@ -197,19 +145,8 @@ extension AppModel {
         metadataActivationMessage = nil
         Task { @MainActor [weak self] in
             guard let self else { return }
-            let context = LAContext()
-            var policyError: NSError?
-            guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &policyError) else {
-                metadataActivationMessage = "无法验证本机所有者，未读取或修改数据。"
-                metadataPreviewLoading = false
-                return
-            }
             do {
-                let approved = try await context.evaluatePolicy(
-                    .deviceOwnerAuthentication,
-                    localizedReason: "验证 Mac 所有者身份，以检查待恢复数据库的影响"
-                )
-                guard approved else { throw NSError(domain: "LightIsle", code: 1) }
+                try await DeviceOwnerAuth.authenticate(reason: "验证 Mac 所有者身份，以检查待恢复数据库的影响")
                 let preview = await NativeMetadataRecovery.runPreview(dataDir: privateRoot.path, stage: selected.lastPathComponent)
                 guard preview.isReady else {
                     metadataActivationMessage = preview.error?.message ?? "无法验证恢复预览，当前数据库未修改。"
@@ -218,6 +155,8 @@ extension AppModel {
                 }
                 metadataPreview = preview
                 metadataPreviewStageName = selected.lastPathComponent
+            } catch let authError as DeviceOwnerAuth.AuthError {
+                metadataActivationMessage = authError.errorDescription
             } catch {
                 metadataActivationMessage = "本机验证取消或失败，未读取或修改数据。"
             }
@@ -256,19 +195,8 @@ extension AppModel {
         metadataActivationMessage = nil
         Task { @MainActor [weak self] in
             guard let self else { return }
-            let context = LAContext()
-            var policyError: NSError?
-            guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &policyError) else {
-                metadataActivationMessage = "无法验证本机所有者，未修改任何数据。"
-                activatingMetadata = false
-                return
-            }
             do {
-                let approved = try await context.evaluatePolicy(
-                    .deviceOwnerAuthentication,
-                    localizedReason: "验证 Mac 所有者身份，以离线恢复轻屿数据库"
-                )
-                guard approved else { throw NSError(domain: "LightIsle", code: 1) }
+                try await DeviceOwnerAuth.authenticate(reason: "验证 Mac 所有者身份，以离线恢复轻屿数据库")
                 await stop()
                 metadataActivationMessage = await NativeMetadataRecovery.runOperation(
                     operation: "activate",
@@ -280,6 +208,8 @@ extension AppModel {
                 metadataPreview = nil
                 metadataPreviewStageName = nil
                 launch()
+            } catch let authError as DeviceOwnerAuth.AuthError {
+                metadataActivationMessage = authError.errorDescription
             } catch {
                 metadataActivationMessage = "用户验证取消或失败，现有数据库保持原样。"
             }
@@ -299,13 +229,8 @@ extension AppModel {
         activatingMetadata = true
         Task { @MainActor [weak self] in
             guard let self else { return }
-            let context = LAContext()
             do {
-                let approved = try await context.evaluatePolicy(
-                    .deviceOwnerAuthentication,
-                    localizedReason: "验证 Mac 所有者身份以修复中断的数据库恢复"
-                )
-                guard approved else { throw NSError(domain: "LightIsle", code: 1) }
+                try await DeviceOwnerAuth.authenticate(reason: "验证 Mac 所有者身份以修复中断的数据库恢复")
                 await stop()
                 let root = (try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask, appropriateFor: nil, create: false))
                 let dataDir = root?.appendingPathComponent("LightIsle").path ?? ""
@@ -321,6 +246,8 @@ extension AppModel {
                     confirmation: "RESTORE_PREVIOUS_METADATA"
                 )
                 launch()
+            } catch let authError as DeviceOwnerAuth.AuthError {
+                metadataActivationMessage = authError.errorDescription
             } catch {
                 metadataActivationMessage = "本机验证取消或失败，未修改数据。"
             }
@@ -368,10 +295,7 @@ extension AppModel {
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                let context = LAContext()
-                let approved = try await context.evaluatePolicy(.deviceOwnerAuthentication,
-                    localizedReason: "验证 Mac 所有者身份，以离线回退轻屿账号与配置")
-                guard approved else { throw NSError(domain: "LightIsle", code: 1) }
+                try await DeviceOwnerAuth.authenticate(reason: "验证 Mac 所有者身份，以离线回退轻屿账号与配置")
                 await stop()
                 let result = await OfflineRecoveryRunner.run(binary: binary, arguments: [
                     "--data-dir", dataDir, "--operation", "rollback", "--transaction-id", transaction.id,
@@ -389,6 +313,8 @@ extension AppModel {
                 }
                 metadataRollbacks = nil
                 launch()
+            } catch let authError as DeviceOwnerAuth.AuthError {
+                metadataActivationMessage = authError.errorDescription
             } catch {
                 metadataActivationMessage = "本机验证取消或失败，未开始回退。"
             }

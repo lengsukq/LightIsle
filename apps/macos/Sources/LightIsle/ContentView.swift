@@ -27,10 +27,10 @@ struct MetadataPreviewRow: Identifiable {
 
 struct ContentView: View {
     @EnvironmentObject var model: AppModel
-    @ObservedObject var appsCenter = AppModel.shared.appsCenter
+    @StateObject var drafts = PreferencesDraftStore()
     @StateObject var dependencyStore = ExternalDependencyStore()
     @Environment(\.isleReduceMotion) var reduceMotion
-    @AppStorage("hasSeenIntro") var hasSeenIntro = false
+    @AppStorage(AppPreferenceKeys.hasSeenIntro) var hasSeenIntro = false
     @State var showingManualIntro = false
     @State var confirmPlainHTTP = false
     @State var firstUsername = ""
@@ -38,18 +38,12 @@ struct ContentView: View {
     @State var confirmPassword = ""
     @State var copiedNotice: String?
     @State var showingRollbackRecovery = false
-    @State var localPortText = ""
     @State var thumbnailCacheMiB = AppModel.shared.preferredThumbnailCacheMiB
-    @State var vaultUsername = ""
-    @State var vaultPassword = ""
-    @State var resetAdminPassword = ""
-    @State var resetAdminConfirmation = ""
     @State var processSortByMemory = false
-    @AppStorage("lightisle.sidebarExpanded") var sidebarExpanded = false
-    @AppStorage("lightisle.sidebarWidth") var sidebarWidth: Double = 224
+    @AppStorage(AppPreferenceKeys.sidebarExpanded) var sidebarExpanded = false
+    @AppStorage(AppPreferenceKeys.sidebarWidth) var sidebarWidth: Double = 224
     @Namespace var sidebarSelection
     @StateObject var childEdits = ManagementEdits()
-    @State var draftTimeout: Task<Void, Never>?
     @State var revealUnlockedPassword = false
     @State var selectedDiskID: String?
     @StateObject var previews = DetailPreviewCoordinator()
@@ -61,48 +55,29 @@ struct ContentView: View {
     @State var showingUnsavedFRP = false
     @State var settingsDetail: PreferencesSection?
     @State var settingsTool: SettingsTool?
+    @State var activeAppsWorkspace: AppsAndContainersSection = .plugins
     @State var dockerDetail: DockerDetail = .containers
-    @AppStorage("lightisle.dockerContext") var dockerContext = "desktop-linux"
+    @AppStorage(AppPreferenceKeys.dockerContext) var dockerContext = "desktop-linux"
     @State var selectedPluginAppID: String?
     @State var selectedDockerContainer: DockerContainer?
     @State var pendingNavigation: (() -> Void)?
     @State var showingUnsavedChanges = false
-    @State var saveBeforeLeaving = false
-    @State var draftError: String?
-    @State var pendingDraftSaves: Set<NativeDraft> = []
-    @State var notificationDraftLoaded = false
-    @State var notificationBaseline: [String] = []
     @State var confirmedRoute: SidebarPage = .overview
     @State var suppressRouteGuard = false
     @State var expandedDiskHealth: Set<String> = []
-    @State var thresholdFreeMiBText = ""
-    @State var thresholdPercentText = ""
     @State var presentingTunnelManager = false
-    @State var tmdbTokenDraft = ""
-    @State var tiandituKeyDraft = ""
-    @State var notifyBarkServerDraft = ""
-    @State var notifyBarkKeyDraft = ""
-    @State var notifyWebhookDraft = ""
-    @State var notifyAllowPrivateDraft = false
-    @State var notifyWecomDraft = ""
-    @State var notifyDingtalkDraft = ""
-    @State var notifyDingtalkSecretDraft = ""
-    @State var notifySMTPHostDraft = ""
-    @State var notifySMTPPortDraft = "465"
-    @State var notifySMTPUserDraft = ""
-    @State var notifySMTPPasswordDraft = ""
-    @State var notifySMTPFromDraft = ""
-    @State var notifySMTPToDraft = ""
     @State var preferencesSection: PreferencesSection = .general
-    @State var manualTunnelToken = ""
     @State var presentingSudoersGuide = false
     @State var sudoersGuideDevice = "disk0"
     @State var showingStatusPopover = false
     @State var copiedPopoverKey: String?
+    @State var copiedPopoverTask: Task<Void, Never>?
     @State var setupStorageProbeCache: StoragePermissionHelper.AccessProbeResult?
     @State var settingsPermissionWritableCache = true
     @State var showSetupAdvancedStorage = false
-    @AppStorage("lightisle.dismissedQuickReadyChecklist") var dismissedQuickReadyChecklist = false
+    @State var showBackupAdvancedTools = false
+    @AppStorage(AppPreferenceKeys.dismissedQuickReadyChecklist) var dismissedQuickReadyChecklist = false
+    @AppStorage(AppPreferenceKeys.hasCompletedPersonalSpaceStep) var hasCompletedPersonalSpaceStep = false
     let settingsControlWidth: CGFloat = 320
 
     var body: some View {
@@ -184,8 +159,11 @@ struct ContentView: View {
         .onChange(of: draftSaveSignal) { _, _ in completeDraftSaveIfReady() }
         .onChange(of: model.diskManagementError) { _, error in
             if storageDetail == .capacity, let error {
-                draftError = error; pendingDraftSaves.remove(.threshold); saveBeforeLeaving = false; draftTimeout?.cancel()
+                drafts.draftError = error; drafts.pendingSaves.remove(.threshold); drafts.saveBeforeLeaving = false; drafts.cancelTimeout()
             }
+        }
+        .onReceive(model.appsCenter.$workspaceSection) { section in
+            if activeAppsWorkspace != section { activeAppsWorkspace = section }
         }
         .confirmationDialog("有尚未保存的修改", isPresented: $showingUnsavedChanges, titleVisibility: .visible) {
             Button("保存并离开") { saveDraftsAndLeave() }
@@ -210,7 +188,7 @@ struct ContentView: View {
             }.frame(minWidth: 600, idealWidth: 660, maxWidth: 720, minHeight: 400, idealHeight: 480, maxHeight: 550)
                 .interactiveDismissDisabled(model.activatingMetadata)
         }
-        .onDisappear { model.navigationRequest = nil; model.storageDetailNavigationRequest = nil; model.connectionDetailNavigationRequest = nil; model.appsSectionNavigationRequest = nil; model.settingsDetailNavigationRequest = nil; previews.dismiss(); childEdits.reset(); noticeTask?.cancel(); draftTimeout?.cancel(); model.setDiagnosticsVisible(false) }
+        .onDisappear { model.navigationRequest = nil; model.storageDetailNavigationRequest = nil; model.connectionDetailNavigationRequest = nil; model.appsSectionNavigationRequest = nil; model.settingsDetailNavigationRequest = nil; previews.dismiss(); childEdits.reset(); noticeTask?.cancel(); drafts.cancelTimeout(); model.setDiagnosticsVisible(false) }
     }
 
     var managementShell: some View {
@@ -358,7 +336,7 @@ struct ContentView: View {
     }
     var scrollRouteKey: String {
         if model.selectedSidebarPage == .containers {
-            return "\(routeKey)-\(appsCenter.workspaceSection.rawValue)-\(dockerDetail.rawValue)-\(selectedPluginAppID ?? "")-\(selectedDockerContainer?.id ?? "")"
+            return "\(routeKey)-\(activeAppsWorkspace.rawValue)-\(dockerDetail.rawValue)-\(selectedPluginAppID ?? "")-\(selectedDockerContainer?.id ?? "")"
         }
         return routeKey
     }
@@ -376,12 +354,12 @@ struct ContentView: View {
                         detail.rawValue, detail.subtitle, detail.icon)
             }
         case .containers:
-            if appsCenter.workspaceSection == .plugins, let appID = selectedPluginAppID {
-                let app = appsCenter.apps.first(where: { $0.id == appID })
+            if activeAppsWorkspace == .plugins, let appID = selectedPluginAppID {
+                let app = model.appsCenter.apps.first(where: { $0.id == appID })
                 let ver = app.map { " · v\($0.version)" } ?? ""
                 return ("轻应用与插件", { requestLocalNavigation { selectedPluginAppID = nil } },
                         app?.name ?? appID, "ID: \(appID)\(ver) · 运行日志、成员权限与生命周期配置", "puzzlepiece.extension.fill")
-            } else if appsCenter.workspaceSection == .docker, detailIsContainerSubpage, let container = selectedDockerContainer {
+            } else if activeAppsWorkspace == .docker, detailIsContainerSubpage, let container = selectedDockerContainer {
                 return ("Docker 容器", { requestLocalNavigation { selectedDockerContainer = nil } },
                         container.name, "\(container.image) · 容器日志与实时资源采样", "shippingbox.fill")
             }
@@ -407,9 +385,6 @@ struct ContentView: View {
                     settingsTool = nil
                 }
             }, SidebarPage.dependencies.rawValue, SidebarPage.dependencies.subtitle, SidebarPage.dependencies.icon)
-        case .files, .photos, .cinema:
-            return ("个人空间", { requestNavigation(.spaces) },
-                    model.selectedSidebarPage.rawValue, model.selectedSidebarPage.subtitle, model.selectedSidebarPage.icon)
         default:
             break
         }
@@ -455,8 +430,8 @@ struct ContentView: View {
             .frame(maxWidth: .infinity, alignment: .top)
             ScrollView {
                 VStack(alignment: .leading, spacing: 22) {
-                    if let draftError { Text(draftError).font(.system(size: 13)).foregroundStyle(IsleTheme.warningText).textSelection(.enabled) }
-                    if saveBeforeLeaving { ProgressView("正在保存修改…").controlSize(.small) }
+                    if let draftError = drafts.draftError { Text(draftError).font(.system(size: 13)).foregroundStyle(IsleTheme.warningText).textSelection(.enabled) }
+                    if drafts.saveBeforeLeaving { ProgressView("正在保存修改…").controlSize(.small) }
                     if let error = model.webOpenError { Text(error).font(.system(size: 13)).foregroundStyle(IsleTheme.warningText) }
                     pageContent
                         .environment(\.isleAccent, tint)
@@ -521,12 +496,13 @@ struct ContentView: View {
                         }
                         Spacer()
                         Button {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(endpoint, forType: .string)
+                            PasteboardHelper.copy(endpoint)
                             showNotice("已复制本机访问地址")
                             withAnimation(reduceMotion ? nil : IsleMotion.quick) { copiedPopoverKey = "local" }
-                            Task { @MainActor in
+                            copiedPopoverTask?.cancel()
+                            copiedPopoverTask = Task { @MainActor in
                                 try? await Task.sleep(for: .milliseconds(1800))
+                                guard !Task.isCancelled else { return }
                                 if copiedPopoverKey == "local" {
                                     withAnimation(reduceMotion ? nil : IsleMotion.quick) { copiedPopoverKey = nil }
                                 }
@@ -552,12 +528,13 @@ struct ContentView: View {
                     if let lan = model.remoteAddress {
                         ConnectionQRCodePopoverButton(urlString: lan, label: "局域网扫码直连")
                         Button {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(lan, forType: .string)
+                            PasteboardHelper.copy(lan)
                             showNotice("已复制局域网地址")
                             withAnimation(reduceMotion ? nil : IsleMotion.quick) { copiedPopoverKey = "lan" }
-                            Task { @MainActor in
+                            copiedPopoverTask?.cancel()
+                            copiedPopoverTask = Task { @MainActor in
                                 try? await Task.sleep(for: .milliseconds(1800))
+                                guard !Task.isCancelled else { return }
                                 if copiedPopoverKey == "lan" {
                                     withAnimation(reduceMotion ? nil : IsleMotion.quick) { copiedPopoverKey = nil }
                                 }
@@ -582,6 +559,7 @@ struct ContentView: View {
             }
             .padding(16)
             .frame(width: 310, alignment: .leading)
+            .onDisappear { copiedPopoverTask?.cancel(); copiedPopoverTask = nil }
         }
     }
     @ViewBuilder var pageContent: some View {
@@ -590,14 +568,12 @@ struct ContentView: View {
         case .storage: storageView
         case .services: servicesView
         case .spaces: personalSpacesView
-        case .files: filesSpaceView
-        case .photos: photosSpaceView
-        case .cinema: cinemaSpaceView
         case .settings: settingsView
         case .dependencies:
             ExternalDependenciesView(store: dependencyStore) { requestNavigation($0) }.disabled(model.isPresentationPreview)
         case .containers:
             DockerManagementView(
+                appsCenter: model.appsCenter,
                 detail: $dockerDetail,
                 context: $dockerContext,
                 selectedPluginAppID: $selectedPluginAppID,

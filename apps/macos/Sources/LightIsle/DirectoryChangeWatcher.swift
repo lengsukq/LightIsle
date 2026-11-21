@@ -5,6 +5,11 @@ import Foundation
 /// released with its Go child; no persistent background watcher is installed.
 @MainActor
 final class DirectoryChangeWatcher {
+    // Why `nonisolated(unsafe)`: `FSEventStreamRef` is a non-`Sendable` CoreServices
+    // opaque pointer that must be stopped/invalidated/released in `nonisolated deinit`
+    // (macOS 14 target predates `isolated deinit`). All normal mutations happen on
+    // `@MainActor` (`init`/`stop`), the C callback never reads `stream`, and `deinit`
+    // only executes with exclusive ownership after ARC refcount reaches zero.
     private nonisolated(unsafe) var stream: FSEventStreamRef?
     private let callback: ([String]?, Bool) -> Void
     private var active = true

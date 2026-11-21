@@ -11,13 +11,11 @@ let package = Package(
     targets: [
         .executableTarget(
             name: "LightIsle",
-            path: "apps/macos/Sources/LightIsle",
-            swiftSettings: [.swiftLanguageMode(.v5)]
+            path: "apps/macos/Sources/LightIsle"
         ),
         .executableTarget(
             name: "LightIsleMediaWorker",
-            path: "apps/macos/Sources/LightIsleMediaWorker",
-            swiftSettings: [.swiftLanguageMode(.v5)]
+            path: "apps/macos/Sources/LightIsleMediaWorker"
         )
     ]
 )

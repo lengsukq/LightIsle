@@ -1,4 +1,14 @@
+import Darwin
 import Foundation
+
+enum VisionWorkerDiagnostics {
+    static func logFailure(stage: String, error: Error) {
+        let message = "[lightisle-media-worker] vision stage=\(stage) failed: \(error.localizedDescription)\n"
+        message.withCString { ptr in
+            _ = fputs(ptr, stderr)
+        }
+    }
+}
 
 struct AISceneTagDTO: Encodable, Sendable {
     let label: String

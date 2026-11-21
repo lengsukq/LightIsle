@@ -11,23 +11,33 @@ extension AppModel {
             hasSavedNotifySecret = false
             return
         }
-        hasSavedTmdbToken = TmdbSecretVault.load() != nil
-        hasSavedMapKey = MapSecretVault.load() != nil
-        if let notify = NotifySecretVault.load(), !notify.isEmpty {
-            hasSavedNotifySecret = true
-        } else {
-            hasSavedNotifySecret = false
+        Task { @MainActor [weak self] in
+            let presence = await Task.detached(priority: .utility) {
+                let hasTmdb = TmdbSecretVault.load() != nil
+                let hasMap = MapSecretVault.load() != nil
+                let notify = NotifySecretVault.load()
+                let hasNotify = (notify != nil && notify?.isEmpty == false)
+                return (hasTmdb, hasMap, hasNotify)
+            }.value
+            guard let self else { return }
+            if self.hasSavedTmdbToken != presence.0 { self.hasSavedTmdbToken = presence.0 }
+            if self.hasSavedMapKey != presence.1 { self.hasSavedMapKey = presence.1 }
+            if self.hasSavedNotifySecret != presence.2 { self.hasSavedNotifySecret = presence.2 }
         }
     }
 
     // MARK: TMDB token (cinema auto-scrape)
 
     private func writeCinemaIPC(_ line: String) {
-        guard state == .online, let pipe = coreCommands else { return }
+        guard state == .online, let pipe = coreCommands else {
+            tmdbTokenBusy = false
+            return
+        }
         do {
             try pipe.write(contentsOf: Data((line + "\n").utf8))
         } catch {
-            tmdbTokenError = "无法发送 TMDB 命令：\(error.localizedDescription)"
+            tmdbTokenBusy = false
+            tmdbTokenError = UserFacingErrorMapper.coreIPCCommandError(action: "TMDB 设置同步")
         }
     }
 
@@ -43,7 +53,8 @@ extension AppModel {
         do {
             try TmdbSecretVault.save(token)
         } catch {
-            tmdbTokenError = "写入钥匙串失败：\(error.localizedDescription)"
+            tmdbTokenError = (error as? LocalizedError)?.errorDescription
+                ?? "无法将 TMDB Token 写入本机钥匙串，现有数据未受影响。请解锁登录钥匙串后重试。"
             return
         }
         hasSavedTmdbToken = true
@@ -70,7 +81,7 @@ extension AppModel {
             return true
         } catch {
             mapKeyBusy = false
-            mapKeyError = "无法同步天地图配置至 Core，请检查服务状态并重新操作：\(error.localizedDescription)"
+            mapKeyError = UserFacingErrorMapper.coreIPCCommandError(action: "天地图配置同步")
             return false
         }
     }
@@ -83,7 +94,8 @@ extension AppModel {
         do {
             try MapSecretVault.save(key)
         } catch {
-            mapKeyError = "无法保存天地图 Key 至 Mac 钥匙串：\(error.localizedDescription)"
+            mapKeyError = (error as? LocalizedError)?.errorDescription
+                ?? "无法将天地图 Key 写入本机钥匙串，原有配置未受影响。请解锁登录钥匙串后重试。"
             return
         }
         hasSavedMapKey = true
@@ -100,7 +112,8 @@ extension AppModel {
         do {
             try MapSecretVault.remove()
         } catch {
-            mapKeyError = "无法从 Mac 钥匙串删除 Key，原有配置仍保留：\(error.localizedDescription)"
+            mapKeyError = (error as? LocalizedError)?.errorDescription
+                ?? "无法从本机钥匙串清除天地图 Key，原有配置仍保留。请解锁登录钥匙串后重试。"
             return
         }
         hasSavedMapKey = false
@@ -121,19 +134,28 @@ extension AppModel {
     }
 
     func loadMapSecretAndResend() {
-        let loaded = MapSecretVault.load()
-        hasSavedMapKey = loaded != nil
-        guard !mapCoreAcknowledged, let key = loaded,
-              let data = key.data(using: .utf8) else {
-            refreshMapKeyStatus()
-            return
+        Task { @MainActor [weak self] in
+            let loaded = await Task.detached(priority: .utility) { MapSecretVault.load() }.value
+            guard let self else { return }
+            self.hasSavedMapKey = loaded != nil
+            guard !self.mapCoreAcknowledged, let key = loaded,
+                  let data = key.data(using: .utf8) else {
+                self.refreshMapKeyStatus()
+                return
+            }
+            self.mapKeyBusy = true
+            self.writeMapIPC("map tianditu set " + data.base64URLEncodedString)
         }
-        mapKeyBusy = true
-        writeMapIPC("map tianditu set " + data.base64URLEncodedString)
     }
 
     func clearTmdbToken() {
-        TmdbSecretVault.remove()
+        do {
+            try TmdbSecretVault.remove()
+        } catch {
+            tmdbTokenError = (error as? LocalizedError)?.errorDescription
+                ?? "无法从本机钥匙串清除 TMDB Token，原有配置仍保留。请解锁登录钥匙串后重试。"
+            return
+        }
         hasSavedTmdbToken = false
         tmdbTokenError = nil
         tmdbCoreAcknowledged = false
@@ -152,27 +174,34 @@ extension AppModel {
     }
 
     func loadTmdbSecretAndResend() {
-        let loaded = TmdbSecretVault.load()
-        hasSavedTmdbToken = loaded != nil
-        guard !tmdbCoreAcknowledged, let token = loaded else {
-            if loaded == nil {
-                refreshTmdbStatus()
+        Task { @MainActor [weak self] in
+            let loaded = await Task.detached(priority: .utility) { TmdbSecretVault.load() }.value
+            guard let self else { return }
+            self.hasSavedTmdbToken = loaded != nil
+            guard !self.tmdbCoreAcknowledged, let token = loaded else {
+                if loaded == nil {
+                    self.refreshTmdbStatus()
+                }
+                return
             }
-            return
+            guard let data = token.data(using: .utf8) else { return }
+            self.tmdbTokenBusy = true
+            self.writeCinemaIPC("cinema tmdb set " + data.base64URLEncodedString)
         }
-        guard let data = token.data(using: .utf8) else { return }
-        tmdbTokenBusy = true
-        writeCinemaIPC("cinema tmdb set " + data.base64URLEncodedString)
     }
 
     // MARK: Outbound notifications (Bark / webhook)
 
     private func writeNotifyIPC(_ line: String) {
-        guard state == .online, let pipe = coreCommands else { return }
+        guard state == .online, let pipe = coreCommands else {
+            notifyBusy = false
+            return
+        }
         do {
             try pipe.write(contentsOf: Data((line + "\n").utf8))
         } catch {
-            notifyError = "无法发送通知命令：\(error.localizedDescription)"
+            notifyBusy = false
+            notifyError = UserFacingErrorMapper.coreIPCCommandError(action: "通知渠道配置同步")
         }
     }
 
@@ -186,7 +215,8 @@ extension AppModel {
         do {
             try NotifySecretVault.save(config)
         } catch {
-            notifyError = "写入钥匙串失败：\(error.localizedDescription)"
+            notifyError = (error as? LocalizedError)?.errorDescription
+                ?? "无法将通知凭据写入本机钥匙串，原有设置未受影响。请解锁登录钥匙串后重试。"
             return
         }
         hasSavedNotifySecret = true
@@ -202,7 +232,13 @@ extension AppModel {
     }
 
     func clearNotify() {
-        NotifySecretVault.remove()
+        do {
+            try NotifySecretVault.remove()
+        } catch {
+            notifyError = (error as? LocalizedError)?.errorDescription
+                ?? "无法从本机钥匙串清除通知凭据，原有配置仍保留。请解锁登录钥匙串后重试。"
+            return
+        }
         hasSavedNotifySecret = false
         notifyError = nil
         notifyCoreAcknowledged = false
@@ -232,16 +268,19 @@ extension AppModel {
     }
 
     func loadNotifySecretAndResend() {
-        let loaded = NotifySecretVault.load()
-        hasSavedNotifySecret = (loaded != nil && loaded?.isEmpty == false)
-        guard !notifyCoreAcknowledged, let config = loaded, !config.isEmpty else {
-            if loaded == nil {
-                refreshNotifyStatus()
+        Task { @MainActor [weak self] in
+            let loaded = await Task.detached(priority: .utility) { NotifySecretVault.load() }.value
+            guard let self else { return }
+            self.hasSavedNotifySecret = (loaded != nil && loaded?.isEmpty == false)
+            guard !self.notifyCoreAcknowledged, let config = loaded, !config.isEmpty else {
+                if loaded == nil {
+                    self.refreshNotifyStatus()
+                }
+                return
             }
-            return
+            guard let data = try? JSONEncoder().encode(config) else { return }
+            self.notifyBusy = true
+            self.writeNotifyIPC("notify set " + data.base64URLEncodedString)
         }
-        guard let data = try? JSONEncoder().encode(config) else { return }
-        notifyBusy = true
-        writeNotifyIPC("notify set " + data.base64URLEncodedString)
     }
 }

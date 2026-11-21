@@ -441,8 +441,7 @@ struct MCPClientWizardSheet: View {
     }
 
     private func performCopy(key: String, text: String, notice: String) {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(text, forType: .string)
+        PasteboardHelper.copy(text)
         copiedKey = key
         copyFeedback = notice
         copyResetTask?.cancel()

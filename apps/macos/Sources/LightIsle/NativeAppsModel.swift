@@ -28,8 +28,37 @@ private struct NativeAppsEnvelope: Decodable {
     let error: String?
 }
 
+struct NativeMCPToolDescriptor: Identifiable, Equatable {
+    let name: String
+    let description: String
+    let sampleArgsJSON: String
+
+    var id: String { name }
+    var displayLabel: String {
+        description.isEmpty ? name : "\(name) · \(description)"
+    }
+}
+
+struct NativeMCPResourceDescriptor: Identifiable, Equatable {
+    let uri: String
+    let name: String
+    let description: String
+
+    var id: String { uri }
+    var displayLabel: String {
+        let suffix = !name.isEmpty ? name : description
+        return suffix.isEmpty ? uri : "\(uri) · \(suffix)"
+    }
+}
+
 @MainActor
 final class NativeAppsModel: ObservableObject {
+    private enum MCPCatalogPhase {
+        case idle
+        case tools
+        case resources
+    }
+
     @Published var workspaceSection: AppsAndContainersSection = .plugins
     @Published private(set) var connected = false
     @Published private(set) var busy = false
@@ -38,6 +67,10 @@ final class NativeAppsModel: ObservableObject {
     @Published private(set) var appStorage: NativeAppStorageSnapshot?
     @Published private(set) var mcp: NativeMCPConfigSnapshot = .empty
     @Published private(set) var mcpLogs: [NativeMCPCallLogEntry] = []
+    @Published private(set) var discoveredMCPTools: [NativeMCPToolDescriptor] = []
+    @Published private(set) var discoveredMCPResources: [NativeMCPResourceDescriptor] = []
+    @Published private(set) var mcpCatalogLoading = false
+    @Published private(set) var mcpCatalogError: String?
     @Published private(set) var members: [NativeAppMember] = []
     @Published private(set) var configuredChannels: [String] = []
     @Published private(set) var automationTasks: [NativeAutomationTask] = []
@@ -52,6 +85,7 @@ final class NativeAppsModel: ObservableObject {
     private var writer: ((String) throws -> Void)?
     private var activeRequestID: String?
     private var timeoutTask: Task<Void, Never>?
+    private var pendingCatalogPhase: MCPCatalogPhase = .idle
 
     func connect(_ writer: @escaping (String) throws -> Void) {
         self.writer = writer
@@ -66,6 +100,8 @@ final class NativeAppsModel: ObservableObject {
         connected = false
         busy = false
         activeRequestID = nil
+        pendingCatalogPhase = .idle
+        mcpCatalogLoading = false
     }
 
     func refresh() {
@@ -172,6 +208,8 @@ final class NativeAppsModel: ObservableObject {
     }
 
     func executeMCPDebug(method: String, tool: String, uri: String, argsJSON: String, rawRPC: String) {
+        pendingCatalogPhase = .idle
+        mcpCatalogLoading = false
         var debugObj: [String: Any] = [
             "method": method,
             "tool": tool,
@@ -183,6 +221,28 @@ final class NativeAppsModel: ObservableObject {
             debugObj["args"] = parsed
         }
         sendRawDict(operation: "mcp-debug", payload: ["mcpDebug": debugObj])
+    }
+
+    /// Dynamically discovers available MCP tools and resources directly from Go Core
+    /// via `tools/list` and `resources/list` so the native inspector stays in sync with backend SSOT.
+    func refreshMCPCatalog() {
+        guard connected else {
+            mcpCatalogLoading = false
+            mcpCatalogError = "轻屿核心服务尚未就绪，暂无法拉取 MCP 工具目录。"
+            return
+        }
+        guard !busy else { return }
+        mcpCatalogError = nil
+        mcpCatalogLoading = true
+        pendingCatalogPhase = .tools
+        sendRawDict(operation: "mcp-debug", payload: [
+            "mcpDebug": [
+                "method": "tools/list",
+                "tool": "",
+                "uri": "",
+                "rawRpc": ""
+            ]
+        ])
     }
 
     func clearMCPLogs() {
@@ -244,6 +304,24 @@ final class NativeAppsModel: ObservableObject {
         sendRawDict(operation: "automation-runs", payload: ["automationTaskId": taskID])
     }
 
+    private func openManagedDirectory(_ url: URL, label: String) {
+        do {
+            try FileManager.default.createDirectory(
+                at: url,
+                withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700]
+            )
+            if NSWorkspace.shared.open(url) {
+                errorMessage = nil
+            } else {
+                errorMessage = UserFacingErrorMapper.directoryOpenError(label: label)
+            }
+        } catch {
+            NSLog("LightIsle failed to prepare %@ directory (%@): %@", label, url.path, error.localizedDescription)
+            errorMessage = UserFacingErrorMapper.directoryOpenError(label: label)
+        }
+    }
+
     func openAutomationScriptsDirectory(taskID: String? = nil) {
         let baseDir = !automationScriptsDir.isEmpty
             ? automationScriptsDir
@@ -252,17 +330,14 @@ final class NativeAppsModel: ObservableObject {
         if let taskID, !taskID.isEmpty {
             url.appendPathComponent(taskID, isDirectory: true)
         }
-        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        NSWorkspace.shared.open(url)
+        openManagedDirectory(url, label: "定时脚本")
     }
 
     func openPluginDirectory(appID: String? = nil) {
         if let appID, !appID.isEmpty,
            let matched = apps.first(where: { $0.id == appID }),
            let explicitDir = matched.pluginsDir, !explicitDir.isEmpty {
-            let url = URL(fileURLWithPath: explicitDir, isDirectory: true)
-            try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            NSWorkspace.shared.open(url)
+            openManagedDirectory(URL(fileURLWithPath: explicitDir, isDirectory: true), label: "轻应用插件")
             return
         }
         let baseDir = !mcp.pluginsDir.isEmpty
@@ -272,17 +347,14 @@ final class NativeAppsModel: ObservableObject {
         if let appID, !appID.isEmpty {
             url.appendPathComponent(appID, isDirectory: true)
         }
-        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        NSWorkspace.shared.open(url)
+        openManagedDirectory(url, label: "轻应用插件")
     }
 
     func openPluginDataDirectory(appID: String? = nil) {
         if let appID, !appID.isEmpty,
            let matched = apps.first(where: { $0.id == appID }),
            let explicitDir = matched.pluginDataDir, !explicitDir.isEmpty {
-            let url = URL(fileURLWithPath: explicitDir, isDirectory: true)
-            try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            NSWorkspace.shared.open(url)
+            openManagedDirectory(URL(fileURLWithPath: explicitDir, isDirectory: true), label: "轻应用数据")
             return
         }
         let baseDir = !mcp.pluginDataDir.isEmpty
@@ -292,8 +364,7 @@ final class NativeAppsModel: ObservableObject {
         if let appID, !appID.isEmpty {
             url.appendPathComponent(appID, isDirectory: true)
         }
-        try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        NSWorkspace.shared.open(url)
+        openManagedDirectory(url, label: "轻应用数据")
     }
 
     func consume(_ raw: String) {
@@ -344,8 +415,15 @@ final class NativeAppsModel: ObservableObject {
             if let probe = payload.probeResult, lastProbeResult != probe {
                 lastProbeResult = probe
             }
-            if let debugRes = payload.mcpDebugResult, lastMCPDebugResult != debugRes {
-                lastMCPDebugResult = debugRes
+            if let debugRes = payload.mcpDebugResult {
+                if pendingCatalogPhase != .idle {
+                    handleMCPCatalogResponse(debugRes)
+                } else {
+                    if lastMCPDebugResult != debugRes {
+                        lastMCPDebugResult = debugRes
+                    }
+                    ingestDiscoveredMCPCatalogIfPresent(from: debugRes)
+                }
             }
             if let ticket = payload.launchTicket, let url = URL(string: ticket.launchUrl) {
                 NSWorkspace.shared.open(url)
@@ -353,6 +431,11 @@ final class NativeAppsModel: ObservableObject {
         }
 
         if let err = envelope.error, !err.isEmpty {
+            if pendingCatalogPhase != .idle {
+                pendingCatalogPhase = .idle
+                mcpCatalogLoading = false
+                mcpCatalogError = "动态拉取 MCP 目录失败，请确认 MCP 服务已开启后重试。"
+            }
             if errorMessage != err { errorMessage = err }
             return
         }
@@ -442,7 +525,100 @@ final class NativeAppsModel: ObservableObject {
             guard let self, !Task.isCancelled, self.activeRequestID == requestID else { return }
             self.busy = false
             self.activeRequestID = nil
-            self.errorMessage = "轻应用或 MCP 操作响应超时，请刷新重试。"
+            if self.pendingCatalogPhase != .idle {
+                self.pendingCatalogPhase = .idle
+                self.mcpCatalogLoading = false
+                self.mcpCatalogError = "拉取 MCP 工具目录超时，请稍后重试。"
+            } else {
+                self.errorMessage = "轻应用或 MCP 操作响应超时，请刷新重试。"
+            }
         }
+    }
+
+    private func handleMCPCatalogResponse(_ result: NativeMCPDebugExecResult) {
+        let phase = pendingCatalogPhase
+        if result.isError {
+            pendingCatalogPhase = .idle
+            mcpCatalogLoading = false
+            mcpCatalogError = "MCP 网关未返回有效目录，请确认服务已开启后点击刷新。"
+            return
+        }
+        ingestDiscoveredMCPCatalogIfPresent(from: result)
+        switch phase {
+        case .tools:
+            pendingCatalogPhase = .resources
+            sendRawDict(operation: "mcp-debug", payload: [
+                "mcpDebug": [
+                    "method": "resources/list",
+                    "tool": "",
+                    "uri": "",
+                    "rawRpc": ""
+                ]
+            ])
+        case .resources, .idle:
+            pendingCatalogPhase = .idle
+            mcpCatalogLoading = false
+            mcpCatalogError = nil
+        }
+    }
+
+    private func ingestDiscoveredMCPCatalogIfPresent(from result: NativeMCPDebugExecResult) {
+        guard !result.isError,
+              let data = result.responseJson.data(using: .utf8),
+              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let payload = root["result"] as? [String: Any] else { return }
+        if let rawTools = payload["tools"] as? [[String: Any]] {
+            let parsed = rawTools.compactMap { entry -> NativeMCPToolDescriptor? in
+                guard let name = entry["name"] as? String, !name.isEmpty else { return nil }
+                let desc = (entry["description"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let sample = Self.sampleArgsJSON(from: entry["inputSchema"] as? [String: Any])
+                return NativeMCPToolDescriptor(name: name, description: desc, sampleArgsJSON: sample)
+            }
+            if !parsed.isEmpty && discoveredMCPTools != parsed {
+                discoveredMCPTools = parsed
+            }
+        }
+        if let rawResources = payload["resources"] as? [[String: Any]] {
+            let parsed = rawResources.compactMap { entry -> NativeMCPResourceDescriptor? in
+                guard let uri = entry["uri"] as? String, !uri.isEmpty else { return nil }
+                let name = (entry["name"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                let desc = (entry["description"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+                return NativeMCPResourceDescriptor(uri: uri, name: name, description: desc)
+            }
+            if !parsed.isEmpty && discoveredMCPResources != parsed {
+                discoveredMCPResources = parsed
+            }
+        }
+    }
+
+    private static func sampleArgsJSON(from schema: [String: Any]?) -> String {
+        guard let schema,
+              let properties = schema["properties"] as? [String: [String: Any]],
+              !properties.isEmpty else {
+            return "{}"
+        }
+        let requiredKeys = Set(schema["required"] as? [String] ?? [])
+        let keysToInclude = requiredKeys.isEmpty ? Array(properties.keys.sorted().prefix(3)) : requiredKeys.sorted()
+        var template: [String: Any] = [:]
+        for key in keysToInclude {
+            guard let prop = properties[key] else { continue }
+            if let enumValues = prop["enum"] as? [Any], let first = enumValues.first {
+                template[key] = first
+            } else {
+                switch (prop["type"] as? String) ?? "string" {
+                case "integer", "number": template[key] = 0
+                case "boolean": template[key] = false
+                case "array": template[key] = []
+                case "object": template[key] = [:]
+                default: template[key] = ""
+                }
+            }
+        }
+        guard !template.isEmpty,
+              let data = try? JSONSerialization.data(withJSONObject: template, options: [.prettyPrinted, .sortedKeys]),
+              let text = String(data: data, encoding: .utf8) else {
+            return "{}"
+        }
+        return text
     }
 }

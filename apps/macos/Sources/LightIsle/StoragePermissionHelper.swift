@@ -169,6 +169,13 @@ enum StoragePermissionHelper {
         return .writable
     }
 
+    /// Runs the blocking directory read/write probe off the main thread.
+    static func probeDirectoryReadWriteAsync(at directoryURL: URL) async -> AccessProbeResult {
+        await Task.detached(priority: .userInitiated) {
+            probeDirectoryReadWrite(at: directoryURL)
+        }.value
+    }
+
     /// Ensures a directory exists and has persistent OS + POSIX read/write access for both the Mac app
     /// and the background `lightisled` service before registering or using it.
     static func ensureDirectoryWritable(
@@ -176,7 +183,7 @@ enum StoragePermissionHelper {
         reason: String = "轻屿需要该存储目录的持久读写权限，以确保后续手机或网页远程访问时无需在 Mac 旁手动确认。"
     ) async -> (ok: Bool, errorMessage: String?) {
         let canonical = url.resolvingSymlinksInPath()
-        let probe = probeDirectoryReadWrite(at: canonical)
+        let probe = await probeDirectoryReadWriteAsync(at: canonical)
         if probe.isWritable {
             return (true, nil)
         }
@@ -187,7 +194,9 @@ enum StoragePermissionHelper {
         )
     }
 
-    /// Interactive multi-tier permission acquisition & repair flow while the user is at the Mac.
+    /// Interactive permission acquisition & repair flow while the user is at the Mac.
+    /// Runs filesystem probes off `@MainActor` and consolidates repair actions into a
+    /// single iterative guidance loop instead of stacking multiple blocking alerts.
     static func requestReadWriteAccess(
         forPath targetPath: String,
         reason: String = "轻屿需要该存储目录的持久读写权限，以确保后续远程访问或迁移数据时不被 macOS 拦截。",
@@ -199,7 +208,12 @@ enum StoragePermissionHelper {
             return (false, "请选择具体硬盘或专用文件夹，不能直接授权系统根目录。")
         }
 
-        var probe = initialProbe ?? probeDirectoryReadWrite(at: cleanURL)
+        var probe: AccessProbeResult
+        if let initialProbe {
+            probe = initialProbe
+        } else {
+            probe = await probeDirectoryReadWriteAsync(at: cleanURL)
+        }
         if case .readOnlyVolume = probe {
             let alert = NSAlert()
             alert.alertStyle = .warning
@@ -213,7 +227,7 @@ enum StoragePermissionHelper {
             alert.addButton(withTitle: "知道了")
             NSApp.activate(ignoringOtherApps: true)
             _ = alert.runModal()
-            return (false, "该外置硬盘以只读方式挂载（如 NTFS 格式），macOS 无法写入，请更换为 APFS 或 ExFAT 格式。")
+            return (false, "该外置硬盘以只读方式挂载（如 NTFS 格式），原有文件未受影响。请更换为 APFS 或 ExFAT 格式后重试。")
         }
 
         if case .tccOrSandboxBlocked = probe {
@@ -224,15 +238,16 @@ enum StoragePermissionHelper {
             if let stopMessage = tccResult.errorMessage {
                 return (false, stopMessage)
             }
-            probe = probeDirectoryReadWrite(at: cleanURL)
+            probe = await probeDirectoryReadWriteAsync(at: cleanURL)
             if probe.isWritable {
                 return (true, nil)
             }
         }
 
-        // Also allow folder selection via NSOpenPanel if directory creation requires user confirmation,
-        // preferring the external volume root so whole-disk read/write access is granted upfront,
-        // then strictly re-verify persistent access AFTER releasing the temporary security-scoped token.
+        var lastFailure: String? = probe.detailMessage
+
+        // Offer a single folder-grant confirmation via NSOpenPanel first, then verify
+        // persistent access AFTER releasing the temporary security-scoped resource.
         let mountPath = externalVolumeMountPath(forPath: cleanPath)
         let targetPanelDir = mountPath.map { URL(fileURLWithPath: $0, isDirectory: true) } ?? closestExistingDirectory(forPath: cleanPath)
         let panel = NSOpenPanel()
@@ -247,15 +262,28 @@ enum StoragePermissionHelper {
         NSApp.activate(ignoringOtherApps: true)
 
         if panel.runModal() == .OK, let grantedURL = panel.url {
-            let scoped = grantedURL.startAccessingSecurityScopedResource()
-            try? FileManager.default.createDirectory(at: cleanURL, withIntermediateDirectories: true)
+            var scoped = grantedURL.startAccessingSecurityScopedResource()
+            defer {
+                if scoped {
+                    grantedURL.stopAccessingSecurityScopedResource()
+                }
+            }
+            var createError: String?
+            do {
+                try FileManager.default.createDirectory(at: cleanURL, withIntermediateDirectories: true)
+            } catch {
+                let classified = classifyError(error, detail: "无法在所选位置创建目录 \(cleanPath)")
+                createError = classified.detailMessage
+            }
             if scoped {
                 grantedURL.stopAccessingSecurityScopedResource()
+                scoped = false
             }
-            let postPanelProbe = probeDirectoryReadWrite(at: cleanURL)
+            let postPanelProbe = await probeDirectoryReadWriteAsync(at: cleanURL)
             if postPanelProbe.isWritable {
                 return (true, nil)
             }
+            lastFailure = createError ?? postPanelProbe.detailMessage
             if case .tccOrSandboxBlocked = postPanelProbe {
                 let tccResult = await presentTCCPrivacyGuide(forURL: cleanURL, reason: reason)
                 if tccResult.ok { return (true, nil) }
@@ -263,101 +291,129 @@ enum StoragePermissionHelper {
             }
         }
 
+        // Single consolidated iterative guidance loop (replaces stacked follow-up alerts).
         let command = manualRepairCommand(forPath: cleanPath)
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = "该存储目录或所在硬盘尚无持久读写权限，请选择修复方式"
-        alert.informativeText = """
-        目标目录：\(cleanPath)
-        原因：\(reason)
+        var statusNotice: String? = lastFailure
+        while true {
+            let alert = NSAlert()
+            alert.alertStyle = .warning
+            alert.messageText = "需要完成存储目录读写授权"
+            var lines: [String] = [
+                "目标目录：\(cleanPath)",
+                "说明：\(reason)",
+                "原硬盘数据未受任何改动。请选择以下任一方式完成授权："
+            ]
+            if let statusNotice, !statusNotice.isEmpty {
+                lines.append("当前检测状态：\(statusNotice)")
+            }
+            lines.append("• 推荐：点击「管理员一键修复权限」自动修复目录所有权与可写权限；")
+            lines.append("• 若为外置硬盘：点击「打开系统隐私设置」允许轻屿访问「可移除宗卷」，完成后点击「重新检测」。")
+            alert.informativeText = lines.joined(separator: "\n\n")
 
-        若未获得整盘与目录的持久读写权限，本次目录添加将视为失败（以避免后续跨目录数据迁移或远程上传失败）。原有文件未受影响：
-        1. 点击「使用管理员权限自动修复」一键修复整盘挂载点与目录所有权；
-        2. 点击「打开系统隐私与安全性设置」开启「文件和文件夹 → 可移除宗卷」权限；
-        3. 点击「复制终端命令手动执行…」在终端运行：
-        \(command)
-        """
-        alert.addButton(withTitle: "使用管理员权限自动修复")
-        alert.addButton(withTitle: "打开系统「隐私与安全性」设置")
-        alert.addButton(withTitle: "复制终端命令手动执行…")
-        alert.addButton(withTitle: "取消")
-        NSApp.activate(ignoringOtherApps: true)
+            alert.addButton(withTitle: "管理员一键修复权限")
+            alert.addButton(withTitle: "打开系统「隐私与安全性」")
+            alert.addButton(withTitle: "重新检测")
+            alert.addButton(withTitle: "复制手动终端命令")
+            alert.addButton(withTitle: "取消")
+            NSApp.activate(ignoringOtherApps: true)
 
-        let response = alert.runModal()
-        if response == .alertFirstButtonReturn {
-            do {
-                try await runAdminPermissionRepair(forPath: cleanPath)
-                if probeDirectoryReadWrite(at: cleanURL).isWritable {
+            let response = alert.runModal()
+            if response == .alertFirstButtonReturn {
+                do {
+                    try await runAdminPermissionRepair(forPath: cleanPath)
+                    let recheck = await probeDirectoryReadWriteAsync(at: cleanURL)
+                    if recheck.isWritable {
+                        return (true, nil)
+                    }
+                    statusNotice = recheck.detailMessage ?? "管理员修复已执行，但系统隐私策略仍拦截写入，请开启「可移除宗卷」权限后重新检测。"
+                } catch RepairError.cancelled {
+                    statusNotice = "已取消管理员密码验证，原有数据未受影响。你可以重试或改用其他授权方式。"
+                } catch {
+                    statusNotice = (error as? LocalizedError)?.errorDescription ?? "管理员自动修复未能完成，原有数据未受影响。请检查系统隐私设置或尝试复制终端命令。"
+                }
+            } else if response == .alertSecondButtonReturn {
+                openSystemPrivacySettings()
+                statusNotice = "已打开「系统设置 → 隐私与安全性」。请在「文件和文件夹 → 可移除宗卷」中允许 LightIsle 后，点击「重新检测」。"
+            } else if response == .alertThirdButtonReturn {
+                let recheck = await probeDirectoryReadWriteAsync(at: cleanURL)
+                if recheck.isWritable {
                     return (true, nil)
                 }
-                return presentManualCommandGuide(
-                    forPath: cleanPath,
-                    reason: reason,
-                    failureDetail: "管理员所有权修复已执行，但整盘与目录持久读写检测仍未通过。请检查「系统设置 → 隐私与安全性 → 文件和文件夹（或完全磁盘访问权限）」是否已允许 LightIsle 访问可移除宗卷，或在终端执行下方命令。"
-                )
-            } catch {
-                return presentManualCommandGuide(
-                    forPath: cleanPath,
-                    reason: reason,
-                    failureDetail: "自动提权未完成（\(error.localizedDescription)）。你可以在终端运行下方命令，执行成功后点击「我已执行完成，重新检测」。"
-                )
+                statusNotice = recheck.detailMessage ?? "读写检测仍未通过，请确认已完成授权后重试。"
+            } else if response.rawValue == NSApplication.ModalResponse.alertThirdButtonReturn.rawValue + 1 {
+                PasteboardHelper.copy(command)
+                NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app"))
+                statusNotice = "已将修复命令复制到剪贴板并打开「终端」。粘贴执行完成后，返回此处点击「重新检测」。"
+            } else {
+                return (false, "未获取存储目录持久读写权限，已取消本次操作，原有数据未受影响。")
             }
-        } else if response == .alertSecondButtonReturn {
-            let tccResult = await presentTCCPrivacyGuide(forURL: cleanURL, reason: reason, openImmediately: true)
-            if tccResult.ok { return (true, nil) }
-            return (false, tccResult.errorMessage ?? "未开启系统「隐私与安全性」可移除宗卷读写权限，添加目录失败。")
-        } else if response == .alertThirdButtonReturn {
-            return presentManualCommandGuide(forPath: cleanPath, reason: reason, failureDetail: nil)
         }
-
-        return (false, "未获取整盘与目录持久读写权限，已中止添加目录（可在终端执行：\(command)）。原有数据未受影响。")
     }
 
     /// Guides the user to enable macOS TCC Removable Volumes / Full Disk Access and re-verifies immediately.
+    /// Uses a flat iterative loop (never recurses) and performs directory probes off `@MainActor`.
     private static func presentTCCPrivacyGuide(
         forURL cleanURL: URL,
         reason: String,
         openImmediately: Bool = false
     ) async -> (ok: Bool, errorMessage: String?) {
-        if openImmediately {
+        var hasOpenedSettings = openImmediately
+        var feedback: String?
+        if hasOpenedSettings {
             openSystemPrivacySettings()
         }
         while true {
             let alert = NSAlert()
             alert.alertStyle = .warning
             alert.messageText = "需要开启 macOS「可移除宗卷」隐私权限"
-            alert.informativeText = """
+            var body = """
             目标目录：\(cleanURL.path)
             原因：\(reason)
 
-            macOS 隐私保护当前拦截了对该外置硬盘的后台持久访问。若不在此刻放行，后续你不在 Mac 旁时，手机端和网页端将无法读写此硬盘。
+            macOS 隐私保护当前拦截了对该外置硬盘的后台持久访问，原有文件未受影响。若不放行，后续你不在 Mac 旁时，手机端和网页端将无法读写此硬盘。
 
             请在「系统设置 → 隐私与安全性 → 文件和文件夹」中找到「LightIsle（轻屿）」并开启「可移除宗卷」（或在「完全磁盘访问权限」中开启轻屿），然后点击「我已开启权限，立即重新检测」。
             """
-            alert.addButton(withTitle: openImmediately ? "我已开启权限，立即重新检测" : "打开系统「隐私与安全性」设置")
-            alert.addButton(withTitle: openImmediately ? "再次打开系统设置" : "我已开启权限，立即重新检测")
+            if let feedback, !feedback.isEmpty {
+                body += "\n\n当前状态：\(feedback)"
+            }
+            alert.informativeText = body
+            alert.addButton(withTitle: hasOpenedSettings ? "我已开启权限，立即重新检测" : "打开系统「隐私与安全性」设置")
+            alert.addButton(withTitle: hasOpenedSettings ? "再次打开系统设置" : "我已开启权限，立即重新检测")
             alert.addButton(withTitle: "尝试管理员目录权限修复…")
             alert.addButton(withTitle: "取消")
             NSApp.activate(ignoringOtherApps: true)
 
             let choice = alert.runModal()
-            let shouldOpenSettings = openImmediately ? (choice == .alertSecondButtonReturn) : (choice == .alertFirstButtonReturn)
-            let shouldRecheck = openImmediately ? (choice == .alertFirstButtonReturn) : (choice == .alertSecondButtonReturn)
+            let shouldOpenSettings = hasOpenedSettings ? (choice == .alertSecondButtonReturn) : (choice == .alertFirstButtonReturn)
+            let shouldRecheck = hasOpenedSettings ? (choice == .alertFirstButtonReturn) : (choice == .alertSecondButtonReturn)
 
             if shouldOpenSettings {
                 openSystemPrivacySettings()
-                return await presentTCCPrivacyGuide(forURL: cleanURL, reason: reason, openImmediately: true)
+                hasOpenedSettings = true
+                feedback = "已打开系统设置，开启权限后请点击「我已开启权限，立即重新检测」。"
+                continue
             } else if shouldRecheck {
-                if probeDirectoryReadWrite(at: cleanURL).isWritable {
+                let recheck = await probeDirectoryReadWriteAsync(at: cleanURL)
+                if recheck.isWritable {
                     return (true, nil)
                 }
+                feedback = recheck.detailMessage ?? "读写检测仍未通过，请确认已在系统设置中勾选轻屿权限。"
                 continue
             } else if choice == .alertThirdButtonReturn {
-                try? await runAdminPermissionRepair(forPath: cleanURL.path)
-                if probeDirectoryReadWrite(at: cleanURL).isWritable {
-                    return (true, nil)
+                do {
+                    try await runAdminPermissionRepair(forPath: cleanURL.path)
+                    let recheck = await probeDirectoryReadWriteAsync(at: cleanURL)
+                    if recheck.isWritable {
+                        return (true, nil)
+                    }
+                    feedback = recheck.detailMessage ?? "管理员目录修复已完成，但系统隐私拦截仍未解除，请继续检查系统设置。"
+                } catch RepairError.cancelled {
+                    feedback = "已取消管理员密码验证，原有文件未受影响。"
+                } catch {
+                    feedback = (error as? LocalizedError)?.errorDescription ?? "管理员目录修复未能完成，原有文件未受影响。"
                 }
-                return (false, nil) // Fall through to manual repair options in caller.
+                continue
             } else {
                 return (false, "尚未开启 macOS「可移除宗卷」隐私权限，已取消本次操作，原有数据未受影响。")
             }
@@ -374,19 +430,19 @@ enum StoragePermissionHelper {
         let cleanURL = URL(fileURLWithPath: targetPath, isDirectory: true).resolvingSymlinksInPath()
         let cleanPath = cleanURL.path
         let command = manualRepairCommand(forPath: cleanPath)
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(command, forType: .string)
+        PasteboardHelper.copy(command)
 
+        var currentNotice = failureDetail
         while true {
             let alert = NSAlert()
             alert.alertStyle = .informational
             alert.messageText = "在终端执行权限修复命令（已复制到剪贴板）"
             var info = ""
-            if let failureDetail, !failureDetail.isEmpty {
-                info += "\(failureDetail)\n\n"
+            if let currentNotice, !currentNotice.isEmpty {
+                info += "\(currentNotice)\n\n"
             }
             info += """
-            请在 macOS「终端 (Terminal)」中粘贴并执行以下命令：
+            请在 macOS「终端 (Terminal)」中粘贴并执行以下命令（原硬盘文件不会丢失）：
 
             \(command)
 
@@ -402,42 +458,27 @@ enum StoragePermissionHelper {
 
             alert.addButton(withTitle: "我已执行完成，立即继续")
             alert.addButton(withTitle: "复制命令并打开终端")
+            alert.addButton(withTitle: "打开系统隐私设置")
             alert.addButton(withTitle: "取消")
             NSApp.activate(ignoringOtherApps: true)
 
             let choice = alert.runModal()
             if choice == .alertFirstButtonReturn {
-                if probeDirectoryReadWrite(at: cleanURL).isWritable {
+                let recheck = probeDirectoryReadWrite(at: cleanURL)
+                if recheck.isWritable {
                     return (true, nil)
                 }
-                let recheck = NSAlert()
-                recheck.alertStyle = .warning
-                recheck.messageText = "整盘与目录持久读写检测仍未通过"
-                recheck.informativeText = """
-                目标目录：\(cleanPath)
-
-                系统真实读写测试仍未通过。请确认终端命令已执行成功，且「系统设置 → 隐私与安全性 → 文件和文件夹 / 完全磁盘访问权限」已允许轻屿访问该外置硬盘。
-                为防止后续迁移数据半途失败，未通过读写检测时将不会添加该目录。
-                """
-                recheck.addButton(withTitle: "返回重新执行并检测")
-                recheck.addButton(withTitle: "打开系统「隐私与安全性」")
-                recheck.addButton(withTitle: "取消添加")
-                let subChoice = recheck.runModal()
-                if subChoice == .alertFirstButtonReturn {
-                    continue
-                } else if subChoice == .alertSecondButtonReturn {
-                    openSystemPrivacySettings()
-                    continue
-                } else {
-                    return (false, "未获得整盘与目录读写权限，添加目录失败（可在终端执行：\(command)），原有文件未受影响。")
-                }
+                currentNotice = "检测仍未通过（\(recheck.statusSummary)）。请确认终端命令已执行成功，且「系统设置 → 隐私与安全性」已允许轻屿访问该外置硬盘。"
+                continue
             } else if choice == .alertSecondButtonReturn {
-                NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString(command, forType: .string)
+                PasteboardHelper.copy(command)
                 NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Applications/Utilities/Terminal.app"))
                 continue
+            } else if choice == .alertThirdButtonReturn {
+                openSystemPrivacySettings()
+                continue
             } else {
-                return (false, "未完成整盘与目录读写授权，添加目录已中止（可在终端执行：\(command)）。")
+                return (false, "未完成整盘与目录读写授权，操作已取消，原有文件未受影响。")
             }
         }
     }

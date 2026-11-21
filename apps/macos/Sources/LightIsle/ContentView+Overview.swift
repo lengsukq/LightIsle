@@ -73,12 +73,11 @@ extension ContentView {
                     )
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(spacing: 8) {
-                            Text({
-                                let raw = model.metrics?.hostname.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-                                // If Go Core reports a generic/stale DHCP hostname while SystemConfiguration knows the Mac's friendly name, still prefer non-empty hostname or localizedName.
-                                if raw.isEmpty { return Self.fallbackLocalMacName }
-                                return raw
-                            }()).font(.system(size: 20, weight: .semibold))
+                            HostMetricsObserver(store: model.hostMetrics) { telemetry in
+                                let raw = telemetry.metrics?.hostname.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+                                Text(raw.isEmpty ? Self.fallbackLocalMacName : raw)
+                                    .font(.system(size: 20, weight: .semibold))
+                            }
                             IsleStatusPill(
                                 text: model.state.label,
                                 tone: model.state == .online ? .success : .warning,
@@ -105,8 +104,7 @@ extension ContentView {
                                     icon: "doc.on.doc",
                                     help: "复制本机访问地址"
                                 ) {
-                                    NSPasteboard.general.clearContents()
-                                    NSPasteboard.general.setString(endpoint, forType: .string)
+                                    PasteboardHelper.copy(endpoint)
                                     showNotice("已复制本机访问地址")
                                 }
                             }
@@ -127,15 +125,23 @@ extension ContentView {
             attentionView
             if !dismissedQuickReadyChecklist && model.state == .online {
                 let storageReady = model.sharedFolderPath != nil
-                let memberReady = model.personalSpaces.users.count > 1
+                let spaceReady = model.personalSpaces.users.count > 1 || hasCompletedPersonalSpaceStep
                 let lanReady = model.remoteAddress != nil
-                if !(storageReady && memberReady && lanReady) {
+                if !(storageReady && spaceReady && lanReady) {
                     LiquidCard {
                         VStack(alignment: .leading, spacing: 10) {
                             HStack {
                                 Label("新手 3 步快速上手向导", systemImage: "sparkles")
                                     .font(.system(size: 13.5, weight: .semibold))
                                 Spacer()
+                                if !spaceReady {
+                                    Button("仅本人使用·完成第 3 步") {
+                                        withAnimation(reduceMotion ? nil : IsleMotion.standard) {
+                                            hasCompletedPersonalSpaceStep = true
+                                        }
+                                    }
+                                    .buttonStyle(LiquidButtonStyle(variant: .borderless, size: .small))
+                                }
                                 Button("收起引导") {
                                     withAnimation(reduceMotion ? nil : IsleMotion.standard) {
                                         dismissedQuickReadyChecklist = true
@@ -155,10 +161,13 @@ extension ContentView {
                                     actionLabel: lanReady ? "已开启" : "去开启"
                                 ) { requestNavigation(.services); connectionDetail = .lan }
                                 quickReadyStepPill(
-                                    done: memberReady,
-                                    title: "3. 创建家人专属空间",
-                                    actionLabel: memberReady ? "已创建" : "去创建"
-                                ) { requestNavigation(.spaces) }
+                                    done: spaceReady,
+                                    title: "3. 进入 Web 空间或添加家人",
+                                    actionLabel: spaceReady ? "已完成" : "打开空间"
+                                ) {
+                                    hasCompletedPersonalSpaceStep = true
+                                    model.openUserWeb()
+                                }
                             }
                         }
                     }
@@ -295,87 +304,89 @@ extension ContentView {
         }
     }
     var overviewMetrics: some View {
-        let m = model.metrics
-        let memTotal = m?.memoryTotal ?? 0
-        let memUsed = min(m?.memoryUsed ?? 0, memTotal)
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("Mac 运行状态").font(.system(size: 15, weight: .semibold))
-                Spacer()
-                Text(model.lastMetricsAt.map { "采样于 " + IsleFormatters.timeHMS($0) } ?? "等待采样")
-                    .font(.system(size: 12)).foregroundStyle(IsleTheme.secondaryText)
-            }
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 205), spacing: 14)], spacing: 14) {
-                let appRss = LightIsleHostMemory.residentBytes() ?? 0
-                let coreRss = m?.coreRssBytes ?? 0
-                let memSlices = memTotal > 0 ? IsleStorageChartBuilder.memorySlices(
-                    total: memTotal,
-                    used: memUsed,
-                    appRss: appRss,
-                    coreRss: coreRss
-                ) : nil
-                LiquidHealthGauge(
-                    title: "处理器",
-                    valueText: m?.cpuPercent.map { String(format: "%.1f%%", $0) } ?? "等待采样",
-                    subtext: m.map { "\($0.cpuCount) 个核心" } ?? "尚无读数",
-                    progress: m?.cpuPercent.map { $0 / 100 },
-                    tint: IsleTheme.accent,
-                    icon: "cpu",
-                    sparklineValues: model.metricHistory.map(\.cpu),
-                    sparklineMax: 100
-                )
-                LiquidHealthGauge(
-                    title: "内存",
-                    valueText: memTotal > 0 ? formatBytes(memUsed) : "等待采样",
-                    subtext: memTotal > 0 ? "总计 \(formatBytes(memTotal))" : "尚无读数",
-                    progress: memTotal > 0 ? Double(memUsed) / Double(memTotal) : nil,
-                    tint: IsleFluidPalette.brandViolet,
-                    icon: "memorychip",
-                    sparklineValues: model.metricHistory.map(\.memory),
-                    sparklineMax: 100,
-                    segmentedSlices: memSlices,
-                    segmentedTotal: memTotal > 0 ? Double(memTotal) : nil
-                )
-                LiquidHealthGauge(
-                    title: "网络下载",
-                    valueText: m?.networkDownBps.map { formatRate($0) + "/s" } ?? "等待采样",
-                    subtext: "本机所有网络接口合计",
-                    progress: nil,
-                    tint: IsleFluidPalette.brandCyan,
-                    icon: "arrow.down",
-                    sparklineValues: model.metricHistory.map(\.download)
-                )
-                LiquidHealthGauge(
-                    title: "网络上传",
-                    valueText: m?.networkUpBps.map { formatRate($0) + "/s" } ?? "等待采样",
-                    subtext: "本机所有网络接口合计",
-                    progress: nil,
-                    tint: IsleFluidPalette.brandIndigo,
-                    icon: "arrow.up",
-                    sparklineValues: model.metricHistory.map(\.upload)
-                )
-                if let pwr = model.powerSnapshot, pwr.available {
-                    LiquidHealthGauge(
-                        title: "供电与 UPS",
-                        valueText: pwr.statusLabel,
-                        subtext: pwr.detailLabel,
-                        progress: pwr.percent >= 0 ? Double(pwr.percent) / 100.0 : nil,
-                        tint: pwr.onBattery ? .orange : .green,
-                        icon: pwr.onBattery ? "bolt.batteryblock.fill" : "powerplug"
-                    )
+        HostMetricsObserver(store: model.hostMetrics) { telemetry in
+            let m = telemetry.metrics
+            let memTotal = m?.memoryTotal ?? 0
+            let memUsed = min(m?.memoryUsed ?? 0, memTotal)
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Text("Mac 运行状态").font(.system(size: 15, weight: .semibold))
+                    Spacer()
+                    Text(telemetry.lastMetricsAt.map { "采样于 " + IsleFormatters.timeHMS($0) } ?? "读取中…")
+                        .font(.system(size: 12)).foregroundStyle(IsleTheme.secondaryText)
                 }
-            }
-            if let volumeSnapshot = overviewVolumeChartSnapshot {
-                overviewVolumeDistributionCard(volumeSnapshot)
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 205), spacing: 14)], spacing: 14) {
+                    let appRss = LightIsleHostMemory.residentBytes() ?? 0
+                    let coreRss = m?.coreRssBytes ?? 0
+                    let memSlices = memTotal > 0 ? IsleStorageChartBuilder.memorySlices(
+                        total: memTotal,
+                        used: memUsed,
+                        appRss: appRss,
+                        coreRss: coreRss
+                    ) : nil
+                    LiquidHealthGauge(
+                        title: "处理器",
+                        valueText: m?.cpuPercent.map { String(format: "%.1f%%", $0) } ?? "读取中…",
+                        subtext: m.map { "\($0.cpuCount) 个核心" } ?? "尚无读数",
+                        progress: m?.cpuPercent.map { $0 / 100 },
+                        tint: IsleTheme.accent,
+                        icon: "cpu",
+                        sparklineValues: telemetry.metricHistory.map(\.cpu),
+                        sparklineMax: 100
+                    )
+                    LiquidHealthGauge(
+                        title: "内存",
+                        valueText: memTotal > 0 ? formatBytes(memUsed) : "读取中…",
+                        subtext: memTotal > 0 ? "总计 \(formatBytes(memTotal))" : "尚无读数",
+                        progress: memTotal > 0 ? Double(memUsed) / Double(memTotal) : nil,
+                        tint: IsleFluidPalette.brandViolet,
+                        icon: "memorychip",
+                        sparklineValues: telemetry.metricHistory.map(\.memory),
+                        sparklineMax: 100,
+                        segmentedSlices: memSlices,
+                        segmentedTotal: memTotal > 0 ? Double(memTotal) : nil
+                    )
+                    LiquidHealthGauge(
+                        title: "网络下载",
+                        valueText: m?.networkDownBps.map { formatRate($0) + "/s" } ?? "读取中…",
+                        subtext: "本机所有网络接口合计",
+                        progress: nil,
+                        tint: IsleFluidPalette.brandCyan,
+                        icon: "arrow.down",
+                        sparklineValues: telemetry.metricHistory.map(\.download)
+                    )
+                    LiquidHealthGauge(
+                        title: "网络上传",
+                        valueText: m?.networkUpBps.map { formatRate($0) + "/s" } ?? "读取中…",
+                        subtext: "本机所有网络接口合计",
+                        progress: nil,
+                        tint: IsleFluidPalette.brandIndigo,
+                        icon: "arrow.up",
+                        sparklineValues: telemetry.metricHistory.map(\.upload)
+                    )
+                    if let pwr = telemetry.powerSnapshot, pwr.available {
+                        LiquidHealthGauge(
+                            title: "供电与 UPS",
+                            valueText: pwr.statusLabel,
+                            subtext: pwr.detailLabel,
+                            progress: pwr.percent >= 0 ? Double(pwr.percent) / 100.0 : nil,
+                            tint: pwr.onBattery ? .orange : .green,
+                            icon: pwr.onBattery ? "bolt.batteryblock.fill" : "powerplug"
+                        )
+                    }
+                }
+                if let volumeSnapshot = overviewVolumeChartSnapshot(from: m) {
+                    overviewVolumeDistributionCard(volumeSnapshot)
+                }
             }
         }
         .onAppear { model.refreshPowerSnapshotIfNeeded() }
     }
 
-    private var overviewVolumeChartSnapshot: (title: String, subtitle: String, total: UInt64, free: UInt64, rootID: String?, generation: UInt64?)? {
+    private func overviewVolumeChartSnapshot(from metrics: HostMetrics?) -> (title: String, subtitle: String, total: UInt64, free: UInt64, rootID: String?, generation: UInt64?)? {
         let defaultRoot = model.rootManagement.defaultRoot
         let defaultPath = defaultRoot?.path ?? model.sharedFolderPath
-        if let volumes = model.metrics?.volumes,
+        if let volumes = metrics?.volumes,
            let mount = StorageVolumeSelection.matchingMount(for: defaultPath, mounts: volumes.map(\.mount)),
            let vol = volumes.first(where: { $0.mount == mount }),
            vol.total > 0 {
@@ -388,7 +399,7 @@ extension ContentView {
                 generation: defaultRoot?.generation
             )
         }
-        if let m = model.metrics, m.diskTotal > 0 {
+        if let m = metrics, m.diskTotal > 0 {
             return (
                 title: "宿主 Mac 磁盘空间构成",
                 subtitle: "可用 \(formatBytes(m.diskFree)) / 共 \(formatBytes(m.diskTotal))",
@@ -446,18 +457,22 @@ extension ContentView {
     var diagnosticsView: some View {
         VStack(alignment: .leading, spacing: 20) {
             BetaDiagnosticControls(model: model)
-            AppleSettingsGroup(title: "应用资源占用", footer: "当前常驻内存；不同于整个 Mac 的内存用量。") {
-                AppleSettingsRow(title: "Mac 管理界面") { Text(LightIsleHostMemory.residentBytes().map(formatBytes) ?? "暂无数据").monospacedDigit() }
-                IsleGroupSpacing(height: 4)
-                AppleSettingsRow(title: "Core 服务") { Text(model.metrics?.coreRssBytes.map(formatBytes) ?? "暂无数据").monospacedDigit() }
+            HostMetricsObserver(store: model.hostMetrics) { telemetry in
+                VStack(alignment: .leading, spacing: 20) {
+                    AppleSettingsGroup(title: "应用资源占用", footer: "当前常驻内存；不同于整个 Mac 的内存用量。") {
+                        AppleSettingsRow(title: "Mac 管理界面") { Text(LightIsleHostMemory.residentBytes().map(formatBytes) ?? "暂无数据").monospacedDigit() }
+                        IsleGroupSpacing(height: 4)
+                        AppleSettingsRow(title: "Core 服务") { Text(telemetry.metrics?.coreRssBytes.map(formatBytes) ?? "暂无数据").monospacedDigit() }
+                    }
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 14)], spacing: 14) {
+                        IsleHistoryGraph(title: "处理器 (%)", values: telemetry.metricHistory.map(\.cpu), maximum: 100, tint: IsleTheme.accent)
+                        IsleHistoryGraph(title: "内存 (%)", values: telemetry.metricHistory.map(\.memory), maximum: 100, tint: IsleTheme.accent)
+                        IsleHistoryGraph(title: "下载速率", values: telemetry.metricHistory.map(\.download), maximum: max(telemetry.metricHistory.map(\.download).max() ?? 1, 1), tint: IsleTheme.accent)
+                        IsleHistoryGraph(title: "上传速率", values: telemetry.metricHistory.map(\.upload), maximum: max(telemetry.metricHistory.map(\.upload).max() ?? 1, 1), tint: IsleTheme.accent)
+                    }
+                    processMonitorView(metrics: telemetry.metrics)
+                }
             }
-            LazyVGrid(columns: [GridItem(.adaptive(minimum: 280), spacing: 14)], spacing: 14) {
-                IsleHistoryGraph(title: "处理器 (%)", values: model.metricHistory.map(\.cpu), maximum: 100, tint: IsleTheme.accent)
-                IsleHistoryGraph(title: "内存 (%)", values: model.metricHistory.map(\.memory), maximum: 100, tint: IsleTheme.accent)
-                IsleHistoryGraph(title: "下载速率", values: model.metricHistory.map(\.download), maximum: max(model.metricHistory.map(\.download).max() ?? 1, 1), tint: IsleTheme.accent)
-                IsleHistoryGraph(title: "上传速率", values: model.metricHistory.map(\.upload), maximum: max(model.metricHistory.map(\.upload).max() ?? 1, 1), tint: IsleTheme.accent)
-            }
-            processMonitorView
         }.onAppear { model.setDiagnosticsVisible(true) }.onDisappear { model.setDiagnosticsVisible(false) }
     }
 

@@ -546,7 +546,7 @@ struct AppleSettingsRow<RightContent: View>: View {
         .overlay(alignment: .bottom) {
             if showsDivider {
                 Rectangle().fill(IsleFluidPalette.rim.opacity(0.32)).frame(height: 0.75)
-                    .padding(.leading, icon != nil ? 55 : 16).padding(.bottom, 0.5).allowsHitTesting(false)
+                    .padding(.leading, icon != nil ? 55 : 16).offset(y: 0.75).allowsHitTesting(false)
             }
         }
         .accessibilityElement(children: .contain).accessibilityLabel(title)

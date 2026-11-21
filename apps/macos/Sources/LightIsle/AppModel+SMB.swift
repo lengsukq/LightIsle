@@ -9,6 +9,25 @@ extension AppModel {
         sendCoreCommandLine("smb state\n", context: "smb.state")
     }
 
+    func reconcileSMBShares(mountPath: String? = nil, userInitiated: Bool = false) {
+        guard state == .online else { return }
+        if let mountPath, !mountPath.isEmpty {
+            let payload: [String: Any] = ["action": "reconcile", "path": mountPath]
+            if userInitiated {
+                _ = sendSMBAction(payload)
+            } else if !smbBusy,
+                      let data = try? JSONSerialization.data(withJSONObject: payload) {
+                sendCoreCommandLine("smb action \(data.base64URLEncodedString)\n", context: "smb.reconcile")
+            }
+            return
+        }
+        if userInitiated {
+            _ = sendSMBAction(["action": "reconcile"])
+        } else if !smbBusy {
+            sendCoreCommandLine("smb reconcile\n", context: "smb.reconcile")
+        }
+    }
+
     func setSMBServiceEnabled(_ enabled: Bool) {
         sendSMBAction([
             "action": "service",

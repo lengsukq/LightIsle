@@ -35,18 +35,34 @@ extension ContentView {
                 let advancedDetails: [ConnectionDetail] = [.cloudflare, .frp]
                 IsleDestinationGrid {
                     ForEach(Array(primaryDetails.enumerated()), id: \.element.id) { index, detail in
-                        let status = connectionBadge(for: detail)
                         let rowTitle = detail == .remote ? "主推方案 · \(detail.rawValue) (Tailscale)" : detail.rawValue
-                        IsleDestinationRow(
-                            title: rowTitle,
-                            subtitle: detail.subtitle,
-                            icon: detail.icon,
-                            badge: status.0,
-                            badgeTone: status.1,
-                            iconTint: connectionIconTint(for: detail)
-                        ) {
-                            requestLocalNavigation { connectionDetail = detail }
-                        }.modifier(IsleCascade(index: index))
+                        if detail == .remote {
+                            HostMetricsObserver(store: model.hostMetrics) { telemetry in
+                                let status = connectionBadge(for: detail, tailscale: telemetry.tailscaleStatus)
+                                IsleDestinationRow(
+                                    title: rowTitle,
+                                    subtitle: detail.subtitle,
+                                    icon: detail.icon,
+                                    badge: status.0,
+                                    badgeTone: status.1,
+                                    iconTint: connectionIconTint(for: detail)
+                                ) {
+                                    requestLocalNavigation { connectionDetail = detail }
+                                }.modifier(IsleCascade(index: index))
+                            }
+                        } else {
+                            let status = connectionBadge(for: detail)
+                            IsleDestinationRow(
+                                title: rowTitle,
+                                subtitle: detail.subtitle,
+                                icon: detail.icon,
+                                badge: status.0,
+                                badgeTone: status.1,
+                                iconTint: connectionIconTint(for: detail)
+                            ) {
+                                requestLocalNavigation { connectionDetail = detail }
+                            }.modifier(IsleCascade(index: index))
+                        }
                     }
                 }
                 DisclosureGroup("高级穿透选项（Cloudflare Tunnel / FRP）") {
@@ -72,6 +88,9 @@ extension ContentView {
                 .padding(.top, 4)
             }
         }
+        .task {
+            model.refreshTailscaleStatusIfNeeded()
+        }
     }
     private func connectionIconTint(for detail: ConnectionDetail) -> Color {
         switch detail {
@@ -83,7 +102,7 @@ extension ContentView {
         case .frp: return .teal
         }
     }
-    private func connectionBadge(for detail: ConnectionDetail) -> (String, IsleStatusTone) {
+    private func connectionBadge(for detail: ConnectionDetail, tailscale: NativeTailscaleSnapshot? = nil) -> (String, IsleStatusTone) {
         switch detail {
         case .local:
             return (model.state == .online ? "正在运行" : model.state.label, model.state == .online ? .success : .warning)
@@ -100,7 +119,7 @@ extension ContentView {
             if smbOn { return (count > 0 ? "已开启 · \(count) 个共享" : "已开启", .success) }
             return ("未开启", .neutral)
         case .remote:
-            let ts = TailscaleAndUPSDetector.detectTailscale()
+            let ts = tailscale ?? model.hostMetrics.tailscaleStatus
             if ts.connected { return ("Tailscale 已组网 · \(ts.ipv4)", .success) }
             return (ts.installed ? "Tailscale 已安装" : "Tailscale / EasyTier", .neutral)
         case .cloudflare:
@@ -160,8 +179,7 @@ extension ContentView {
                                     icon: "doc.on.doc",
                                     help: "复制本机访问地址"
                                 ) {
-                                    NSPasteboard.general.clearContents()
-                                    NSPasteboard.general.setString(endpoint, forType: .string)
+                                    PasteboardHelper.copy(endpoint)
                                     showNotice("已复制本机访问地址")
                                 }
                             }
@@ -218,8 +236,7 @@ extension ContentView {
                                     icon: "doc.on.doc",
                                     help: "复制局域网连接地址"
                                 ) {
-                                    NSPasteboard.general.clearContents()
-                                    NSPasteboard.general.setString(remote, forType: .string)
+                                    PasteboardHelper.copy(remote)
                                     showNotice("已复制局域网连接地址")
                                 }
                             }
@@ -263,6 +280,9 @@ extension ContentView {
                 ])
             }
         }
+        .task {
+            model.refreshTailscaleStatusIfNeeded()
+        }
     }
     var connectionLocalContent: some View {
         VStack(alignment: .leading, spacing: 20) {
@@ -288,8 +308,7 @@ extension ContentView {
                                 variant: .borderless,
                                 help: "复制本机访问地址"
                             ) {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(endpoint.absoluteString, forType: .string)
+                                PasteboardHelper.copy(endpoint.absoluteString)
                                 showNotice("已复制访问地址")
                             }
                             IsleIconButton(
@@ -384,8 +403,7 @@ extension ContentView {
                                 variant: .borderless,
                                 help: "复制连接地址"
                             ) {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(address, forType: .string)
+                                PasteboardHelper.copy(address)
                                 showNotice("已复制连接地址")
                             }
 
@@ -413,8 +431,7 @@ extension ContentView {
                                     variant: .borderless,
                                     help: "复制连接验证信息"
                                 ) {
-                                    NSPasteboard.general.clearContents()
-                                    NSPasteboard.general.setString(fingerprint, forType: .string)
+                                    PasteboardHelper.copy(fingerprint)
                                     showNotice("已复制连接验证信息")
                                 }
                             }
@@ -456,71 +473,81 @@ extension ContentView {
         SmbSharingSectionView(model: model, showNotice: showNotice)
     }
     var connectionRemoteContent: some View {
-        let ts = TailscaleAndUPSDetector.detectTailscale()
-        let tsDirect = ts.directURL(remoteAddress: model.remoteAddress, fallbackPort: model.preferredLocalPort)
-        return VStack(alignment: .leading, spacing: 20) {
-            AppleSettingsGroup(title: "零配置异地组网（Tailscale / EasyTier）", footer: "不在家时，让手机与本机登录同一 Tailscale 账号即可通过 100.64.0.0/10 虚拟组网接口加密直连，轻屿开启局域网连接后会自动双接口绑定（无需暴露公网端口）。") {
-                AppleSettingsRow(
-                    title: "Tailscale 本机实时探测",
-                    subtitle: ts.connected ? "已识别虚拟组网接口 \(ts.interfaceName) · \(ts.ipv4)" : (ts.installed ? "已检测到 Tailscale 客户端，登录组网后即可自动直连。" : "尚未检测到 Tailscale，安装登录同一账号即可免公网 IP 异地直连。"),
-                    icon: "point.3.connected.trianglepath.dotted",
-                    iconTint: ts.connected ? .green : .indigo
-                ) {
-                    HStack(spacing: 8) {
-                        if let direct = tsDirect {
-                            Text(direct)
-                                .font(.system(size: 11.5, design: .monospaced))
-                                .foregroundStyle(IsleTheme.accent)
-                                .textSelection(.enabled)
-                            ConnectionQRCodePopoverButton(urlString: direct, label: "异地组网扫码直连")
+        HostMetricsObserver(store: model.hostMetrics) { telemetry in
+            let ts = telemetry.tailscaleStatus
+            let tsDirect = ts.directURL(remoteAddress: model.remoteAddress, fallbackPort: model.preferredLocalPort)
+            VStack(alignment: .leading, spacing: 20) {
+                AppleSettingsGroup(title: "零配置异地组网（Tailscale / EasyTier）", footer: "不在家时，让手机与本机登录同一 Tailscale 账号即可通过 100.64.0.0/10 虚拟组网接口加密直连，轻屿开启局域网连接后会自动双接口绑定（无需暴露公网端口）。") {
+                    AppleSettingsRow(
+                        title: "Tailscale 本机实时探测",
+                        subtitle: ts.connected ? "已识别虚拟组网接口 \(ts.interfaceName) · \(ts.ipv4)" : (ts.installed ? "已检测到 Tailscale 客户端，登录组网后即可自动直连。" : "尚未检测到 Tailscale，安装登录同一账号即可免公网 IP 异地直连。"),
+                        icon: "point.3.connected.trianglepath.dotted",
+                        iconTint: ts.connected ? .green : .indigo
+                    ) {
+                        HStack(spacing: 8) {
+                            if let direct = tsDirect {
+                                Text(direct)
+                                    .font(.system(size: 11.5, design: .monospaced))
+                                    .foregroundStyle(IsleTheme.accent)
+                                    .textSelection(.enabled)
+                                ConnectionQRCodePopoverButton(urlString: direct, label: "异地组网扫码直连")
+                                IsleIconButton(
+                                    icon: "doc.on.doc",
+                                    help: "复制 Tailscale 异地直连地址"
+                                ) {
+                                    PasteboardHelper.copy(direct)
+                                    showNotice("已复制 Tailscale 直连地址")
+                                }
+                            } else {
+                                IsleStatusPill(text: ts.connected ? "请先开启局域网连接" : (ts.installed ? "待连接" : "未安装"), tone: ts.connected ? .warning : .neutral)
+                            }
                             IsleIconButton(
-                                icon: "doc.on.doc",
-                                help: "复制 Tailscale 异地直连地址"
+                                icon: "arrow.clockwise",
+                                help: "重新探测本机 Tailscale 组网状态"
                             ) {
-                                NSPasteboard.general.clearContents()
-                                NSPasteboard.general.setString(direct, forType: .string)
-                                showNotice("已复制 Tailscale 直连地址")
+                                model.refreshTailscaleStatusIfNeeded(force: true)
                             }
-                        } else {
-                            IsleStatusPill(text: ts.connected ? "请先开启局域网连接" : (ts.installed ? "待连接" : "未安装"), tone: ts.connected ? .warning : .neutral)
+                        }
+                    }
+                    IsleGroupSpacing(height: 4).padding(.leading, 14)
+                    AppleSettingsRow(
+                        title: "在家庭网络之外访问",
+                        subtitle: "先开启加密连接，再让手机和 Mac 加入同一个私人网络。首次连接时请核对验证信息。",
+                        icon: "network.badge.shield.half.filled",
+                        iconTint: .indigo
+                    ) {
+                        HStack(spacing: 8) {
+                            Button("Tailscale 配置指南") {
+                                if let url = URL(string: "https://tailscale.com/kb/1017/install") {
+                                    NSWorkspace.shared.open(url)
+                                }
+                            }
+                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                            Button("EasyTier 使用说明") {
+                                if let url = URL(string: "https://github.com/EasyTier/EasyTier") {
+                                    NSWorkspace.shared.open(url)
+                                }
+                            }
+                            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                         }
                     }
                 }
-                IsleGroupSpacing(height: 4).padding(.leading, 14)
-                AppleSettingsRow(
-                    title: "在家庭网络之外访问",
-                    subtitle: "先开启加密连接，再让手机和 Mac 加入同一个私人网络。首次连接时请核对验证信息。",
-                    icon: "network.badge.shield.half.filled",
-                    iconTint: .indigo
-                ) {
-                    HStack(spacing: 8) {
-                        Button("Tailscale 配置指南") {
-                            if let url = URL(string: "https://tailscale.com/kb/1017/install") {
-                                NSWorkspace.shared.open(url)
-                            }
-                        }
-                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                        Button("EasyTier 使用说明") {
-                            if let url = URL(string: "https://github.com/EasyTier/EasyTier") {
-                                NSWorkspace.shared.open(url)
-                            }
-                        }
-                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                    }
+                .task {
+                    model.refreshTailscaleStatusIfNeeded()
                 }
-            }
 
-            IsleQuickJumpBar(items: [
-                IsleQuickJumpItem("开启局域网监听", icon: "wifi", tint: .teal, help: "Tailscale 双接口绑定需要先开启「局域网连接」") {
-                    requestLocalNavigation { connectionDetail = .lan }
-                },
-                IsleQuickJumpItem("Cloudflare Tunnel", icon: "cloud", tint: .cyan, help: "改用绑定自有公网域名的 Cloudflare 穿透") {
-                    requestLocalNavigation { connectionDetail = .cloudflare }
-                },
-                IsleQuickJumpItem("FRP 穿透", icon: "point.topleft.down.curvedto.point.bottomright.up", tint: .purple, help: "使用自建 FRP 服务器进行公网映射") {
-                    requestLocalNavigation { connectionDetail = .frp }
-                }
-            ])
+                IsleQuickJumpBar(items: [
+                    IsleQuickJumpItem("开启局域网监听", icon: "wifi", tint: .teal, help: "Tailscale 双接口绑定需要先开启「局域网连接」") {
+                        requestLocalNavigation { connectionDetail = .lan }
+                    },
+                    IsleQuickJumpItem("Cloudflare Tunnel", icon: "cloud", tint: .cyan, help: "改用绑定自有公网域名的 Cloudflare 穿透") {
+                        requestLocalNavigation { connectionDetail = .cloudflare }
+                    },
+                    IsleQuickJumpItem("FRP 穿透", icon: "point.topleft.down.curvedto.point.bottomright.up", tint: .purple, help: "使用自建 FRP 服务器进行公网映射") {
+                        requestLocalNavigation { connectionDetail = .frp }
+                    }
+                ])
+            }
         }
     }
 }

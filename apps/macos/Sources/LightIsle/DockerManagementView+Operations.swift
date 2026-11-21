@@ -59,7 +59,7 @@ extension DockerManagementView {
             guard selectedContainer?.id == container.id, selected == context, metricsContainer?.id == container.id else { return }
             switch outcome {
             case .success(let value): containerMetrics = value
-            case .failure(let issue): metricsError = "无法获取容器指标：" + issue.localizedDescription
+            case .failure(let issue): metricsError = UserFacingErrorMapper.dockerOperationError(action: "容器指标采样", error: issue)
             }
         }
     }
@@ -98,7 +98,7 @@ extension DockerManagementView {
                 message = "已创建 Docker " + (isVolume ? "数据卷：" : "网络：") + name
                 if detail == .resources || detail == .images || detail == .compose { refreshExtras(context: selected) }
             case .failure(let error):
-                problem = "创建 Docker 资源失败：" + error.localizedDescription
+                problem = UserFacingErrorMapper.dockerOperationError(action: "创建 Docker 资源", error: error)
             }
         }
     }
@@ -158,7 +158,7 @@ extension DockerManagementView {
                 refresh()
             case .failure(let error):
                 message = nil
-                problem = "Compose 部署失败：" + error.localizedDescription
+                problem = UserFacingErrorMapper.dockerOperationError(action: "Compose 部署", error: error)
             }
         }
     }
@@ -183,7 +183,7 @@ extension DockerManagementView {
                 if detail == .resources || detail == .images || detail == .compose { refreshExtras(context: selected) }
             case .failure(let error):
                 snapshot = nil
-                problem = "本机引擎暂不可用：" + error.localizedDescription
+                problem = UserFacingErrorMapper.dockerOperationError(action: "读取本机 Docker 引擎状态", error: error)
             }
         }
     }
@@ -205,7 +205,7 @@ extension DockerManagementView {
             case .success(let state): extras = state
             case .failure(let error):
                 extras = nil
-                extrasError = "读取 Compose/存储信息失败：" + error.localizedDescription
+                extrasError = UserFacingErrorMapper.dockerOperationError(action: "读取 Compose 与存储信息", error: error)
             }
         }
     }
@@ -225,7 +225,7 @@ extension DockerManagementView {
             guard selected == context && logsContainer?.id == container.id else { return }
             switch result {
             case .success(let text): logsContent = text
-            case .failure(let error): logsError = "读取失败：" + error.localizedDescription
+            case .failure(let error): logsError = UserFacingErrorMapper.dockerOperationError(action: "读取容器日志", error: error)
             }
         }
     }
@@ -256,7 +256,7 @@ extension DockerManagementView {
                 message = "镜像拉取已完成：" + reference + (detail.isEmpty ? "" : "\n" + String(detail.prefix(350)))
                 refresh()
             case .failure(let error):
-                problem = "镜像拉取失败：" + error.localizedDescription
+                problem = UserFacingErrorMapper.dockerOperationError(action: "拉取镜像", error: error)
                 message = nil
             }
         }
@@ -288,7 +288,7 @@ extension DockerManagementView {
                 message = "Compose 项目操作已完成：" + project.name + " · " + verb
                 refresh()
             case .failure(let error):
-                problem = "Compose 操作失败：" + error.localizedDescription
+                problem = UserFacingErrorMapper.dockerOperationError(action: "执行 Compose 操作", error: error)
             }
         }
     }
@@ -323,7 +323,7 @@ extension DockerManagementView {
                     }
                 }
             case .failure(let error):
-                problem = "容器操作失败：" + error.localizedDescription
+                problem = UserFacingErrorMapper.dockerOperationError(action: "执行容器操作", error: error)
             }
         }
     }
@@ -357,7 +357,7 @@ extension DockerManagementView {
                 edits.dirty = otherInputs; edits.error = nil
                 message = description
             case .failure(let error):
-                problem = "镜像源配置失败：" + error.localizedDescription
+                problem = UserFacingErrorMapper.dockerOperationError(action: "写入镜像源配置", error: error)
                 edits.error = problem
             }
         }
@@ -373,7 +373,7 @@ extension DockerManagementView {
                 let result = try await DockerMirrorProbe.check(source)
                 if source == mirror { mirrorTestResult = result }
             } catch {
-                if source == mirror { mirrorTestResult = "连接检测失败：" + error.localizedDescription }
+                if source == mirror { mirrorTestResult = UserFacingErrorMapper.dockerOperationError(action: "镜像源连通性检测", error: error) }
             }
             mirrorTesting = false
         }
@@ -546,8 +546,7 @@ extension DockerManagementView {
                     .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
                     .disabled(logsLoading)
                     Button(copiedContainerLogs ? "已复制" : "复制日志") {
-                        NSPasteboard.general.clearContents()
-                        NSPasteboard.general.setString(logsContent, forType: .string)
+                        PasteboardHelper.copy(logsContent)
                         copiedContainerLogs = true
                         DispatchQueue.main.asyncAfter(deadline: .now() + 2) {
                             copiedContainerLogs = false

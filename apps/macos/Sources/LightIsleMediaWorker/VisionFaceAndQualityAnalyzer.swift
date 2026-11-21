@@ -30,8 +30,13 @@ struct NativeANFRFaceprintProvider: FaceEmbeddingProvider {
         setFaces(request, setInputSel, faces as NSArray)
 
         let handler = VNImageRequestHandler(cgImage: image, options: [:])
-        guard (try? handler.perform([request])) != nil,
-              let results = request.results as? [VNFaceObservation],
+        do {
+            try handler.perform([request])
+        } catch {
+            VisionWorkerDiagnostics.logFailure(stage: "faceprint-anfr", error: error)
+            return Array(repeating: nil, count: faces.count)
+        }
+        guard let results = request.results as? [VNFaceObservation],
               results.count == faces.count else {
             return Array(repeating: nil, count: faces.count)
         }
@@ -119,8 +124,13 @@ enum VisionFaceAndQualityAnalyzer {
     private static func detectFaces(in image: CGImage) -> [AIFaceDTO] {
         let rectReq = VNDetectFaceRectanglesRequest()
         let handler = VNImageRequestHandler(cgImage: image, options: [:])
-        guard (try? handler.perform([rectReq])) != nil,
-              let candidates = rectReq.results, !candidates.isEmpty else {
+        do {
+            try handler.perform([rectReq])
+        } catch {
+            VisionWorkerDiagnostics.logFailure(stage: "face-rectangles", error: error)
+            return []
+        }
+        guard let candidates = rectReq.results, !candidates.isEmpty else {
             return []
         }
 
@@ -135,7 +145,11 @@ enum VisionFaceAndQualityAnalyzer {
         qualityReq.inputFaceObservations = selectedFaces
         let landmarksReq = VNDetectFaceLandmarksRequest()
         landmarksReq.inputFaceObservations = selectedFaces
-        try? handler.perform([qualityReq, landmarksReq])
+        do {
+            try handler.perform([qualityReq, landmarksReq])
+        } catch {
+            VisionWorkerDiagnostics.logFailure(stage: "face-quality-landmarks", error: error)
+        }
 
         let qualityByUUID = Dictionary(
             uniqueKeysWithValues: (qualityReq.results ?? []).compactMap { obs in
@@ -185,8 +199,13 @@ enum VisionFaceAndQualityAnalyzer {
             req.revision = VNGenerateImageFeaturePrintRequestRevision2
         }
         let handler = VNImageRequestHandler(cgImage: image, options: [:])
-        guard (try? handler.perform([req])) != nil,
-              let obs = req.results?.first,
+        do {
+            try handler.perform([req])
+        } catch {
+            VisionWorkerDiagnostics.logFailure(stage: "image-featureprint", error: error)
+            return nil
+        }
+        guard let obs = req.results?.first,
               obs.elementType == .float,
               obs.elementCount > 0,
               obs.data.count == obs.elementCount * MemoryLayout<Float>.size else {
@@ -200,8 +219,13 @@ enum VisionFaceAndQualityAnalyzer {
         if #available(macOS 15.0, *) {
             let req = VNCalculateImageAestheticsScoresRequest()
             let handler = VNImageRequestHandler(cgImage: image, options: [:])
-            if (try? handler.perform([req])) != nil, let first = req.results?.first {
-                return (first.overallScore, first.isUtility)
+            do {
+                try handler.perform([req])
+                if let first = req.results?.first {
+                    return (first.overallScore, first.isUtility)
+                }
+            } catch {
+                VisionWorkerDiagnostics.logFailure(stage: "image-aesthetics", error: error)
             }
         }
         return (nil, nil)

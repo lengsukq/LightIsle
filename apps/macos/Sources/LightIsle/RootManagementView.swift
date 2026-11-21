@@ -24,22 +24,30 @@ struct RootManagementView: View {
             ) {
                 HStack(spacing: 8) {
                     if model.busy { ProgressView().controlSize(.small) }
-                    Button("权限与初始化预检…") {
-                        AppModel.shared.navigateToSettingsDetail(.permissions)
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-
-                    Button("用户空间与目录迁移…") {
-                        AppModel.shared.navigate(to: .spaces)
-                    }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-
-                    Button("切换默认主目录…") { model.selectFolderAndSwitch() }
-                        .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
                     Button("+ 添加存储目录…") { model.addFolder() }
-                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                    Button("刷新") { model.refresh() }
-                        .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                        .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                    Menu {
+                        Button("切换默认主目录…") {
+                            model.selectFolderAndSwitch()
+                        }
+                        Button("用户空间与目录迁移…") {
+                            AppModel.shared.navigate(to: .spaces)
+                        }
+                        Button("权限与初始化预检…") {
+                            AppModel.shared.navigateToSettingsDetail(.permissions)
+                        }
+                        Divider()
+                        Button("刷新目录状态") {
+                            model.refresh()
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                            .font(.system(size: 14, weight: .medium))
+                            .frame(width: 28, height: 28)
+                    }
+                    .menuStyle(.borderlessButton)
+                    .fixedSize()
+                    .help("更多目录操作")
                 }
                 .disabled(!model.connected || model.busy)
             }

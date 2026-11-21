@@ -510,16 +510,24 @@ private func writeResponse(_ response: WorkerResponse) -> Bool {
 
 @main
 struct LightIsleMediaWorkerMain {
+    /// Creates the parent-liveness timer outside `@MainActor` so its event
+    /// handler runs on the background utility queue without inheriting
+    /// main-actor isolation from `@main static func main() async`.
+    private nonisolated static func startParentWatchdog(parentPID: pid_t) -> DispatchSourceTimer {
+        let timer = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
+        timer.schedule(deadline: .now() + .milliseconds(150), repeating: .milliseconds(150), leeway: .milliseconds(50))
+        timer.setEventHandler {
+            if getppid() != parentPID { _exit(125) }
+        }
+        timer.resume()
+        return timer
+    }
+
     static func main() async {
         signal(SIGPIPE, SIG_IGN)
         let parentPID = getppid()
         guard parentPID > 1 else { _exit(125) }
-        let parentWatchdog = DispatchSource.makeTimerSource(queue: DispatchQueue.global(qos: .utility))
-        parentWatchdog.schedule(deadline: .now() + .milliseconds(150), repeating: .milliseconds(150), leeway: .milliseconds(50))
-        parentWatchdog.setEventHandler {
-            if getppid() != parentPID { _exit(125) }
-        }
-        parentWatchdog.resume()
+        let parentWatchdog = startParentWatchdog(parentPID: parentPID)
         defer { parentWatchdog.cancel() }
 
         do {
