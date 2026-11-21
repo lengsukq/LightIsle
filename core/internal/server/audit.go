@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+
+	"github.com/lengsukq/lightisle/core/internal/tasks"
 )
 
 type auditWriter struct {
@@ -37,7 +39,7 @@ func (w *auditWriter) Unwrap() http.ResponseWriter { return w.ResponseWriter }
 
 func auditOutcome(status int) string {
 	if status >= 500 {
-		return "failed"
+		return tasks.StatusFailed
 	}
 	if status >= 400 {
 		return "denied"
@@ -119,7 +121,7 @@ func (a *API) auditMiddleware(next http.Handler) http.Handler {
 		}
 		outcome := auditOutcome(tracked.status)
 		if tracked.writeErr != nil {
-			outcome = "failed"
+			outcome = tasks.StatusFailed
 		}
 		a.recordAudit(actor.ID, action, target, outcome)
 	})

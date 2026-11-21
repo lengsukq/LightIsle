@@ -15,7 +15,7 @@ import (
 func (a *API) diskList(w http.ResponseWriter, r *http.Request) {
 	disks, err := diskmgmt.Shared().List(r.Context())
 	if err != nil {
-		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "drive_discovery_unavailable"})
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "drive_discovery_unavailable")
 		return
 	}
 	jsonReply(w, http.StatusOK, map[string]any{"disks": disks})
@@ -27,12 +27,12 @@ func (a *API) diskList(w http.ResponseWriter, r *http.Request) {
 func (a *API) diskSmart(w http.ResponseWriter, r *http.Request) {
 	d, code := discoveredDrive(r)
 	if code != http.StatusOK {
-		jsonReply(w, code, map[string]string{"error": "disk_not_available_or_identity_unknown"})
+		writeAPIErrorCode(w, code, "disk_not_available_or_identity_unknown")
 		return
 	}
 	report, err := diskhealth.Shared().Report(r.Context(), d.ID)
 	if err != nil {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_drive_request"})
+		writeAPIErrorCode(w, http.StatusBadRequest, "invalid_drive_request")
 		return
 	}
 	risk := "unknown"
@@ -68,16 +68,16 @@ func discoveredDrive(r *http.Request) (diskmgmt.Disk, int) {
 func (a *API) diskSmartHistory(w http.ResponseWriter, r *http.Request) {
 	d, code := discoveredDrive(r)
 	if code != http.StatusOK {
-		jsonReply(w, code, map[string]string{"error": "disk_not_available_or_identity_unknown"})
+		writeAPIErrorCode(w, code, "disk_not_available_or_identity_unknown")
 		return
 	}
 	if a.journal == nil || d.Identity == "" {
-		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "disk_health_history_unavailable"})
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "disk_health_history_unavailable")
 		return
 	}
 	samples, err := a.journal.DiskHealthHistory(d.Identity, 120)
 	if err != nil {
-		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "disk_health_history_unavailable"})
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "disk_health_history_unavailable")
 		return
 	}
 	jsonReply(w, http.StatusOK, map[string]any{
@@ -93,7 +93,7 @@ func (a *API) diskAction(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&req); err != nil {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_drive_request"})
+		writeAPIErrorCode(w, http.StatusBadRequest, "invalid_drive_request")
 		return
 	}
 	disks, err := diskmgmt.Shared().Do(r.Context(), req)
@@ -101,16 +101,16 @@ func (a *API) diskAction(w http.ResponseWriter, r *http.Request) {
 	case err == nil:
 		jsonReply(w, http.StatusOK, map[string]any{"disks": disks})
 	case errors.Is(err, diskmgmt.ErrInvalid):
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_drive_request"})
+		writeAPIErrorCode(w, http.StatusBadRequest, "invalid_drive_request")
 	case errors.Is(err, diskmgmt.ErrChanged):
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "drive_identity_changed_refresh_required"})
+		writeAPIErrorCode(w, http.StatusConflict, "drive_identity_changed_refresh_required")
 	case errors.Is(err, diskmgmt.ErrProtected):
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "drive_in_use_or_protected"})
+		writeAPIErrorCode(w, http.StatusConflict, "drive_in_use_or_protected")
 	case errors.Is(err, diskmgmt.ErrBusy):
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "drive_operation_busy"})
+		writeAPIErrorCode(w, http.StatusConflict, "drive_operation_busy")
 	case errors.Is(err, diskmgmt.ErrUnsupported):
-		jsonReply(w, http.StatusForbidden, map[string]string{"error": "drive_operation_not_supported"})
+		writeAPIErrorCode(w, http.StatusForbidden, "drive_operation_not_supported")
 	default:
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "diskutil_operation_failed"})
+		writeAPIErrorCode(w, http.StatusConflict, "diskutil_operation_failed")
 	}
 }

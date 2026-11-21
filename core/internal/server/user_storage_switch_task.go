@@ -18,6 +18,8 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/roots"
+	"github.com/lengsukq/lightisle/core/internal/safego"
+	"github.com/lengsukq/lightisle/core/internal/tasks"
 )
 
 type storageSwitchProgress struct {
@@ -443,7 +445,7 @@ func (s *RootServer) startStorageSwitch(session string, native bool, userID int6
 	ctx, cancel := context.WithCancel(context.Background())
 	s.switchTaskID, s.switchCancel = progress.TaskID, cancel
 	response := progress.SwitchUserStorageResponse
-	go func() {
+	safego.Go("storage-switch:"+progress.TaskID, func() {
 		defer s.requests.Done()
 		defer cancel()
 		defer func() {
@@ -460,21 +462,23 @@ func (s *RootServer) startStorageSwitch(session string, native bool, userID int6
 			if progress.committed {
 				progress.Phase = "source_pending"
 			} else {
-				progress.Phase = "failed"
+				progress.Phase = tasks.StatusFailed
 				if progress.Publishing || progress.Reserved {
-					progress.Phase = "interrupted"
+					progress.Phase = tasks.StatusInterrupted
 				} else if errors.Is(err, context.Canceled) {
-					progress.Phase = "cancelled"
+					progress.Phase = tasks.StatusCancelled
 				}
 			}
 		} else {
 			progress.ErrorDetail = ""
 		}
-		if progress.Phase == "completed" || progress.Phase == "failed" || progress.Phase == "cancelled" {
+		if progress.Phase == tasks.StatusCompleted || progress.Phase == tasks.StatusFailed || progress.Phase == tasks.StatusCancelled {
 			progress.Verified, progress.Published = nil, nil
 		}
-		_ = s.saveSwitch(progress)
-	}()
+		if saveErr := s.saveSwitch(progress); saveErr != nil {
+			slog.Error("failed to persist final storage switch state", "taskID", progress.TaskID, "phase", progress.Phase, "error", saveErr)
+		}
+	})
 	return response, nil
 }
 

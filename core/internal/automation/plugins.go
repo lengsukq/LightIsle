@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lengsukq/lightisle/core/internal/safego"
 	"github.com/robfig/cron/v3"
 )
 
@@ -62,7 +63,7 @@ func (m *Manager) syncSchedulerLocked() {
 		schedule := locationSchedule{Schedule: parsed, Location: loc}
 		var entryID cron.EntryID
 		entryID = scheduler.Schedule(schedule, cron.FuncJob(func() {
-			m.runScheduled(taskID, scheduler, scheduler.Entry(entryID).Prev)
+			m.runScheduled(taskID, false, scheduler, scheduler.Entry(entryID).Prev)
 		}))
 	}
 	m.scheduler = scheduler
@@ -252,22 +253,6 @@ func (m *Manager) ListScriptRuns(id string, limit int) ([]TaskRun, error) {
 	return m.ListRuns(id, limit)
 }
 
-// RunSync executes a task synchronously (used by manual triggers and tests).
-func (m *Manager) RunSync(id string) error {
-	m.mu.Lock()
-	_, ok := m.tasks[id]
-	closed := m.closed
-	m.mu.Unlock()
-	if closed {
-		return ErrUnavailable
-	}
-	if !ok {
-		return ErrNotFound
-	}
-	m.run(id)
-	return nil
-}
-
 // RunScriptTaskNow triggers an asynchronous immediate execution of a local
 // script task in automation/scripts/ (excluding plugin-backed tasks, which
 // execute through the App Center cron endpoint after activation checks).
@@ -278,7 +263,8 @@ func (m *Manager) RunScriptTaskNow(id string) error {
 	return m.RunNow(id)
 }
 
-// RunNow triggers an asynchronous immediate execution of a registered task.
+// RunNow triggers an asynchronous immediate execution of a registered task,
+// even when its cron schedule is currently paused, without mutating Enabled.
 func (m *Manager) RunNow(id string) error {
 	m.mu.Lock()
 	task, ok := m.tasks[id]
@@ -294,37 +280,21 @@ func (m *Manager) RunNow(id string) error {
 		m.mu.Unlock()
 		return ErrBusy
 	}
-	if !task.Enabled {
-		// Allow manual run even if schedule is paused by temporarily running via runForce
+	select {
+	case m.slots <- struct{}{}:
+	default:
 		m.mu.Unlock()
-		go m.runForce(id)
-		return nil
+		return ErrBusy
 	}
+	ctx, cancel := m.startRunContext(task)
+	m.running[id] = cancel
+	m.wg.Add(1)
 	m.mu.Unlock()
-	go m.run(id)
-	return nil
-}
 
-func (m *Manager) runForce(id string) {
-	m.mu.Lock()
-	task, ok := m.tasks[id]
-	if !ok || m.closed {
-		m.mu.Unlock()
-		return
-	}
-	wasEnabled := task.Enabled
-	if !wasEnabled {
-		task.Enabled = true
-		m.tasks[id] = task
-	}
-	m.mu.Unlock()
-	m.run(id)
-	if !wasEnabled {
-		m.mu.Lock()
-		if cur, exists := m.tasks[id]; exists {
-			cur.Enabled = false
-			m.tasks[id] = cur
-		}
-		m.mu.Unlock()
-	}
+	go func() {
+		defer m.finishReservedRun(id, cancel)
+		defer safego.Recover("automation:" + id)
+		m.executeTask(ctx, id, task)
+	}()
+	return nil
 }

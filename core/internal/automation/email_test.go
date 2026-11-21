@@ -187,7 +187,7 @@ func TestAgentDeletedEmailFileFallsBackToBrandedTemplate(t *testing.T) {
 	if err := os.Remove(filepath.Join(dir, "email.html")); err != nil {
 		t.Fatal(err)
 	}
-	m.run("vanishing-mail")
+	m.run("vanishing-mail", false)
 	if !notified {
 		t.Fatal("missing custom template suppressed notification")
 	}

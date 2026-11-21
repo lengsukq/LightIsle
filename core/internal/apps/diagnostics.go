@@ -667,7 +667,7 @@ func verifyPortOwnedByInstance(port, pid, pgid int) bool {
 		if lpid == pid || lpid == pgid {
 			return true
 		}
-		psOut, psErr := exec.Command("/bin/ps", "-o", "pgid=,ppid=", "-p", strconv.Itoa(lpid)).Output()
+		psOut, psErr := exec.CommandContext(ctx, "/bin/ps", "-o", "pgid=,ppid=", "-p", strconv.Itoa(lpid)).Output()
 		if psErr == nil {
 			fields := strings.Fields(string(psOut))
 			for _, f := range fields {

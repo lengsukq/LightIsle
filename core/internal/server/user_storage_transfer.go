@@ -252,40 +252,40 @@ func (a *API) switchUserStorageRoot(w http.ResponseWriter, r *http.Request) {
 func writeSwitchStorageError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, errStorageSwitchInvalidMode), errors.Is(err, auth.ErrInput):
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "storage_invalid_request"})
+		writeAPIErrorCode(w, http.StatusBadRequest, "storage_invalid_request")
 	case errors.Is(err, auth.ErrForbidden):
-		jsonReply(w, http.StatusForbidden, map[string]string{"error": "storage_permission_denied"})
+		writeAPIErrorCode(w, http.StatusForbidden, "storage_permission_denied")
 	case errors.Is(err, errStorageSwitchTaskMissing):
-		jsonReply(w, http.StatusNotFound, map[string]string{"error": errStorageSwitchTaskMissing.Error()})
+		writeAPIErrorCode(w, http.StatusNotFound, errStorageSwitchTaskMissing.Error())
 	case errors.Is(err, auth.ErrNotFound):
-		jsonReply(w, http.StatusNotFound, map[string]string{"error": "user_not_found"})
+		writeAPIErrorCode(w, http.StatusNotFound, "user_not_found")
 	case errors.Is(err, roots.ErrMissing):
-		jsonReply(w, http.StatusNotFound, map[string]string{"error": "root_not_found"})
+		writeAPIErrorCode(w, http.StatusNotFound, "root_not_found")
 	case errors.Is(err, roots.ErrOffline), errors.Is(err, roots.ErrStale):
-		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "root_unavailable"})
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "root_unavailable")
 	case errors.Is(err, errStorageRootGenChanged):
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "root_generation_changed"})
+		writeAPIErrorCode(w, http.StatusConflict, "root_generation_changed")
 	case errors.Is(err, files.ErrRootBusy):
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_switch_busy"})
+		writeAPIErrorCode(w, http.StatusConflict, "storage_switch_busy")
 	case errors.Is(err, errStorageFolderConflict):
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_folder_conflict"})
+		writeAPIErrorCode(w, http.StatusConflict, "storage_folder_conflict")
 	case errors.Is(err, errStorageFolderNotEmpty):
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_folder_not_empty"})
+		writeAPIErrorCode(w, http.StatusConflict, "storage_folder_not_empty")
 	case errors.Is(err, files.ErrInsufficientSpace), errors.Is(err, syscall.ENOSPC):
-		jsonReply(w, http.StatusInsufficientStorage, map[string]string{"error": "insufficient_storage_space"})
+		writeAPIErrorCode(w, http.StatusInsufficientStorage, "insufficient_storage_space")
 	case errors.Is(err, syscall.EROFS), errors.Is(err, fs.ErrPermission),
 		errors.Is(err, syscall.EACCES), errors.Is(err, syscall.EPERM):
-		jsonReply(w, http.StatusForbidden, map[string]string{"error": "storage_root_not_writable"})
+		writeAPIErrorCode(w, http.StatusForbidden, "storage_root_not_writable")
 	case errors.Is(err, errMigrationVerifyFailed):
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_migration_verification_failed"})
+		writeAPIErrorCode(w, http.StatusConflict, "storage_migration_verification_failed")
 	case errors.Is(err, auth.ErrStorageQuotaExceeded):
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_quota_exceeded"})
+		writeAPIErrorCode(w, http.StatusConflict, "storage_quota_exceeded")
 	case errors.Is(err, auth.ErrStorageLedgerConflict):
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_accounting_conflict"})
+		writeAPIErrorCode(w, http.StatusConflict, "storage_accounting_conflict")
 	case errors.Is(err, auth.ErrStorageReassignmentRequiresMigration):
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_migration_required"})
+		writeAPIErrorCode(w, http.StatusConflict, "storage_migration_required")
 	default:
-		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_settings_unavailable"})
+		writeAPIErrorCode(w, http.StatusInternalServerError, "storage_settings_unavailable")
 	}
 }
 

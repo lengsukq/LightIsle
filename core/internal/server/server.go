@@ -96,16 +96,31 @@ func NewWithRetention(webRoot string, store *auth.Store, fileStore files.Access,
 // NewWithDownloads wires the optional aria2-backed download center; a nil
 // manager keeps those endpoints honestly unavailable.
 func NewWithDownloads(webRoot string, store *auth.Store, fileStore files.Access, photos *gallery.Library, films *cinema.Library, journal *tasks.Journal, retention *tasks.RetentionStore, downloadCenter *downloads.Manager, backupServices ...*backup.Service) http.Handler {
-	h, _ := newWithDownloadsAndAPI(webRoot, store, fileStore, photos, films, journal, retention, downloadCenter, backupServices...)
-	return h
+	a := newAPI(webRoot, store, fileStore, photos, films, journal, retention, downloadCenter, backupServices...)
+	mux := http.NewServeMux()
+	registerGlobalRoutes(mux, a)
+	registerSingleRootCompatRoutes(mux, a)
+	return &apiHandler{
+		Handler: securityHeaders(a.auditMiddleware(mux)),
+		api:     a,
+	}
 }
 
-func newWithDownloadsAndAPI(webRoot string, store *auth.Store, fileStore files.Access, photos *gallery.Library, films *cinema.Library, journal *tasks.Journal, retention *tasks.RetentionStore, downloadCenter *downloads.Manager, backupServices ...*backup.Service) (http.Handler, *API) {
-	a := &API{collector: &system.Collector{}, webRoot: webRoot, auth: store, files: fileStore, gallery: photos, cinema: films, limiter: newLoginLimiter(), downloads: downloadCenter}
-	a.journal = journal
-	a.retention = retention
-	a.shareGrants = newShareGrantStore()
-	a.duplicateScans = newDuplicateScanStore()
+func newAPI(webRoot string, store *auth.Store, fileStore files.Access, photos *gallery.Library, films *cinema.Library, journal *tasks.Journal, retention *tasks.RetentionStore, downloadCenter *downloads.Manager, backupServices ...*backup.Service) *API {
+	a := &API{
+		collector:      &system.Collector{},
+		webRoot:        webRoot,
+		auth:           store,
+		files:          fileStore,
+		gallery:        photos,
+		cinema:         films,
+		journal:        journal,
+		retention:      retention,
+		limiter:        newLoginLimiter(),
+		downloads:      downloadCenter,
+		shareGrants:    newShareGrantStore(),
+		duplicateScans: newDuplicateScanStore(),
+	}
 	if len(backupServices) > 0 {
 		a.backup = backupServices[0]
 	}
@@ -121,7 +136,12 @@ func newWithDownloadsAndAPI(webRoot string, store *auth.Store, fileStore files.A
 			a.dav = dav.New(store, rooter.State, fileStore.MoveToTrash)
 		}
 	}
-	mux := http.NewServeMux()
+	return a
+}
+
+// registerGlobalRoutes mounts host-wide endpoints shared by both NewWithRoots
+// and legacy single-root test servers.
+func registerGlobalRoutes(mux *http.ServeMux, a *API) {
 	registerComputerFiles(mux, a)
 	mux.HandleFunc("GET /api/v2/map/status", a.requireLogin(func(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, http.StatusOK, map[string]bool{"tiandituConfigured": maptiles.Default.Configured()})
@@ -138,12 +158,8 @@ func newWithDownloadsAndAPI(webRoot string, store *auth.Store, fileStore files.A
 	mux.HandleFunc("POST /api/v2/alerts/{code}/acknowledge", a.requireAdmin(a.alertAcknowledge))
 	mux.HandleFunc("POST /api/v2/tasks/{kind}/cancel", a.requireAdmin(a.taskCancel))
 	mux.HandleFunc("POST /api/v2/tasks/{kind}/retry", a.requireAdmin(a.taskRetry))
-	mux.HandleFunc("GET /api/v2/admin/uploads", a.requireAdmin(a.adminUploadList))
 	mux.HandleFunc("GET /api/v2/admin/cleanup-rules", a.requireAdmin(a.getCleanupRules))
 	mux.HandleFunc("PUT /api/v2/admin/cleanup-rules", a.requireAdmin(a.setCleanupRules))
-	mux.HandleFunc("GET /api/v2/admin/uploads/unrecognized", a.requireAdmin(a.adminUnknownUploadList))
-	mux.HandleFunc("DELETE /api/v2/admin/uploads/{id}", a.requireAdmin(a.adminUploadCancel))
-	mux.HandleFunc("POST /api/v2/admin/uploads/cleanup-expired", a.requireAdmin(a.adminUploadCleanupExpired))
 	mux.HandleFunc("GET /api/v2/health", a.health)
 	mux.HandleFunc("GET /api/v2/network-test/ping", a.requireLogin(a.networkTestPing))
 	mux.HandleFunc("GET /api/v2/network-test/download", a.requireLogin(a.networkTestDownload))
@@ -164,9 +180,6 @@ func newWithDownloadsAndAPI(webRoot string, store *auth.Store, fileStore files.A
 	mux.HandleFunc("POST /api/v2/users", a.requireAdmin(a.addUser))
 	mux.HandleFunc("PATCH /api/v2/users/{id}", a.requireAdmin(a.changeUser))
 	mux.HandleFunc("POST /api/v2/users/{id}/password", a.requireAdmin(a.resetMemberPassword))
-	mux.HandleFunc("GET /api/v2/users/{id}/file-grants", a.requireAdmin(a.getFileGrants))
-	mux.HandleFunc("PUT /api/v2/users/{id}/file-grants", a.requireAdmin(a.setFileGrant))
-	mux.HandleFunc("DELETE /api/v2/users/{id}/file-grants", a.requireAdmin(a.deleteFileGrant))
 	// Physical volume paths and whole-host utilization are administrator
 	// information. Members receive only their allocated storage ledger.
 	mux.HandleFunc("GET /api/v2/system", a.requireAdmin(a.system))
@@ -179,9 +192,29 @@ func newWithDownloadsAndAPI(webRoot string, store *auth.Store, fileStore files.A
 	mux.HandleFunc("GET /api/v2/admin/tailscale", a.requireAdmin(a.adminTailscaleStatus))
 	mux.HandleFunc("GET /api/v2/admin/smb", a.requireAdmin(a.smbStatus))
 	mux.HandleFunc("POST /api/v2/admin/smb/service", a.requireAdmin(a.smbSetService))
+	mux.HandleFunc("POST /api/v2/admin/smb/reconcile", a.requireAdmin(a.smbReconcile))
 	mux.HandleFunc("POST /api/v2/admin/smb/shares", a.requireAdmin(a.smbAddShare))
 	mux.HandleFunc("PATCH /api/v2/admin/smb/shares/{recordName}", a.requireAdmin(a.smbUpdateShare))
 	mux.HandleFunc("DELETE /api/v2/admin/smb/shares/{recordName}", a.requireAdmin(a.smbRemoveShare))
+	mux.HandleFunc("GET /api/v2/trash/retention", a.requireLogin(a.trashRetention))
+	mux.HandleFunc("GET /api/v2/downloads/status", a.requireLogin(a.downloadStatus))
+	mux.HandleFunc("GET /api/v2/downloads", a.requireLogin(a.downloadList))
+	mux.HandleFunc("POST /api/v2/downloads", a.requireAdmin(a.downloadCreate))
+	mux.HandleFunc("POST /api/v2/downloads/{id}/actions", a.requireLogin(a.downloadAction))
+	mux.HandleFunc("DELETE /api/v2/downloads/{id}", a.requireLogin(a.downloadDelete))
+	mux.HandleFunc("GET /api/v2/dav/credentials", a.requireLogin(a.davCredentials))
+	mux.HandleFunc("POST /api/v2/dav/credentials", a.requireLogin(a.davCredentials))
+	mux.HandleFunc("POST /api/v2/dav/credentials/{id}/rotate", a.requireLogin(a.davCredentialRotate))
+	mux.HandleFunc("DELETE /api/v2/dav/credentials/{id}", a.requireLogin(a.davCredentialDelete))
+}
+
+// registerSingleRootCompatRoutes mounts unscoped file/media/DAV routes used
+// only by legacy single-root test constructors (New..NewWithDownloads).
+func registerSingleRootCompatRoutes(mux *http.ServeMux, a *API) {
+	mux.HandleFunc("GET /api/v2/admin/uploads", a.requireAdmin(a.adminUploadList))
+	mux.HandleFunc("GET /api/v2/admin/uploads/unrecognized", a.requireAdmin(a.adminUnknownUploadList))
+	mux.HandleFunc("DELETE /api/v2/admin/uploads/{id}", a.requireAdmin(a.adminUploadCancel))
+	mux.HandleFunc("POST /api/v2/admin/uploads/cleanup-expired", a.requireAdmin(a.adminUploadCleanupExpired))
 	mux.HandleFunc("GET /api/v2/files", a.requireLogin(a.listFiles))
 	mux.HandleFunc("GET /api/v2/files/search", a.requireLogin(a.searchFiles))
 	mux.HandleFunc("GET /api/v2/files/duplicates", a.requireLogin(a.duplicatesStatus))
@@ -209,16 +242,12 @@ func newWithDownloadsAndAPI(webRoot string, store *auth.Store, fileStore files.A
 	mux.HandleFunc("HEAD /api/v2/files/preview", a.requireLogin(a.previewFile))
 	mux.HandleFunc("GET /api/v2/files/thumbnail", a.requireLogin(a.fileThumbnail))
 	mux.HandleFunc("HEAD /api/v2/files/thumbnail", a.requireLogin(a.fileThumbnail))
-	mux.HandleFunc("GET /api/v2/trash/retention", a.requireLogin(a.trashRetention))
 	mux.HandleFunc("GET /api/v2/files/trash", a.requireLogin(a.listTrash))
 	mux.HandleFunc("POST /api/v2/files/trash/{id}/restore", a.requireLogin(a.restoreTrash))
 	mux.HandleFunc("GET /api/v2/files/root", a.requireLogin(a.fileRoot))
 	mux.HandleFunc("POST /api/v2/file-shares", a.requireLogin(a.createFileShare))
 	mux.HandleFunc("GET /api/v2/file-shares", a.requireLogin(a.listFileShares))
 	mux.HandleFunc("DELETE /api/v2/file-shares/{id}", a.requireLogin(a.revokeFileShare))
-	mux.HandleFunc("GET /api/v2/public/file/{token}", a.downloadSharedFile)
-	mux.HandleFunc("HEAD /api/v2/public/file/{token}", a.downloadSharedFile)
-	mux.HandleFunc("POST /api/v2/public/file/{token}", a.downloadSharedFile)
 	mux.HandleFunc("GET /api/v2/photos", a.requireMedia(a.galleryList))
 	mux.HandleFunc("GET /api/v2/photos/timeline", a.requireMedia(a.galleryTimeline))
 	mux.HandleFunc("GET /api/v2/photos/facets", a.requireMedia(a.galleryFacets))
@@ -277,6 +306,8 @@ func newWithDownloadsAndAPI(webRoot string, store *auth.Store, fileStore files.A
 	mux.HandleFunc("POST /api/v2/cinema/{id}/metadata/tmdb/match", a.requireAdmin(a.cinemaTMDBMatch))
 	mux.HandleFunc("POST /api/v2/cinema/{id}/metadata/douban/search", a.requireAdmin(a.cinemaDoubanSearch))
 	mux.HandleFunc("POST /api/v2/cinema/{id}/metadata/douban/match", a.requireAdmin(a.cinemaDoubanMatch))
+	mux.HandleFunc("GET /api/v2/cinema/tmdb-poster", a.requireMedia(a.cinemaTMDBPosterProxy))
+	mux.HandleFunc("HEAD /api/v2/cinema/tmdb-poster", a.requireMedia(a.cinemaTMDBPosterProxy))
 	mux.HandleFunc("GET /api/v2/cinema/{id}/poster", a.requireMedia(a.cinemaPoster))
 	mux.HandleFunc("HEAD /api/v2/cinema/{id}/poster", a.requireMedia(a.cinemaPoster))
 	mux.HandleFunc("GET /api/v2/cinema/{id}/stream", a.requireMedia(a.cinemaStream))
@@ -285,42 +316,25 @@ func newWithDownloadsAndAPI(webRoot string, store *auth.Store, fileStore files.A
 	mux.HandleFunc("GET /api/v2/cinema/{id}/progress", a.requireMedia(a.cinemaProgress))
 	mux.HandleFunc("PUT /api/v2/cinema/{id}/progress", a.requireMedia(a.cinemaSaveProgress))
 	mux.HandleFunc("DELETE /api/v2/cinema/{id}/progress", a.requireMedia(a.cinemaClearProgress))
-	// Transcode-backed playback: availability status plus per-film HLS
-	// sessions, track listings and embedded-subtitle extraction.
 	mux.HandleFunc("GET /api/v2/cinema/transcode/status", a.requireMedia(a.cinemaTranscodeStatus))
-	mux.HandleFunc("GET /api/v2/downloads/status", a.requireLogin(a.downloadStatus))
-	mux.HandleFunc("GET /api/v2/downloads", a.requireLogin(a.downloadList))
-	mux.HandleFunc("POST /api/v2/downloads", a.requireAdmin(a.downloadCreate))
-	mux.HandleFunc("POST /api/v2/downloads/{id}/actions", a.requireLogin(a.downloadAction))
-	mux.HandleFunc("DELETE /api/v2/downloads/{id}", a.requireLogin(a.downloadDelete))
 	mux.HandleFunc("GET /api/v2/cinema/{id}/hls/session", a.requireMedia(a.cinemaHLSSession))
 	mux.HandleFunc("DELETE /api/v2/cinema/{id}/hls/session", a.requireMedia(a.cinemaHLSSessionStop))
 	mux.HandleFunc("GET /api/v2/cinema/{id}/hls/{session}/{file}", a.requireMedia(a.cinemaHLSFile))
 	mux.HandleFunc("GET /api/v2/cinema/{id}/tracks", a.requireMedia(a.cinemaTracks))
 	mux.HandleFunc("GET /api/v2/cinema/{id}/embedded-subtitles", a.requireMedia(a.cinemaEmbeddedSubtitle))
-	// Series live under their own prefix: "cinema/series/{id}" would be an
-	// ambiguous pattern against "cinema/{id}/poster" in net/http's ServeMux.
 	mux.HandleFunc("GET /api/v2/series", a.requireMedia(a.cinemaSeriesList))
 	mux.HandleFunc("GET /api/v2/series/{id}", a.requireMedia(a.cinemaSeriesGet))
+	mux.HandleFunc("GET /api/v2/series/{id}/poster", a.requireMedia(a.cinemaSeriesPoster))
+	mux.HandleFunc("HEAD /api/v2/series/{id}/poster", a.requireMedia(a.cinemaSeriesPoster))
 	mux.HandleFunc("POST /api/v2/series/{id}/metadata/tmdb/match", a.requireAdmin(a.cinemaSeriesTMDBMatch))
 	mux.HandleFunc("POST /api/v2/cinema/scrape/start", a.requireAdmin(a.cinemaScrapeStart))
 	mux.HandleFunc("GET /api/v2/cinema/scrape/status", a.requireAdmin(a.cinemaScrapeStatus))
 	mux.HandleFunc("GET /api/v2/cinema/history", a.requireMedia(a.cinemaHistory))
 	mux.HandleFunc("DELETE /api/v2/cinema/history", a.requireMedia(a.cinemaClearHistory))
 	mux.HandleFunc("POST /api/v2/cinema/{id}/watched", a.requireMedia(a.cinemaMarkWatched))
-	// WebDAV mounts with its own Basic-auth credential model; every method
-	// (PROPFIND, PUT, LOCK, ...) matches this unscoped pattern.
 	mux.Handle("/dav", a.davEndpoint())
 	mux.Handle("/dav/", a.davEndpoint())
-	mux.HandleFunc("GET /api/v2/dav/credentials", a.requireLogin(a.davCredentials))
-	mux.HandleFunc("POST /api/v2/dav/credentials", a.requireLogin(a.davCredentials))
-	mux.HandleFunc("POST /api/v2/dav/credentials/{id}/rotate", a.requireLogin(a.davCredentialRotate))
-	mux.HandleFunc("DELETE /api/v2/dav/credentials/{id}", a.requireLogin(a.davCredentialDelete))
 	mux.HandleFunc("/", a.static)
-	return &apiHandler{
-		Handler: securityHeaders(a.auditMiddleware(legacyRootTransitionGate(fileStore, mux))),
-		api:     a,
-	}, a
 }
 
 type apiHandler struct {
@@ -332,44 +346,6 @@ func (h *apiHandler) SetProtectedHostDirsProvider(fn func() []string) {
 	if h != nil && h.api != nil {
 		h.api.protectedHostDirs = fn
 	}
-}
-
-type legacyRequestGateProvider interface {
-	TryAcquireLegacyRequest() (func(), bool)
-}
-
-func legacyRootTransitionGate(fileStore files.Access, next http.Handler) http.Handler {
-	gate, ok := fileStore.(legacyRequestGateProvider)
-	if !ok {
-		return next
-	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		path := r.URL.Path
-		legacy := path == "/api/v2" || strings.HasPrefix(path, "/api/v2/") ||
-			path == "/dav" || strings.HasPrefix(path, "/dav/")
-		// Disk actions acquire diskmgmt's storage-transition read lock. The
-		// native root switch holds its write lock before trying this gate, so
-		// taking both here would invert lock order and could deadlock.
-		if path == "/api/v2/admin/disks/actions" ||
-			path == "/api/v2/admin/tailscale" ||
-			path == "/api/v2/admin/smb" || strings.HasPrefix(path, "/api/v2/admin/smb/") ||
-			strings.HasPrefix(path, "/api/v2/network-test/") ||
-			path == "/api/v2/roots" || strings.HasPrefix(path, "/api/v2/roots/") ||
-			strings.HasPrefix(path, "/api/v2/storage/") {
-			legacy = false
-		}
-		if !legacy {
-			next.ServeHTTP(w, r)
-			return
-		}
-		release, acquired := gate.TryAcquireLegacyRequest()
-		if !acquired {
-			jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": files.ErrLegacyTransitionBusy.Error()})
-			return
-		}
-		defer release()
-		next.ServeHTTP(w, r)
-	})
 }
 
 // davEndpoint guards the DAV service: a missing service (files manager
@@ -406,7 +382,7 @@ func securityHeaders(next http.Handler) http.Handler {
 			// authenticated API mutations or the Origin check below.
 			if r.Header.Get("X-LightIsle-Request") != "1" && !publicShareFormPost(r) {
 				if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
-					jsonReply(w, http.StatusForbidden, map[string]string{"error": "request_header_required"})
+					writeAPIErrorCode(w, http.StatusForbidden, "request_header_required")
 				} else {
 					http.Error(w, "missing application request header", http.StatusForbidden)
 				}
@@ -414,7 +390,7 @@ func securityHeaders(next http.Handler) http.Handler {
 			}
 			if origin := r.Header.Get("Origin"); origin != "" && !originMatchesHost(origin, r.Host) {
 				if r.URL.Path == "/api" || strings.HasPrefix(r.URL.Path, "/api/") {
-					jsonReply(w, http.StatusForbidden, map[string]string{"error": "cross_origin_request_rejected"})
+					writeAPIErrorCode(w, http.StatusForbidden, "cross_origin_request_rejected")
 				} else {
 					http.Error(w, "cross-origin request rejected", http.StatusForbidden)
 				}
@@ -432,13 +408,25 @@ func isStreamingUploadPath(p string) bool {
 	return strings.HasPrefix(p, "/apps/") ||
 		strings.Contains(p, "/files/content") ||
 		strings.Contains(p, "/uploads") ||
-		strings.HasPrefix(p, "/api/v2/network-test/upload")
+		strings.HasPrefix(p, "/api/v2/network-test/upload") ||
+		strings.HasSuffix(p, "/data-restore")
 }
 
 func jsonReply(w http.ResponseWriter, status int, v any) {
 	if status >= 400 {
-		if payload, ok := v.(map[string]string); ok {
+		switch payload := v.(type) {
+		case APIError:
+			diagnostics.SetErrorCode(w, payload.Error)
+		case *APIError:
+			if payload != nil {
+				diagnostics.SetErrorCode(w, payload.Error)
+			}
+		case map[string]string:
 			diagnostics.SetErrorCode(w, payload["error"])
+		case map[string]any:
+			if code, ok := payload["error"].(string); ok {
+				diagnostics.SetErrorCode(w, code)
+			}
 		}
 	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")

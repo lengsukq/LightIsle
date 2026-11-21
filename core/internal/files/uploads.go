@@ -431,17 +431,6 @@ func (s *Store) persistUpload(meta UploadState) (committed bool, err error) {
 	return true, syncUploadsRoot(s, root)
 }
 
-func (s *Store) syncUploadsDirectory() error {
-	root, _, err := s.openExistingUploadsRoot()
-	if err != nil {
-		return err
-	}
-	if root == nil {
-		return fs.ErrNotExist
-	}
-	return syncUploadsRoot(s, root)
-}
-
 func syncUploadsRoot(s *Store, root *os.Root) error {
 	dir, err := root.Open(".")
 	if err != nil {

@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"strconv"
 	"testing"
 
 	"github.com/lengsukq/lightisle/core/internal/auth"
@@ -70,9 +69,8 @@ func TestFileACLNoPrivateSymlinkSearchOrTrashDisclosure(t *testing.T) {
 		route.ServeHTTP(resp, req)
 		return resp
 	}
-	grantUrl := "/api/v2/users/" + strconv.FormatInt(child.ID, 10) + "/file-grants"
-	if got := call("PUT", grantUrl, `{"path":"shared","canWrite":true}`, admin); got.Code != 200 {
-		t.Fatalf("cannot grant shared directory: %d %s", got.Code, got.Body.String())
+	if err := accounts.SetFileGrant(admin, child.ID, "shared", true); err != nil {
+		t.Fatalf("cannot grant shared directory: %v", err)
 	}
 	for _, request := range []struct{ method, url, body string }{
 		{"GET", "/api/v2/files/content?path=shared/link/private.txt", ""},

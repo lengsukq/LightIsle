@@ -159,7 +159,7 @@ func (s *Store) StorageSwitchShares(req SwitchUserStorageCategoriesRequest) ([]S
   SELECT kind,file_path,user_id,0 FROM root_file_shares WHERE root_id=? AND root_generation=? AND expires_at>?
   AND EXISTS(SELECT 1 FROM selected WHERE lower(file_path)=lower(prefix)
    OR substr(lower(file_path),1,length(prefix)+1)=lower(prefix)||'/'
-   OR (kind='folder' AND (file_path='.' OR substr(lower(prefix),1,length(file_path)+1)=lower(file_path)||'/')))
+   OR (kind IN ('dir','folder') AND (file_path='.' OR substr(lower(prefix),1,length(file_path)+1)=lower(file_path)||'/')))
   UNION ALL
   SELECT 'album',album_name,owner_user_id,member_user_id FROM shared_folder_albums
   WHERE root_id=? AND root_generation=? AND (owner_user_id=? OR member_user_id=?)

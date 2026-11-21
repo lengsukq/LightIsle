@@ -315,7 +315,7 @@ func (m *Manager) publishOne(task Task, sourceName, source, desired string, size
 	target := desired
 	if hasPrior {
 		target = prior.target
-		if prior.size != size || prior.sha256 != digest || prior.state == "recovery_required" {
+		if prior.size != size || prior.sha256 != digest || prior.state == pubStateRecoveryRequired {
 			return "", errRecoveryRequired
 		}
 		if prior.state == "publishing" || prior.state == "published" {
@@ -327,11 +327,11 @@ func (m *Manager) publishOne(task Task, sourceName, source, desired string, size
 				return target, m.setPublicationState(task.ID, sourceName, target, size, digest, "published")
 			}
 			if exists || prior.state == "published" {
-				_ = m.setPublicationState(task.ID, sourceName, target, size, digest, "recovery_required")
+				_ = m.setPublicationState(task.ID, sourceName, target, size, digest, pubStateRecoveryRequired)
 				return "", errRecoveryRequired
 			}
 		}
-		if prior.state == "pending" {
+		if prior.state == pubStatePending {
 			// An earlier attempt reserved a target but did not publish it.
 			// Foreign files at that path must be treated as collisions, not
 			// as crash-recovered publications.
@@ -353,7 +353,7 @@ func (m *Manager) publishOne(task Task, sourceName, source, desired string, size
 				continue
 			}
 		}
-		if err := m.setPublicationState(task.ID, sourceName, target, size, digest, "pending"); err != nil {
+		if err := m.setPublicationState(task.ID, sourceName, target, size, digest, pubStatePending); err != nil {
 			return "", err
 		}
 		if err := m.setPublicationState(task.ID, sourceName, target, size, digest, "publishing"); err != nil {
@@ -388,7 +388,7 @@ func (m *Manager) publishOne(task Task, sourceName, source, desired string, size
 		if errors.Is(publishErr, files.ErrExists) && !hasPrior {
 			// Publishing lost a race to an unrelated writer. Leave the
 			// reservation in a retryable state before trying a new suffix.
-			if err := m.setPublicationState(task.ID, sourceName, target, size, digest, "pending"); err != nil {
+			if err := m.setPublicationState(task.ID, sourceName, target, size, digest, pubStatePending); err != nil {
 				return "", err
 			}
 			continue
@@ -397,7 +397,7 @@ func (m *Manager) publishOne(task Task, sourceName, source, desired string, size
 			return "", publishErr
 		}
 		if closeErr != nil || written != size {
-			_ = m.setPublicationState(task.ID, sourceName, target, size, digest, "recovery_required")
+			_ = m.setPublicationState(task.ID, sourceName, target, size, digest, pubStateRecoveryRequired)
 			return "", errRecoveryRequired
 		}
 		same, exists, err := m.verifyPublication(task, target, size, digest)
@@ -405,7 +405,7 @@ func (m *Manager) publishOne(task Task, sourceName, source, desired string, size
 			return "", err
 		}
 		if !exists || !same {
-			_ = m.setPublicationState(task.ID, sourceName, target, size, digest, "recovery_required")
+			_ = m.setPublicationState(task.ID, sourceName, target, size, digest, pubStateRecoveryRequired)
 			return "", errRecoveryRequired
 		}
 		return target, m.setPublicationState(task.ID, sourceName, target, size, digest, "published")

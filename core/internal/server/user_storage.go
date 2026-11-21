@@ -19,7 +19,7 @@ import (
 func storageUserID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	userID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if err != nil || userID <= 0 {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_user"})
+		writeAPIErrorCode(w, http.StatusBadRequest, "invalid_user")
 		return 0, false
 	}
 	return userID, true
@@ -31,13 +31,13 @@ func storageUserID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 // registered disk must NOT be treated as lost automatically.
 func (a *API) abandonRemovedStorageCategory(w http.ResponseWriter, r *http.Request) {
 	if a.rootServer == nil || a.rootServer.registry == nil {
-		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "storage_registry_unavailable"})
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "storage_registry_unavailable")
 		return
 	}
 	userID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	category := r.PathValue("category")
 	if err != nil || userID <= 0 || (category != auth.StorageFiles && category != auth.StoragePhotos && category != auth.StorageVideos) {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_storage_category"})
+		writeAPIErrorCode(w, http.StatusBadRequest, "invalid_storage_category")
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1024)
@@ -51,12 +51,12 @@ func (a *API) abandonRemovedStorageCategory(w http.ResponseWriter, r *http.Reque
 	decoder.DisallowUnknownFields()
 	var extra any
 	if decoder.Decode(&request) != nil || decoder.Decode(&extra) != io.EOF || !request.Confirm {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "storage_reset_confirmation_required"})
+		writeAPIErrorCode(w, http.StatusBadRequest, "storage_reset_confirmation_required")
 		return
 	}
 	for _, root := range a.rootServer.registry.List() {
 		if root.ID == request.RootID {
-			jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_remove_root_first"})
+			writeAPIErrorCode(w, http.StatusConflict, "storage_remove_root_first")
 			return
 		}
 	}
@@ -74,13 +74,13 @@ func (a *API) abandonRemovedStorageCategory(w http.ResponseWriter, r *http.Reque
 
 func (a *API) abandonRemovedStorageRoot(w http.ResponseWriter, r *http.Request) {
 	if a.rootServer == nil || a.rootServer.registry == nil {
-		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "storage_registry_unavailable"})
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "storage_registry_unavailable")
 		return
 	}
 	userID, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	rootID := r.PathValue("rootID")
 	if err != nil || userID <= 0 || rootID == "" {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "storage_invalid_request"})
+		writeAPIErrorCode(w, http.StatusBadRequest, "storage_invalid_request")
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 1024)
@@ -93,12 +93,12 @@ func (a *API) abandonRemovedStorageRoot(w http.ResponseWriter, r *http.Request) 
 	decoder.DisallowUnknownFields()
 	var extra any
 	if decoder.Decode(&request) != nil || decoder.Decode(&extra) != io.EOF || !request.Confirm || request.Generation == 0 {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "storage_reset_confirmation_required"})
+		writeAPIErrorCode(w, http.StatusBadRequest, "storage_reset_confirmation_required")
 		return
 	}
 	for _, root := range a.rootServer.registry.List() {
 		if root.ID == rootID {
-			jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_remove_root_first"})
+			writeAPIErrorCode(w, http.StatusConflict, "storage_remove_root_first")
 			return
 		}
 	}
@@ -126,7 +126,7 @@ func (a *API) userStoragePendingReservations(w http.ResponseWriter, r *http.Requ
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		parsed, err := strconv.Atoi(raw)
 		if err != nil || parsed < 1 || parsed > 100 {
-			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_page_size"})
+			writeAPIErrorCode(w, http.StatusBadRequest, "invalid_page_size")
 			return
 		}
 		limit = parsed
@@ -142,17 +142,17 @@ func (a *API) userStoragePendingReservations(w http.ResponseWriter, r *http.Requ
 func storagePolicyError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, auth.ErrForbidden):
-		jsonReply(w, http.StatusForbidden, map[string]string{"error": "storage_permission_denied"})
+		writeAPIErrorCode(w, http.StatusForbidden, "storage_permission_denied")
 	case errors.Is(err, auth.ErrInput):
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "storage_invalid_request"})
+		writeAPIErrorCode(w, http.StatusBadRequest, "storage_invalid_request")
 	case errors.Is(err, auth.ErrNotFound):
-		jsonReply(w, http.StatusNotFound, map[string]string{"error": "user_not_found"})
+		writeAPIErrorCode(w, http.StatusNotFound, "user_not_found")
 	case errors.Is(err, auth.ErrStorageReassignmentRequiresMigration):
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_migration_required"})
+		writeAPIErrorCode(w, http.StatusConflict, "storage_migration_required")
 	case errors.Is(err, auth.ErrStorageUnassigned):
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_destination_not_assigned"})
+		writeAPIErrorCode(w, http.StatusConflict, "storage_destination_not_assigned")
 	default:
-		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "storage_settings_unavailable"})
+		writeAPIErrorCode(w, http.StatusInternalServerError, "storage_settings_unavailable")
 	}
 }
 
@@ -174,7 +174,7 @@ func (a *API) userStoragePolicy(w http.ResponseWriter, r *http.Request) {
 func (a *API) ownStoragePolicy(w http.ResponseWriter, r *http.Request) {
 	user, ok := a.auth.Identity(token(r))
 	if !ok {
-		jsonReply(w, http.StatusUnauthorized, map[string]string{"error": "authentication_required"})
+		writeAPIErrorCode(w, http.StatusUnauthorized, "authentication_required")
 		return
 	}
 	policy, err := a.auth.StoragePolicy(token(r), user.ID)
@@ -201,7 +201,7 @@ func (a *API) setUserStorageRootQuota(w http.ResponseWriter, r *http.Request) {
 	decoder.DisallowUnknownFields()
 	var extra any
 	if decoder.Decode(&payload) != nil || payload.QuotaBytes == nil || payload.Generation == nil || decoder.Decode(&extra) != io.EOF {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
+		writeAPIErrorCode(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
 	if err := a.auth.SetUserStorageRootQuota(token(r), id, rootID, *payload.Generation, *payload.QuotaBytes); err != nil {
@@ -222,17 +222,17 @@ func (a *API) setUserStorageRootQuota(w http.ResponseWriter, r *http.Request) {
 func (a *API) assignUserStorageRoot(w http.ResponseWriter, r *http.Request) {
 	if a.rootLease == nil || a.rootRuntime == nil ||
 		!a.rootLease.Valid(r.Context()) || a.rootID == "" {
-		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "root_unavailable"})
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "root_unavailable")
 		return
 	}
 	userID, err := strconv.ParseInt(r.PathValue("userID"), 10, 64)
 	if err != nil || userID <= 0 {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_user"})
+		writeAPIErrorCode(w, http.StatusBadRequest, "invalid_user")
 		return
 	}
 	category := r.PathValue("category")
 	if category != auth.StorageFiles && category != auth.StoragePhotos && category != auth.StorageVideos {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "storage_invalid_request"})
+		writeAPIErrorCode(w, http.StatusBadRequest, "storage_invalid_request")
 		return
 	}
 	var payload struct {
@@ -245,10 +245,10 @@ func (a *API) assignUserStorageRoot(w http.ResponseWriter, r *http.Request) {
 		decoder.DisallowUnknownFields()
 		var extra any
 		if err := decoder.Decode(&payload); err != nil && !errors.Is(err, io.EOF) {
-			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "storage_invalid_request"})
+			writeAPIErrorCode(w, http.StatusBadRequest, "storage_invalid_request")
 			return
 		} else if err == nil && decoder.Decode(&extra) != io.EOF {
-			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "storage_invalid_request"})
+			writeAPIErrorCode(w, http.StatusBadRequest, "storage_invalid_request")
 			return
 		}
 	}
@@ -288,12 +288,12 @@ func (a *API) assignUserStorageRoot(w http.ResponseWriter, r *http.Request) {
 func (a *API) allocateUserStorageSpace(w http.ResponseWriter, r *http.Request) {
 	if a.rootLease == nil || a.rootRuntime == nil ||
 		!a.rootLease.Valid(r.Context()) || a.rootID == "" {
-		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "root_unavailable"})
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "root_unavailable")
 		return
 	}
 	userID, err := strconv.ParseInt(r.PathValue("userID"), 10, 64)
 	if err != nil || userID <= 0 {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_user"})
+		writeAPIErrorCode(w, http.StatusBadRequest, "invalid_user")
 		return
 	}
 	var payload struct {
@@ -308,16 +308,16 @@ func (a *API) allocateUserStorageSpace(w http.ResponseWriter, r *http.Request) {
 		decoder.DisallowUnknownFields()
 		var extra any
 		if err := decoder.Decode(&payload); err != nil && !errors.Is(err, io.EOF) {
-			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "storage_invalid_request"})
+			writeAPIErrorCode(w, http.StatusBadRequest, "storage_invalid_request")
 			return
 		} else if err == nil && decoder.Decode(&extra) != io.EOF {
-			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "storage_invalid_request"})
+			writeAPIErrorCode(w, http.StatusBadRequest, "storage_invalid_request")
 			return
 		}
 	}
 	for _, category := range payload.Categories {
 		if category != auth.StorageFiles && category != auth.StoragePhotos && category != auth.StorageVideos {
-			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "storage_invalid_request"})
+			writeAPIErrorCode(w, http.StatusBadRequest, "storage_invalid_request")
 			return
 		}
 	}
@@ -328,7 +328,7 @@ func (a *API) allocateUserStorageSpace(w http.ResponseWriter, r *http.Request) {
 	}
 	subdirs, ok := resolvePersonalSubdirectories(userID, policy, a.rootID, a.rootRuntime.root.Generation, payload.Categories, payload.Subdirectories)
 	if !ok {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "storage_invalid_request"})
+		writeAPIErrorCode(w, http.StatusBadRequest, "storage_invalid_request")
 		return
 	}
 	createdDirs, err := provisionPersonalSpaceDirectories(a.files, userID, policy, a.rootID, a.rootRuntime.root.Generation, payload.Categories, subdirs)
@@ -362,18 +362,18 @@ func writePersonalStorageSetupError(w http.ResponseWriter, err error) {
 		errors.Is(err, auth.ErrStorageUnassigned):
 		storagePolicyError(w, err)
 	case errors.Is(err, errStorageFolderConflict):
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_folder_conflict"})
+		writeAPIErrorCode(w, http.StatusConflict, "storage_folder_conflict")
 	case errors.Is(err, errStorageFolderNotEmpty):
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "storage_folder_not_empty"})
+		writeAPIErrorCode(w, http.StatusConflict, "storage_folder_not_empty")
 	case errors.Is(err, errStorageRootGenChanged):
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "root_generation_changed"})
+		writeAPIErrorCode(w, http.StatusConflict, "root_generation_changed")
 	case errors.Is(err, roots.ErrOffline), errors.Is(err, roots.ErrStale), errors.Is(err, files.ErrOffline):
-		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "root_unavailable"})
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "root_unavailable")
 	case errors.Is(err, files.ErrInsufficientSpace), errors.Is(err, syscall.ENOSPC):
-		jsonReply(w, http.StatusInsufficientStorage, map[string]string{"error": "insufficient_storage_space"})
+		writeAPIErrorCode(w, http.StatusInsufficientStorage, "insufficient_storage_space")
 	case errors.Is(err, syscall.EROFS), errors.Is(err, fs.ErrPermission),
 		errors.Is(err, syscall.EACCES), errors.Is(err, syscall.EPERM):
-		jsonReply(w, http.StatusForbidden, map[string]string{"error": "storage_root_not_writable"})
+		writeAPIErrorCode(w, http.StatusForbidden, "storage_root_not_writable")
 	default:
 		fileError(w, err)
 	}

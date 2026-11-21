@@ -616,13 +616,3 @@ func (l *authLimiter) trim(now time.Time) {
 		}
 	}
 }
-
-// relativePath converts a webdav name ("/a/b") into the grant/manager path
-// format ("a/b", root is ".").
-func relativePath(name string) string {
-	trimmed := strings.TrimPrefix(name, "/")
-	if trimmed == "" {
-		return "."
-	}
-	return trimmed
-}

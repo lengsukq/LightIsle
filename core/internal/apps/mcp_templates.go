@@ -161,15 +161,16 @@ public class Server {
 		webScript = "#!/bin/sh\nset -eu\nexec java -XX:+UseSerialGC -Xms16m -Xmx64m -XX:TieredStopAtLevel=1 Server.java\n"
 
 	case "shell":
+		shellBody := strings.ReplaceAll(fmt.Sprintf(`{"app":%q,"name":%q,"runtime":"shell"}`, id, name), `'`, `'\''`)
 		webScript = fmt.Sprintf(`#!/bin/sh
 set -eu
 PORT="${PORT:-8080}"
-BODY='{"app":%q,"name":%q,"runtime":"shell"}'
+BODY='%s'
 LEN=$(printf '%%s' "$BODY" | wc -c | tr -d ' ')
 while true; do
   printf 'HTTP/1.1 200 OK\r\nContent-Type: application/json; charset=utf-8\r\nContent-Length: %%s\r\nConnection: close\r\n\r\n%%s' "$LEN" "$BODY" | nc -l 127.0.0.1 "$PORT" >/dev/null 2>&1 || break
 done
-`, id, name)
+`, shellBody)
 
 	case "python":
 		appPy := fmt.Sprintf(`import http.server

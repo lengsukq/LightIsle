@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"os"
 	"strings"
 	"syscall"
@@ -128,7 +129,9 @@ func buildNativeSpacesOverview(ctx context.Context, accountStore *auth.Store, ro
 				if lease, err := rootRegistry.Acquire(ctx, r.ID); err == nil {
 					online = true
 					if accountStore != nil {
-						_ = accountStore.SyncVerifiedRootGeneration(r.ID, r.Generation)
+						if err := accountStore.SyncVerifiedRootGeneration(r.ID, r.Generation); err != nil {
+							slog.Warn("failed to sync verified root generation in spaces overview", "rootID", r.ID, "generation", r.Generation, "error", err)
+						}
 					}
 					var stat syscall.Statfs_t
 					if syscall.Statfs(r.Path, &stat) == nil && stat.Bsize > 0 {

@@ -120,9 +120,12 @@ func (s *Store) InspectFolderAlbumShareTarget(session, rootID string, generation
 	if memberEnabled != 1 {
 		return "", "", "", "", ErrForbidden
 	}
-	_ = s.db.QueryRow(`SELECT link_name FROM shared_folder_albums
+	err = s.db.QueryRow(`SELECT link_name FROM shared_folder_albums
 		WHERE root_id=? AND root_generation=? AND owner_user_id=? AND album_name=? AND member_user_id=?`,
 		rootID, int64(generation), actor.ID, albumName, memberUserID).Scan(&existingLink)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return "", "", "", "", err
+	}
 	return ownerPhotos, memberPhotos, actor.Username, existingLink, nil
 }
 
@@ -259,6 +262,7 @@ func (s *Store) UnshareFolderAlbumWithCleanup(session, rootID string, generation
 	if err := tx.Commit(); err != nil {
 		return SharedFolderAlbum{}, err
 	}
+	s.bumpAccessEpoch()
 	item.RootID = rootID
 	item.RootGeneration = generation
 	item.OwnerUserID = ownerUserID

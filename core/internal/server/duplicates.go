@@ -16,6 +16,8 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/roots"
+	"github.com/lengsukq/lightisle/core/internal/safego"
+	"github.com/lengsukq/lightisle/core/internal/tasks"
 )
 
 type duplicateItemResponse struct {
@@ -134,7 +136,7 @@ func (s *duplicateScanStore) finish(rootID string, generation uint64, userID int
 	cur.progress = nil
 	if scanErr != nil {
 		if errors.Is(scanErr, context.Canceled) {
-			cur.lastError = "cancelled"
+			cur.lastError = tasks.StatusCancelled
 		} else {
 			cur.lastError = scanErr.Error()
 		}
@@ -445,7 +447,7 @@ func (a *API) duplicatesScan(w http.ResponseWriter, r *http.Request) {
 	store := a.duplicateScans
 	minSize := body.MinSizeBytes
 	maxGroups := body.MaxGroups
-	go func() {
+	safego.Go("duplicate-scan:"+rootID, func() {
 		defer func() {
 			if runtime != nil && bgLease != nil && rootSrv != nil {
 				rootSrv.mu.Lock()
@@ -475,7 +477,7 @@ func (a *API) duplicatesScan(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		store.finish(rootID, gen, viewer.ID, &rawRes, nil)
-	}()
+	})
 
 	canRead := func(p string) bool { return a.canAccess(session, p, false, false) }
 	canWrite := func(p string) bool { return a.canAccess(session, p, true, false) }
@@ -498,7 +500,7 @@ func (a *API) duplicatesScan(w http.ResponseWriter, r *http.Request) {
 	select {
 	case <-doneCh:
 		snap := store.snapshot(rootID, gen, viewer.ID, canRead, canWrite)
-		if snap.LastError != "" && snap.LastError != "cancelled" && snap.Result == nil {
+		if snap.LastError != "" && snap.LastError != tasks.StatusCancelled && snap.Result == nil {
 			fileError(w, errors.New(snap.LastError))
 			return
 		}

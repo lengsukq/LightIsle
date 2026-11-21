@@ -107,6 +107,7 @@ func (s *Store) switchUserStorageCategories(actorSession string, actorID int64, 
 	if err := tx.Commit(); err != nil {
 		return nil, err
 	}
+	s.bumpAccessEpoch()
 	return locations, nil
 }
 
@@ -303,7 +304,9 @@ func upsertTargetRootQuotaTx(tx *sql.Tx, req SwitchUserStorageCategoriesRequest,
 func insertSwitchedTargetFilesTx(tx *sql.Tx, req SwitchUserStorageCategoriesRequest) error {
 	for _, f := range req.CopiedFiles {
 		if _, err := tx.Exec(`INSERT INTO user_storage_files(root_id,root_generation,relative_path,user_id,size_bytes)
-			VALUES(?,?,?,?,?)`,
+			VALUES(?,?,?,?,?)
+			ON CONFLICT(root_id,root_generation,relative_path) DO UPDATE SET
+			user_id=excluded.user_id,size_bytes=excluded.size_bytes`,
 			req.TargetRootID, int64(req.TargetGeneration), f.RelativePath, req.TargetUserID, f.SizeBytes); err != nil {
 			return err
 		}
@@ -313,6 +316,11 @@ func insertSwitchedTargetFilesTx(tx *sql.Tx, req SwitchUserStorageCategoriesRequ
 				ON CONFLICT(root_id,root_generation,relative_path) DO UPDATE SET
 				identity=excluded.identity`,
 				req.TargetRootID, int64(req.TargetGeneration), f.RelativePath, f.Identity); err != nil {
+				return err
+			}
+		} else {
+			if _, err := tx.Exec(`DELETE FROM user_storage_file_identities WHERE root_id=? AND root_generation=? AND relative_path=?`,
+				req.TargetRootID, int64(req.TargetGeneration), f.RelativePath); err != nil {
 				return err
 			}
 		}
@@ -354,7 +362,7 @@ func rebindSwitchedCategoriesTx(
 		}
 		if _, err := tx.Exec(`DELETE FROM root_file_shares WHERE root_id=? AND root_generation=?
 			AND (lower(file_path)=lower(?) OR substr(lower(file_path),1,length(?)+1)=lower(?)||'/'
-				OR (kind='folder' AND (file_path='.' OR substr(lower(?),1,length(file_path)+1)=lower(file_path)||'/')))`,
+				OR (kind IN ('dir','folder') AND (file_path='.' OR substr(lower(?),1,length(file_path)+1)=lower(file_path)||'/')))`,
 			req.SourceRootID, req.SourceGeneration, prefix, prefix, prefix, prefix); err != nil {
 			return nil, err
 		}
@@ -497,7 +505,11 @@ func (s *Store) NativeSetUserEnabled(id int64, enabled bool) error {
 			return err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.bumpAccessEpoch()
+	return nil
 }
 
 // NativeResetMemberPassword resets a member account's password from the trusted macOS parent process
@@ -540,5 +552,9 @@ func (s *Store) NativeResetMemberPassword(id int64, newPassword string) error {
 	if _, err := tx.Exec("DELETE FROM sessions WHERE user_id=?", id); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.bumpAccessEpoch()
+	return nil
 }

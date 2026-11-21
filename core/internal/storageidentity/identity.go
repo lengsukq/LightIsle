@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+
+	"github.com/lengsukq/lightisle/core/internal/idutil"
 )
 
 var (
@@ -89,25 +91,10 @@ func (b Binding) Validate() error {
 		b.BirthNsec < 0 || b.BirthNsec >= 1_000_000_000 {
 		return ErrIncomplete
 	}
-	if !validUUID(b.VolumeUUID) {
+	if !idutil.ValidUUID(b.VolumeUUID) {
 		return fmt.Errorf("%w: invalid volume UUID", ErrIncomplete)
 	}
 	return nil
-}
-
-func validUUID(value string) bool {
-	if len(value) != 36 || value[8] != '-' || value[13] != '-' || value[18] != '-' || value[23] != '-' {
-		return false
-	}
-	for i, r := range value {
-		if i == 8 || i == 13 || i == 18 || i == 23 {
-			continue
-		}
-		if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f' || r >= 'A' && r <= 'F') {
-			return false
-		}
-	}
-	return true
 }
 
 func normalizedPath(path string) (string, error) {
@@ -126,7 +113,7 @@ func normalizedPath(path string) (string, error) {
 
 func normalizeUUID(value string) (string, error) {
 	value = strings.TrimSpace(value)
-	if !validUUID(value) {
+	if !idutil.ValidUUID(value) {
 		return "", fmt.Errorf("%w: missing or invalid VolumeUUID", ErrIncomplete)
 	}
 	return strings.ToUpper(value), nil

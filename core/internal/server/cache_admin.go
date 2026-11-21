@@ -3,7 +3,9 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -52,7 +54,7 @@ func (s *RootServer) aggregateThumbnailCacheStats(ctx context.Context) gallery.T
 	return out
 }
 
-func (s *RootServer) clearAllThumbnailCaches(ctx context.Context) (int, int64) {
+func (s *RootServer) clearAllThumbnailCaches(ctx context.Context) (int, int64, error) {
 	s.mu.Lock()
 	libs := make([]*gallery.Library, 0, len(s.runtimes))
 	for _, rt := range s.runtimes {
@@ -66,20 +68,23 @@ func (s *RootServer) clearAllThumbnailCaches(ctx context.Context) (int, int64) {
 			if leased, err := s.AcquireRootServices(ctx, def.ID); err == nil {
 				defer leased.Close()
 				if leased.Services.Gallery != nil {
-					removed, freed, _ := leased.Services.Gallery.ClearThumbnailCache()
-					return removed, freed
+					return leased.Services.Gallery.ClearThumbnailCache()
 				}
 			}
 		}
 	}
 	var totalRemoved int
 	var totalFreed int64
+	var clearErrs []error
 	for _, lib := range libs {
-		removed, freed, _ := lib.ClearThumbnailCache()
+		removed, freed, err := lib.ClearThumbnailCache()
 		totalRemoved += removed
 		totalFreed += freed
+		if err != nil {
+			clearErrs = append(clearErrs, err)
+		}
 	}
-	return totalRemoved, totalFreed
+	return totalRemoved, totalFreed, errors.Join(clearErrs...)
 }
 
 func serveCachedJPEG(w http.ResponseWriter, r *http.Request, downloadName string, modTime time.Time, f *os.File) {
@@ -128,7 +133,7 @@ func (a *API) adminCacheClear(w http.ResponseWriter, r *http.Request) {
 		raw, err := io.ReadAll(io.LimitReader(r.Body, 4096))
 		if err == nil && len(strings.TrimSpace(string(raw))) > 0 {
 			if err := json.Unmarshal(raw, &body); err != nil {
-				jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
+				writeAPIErrorCode(w, http.StatusBadRequest, "invalid_request")
 				return
 			}
 		}
@@ -149,22 +154,34 @@ func (a *API) adminCacheClear(w http.ResponseWriter, r *http.Request) {
 
 	var totalRemoved int
 	var totalFreed int64
+	var clearErrs []error
 	if clearThumbs {
 		if a.gallery != nil {
-			removed, freed, _ := a.gallery.ClearThumbnailCache()
+			removed, freed, err := a.gallery.ClearThumbnailCache()
 			totalRemoved += removed
 			totalFreed += freed
+			if err != nil {
+				clearErrs = append(clearErrs, err)
+			}
 		}
 		if a.rootServer != nil {
-			removed, freed := a.rootServer.clearAllThumbnailCaches(r.Context())
+			removed, freed, err := a.rootServer.clearAllThumbnailCaches(r.Context())
 			totalRemoved += removed
 			totalFreed += freed
+			if err != nil {
+				clearErrs = append(clearErrs, err)
+			}
 		}
 	}
 	if clearTiles {
 		removed, freed := maptiles.Default.ClearCache()
 		totalRemoved += removed
 		totalFreed += freed
+	}
+	if err := errors.Join(clearErrs...); err != nil {
+		slog.Warn("admin cache clear failed", "removedEntries", totalRemoved, "freedBytes", totalFreed, "error", err)
+		writeAPIErrorCode(w, http.StatusInternalServerError, "cache_clear_failed")
+		return
 	}
 
 	thumbStats := a.collectThumbnailCacheStats(r)

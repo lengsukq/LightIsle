@@ -61,7 +61,7 @@ func (m *Manager) publishPrivateDownload(task Task, sourceName, source, desired 
 	}
 	target := desired
 	if err == nil {
-		if prior.size != size || prior.sha256 != digest || prior.state == "recovery_required" ||
+		if prior.size != size || prior.sha256 != digest || prior.state == pubStateRecoveryRequired ||
 			!strings.HasPrefix(prior.target, task.Destination+"/") {
 			return "", errRecoveryRequired
 		}
@@ -71,7 +71,7 @@ func (m *Manager) publishPrivateDownload(task Task, sourceName, source, desired 
 		if err != nil {
 			return "", err
 		}
-		if err := m.setPublicationState(task.ID, sourceName, target, size, digest, "pending"); err != nil {
+		if err := m.setPublicationState(task.ID, sourceName, target, size, digest, pubStatePending); err != nil {
 			return "", err
 		}
 	}
@@ -132,7 +132,7 @@ func (m *Manager) publishPrivateDownload(task Task, sourceName, source, desired 
 		published, err := finish(expected)
 		if err != nil || prior.state == "published" && !published {
 			if err == nil || errors.Is(err, errRecoveryRequired) {
-				_ = m.setPublicationState(task.ID, sourceName, target, size, digest, "recovery_required")
+				_ = m.setPublicationState(task.ID, sourceName, target, size, digest, pubStateRecoveryRequired)
 				return "", errRecoveryRequired
 			}
 			return "", err
@@ -198,7 +198,7 @@ func (m *Manager) publishPrivateDownload(task Task, sourceName, source, desired 
 		if current() {
 			_ = publisher.accounts.ReleaseStorageReservation(reservationID)
 		}
-		_ = m.setPublicationState(task.ID, sourceName, target, size, digest, "recovery_required")
+		_ = m.setPublicationState(task.ID, sourceName, target, size, digest, pubStateRecoveryRequired)
 		return "", errRecoveryRequired
 	}
 	if err != nil {

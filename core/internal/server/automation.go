@@ -140,7 +140,7 @@ func (h *automationHandler) SetProtectedHostDirsProvider(fn func() []string) {
 func automationMutation(w http.ResponseWriter, r *http.Request) bool {
 	// A cross-site form must not be able to schedule arbitrary code execution.
 	if r.Header.Get("X-LightIsle-Request") != "1" {
-		jsonReply(w, http.StatusForbidden, map[string]string{"error": "request_header_required"})
+		writeAPIErrorCode(w, http.StatusForbidden, "request_header_required")
 		return false
 	}
 	return true
@@ -148,16 +148,16 @@ func automationMutation(w http.ResponseWriter, r *http.Request) bool {
 func automationFailure(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, automation.ErrInvalid):
-		jsonReply(w, 400, map[string]string{"error": "automation_invalid_task"})
+		writeAPIErrorCode(w, http.StatusBadRequest, "automation_invalid_task")
 	case errors.Is(err, automation.ErrNotFound):
-		jsonReply(w, 404, map[string]string{"error": "automation_task_not_found"})
+		writeAPIErrorCode(w, http.StatusNotFound, "automation_task_not_found")
 	case errors.Is(err, automation.ErrBusy):
-		jsonReply(w, 409, map[string]string{"error": "automation_task_running"})
+		writeAPIErrorCode(w, http.StatusConflict, "automation_task_running")
 	case errors.Is(err, automation.ErrChanged):
-		jsonReply(w, 409, map[string]string{"error": "automation_task_changed"})
+		writeAPIErrorCode(w, http.StatusConflict, "automation_task_changed")
 	case errors.Is(err, automation.ErrUnavailable):
-		jsonReply(w, 503, map[string]string{"error": "automation_unavailable"})
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "automation_unavailable")
 	default:
-		jsonReply(w, 500, map[string]string{"error": "automation_operation_failed"})
+		writeAPIErrorCode(w, http.StatusInternalServerError, "automation_operation_failed")
 	}
 }

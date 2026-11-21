@@ -16,6 +16,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/lengsukq/lightisle/core/internal/safego"
 )
 
 // Mode distinguishes the two supported connection styles.
@@ -77,8 +79,10 @@ type Manager struct {
 	mode       Mode
 	namedToken string
 	restarts   int
+	restartSeq uint64
 	onAlert    func(active bool) // true = disconnected unexpectedly, false = back online
 	notify     func(State)
+	notifier   safego.OrderedNotifier[State]
 }
 
 func New(ctx context.Context, targetURL string) *Manager {
@@ -132,6 +136,7 @@ func (m *Manager) StartQuick() (State, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.restarts = 0
+	m.restartSeq++
 	return m.startLocked(ModeQuick, "", "", "")
 }
 
@@ -144,6 +149,7 @@ func (m *Manager) StartNamed(tunnelID, tunnelName, token string) (State, error) 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.restarts = 0
+	m.restartSeq++
 	return m.startLocked(ModeNamed, tunnelID, tunnelName, token)
 }
 
@@ -195,19 +201,30 @@ func (m *Manager) startLocked(mode Mode, tunnelID, tunnelName, token string) (St
 		Mode: mode, Status: "starting", Binary: binary, PID: cmd.Process.Pid,
 		TunnelID: tunnelID, TunnelName: tunnelName, StartedAt: time.Now().Unix(),
 	}
-	go m.supervise(cmd, mode)
+	seq := m.restartSeq
+	go m.supervise(cmd, mode, seq)
 	return m.snapshotLocked(), nil
+}
+
+func truncateUTF8Bytes(s string, maxBytes int) string {
+	if len(s) <= maxBytes {
+		return s
+	}
+	for maxBytes > 0 && (s[maxBytes]&0xC0) == 0x80 {
+		maxBytes--
+	}
+	return s[:maxBytes]
 }
 
 // supervise waits for the child: restart on unexpected exits with a bounded
 // backoff, and surface state changes through the hooks.
-func (m *Manager) supervise(cmd *exec.Cmd, mode Mode) {
+func (m *Manager) supervise(cmd *exec.Cmd, mode Mode, seq uint64) {
 	exited := m.exited
 	defer close(exited)
 	waitErr := cmd.Wait()
 
 	m.mu.Lock()
-	if m.cmd != cmd || m.ctx.Err() != nil {
+	if m.cmd != cmd || m.restartSeq != seq || m.ctx.Err() != nil {
 		// Superseded by Stop()/restart or the Core is shutting down.
 		m.mu.Unlock()
 		return
@@ -236,6 +253,10 @@ func (m *Manager) supervise(cmd *exec.Cmd, mode Mode) {
 	case <-time.After(delay):
 	}
 	m.mu.Lock()
+	if m.restartSeq != seq || m.state.Mode == ModeOff {
+		m.mu.Unlock()
+		return
+	}
 	if _, err := m.startLocked(mode, m.state.TunnelID, m.state.TunnelName, m.namedToken); err != nil {
 		m.state.Status = "error"
 		m.state.Error = "cloudflared_restart_failed"
@@ -248,11 +269,7 @@ func summarizeExit(err error) string {
 	if err == nil {
 		return "cloudflared_exited_unexpectedly"
 	}
-	text := err.Error()
-	if len(text) > logLineCap {
-		text = text[:logLineCap]
-	}
-	return text
+	return truncateUTF8Bytes(err.Error(), logLineCap)
 }
 
 // handleLine is the single output sink for the child process.
@@ -263,9 +280,7 @@ func (m *Manager) handleLine(line string) {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if len(line) > logLineCap {
-		line = line[:logLineCap]
-	}
+	line = truncateUTF8Bytes(line, logLineCap)
 	m.logBuf = append(m.logBuf, line)
 	if len(m.logBuf) > 20 {
 		m.logBuf = m.logBuf[len(m.logBuf)-20:]
@@ -295,7 +310,7 @@ func (m *Manager) handleLine(line string) {
 
 func (m *Manager) emitLocked() {
 	if m.notify != nil {
-		go m.notify(m.snapshotLocked())
+		m.notifier.Enqueue("tunnel-notify", m.notify, m.snapshotLocked())
 	}
 }
 
@@ -307,6 +322,7 @@ func (m *Manager) Stop() State {
 	m.cmd = nil
 	m.namedToken = ""
 	m.restarts = 0
+	m.restartSeq++
 	m.state = State{Mode: ModeOff, Status: "stopped", TunnelID: m.state.TunnelID, TunnelName: m.state.TunnelName}
 	m.emitLocked()
 	m.mu.Unlock()

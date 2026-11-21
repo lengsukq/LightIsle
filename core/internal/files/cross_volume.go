@@ -11,8 +11,8 @@ import (
 	"path"
 	"path/filepath"
 	"sort"
-	"strings"
 
+	"github.com/lengsukq/lightisle/core/internal/pathutil"
 	"github.com/lengsukq/lightisle/core/internal/storageidentity"
 )
 
@@ -211,11 +211,7 @@ func (s *Store) copyOutWithTask(ctx context.Context, sourceRelative, destination
 }
 
 func pathsOverlap(a, b string) bool {
-	inside := func(parent, candidate string) bool {
-		rel, err := filepath.Rel(parent, candidate)
-		return err == nil && (rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))))
-	}
-	return inside(a, b) || inside(b, a)
+	return pathutil.Overlap(a, b)
 }
 
 func captureStoreRootIdentity(ctx context.Context, root *os.Root, identity storageidentity.Provider) (storageidentity.Binding, error) {

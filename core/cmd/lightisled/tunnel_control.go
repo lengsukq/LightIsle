@@ -11,6 +11,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/cloudflareapi"
 	"github.com/lengsukq/lightisle/core/internal/tunnel"
@@ -95,7 +96,9 @@ func (t *tunnelControl) handle(ctx context.Context, command string) bool {
 		go func() {
 			t.apiMu.Lock()
 			defer t.apiMu.Unlock()
-			t.handleAPI(ctx, spec)
+			apiCtx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			defer cancel()
+			t.handleAPI(apiCtx, spec)
 		}()
 	default:
 		return false

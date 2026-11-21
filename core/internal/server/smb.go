@@ -27,7 +27,7 @@ func (a *API) smbSetService(w http.ResponseWriter, r *http.Request) {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil || req.Enabled == nil {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_smb_request"})
+		writeAPIErrorCode(w, http.StatusBadRequest, "invalid_smb_request")
 		return
 	}
 	status, err := smbmgmt.Shared().SetService(r.Context(), *req.Enabled)
@@ -45,7 +45,7 @@ func (a *API) smbAddShare(w http.ResponseWriter, r *http.Request) {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_smb_request"})
+		writeAPIErrorCode(w, http.StatusBadRequest, "invalid_smb_request")
 		return
 	}
 	if strings.TrimSpace(req.Path) != "" {
@@ -53,7 +53,7 @@ func (a *API) smbAddShare(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if strings.TrimSpace(req.RootID) == "" {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_smb_request"})
+		writeAPIErrorCode(w, http.StatusBadRequest, "invalid_smb_request")
 		return
 	}
 	status, err := smbmgmt.Shared().AddShare(r.Context(), req)
@@ -72,7 +72,7 @@ func (a *API) smbUpdateShare(w http.ResponseWriter, r *http.Request) {
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&req); err != nil {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_smb_request"})
+		writeAPIErrorCode(w, http.StatusBadRequest, "invalid_smb_request")
 		return
 	}
 	status, err := smbmgmt.Shared().UpdateShare(r.Context(), recordName, req)
@@ -93,27 +93,41 @@ func (a *API) smbRemoveShare(w http.ResponseWriter, r *http.Request) {
 	jsonReply(w, http.StatusOK, status)
 }
 
+func (a *API) smbReconcile(w http.ResponseWriter, r *http.Request) {
+	status, restored, err := smbmgmt.Shared().Reconcile(r.Context(), "")
+	if err != nil {
+		writeSMBError(w, err)
+		return
+	}
+	jsonReply(w, http.StatusOK, map[string]any{
+		"status":   status,
+		"restored": restored,
+	})
+}
+
 func writeSMBError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, smbmgmt.ErrInvalid):
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_smb_request"})
+		writeAPIErrorCode(w, http.StatusBadRequest, "invalid_smb_request")
 	case errors.Is(err, smbmgmt.ErrNotFound):
-		jsonReply(w, http.StatusNotFound, map[string]string{"error": "smb_share_not_found"})
+		writeAPIErrorCode(w, http.StatusNotFound, "smb_share_not_found")
 	case errors.Is(err, smbmgmt.ErrAlreadyExists):
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "smb_share_already_exists"})
+		writeAPIErrorCode(w, http.StatusConflict, "smb_share_already_exists")
 	case errors.Is(err, smbmgmt.ErrElevationRequired):
-		jsonReply(w, http.StatusForbidden, map[string]string{"error": "smb_elevation_required"})
+		writeAPIErrorCode(w, http.StatusForbidden, "smb_elevation_required")
 	case errors.Is(err, smbmgmt.ErrProtectedPath):
-		jsonReply(w, http.StatusForbidden, map[string]string{"error": "smb_protected_path_rejected"})
+		writeAPIErrorCode(w, http.StatusForbidden, "smb_protected_path_rejected")
 	case errors.Is(err, smbmgmt.ErrVolumeRoot):
-		jsonReply(w, http.StatusForbidden, map[string]string{"error": "smb_volume_root_rejected"})
+		writeAPIErrorCode(w, http.StatusForbidden, "smb_volume_root_rejected")
 	case errors.Is(err, smbmgmt.ErrUnmanagedShare):
-		jsonReply(w, http.StatusForbidden, map[string]string{"error": "smb_unmanaged_share_rejected"})
-	case errors.Is(err, smbmgmt.ErrPersonalGuest), errors.Is(err, smbmgmt.ErrLocalConfirmation):
-		jsonReply(w, http.StatusForbidden, map[string]string{"error": err.Error()})
+		writeAPIErrorCode(w, http.StatusForbidden, "smb_unmanaged_share_rejected")
+	case errors.Is(err, smbmgmt.ErrPersonalGuest):
+		writeAPIErrorCode(w, http.StatusForbidden, "smb_personal_guest_forbidden")
+	case errors.Is(err, smbmgmt.ErrLocalConfirmation):
+		writeAPIErrorCode(w, http.StatusForbidden, "smb_personal_confirmation_required")
 	case errors.Is(err, smbmgmt.ErrRootOffline):
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "smb_root_offline"})
+		writeAPIErrorCode(w, http.StatusConflict, "smb_root_offline")
 	default:
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "smb_operation_failed"})
+		writeAPIErrorCode(w, http.StatusConflict, "smb_operation_failed")
 	}
 }

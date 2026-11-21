@@ -51,6 +51,41 @@ func (s *Store) uploadRecords() ([]UploadRecord, error) {
 	if root == nil {
 		return []UploadRecord{}, nil
 	}
+	entries, err := readBoundedUploadDirEntries(root)
+	if err != nil {
+		return nil, err
+	}
+	ordered, journalIDs, partIDs, err := collectUploadEntryIDs(entries)
+	if err != nil {
+		return nil, err
+	}
+
+	records := make([]UploadRecord, 0, len(ordered))
+	journalBytes := int64(0)
+	journalCount := 0
+	for _, id := range ordered {
+		_, hasJournal := journalIDs[id]
+		_, hasPart := partIDs[id]
+		record := UploadRecord{State: UploadState{ID: id}}
+		if hasJournal {
+			if err := inspectUploadJournal(root, id, &record, &journalCount, &journalBytes); err != nil {
+				return nil, err
+			}
+		}
+		if err := s.inspectUploadPart(root, id, hasJournal, &record); err != nil {
+			return nil, err
+		}
+		if !hasJournal && hasPart && record.State.Activity <= 0 {
+			// A malformed or non-regular part must not become eligible for
+			// expiry cleanup merely because its timestamp is unavailable.
+			record.Corrupt = true
+		}
+		records = append(records, record)
+	}
+	return records, nil
+}
+
+func readBoundedUploadDirEntries(root *os.Root) ([]fs.DirEntry, error) {
 	dir, err := root.Open(".")
 	if err != nil {
 		return nil, err
@@ -74,11 +109,13 @@ func (s *Store) uploadRecords() ([]UploadRecord, error) {
 			break
 		}
 	}
-	closeErr := dir.Close()
-	if closeErr != nil {
-		return nil, closeErr
+	if err := dir.Close(); err != nil {
+		return nil, err
 	}
+	return entries, nil
+}
 
+func collectUploadEntryIDs(entries []fs.DirEntry) ([]string, map[string]struct{}, map[string]struct{}, error) {
 	journalIDs := make(map[string]struct{})
 	partIDs := make(map[string]struct{})
 	for _, entry := range entries {
@@ -89,7 +126,6 @@ func (s *Store) uploadRecords() ([]UploadRecord, error) {
 			partIDs[id] = struct{}{}
 		}
 	}
-
 	ids := make(map[string]struct{}, len(journalIDs)+len(partIDs))
 	for id := range journalIDs {
 		ids[id] = struct{}{}
@@ -98,128 +134,119 @@ func (s *Store) uploadRecords() ([]UploadRecord, error) {
 		ids[id] = struct{}{}
 	}
 	if len(ids) > maxUploadInventoryRecords {
-		return nil, ErrUploadInventoryLimit
+		return nil, nil, nil, ErrUploadInventoryLimit
 	}
 	ordered := make([]string, 0, len(ids))
 	for id := range ids {
 		ordered = append(ordered, id)
 	}
 	sort.Strings(ordered)
+	return ordered, journalIDs, partIDs, nil
+}
 
-	records := make([]UploadRecord, 0, len(ordered))
-	journalBytes := int64(0)
-	journalCount := 0
-	for _, id := range ordered {
-		_, hasJournal := journalIDs[id]
-		_, hasPart := partIDs[id]
-		record := UploadRecord{State: UploadState{ID: id}}
-		if hasJournal {
-			journalInfo, statErr := root.Lstat(id + ".json")
-			if statErr != nil {
-				return nil, statErr
-			}
-			journalCount++
-			record.journalInfo = journalInfo
-			record.JournalModified = journalInfo.ModTime().Unix()
-			journalBytes += journalInfo.Size()
-			if journalCount > maxUploadInventoryRecords || journalBytes > maxUploadInventoryBytes {
-				return nil, ErrUploadInventoryLimit
-			}
-			meta, metaErr := readUploadJournalFrom(root, id)
-			if metaErr != nil {
-				if !errors.Is(metaErr, ErrPath) && !errors.Is(metaErr, ErrType) {
-					return nil, metaErr
-				}
-				record.Corrupt = true
-				record.Orphan = true
-				if info, statErr := root.Lstat(id + ".json"); statErr == nil {
-					record.State.Activity = info.ModTime().Unix()
-				}
-			} else {
-				record.State = meta
-				if meta.Size < 0 || meta.Size > maxResumableSize || meta.Offset < 0 || meta.Offset > meta.Size {
-					record.Corrupt = true
-				}
-			}
+func inspectUploadJournal(root *os.Root, id string, record *UploadRecord, journalCount *int, journalBytes *int64) error {
+	journalInfo, err := root.Lstat(id + ".json")
+	if err != nil {
+		return err
+	}
+	*journalCount++
+	record.journalInfo = journalInfo
+	record.JournalModified = journalInfo.ModTime().Unix()
+	*journalBytes += journalInfo.Size()
+	if *journalCount > maxUploadInventoryRecords || *journalBytes > maxUploadInventoryBytes {
+		return ErrUploadInventoryLimit
+	}
+	meta, metaErr := readUploadJournalFrom(root, id)
+	if metaErr != nil {
+		if !errors.Is(metaErr, ErrPath) && !errors.Is(metaErr, ErrType) {
+			return metaErr
 		}
+		record.Corrupt = true
+		record.Orphan = true
+		if info, statErr := root.Lstat(id + ".json"); statErr == nil {
+			record.State.Activity = info.ModTime().Unix()
+		}
+		return nil
+	}
+	record.State = meta
+	if meta.Size < 0 || meta.Size > maxResumableSize || meta.Offset < 0 || meta.Offset > meta.Size {
+		record.Corrupt = true
+	}
+	return nil
+}
 
-		partPath := id + ".part"
-		partInfo, partErr := root.Lstat(partPath)
-		if partErr == nil {
-			if !partInfo.Mode().IsRegular() {
-				record.Corrupt = true
-				record.Orphan = true
-			} else {
-				record.PartPresent = true
-				record.partInfo = partInfo
-				record.PartSize = partInfo.Size()
-				record.PartModified = partInfo.ModTime().Unix()
-				legacyAlias := false
-				if hasJournal {
-					if destInfo, destErr := s.root.Lstat(record.State.Path); destErr == nil && destInfo.Mode().IsRegular() && os.SameFile(partInfo, destInfo) {
-						legacyAlias = true
-						record.State.Published = true
-					}
-				}
-				if err := validatePrivateUploadPart(partInfo); err != nil && !legacyAlias {
-					record.Corrupt = true
-					record.Orphan = true
-				}
-				if !hasJournal {
-					record.State.Size = partInfo.Size()
-					record.State.Activity = partInfo.ModTime().Unix()
-					record.Orphan = true
-				}
-				if hasJournal && record.State.Version < 2 && !record.State.Published && !record.Corrupt {
-					record.State.Offset = partInfo.Size()
-				}
-				if hasJournal && !record.State.Published && partInfo.Size() < record.State.Offset {
-					record.Corrupt = true
-					record.Orphan = true
-				}
-			}
-		} else if errors.Is(partErr, fs.ErrNotExist) {
-			if hasJournal && !record.State.Published {
-				if record.State.sourceIdentity == nil {
-					record.Orphan = true
-				} else if destInfo, destErr := s.root.Lstat(record.State.Path); destErr == nil && destInfo.Mode().IsRegular() {
-					if sameUploadInode(record.State.sourceIdentity, destInfo) {
-						record.State.Published = true
-					} else {
-						record.Corrupt = true
-						record.Orphan = true
-					}
-				} else {
-					record.Corrupt = true
-					record.Orphan = true
-				}
-			} else if hasJournal && record.State.Published {
-				if record.State.sourceIdentity == nil {
-					// Legacy published journals without a staged alias cannot prove
-					// that a surviving destination still belongs to this upload.
-					record.Corrupt = true
-					record.Orphan = true
-				} else if destInfo, destErr := s.root.Lstat(record.State.Path); destErr == nil && destInfo.Mode().IsRegular() {
-					if !sameUploadInode(record.State.sourceIdentity, destInfo) {
-						record.Corrupt = true
-						record.Orphan = true
-					}
-				} else {
-					record.Corrupt = true
-					record.Orphan = true
-				}
-			}
-		} else {
-			return nil, partErr
+func (s *Store) inspectUploadPart(root *os.Root, id string, hasJournal bool, record *UploadRecord) error {
+	partInfo, partErr := root.Lstat(id + ".part")
+	if partErr == nil {
+		s.inspectPresentUploadPart(partInfo, hasJournal, record)
+		return nil
+	}
+	if errors.Is(partErr, fs.ErrNotExist) {
+		s.inspectMissingUploadPart(hasJournal, record)
+		return nil
+	}
+	return partErr
+}
+
+func (s *Store) inspectPresentUploadPart(partInfo os.FileInfo, hasJournal bool, record *UploadRecord) {
+	if !partInfo.Mode().IsRegular() {
+		record.Corrupt = true
+		record.Orphan = true
+		return
+	}
+	record.PartPresent = true
+	record.partInfo = partInfo
+	record.PartSize = partInfo.Size()
+	record.PartModified = partInfo.ModTime().Unix()
+
+	legacyAlias := false
+	if hasJournal {
+		if destInfo, destErr := s.root.Lstat(record.State.Path); destErr == nil && destInfo.Mode().IsRegular() && os.SameFile(partInfo, destInfo) {
+			legacyAlias = true
+			record.State.Published = true
 		}
-		if !hasJournal && hasPart && record.State.Activity <= 0 {
-			// A malformed or non-regular part must not become eligible for
-			// expiry cleanup merely because its timestamp is unavailable.
+	}
+	if err := validatePrivateUploadPart(partInfo); err != nil && !legacyAlias {
+		record.Corrupt = true
+		record.Orphan = true
+	}
+	if !hasJournal {
+		record.State.Size = partInfo.Size()
+		record.State.Activity = partInfo.ModTime().Unix()
+		record.Orphan = true
+		return
+	}
+	if record.State.Version < 2 && !record.State.Published && !record.Corrupt {
+		record.State.Offset = partInfo.Size()
+	}
+	if !record.State.Published && partInfo.Size() < record.State.Offset {
+		record.Corrupt = true
+		record.Orphan = true
+	}
+}
+
+func (s *Store) inspectMissingUploadPart(hasJournal bool, record *UploadRecord) {
+	if !hasJournal {
+		return
+	}
+	if record.State.sourceIdentity == nil {
+		if record.State.Published {
+			// Legacy published journals without a staged alias cannot prove
+			// that a surviving destination still belongs to this upload.
 			record.Corrupt = true
 		}
-		records = append(records, record)
+		record.Orphan = true
+		return
 	}
-	return records, nil
+	destInfo, destErr := s.root.Lstat(record.State.Path)
+	if destErr != nil || !destInfo.Mode().IsRegular() || !sameUploadInode(record.State.sourceIdentity, destInfo) {
+		record.Corrupt = true
+		record.Orphan = true
+		return
+	}
+	if !record.State.Published {
+		record.State.Published = true
+	}
 }
 
 // ListUploads returns stable ID-ordered upload records after the supplied

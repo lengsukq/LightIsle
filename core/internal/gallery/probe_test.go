@@ -290,52 +290,6 @@ func TestVideoPosterRejectsSameMetadataPathReplacement(t *testing.T) {
 	}
 }
 
-func TestVideoPosterRejectsShareRootSwitchDuringWorker(t *testing.T) {
-	env := newTestLibrary(t, nil)
-	modified := time.Unix(1_700_001_200, 0)
-	writeTestPhoto(t, env.root, "clip.mp4", "source-data", modified)
-	newRoot, err := os.MkdirTemp(mustUserHome(t), ".lightisle-media-root-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() {
-		_ = env.library.Close()
-		_ = env.storage.Close()
-		_ = os.RemoveAll(newRoot)
-	})
-	worker := &fakeMediaWorker{}
-	worker.poster = func(_ context.Context, _ *os.File, _ string, output string) (mediaworker.Metadata, error) {
-		if err := os.WriteFile(filepath.Join(newRoot, "clip.mp4"), []byte("replacement"), 0600); err != nil {
-			return mediaworker.Metadata{}, err
-		}
-		if err := env.storage.SetRootWithLegacyTransition(newRoot, func() error { return nil }, func() error { return nil }); err != nil {
-			return mediaworker.Metadata{}, err
-		}
-		if err := os.WriteFile(output, jpegEnvelope([]byte("poster")), 0600); err != nil {
-			return mediaworker.Metadata{}, err
-		}
-		return mediaworker.Metadata{Version: 1, Status: "ok", Kind: "video", Width: 80, Height: 48}, nil
-	}
-	env.library.SetMediaWorker(worker)
-	source, info, err := env.storage.Read("clip.mp4")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer source.Close()
-	if _, err := env.library.VideoThumbnailFromFile("clip.mp4", source, info); !errors.Is(err, ErrAssetChanged) {
-		t.Fatalf("root switch during worker was accepted: %v", err)
-	}
-}
-
-func mustUserHome(t *testing.T) string {
-	t.Helper()
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatal(err)
-	}
-	return home
-}
-
 func TestVideoPosterLockWaitHonorsRequestCancellation(t *testing.T) {
 	env := newTestLibrary(t, nil)
 	writeTestPhoto(t, env.root, "clip.mp4", "video", time.Unix(1_700_001_300, 0))

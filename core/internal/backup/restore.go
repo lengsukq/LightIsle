@@ -143,7 +143,7 @@ func (s *Service) restoreMetadata(ctx context.Context, input *os.Root, manifest 
 }
 
 func (s *Service) restoreMetadataOnly(ctx context.Context, snapshot string) (string, error) {
-	if s.dataDir == "" || (s.files == nil && s.protectedRegistry == nil) {
+	if s.dataDir == "" {
 		return "", ErrInvalid
 	}
 	source, online := s.metadataSource()

@@ -218,9 +218,14 @@ type directoryCopyFile struct {
 }
 
 func (f *directoryCopyFile) Close() (err error) {
+	if f == nil || f.stage == nil {
+		return os.ErrClosed
+	}
 	defer func() {
-		err = errors.Join(err, f.stage.Close())
-		f.stage = nil
+		if f.stage != nil {
+			err = errors.Join(err, f.stage.Close())
+			f.stage = nil
+		}
 	}()
 	if f.writeErr != nil || !f.state.copyComplete(f.copyReadCount) {
 		return errResourceChanged

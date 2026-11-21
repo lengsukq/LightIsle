@@ -186,6 +186,9 @@ type Transcoder struct {
 	probeMu    sync.Mutex
 	probeCache map[string]TrackInfo
 
+	subMu       sync.Mutex
+	subInFlight map[string]chan struct{}
+
 	ctx      context.Context
 	cancel   context.CancelFunc
 	wg       sync.WaitGroup
@@ -201,8 +204,9 @@ func NewTranscoder(cacheDir string, tools *ffmpegbin.Tools) *Transcoder {
 		cacheDir:   cacheDir,
 		tools:      tools,
 		sessions:   map[string]*session{},
-		slots:      make(chan struct{}, defaultConcurrency),
-		probeCache: map[string]TrackInfo{},
+		slots:       make(chan struct{}, defaultConcurrency),
+		probeCache:  map[string]TrackInfo{},
+		subInFlight: map[string]chan struct{}{},
 		ctx:        ctx,
 		cancel:     cancel,
 	}
@@ -334,7 +338,7 @@ func (t *Transcoder) Session(source *os.File, share string, film Film, requested
 	} else if audioTrack >= len(info.Audio) {
 		return SessionInfo{}, ErrInvalid
 	}
-	profile, videoCopy, audioCopy, tagHevc := decideProfile(info)
+	profile, videoCopy, audioCopy, tagHevc := decideProfile(info, audioTrack)
 	targetHeight := targetHeightFor(quality, info.Height)
 	if targetHeight > 0 {
 		// A scaled tier is always a re-encode, whatever the source is.

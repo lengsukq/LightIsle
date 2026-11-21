@@ -2,16 +2,17 @@ package server
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/lengsukq/lightisle/core/internal/auth"
-	"github.com/lengsukq/lightisle/core/internal/files"
 )
 
 type failedDownloadWriter struct{ *httptest.ResponseRecorder }
@@ -19,41 +20,25 @@ type failedDownloadWriter struct{ *httptest.ResponseRecorder }
 func (w failedDownloadWriter) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
 
 func TestPublicShareAuditReflectsResponseWithoutBearerOrPath(t *testing.T) {
-	dir := t.TempDir()
-	accounts, err := auth.Open(filepath.Join(dir, "accounts.sqlite"))
-	if err != nil {
+	f := newRootRoutingFixture(t)
+	filePath := filepath.Join(f.pathA, "private-name.txt")
+	if err := os.WriteFile(filePath, []byte("download bytes"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	defer accounts.Close()
-	if err := accounts.Setup("owner", "owner-password-12345"); err != nil {
-		t.Fatal(err)
+	created := f.call(f.admin, http.MethodPost, rootRoute(f.rootA.ID, "/file-shares"), `{"path":"private-name.txt","hours":1}`)
+	if created.Code != http.StatusCreated {
+		t.Fatalf("create share: %d %s", created.Code, created.Body.String())
 	}
-	admin, err := accounts.Login("owner", "owner-password-12345")
-	if err != nil {
-		t.Fatal(err)
+	var resp struct {
+		Token string `json:"token"`
 	}
-	store, err := files.Open(filepath.Join(dir, "SharedFiles"))
-	if err != nil {
-		t.Fatal(err)
+	if err := json.Unmarshal(created.Body.Bytes(), &resp); err != nil || resp.Token == "" {
+		t.Fatalf("share response: %v %s", err, created.Body.String())
 	}
-	defer store.Close()
-	if _, err := store.Upload("private-name.txt", strings.NewReader("download bytes")); err != nil {
-		t.Fatal(err)
-	}
-	f, info, err := store.Read("private-name.txt")
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.Close()
-	identity, ok := fileFingerprint(info)
-	if !ok {
-		t.Fatal("file identity unavailable")
-	}
-	_, capability, err := accounts.CreateFileShare(admin, "private-name.txt", identity, auth.ShareKindFile, 1, auth.SharePolicy{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	handler := New("", accounts, store)
+	capability := resp.Token
+	link := rootRoute(f.rootA.ID, "/public/file/"+capability)
+	baseEvents, _, _ := f.accounts.ListAudit(f.admin, 0, 20)
+	baseCount := len(baseEvents)
 	for _, tc := range []struct {
 		name, rangeHeader, outcome string
 		failWrite                  bool
@@ -63,7 +48,7 @@ func TestPublicShareAuditReflectsResponseWithoutBearerOrPath(t *testing.T) {
 		{"broken connection", "", "failed", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r := httptest.NewRequest(http.MethodGet, "/api/v2/public/file/"+capability, nil)
+			r := httptest.NewRequest(http.MethodGet, link, nil)
 			if tc.rangeHeader != "" {
 				r.Header.Set("Range", tc.rangeHeader)
 			}
@@ -71,8 +56,8 @@ func TestPublicShareAuditReflectsResponseWithoutBearerOrPath(t *testing.T) {
 			if tc.failWrite {
 				writer = failedDownloadWriter{httptest.NewRecorder()}
 			}
-			handler.ServeHTTP(writer, r)
-			rows, _, err := accounts.ListAudit(admin, 0, 10)
+			f.server.ServeHTTP(writer, r)
+			rows, _, err := f.accounts.ListAudit(f.admin, 0, 10)
 			if err != nil || len(rows) == 0 {
 				t.Fatalf("missing audit: %+v %v", rows, err)
 			}
@@ -82,10 +67,10 @@ func TestPublicShareAuditReflectsResponseWithoutBearerOrPath(t *testing.T) {
 			}
 		})
 	}
-	before, _, _ := accounts.ListAudit(admin, 0, 10)
-	handler.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodHead, "/api/v2/public/file/"+capability, nil))
-	after, _, _ := accounts.ListAudit(admin, 0, 10)
-	if len(before) != 3 || len(after) != len(before) {
+	before, _, _ := f.accounts.ListAudit(f.admin, 0, 20)
+	f.server.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(http.MethodHead, link, nil))
+	after, _, _ := f.accounts.ListAudit(f.admin, 0, 20)
+	if len(before) != baseCount+3 || len(after) != len(before) {
 		t.Fatalf("HEAD created download audit: %+v", after)
 	}
 }

@@ -94,24 +94,6 @@ func (s *Store) VerifyAdminSessionPassword(session, password string) bool {
 	return err == nil && current == 1
 }
 
-// RevokeDefaultShareAccess atomically revokes grants and public download links
-// when the user explicitly changes or abandons the default shared directory.
-// No legacy migration data or permission history is retained.
-func (s *Store) RevokeDefaultShareAccess() error {
-	tx, err := s.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.Exec("DELETE FROM file_shares"); err != nil {
-		return err
-	}
-	if _, err := tx.Exec("DELETE FROM file_grants"); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
 // ResetMemberPassword lets a signed-in administrator recover an ordinary
 // member account without exposing the privileged first-admin recovery flow.
 // Every previous session for the member is invalidated atomically.

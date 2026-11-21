@@ -173,6 +173,8 @@ func (h *Hub) Update(cfg Config) error {
 	}
 	h.mu.Lock()
 	h.cfg = normalized
+	h.failures = 0
+	h.quietTill = time.Time{}
 	h.mu.Unlock()
 	return nil
 }
@@ -370,6 +372,9 @@ func clamp(value string, limit int) string {
 	value = strings.TrimSpace(value)
 	if len(value) <= limit {
 		return value
+	}
+	for limit > 0 && (value[limit]&0xC0) == 0x80 {
+		limit--
 	}
 	return value[:limit]
 }

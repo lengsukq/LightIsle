@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -26,14 +27,17 @@ func TestCinemaTMDBErrorReturnsStableCredentialCodes(t *testing.T) {
 			if response.Code != tt.wantStatus {
 				t.Fatalf("status = %d, want %d", response.Code, tt.wantStatus)
 			}
-			var body map[string]string
+			var body APIError
 			if err := json.Unmarshal(response.Body.Bytes(), &body); err != nil {
 				t.Fatalf("decode response: %v", err)
 			}
-			if body["error"] != tt.wantCode {
-				t.Fatalf("error = %q, want %q", body["error"], tt.wantCode)
+			if body.Error != tt.wantCode {
+				t.Fatalf("error = %q, want %q", body.Error, tt.wantCode)
 			}
-			if response.Body.String() == tt.upstream {
+			if body.Message == "" || body.NextAction == "" || body.DataSafe == nil || !*body.DataSafe {
+				t.Fatalf("incomplete guidance in response: %+v", body)
+			}
+			if strings.Contains(response.Body.String(), tt.upstream) {
 				t.Fatal("response exposed upstream error details")
 			}
 		})

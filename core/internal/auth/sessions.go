@@ -125,6 +125,9 @@ func sanitizeSessionField(v string, limit int) string {
 		return r
 	}, v))
 	if len(v) > limit {
+		for limit > 0 && (v[limit]&0xC0) == 0x80 {
+			limit--
+		}
 		v = v[:limit]
 	}
 	return v
@@ -291,18 +294,25 @@ func (s *Store) PruneExpired(now time.Time) error {
 		return err
 	}
 	defer tx.Rollback()
+	var totalDeleted int64
 	for _, stmt := range []string{
 		"DELETE FROM sessions WHERE expires_at<=?",
 		"DELETE FROM file_shares WHERE expires_at<=?",
 		"DELETE FROM root_file_shares WHERE expires_at<=?",
 	} {
-		if _, err := tx.Exec(stmt, at); err != nil {
+		res, err := tx.Exec(stmt, at)
+		if err != nil {
 			return err
+		}
+		if n, err := res.RowsAffected(); err == nil {
+			totalDeleted += n
 		}
 	}
 	if err := tx.Commit(); err != nil {
 		return err
 	}
-	s.bumpAccessEpoch()
+	if totalDeleted > 0 {
+		s.bumpAccessEpoch()
+	}
 	return nil
 }

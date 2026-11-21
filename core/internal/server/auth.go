@@ -59,7 +59,7 @@ func (a *API) resetMemberPassword(w http.ResponseWriter, r *http.Request) {
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
 	if err := d.Decode(&body); err != nil || body.Password == "" {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
+		writeAPIErrorCode(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
 	if !allowPasswordWork(w) {
@@ -71,13 +71,13 @@ func (a *API) resetMemberPassword(w http.ResponseWriter, r *http.Request) {
 	case err == nil:
 		jsonReply(w, http.StatusOK, map[string]bool{"reset": true, "sessionsRevoked": true})
 	case errors.Is(err, auth.ErrInput):
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_new_password"})
+		writeAPIErrorCode(w, http.StatusBadRequest, "invalid_new_password")
 	case errors.Is(err, auth.ErrNotFound):
-		jsonReply(w, http.StatusNotFound, map[string]string{"error": "user_not_found"})
+		writeAPIErrorCode(w, http.StatusNotFound, "user_not_found")
 	case errors.Is(err, auth.ErrForbidden):
-		jsonReply(w, http.StatusForbidden, map[string]string{"error": "protected_account"})
+		writeAPIErrorCode(w, http.StatusForbidden, "protected_account")
 	default:
-		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "password_reset_failed"})
+		writeAPIErrorCode(w, http.StatusInternalServerError, "password_reset_failed")
 	}
 }
 func (a *API) changeOwnPassword(w http.ResponseWriter, r *http.Request) {
@@ -90,12 +90,12 @@ func (a *API) changeOwnPassword(w http.ResponseWriter, r *http.Request) {
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
 	if err := d.Decode(&payload); err != nil || payload.CurrentPassword == "" || payload.NewPassword == "" {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
+		writeAPIErrorCode(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
 	user, ok := a.auth.Identity(token(r))
 	if !ok {
-		jsonReply(w, http.StatusUnauthorized, map[string]string{"error": "authentication_required"})
+		writeAPIErrorCode(w, http.StatusUnauthorized, "authentication_required")
 		return
 	}
 	key := "password-change:" + user.Username
@@ -104,7 +104,7 @@ func (a *API) changeOwnPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { <-passwordWorkSlots }()
 	if !a.limiter.admit(r.RemoteAddr, key) {
-		jsonReply(w, http.StatusTooManyRequests, map[string]string{"error": "too_many_attempts"})
+		writeAPIErrorCode(w, http.StatusTooManyRequests, "too_many_attempts")
 		return
 	}
 	err := a.auth.ChangePassword(token(r), payload.CurrentPassword, payload.NewPassword)
@@ -117,7 +117,7 @@ func (a *API) changeOwnPassword(w http.ResponseWriter, r *http.Request) {
 		})
 		jsonReply(w, http.StatusOK, map[string]bool{"changed": true, "authenticated": false})
 	case errors.Is(err, auth.ErrInvalid):
-		jsonReply(w, http.StatusUnauthorized, map[string]string{"error": "current_password_invalid"})
+		writeAPIErrorCode(w, http.StatusUnauthorized, "current_password_invalid")
 	case errors.Is(err, auth.ErrInput):
 		a.limiter.cancel(r.RemoteAddr, key)
 		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_new_password"})
@@ -132,7 +132,7 @@ func (a *API) requireAdmin(next http.HandlerFunc) http.HandlerFunc {
 	return a.requireLogin(func(w http.ResponseWriter, r *http.Request) {
 		user, ok := a.auth.Identity(token(r))
 		if !ok || user.Role != auth.RoleAdmin {
-			jsonReply(w, 403, map[string]string{"error": "admin_only"})
+			writeAPIErrorCode(w, http.StatusForbidden, "admin_only")
 			return
 		}
 		next(w, r)
@@ -173,7 +173,7 @@ func (a *API) requireLogin(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		tok := token(r)
 		if a.auth == nil || !a.auth.Session(tok) {
-			jsonReply(w, http.StatusUnauthorized, map[string]string{"error": "authentication_required"})
+			writeAPIErrorCode(w, http.StatusUnauthorized, "authentication_required")
 			return
 		}
 		a.auth.TouchSession(tok)
@@ -182,12 +182,12 @@ func (a *API) requireLogin(next http.HandlerFunc) http.HandlerFunc {
 }
 func (a *API) authStatus(w http.ResponseWriter, r *http.Request) {
 	if a.auth == nil {
-		jsonReply(w, 503, map[string]string{"error": "database_not_ready"})
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "database_not_ready")
 		return
 	}
 	ok, err := a.auth.Configured()
 	if err != nil {
-		jsonReply(w, 503, map[string]string{"error": "database_unavailable"})
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "database_unavailable")
 		return
 	}
 	jsonReply(w, 200, map[string]bool{"configured": ok})
@@ -205,40 +205,15 @@ func decodeCredentials(w http.ResponseWriter, r *http.Request) (credentials, boo
 	d := json.NewDecoder(r.Body)
 	d.DisallowUnknownFields()
 	if err := d.Decode(&c); err != nil || len(c.Username) > 32 || len(c.Password) > 256 {
-		jsonReply(w, 400, map[string]string{"error": "invalid_request"})
+		writeAPIErrorCode(w, http.StatusBadRequest, "invalid_request")
 		return c, false
 	}
 	return c, true
 }
-func (a *API) setup(w http.ResponseWriter, r *http.Request) {
-	if !isLocal(r.RemoteAddr) {
-		jsonReply(w, 403, map[string]string{"error": "local_setup_only"})
-		return
-	}
-	if a.auth == nil {
-		jsonReply(w, 503, map[string]string{"error": "database_not_ready"})
-		return
-	}
-	c, ok := decodeCredentials(w, r)
-	if !ok {
-		return
-	}
-	err := a.auth.Setup(c.Username, c.Password)
-	switch {
-	case err == nil:
-		jsonReply(w, 201, map[string]any{"created": true})
-	case errors.Is(err, auth.ErrExists):
-		jsonReply(w, 409, map[string]string{"error": "already_configured"})
-	case errors.Is(err, auth.ErrInput):
-		jsonReply(w, 400, map[string]string{"error": "username_or_password_invalid"})
-	default:
-		jsonReply(w, 500, map[string]string{"error": "setup_failed"})
-	}
-}
 
 func (a *API) login(w http.ResponseWriter, r *http.Request) {
 	if a.auth == nil {
-		jsonReply(w, 503, map[string]string{"error": "database_not_ready"})
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "database_not_ready")
 		return
 	}
 	c, ok := decodeCredentials(w, r)

@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -437,7 +438,9 @@ func (c *rootControl) handleVerifyAccess(ctx context.Context, requestID string, 
 	for _, existing := range c.registry.List() {
 		if existing.Path == resolved || strings.HasPrefix(existing.Path, resolved+string(filepath.Separator)) {
 			if c.accounts != nil {
-				_ = c.accounts.SyncVerifiedRootGeneration(existing.ID, existing.Generation)
+				if err := c.accounts.SyncVerifiedRootGeneration(existing.ID, existing.Generation); err != nil {
+					slog.Warn("failed to sync verified root generation after access verify", "rootID", existing.ID, "generation", existing.Generation, "error", err)
+				}
 			}
 			_ = c.prewarmRegisteredRoot(ctx, existing)
 		}
@@ -537,6 +540,10 @@ func (c *rootControl) mutateSelectFolder(ctx context.Context, request rootContro
 		}
 		found = &created
 		wasCreated = true
+	} else if c.accounts != nil {
+		if err := c.accounts.SyncVerifiedRootGeneration(found.ID, found.Generation); err != nil {
+			slog.Warn("failed to sync verified root generation on select-folder", "rootID", found.ID, "generation", found.Generation, "error", err)
+		}
 	}
 	if prewarmErr := c.prewarmRegisteredRoot(ctx, *found); prewarmErr != nil {
 		if wasCreated {
@@ -587,7 +594,9 @@ func (c *rootControl) mutateRebindRoot(ctx context.Context, request rootControlR
 		return nil, err
 	}
 	if c.accounts != nil {
-		_ = c.accounts.SyncVerifiedRootGeneration(rebound.ID, rebound.Generation)
+		if err := c.accounts.SyncVerifiedRootGeneration(rebound.ID, rebound.Generation); err != nil {
+			slog.Warn("failed to sync verified root generation on rebind", "rootID", rebound.ID, "generation", rebound.Generation, "error", err)
+		}
 	}
 	if prewarmErr := c.prewarmRegisteredRoot(ctx, rebound); prewarmErr != nil {
 		return nil, prewarmErr

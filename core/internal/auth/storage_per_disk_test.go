@@ -7,6 +7,28 @@ import (
 	"testing"
 )
 
+func testStorageRootMeter(s *Store, session string, userID int64, rootID string, generation uint64) (StorageMeter, error) {
+	policy, err := s.StoragePolicy(session, userID)
+	if err != nil {
+		return StorageMeter{}, err
+	}
+	for _, q := range policy.RootQuotas {
+		if q.RootID != rootID || q.RootGeneration != generation {
+			continue
+		}
+		meter := StorageMeter{UsedBytes: q.AccountedBytes, ReservedBytes: q.ReservedBytes}
+		if q.QuotaBytes != nil {
+			remaining := *q.QuotaBytes - q.AccountedBytes - q.ReservedBytes
+			if remaining < 0 {
+				remaining = 0
+			}
+			meter.AvailableBytes = &remaining
+		}
+		return meter, nil
+	}
+	return StorageMeter{}, ErrStorageUnassigned
+}
+
 func TestPerDiskMigrationPreservesOfflineReservationsAndNewDiskDefault(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "accounts.sqlite")
 	s, err := Open(dbPath)
@@ -67,7 +89,7 @@ func TestPerDiskMigrationPreservesOfflineReservationsAndNewDiskDefault(t *testin
 			t.Fatalf("old configured per-user limit not migrated onto original root: %+v", root)
 		}
 	}
-	before, err := s.StorageRootMeter(session, member.ID, a, 2)
+	before, err := testStorageRootMeter(s, session, member.ID, a, 2)
 	if err != nil || before.ReservedBytes != 80 || before.AvailableBytes == nil || *before.AvailableBytes != 10 {
 		t.Fatalf("offline reservation lost or freed: %+v %v", before, err)
 	}
@@ -80,7 +102,7 @@ func TestPerDiskMigrationPreservesOfflineReservationsAndNewDiskDefault(t *testin
 	if _, err := s.AssignUserStorage(admin, member.ID, StoragePhotos, c, 1); err != nil {
 		t.Fatal(err)
 	}
-	newRoot, err := s.StorageRootMeter(session, member.ID, c, 1)
+	newRoot, err := testStorageRootMeter(s, session, member.ID, c, 1)
 	if err != nil || newRoot.AvailableBytes == nil || *newRoot.AvailableBytes != DefaultMemberQuotaBytes {
 		t.Fatalf("new disk incorrectly inherited old global setting: %+v %v", newRoot, err)
 	}
@@ -94,11 +116,11 @@ func TestPerDiskMigrationPreservesOfflineReservationsAndNewDiskDefault(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	bRoot, err := s.StorageRootMeter(session, member.ID, b, 3)
+	bRoot, err := testStorageRootMeter(s, session, member.ID, b, 3)
 	if err != nil || bRoot.AvailableBytes == nil || *bRoot.AvailableBytes != 7 {
 		t.Fatalf("per-disk customization overwritten by repeated migration: %+v %v", bRoot, err)
 	}
-	newRoot, err = s.StorageRootMeter(session, member.ID, c, 1)
+	newRoot, err = testStorageRootMeter(s, session, member.ID, c, 1)
 	if err != nil || newRoot.AvailableBytes == nil || *newRoot.AvailableBytes != DefaultMemberQuotaBytes {
 		t.Fatalf("newly added disk inherited legacy quota at next open: %+v %v", newRoot, err)
 	}
@@ -154,7 +176,7 @@ func TestPerDiskQuotaIsSharedByCategoriesOnlyOnThatDisk(t *testing.T) {
 		root string
 		want int64
 	}{{a, 100}, {b, 100}} {
-		meter, err := s.StorageRootMeter(session, member.ID, item.root, 1)
+		meter, err := testStorageRootMeter(s, session, member.ID, item.root, 1)
 		if err != nil || meter.ReservedBytes != item.want || meter.AvailableBytes == nil || *meter.AvailableBytes != 0 {
 			t.Fatalf("incorrect independent disk meter %s %+v %v", item.root, meter, err)
 		}
@@ -166,7 +188,7 @@ func TestPerDiskQuotaIsSharedByCategoriesOnlyOnThatDisk(t *testing.T) {
 		fmt.Sprintf("Users/u%d/videos/empty", member.ID), 0); tracked || !errors.Is(err, ErrStorageQuotaExceeded) {
 		t.Fatalf("zero quota must block even zero-byte new files: tracked=%v err=%v", tracked, err)
 	}
-	if meter, err := s.StorageRootMeter(session, member.ID, a, 1); err != nil ||
+	if meter, err := testStorageRootMeter(s, session, member.ID, a, 1); err != nil ||
 		meter.AvailableBytes == nil || *meter.AvailableBytes != 0 {
 		t.Fatalf("changing B quota affected disk A: %+v %v", meter, err)
 	}

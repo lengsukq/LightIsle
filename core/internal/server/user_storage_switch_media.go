@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path"
 	"strconv"
@@ -65,7 +66,9 @@ func (s *RootServer) stageInitialSwitchTrees(
 		}, func(n int64) {
 			if n-progress.CopiedBytes >= 64<<20 {
 				progress.CopiedBytes = n
-				_ = s.saveSwitch(*progress)
+				if saveErr := s.saveSwitch(*progress); saveErr != nil {
+					slog.Warn("failed to persist storage switch copy progress", "taskID", progress.TaskID, "copiedBytes", n, "error", saveErr)
+				}
 			}
 		}, ignoredLinks); err != nil {
 			return err

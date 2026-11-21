@@ -22,15 +22,19 @@ import (
 
 	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/storageidentity"
+	"github.com/lengsukq/lightisle/core/internal/tasks"
 )
 
 const (
 	StatusQueued    = "queued"
-	StatusRunning   = "running"
+	StatusRunning   = tasks.StatusRunning
 	StatusPaused    = "paused"
-	StatusCompleted = "completed"
-	StatusFailed    = "failed"
-	StatusCancelled = "cancelled"
+	StatusCompleted = tasks.StatusCompleted
+	StatusFailed    = tasks.StatusFailed
+	StatusCancelled = tasks.StatusCancelled
+
+	pubStatePending          = tasks.StatusPending
+	pubStateRecoveryRequired = tasks.StatusRecoveryRequired
 
 	MaxTasks          = 100
 	maxURLLength      = 2048

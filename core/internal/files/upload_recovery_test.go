@@ -11,6 +11,21 @@ import (
 	"testing"
 )
 
+func testLinkFile(s *Store, oldname, newname string) error {
+	return s.root.Link(oldname, newname)
+}
+
+func testSyncUploadsDirectory(s *Store) error {
+	root, _, err := s.openExistingUploadsRoot()
+	if err != nil {
+		return err
+	}
+	if root == nil {
+		return fs.ErrNotExist
+	}
+	return syncUploadsRoot(s, root)
+}
+
 // beginPublishedUpload creates a legacy linked publication and records its
 // marker, leaving the part and journal for recovery tests.
 func beginPublishedUpload(t *testing.T, s *Store, destination string, owner int64, data string) UploadState {
@@ -23,7 +38,7 @@ func beginPublishedUpload(t *testing.T, s *Store, destination string, owner int6
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.linkFile(path.Join(uploadsDir, state.ID+".part"), destination); err != nil {
+	if err := testLinkFile(s, path.Join(uploadsDir, state.ID+".part"), destination); err != nil {
 		t.Fatal(err)
 	}
 	state.Offset = state.Size
@@ -141,7 +156,7 @@ func TestUnmarkedLegacyHardlinkIsNeverTruncatedAfterExternalAppend(t *testing.T)
 	if _, err := s.AppendUpload(state.ID, 42, 0, bytes.NewReader([]byte("data"))); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.linkFile(path.Join(uploadsDir, state.ID+".part"), "legacy-marker.txt"); err != nil {
+	if err := testLinkFile(s, path.Join(uploadsDir, state.ID+".part"), "legacy-marker.txt"); err != nil {
 		t.Fatal(err)
 	}
 	f, err := s.root.OpenFile("legacy-marker.txt", os.O_WRONLY|os.O_APPEND, 0600)
@@ -428,7 +443,7 @@ func TestPublishedUploadPreservesPartWhenDestinationDisappears(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := s.linkFile(path.Join(uploadsDir, state.ID+".part"), "vanishing.txt"); err != nil {
+	if err := testLinkFile(s, path.Join(uploadsDir, state.ID+".part"), "vanishing.txt"); err != nil {
 		t.Fatal(err)
 	}
 	state.Offset = state.Size
@@ -587,7 +602,7 @@ func TestUploadAbortCanRetryAfterPartWasAlreadyRemoved(t *testing.T) {
 	if err := s.removeFile(partPath); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.syncUploadsDirectory(); err != nil {
+	if err := testSyncUploadsDirectory(s); err != nil {
 		t.Fatal(err)
 	}
 	if err := s.AbortUpload(state.ID, 42); err != nil {

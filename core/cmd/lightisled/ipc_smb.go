@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -13,7 +14,10 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/smbmgmt"
 )
 
-func configureSMBRootProvider(registry *roots.Registry) {
+func configureSMBRootProvider(registry *roots.Registry, dataDir string) {
+	if strings.TrimSpace(dataDir) != "" {
+		smbmgmt.Shared().ConfigurePersistence(filepath.Join(dataDir, "smb-shares.json"))
+	}
 	smbmgmt.Shared().SetRootProvider(func() []smbmgmt.RootInfo {
 		if registry == nil {
 			return nil
@@ -41,6 +45,27 @@ func configureSMBRootProvider(registry *roots.Registry) {
 	})
 }
 
+func monitorSMBShares(ctx context.Context) {
+	ticker := time.NewTicker(12 * time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if !smbmgmt.Shared().HasManagedShares() {
+				continue
+			}
+			checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			st, restored, err := smbmgmt.Shared().Reconcile(checkCtx, "")
+			cancel()
+			if err == nil && restored > 0 {
+				emitSMBState(st)
+			}
+		}
+	}
+}
+
 type smbIPCAction struct {
 	Action          string `json:"action"`
 	Enabled         bool   `json:"enabled"`
@@ -57,7 +82,7 @@ type smbIPCAction struct {
 }
 
 func isSMBCommand(command string) bool {
-	return command == "smb status" || command == "smb state" || strings.HasPrefix(command, "smb action ")
+	return command == "smb status" || command == "smb state" || command == "smb reconcile" || strings.HasPrefix(command, "smb action ")
 }
 
 func handleSMBCommand(ctx context.Context, command string) bool {
@@ -74,6 +99,15 @@ func handleSMBCommand(ctx context.Context, command string) bool {
 	}
 	if command == "smb state" {
 		status, err := smbmgmt.Shared().Status(ctx)
+		if err != nil {
+			writeStdoutLine("LIGHTISLE_SMB_ERROR " + smbErrorCode(err))
+			return true
+		}
+		emitSMBState(status)
+		return true
+	}
+	if command == "smb reconcile" {
+		status, _, err := smbmgmt.Shared().Reconcile(ctx, "")
 		if err != nil {
 			writeStdoutLine("LIGHTISLE_SMB_ERROR " + smbErrorCode(err))
 			return true
@@ -99,6 +133,8 @@ func handleSMBCommand(ctx context.Context, command string) bool {
 		switch req.Action {
 		case "service":
 			status, actErr = smbmgmt.Shared().SetService(ctx, req.Enabled)
+		case "reconcile":
+			status, _, actErr = smbmgmt.Shared().Reconcile(ctx, req.Path)
 		case "add":
 			hasRoot := strings.TrimSpace(req.RootID) != ""
 			hasPath := strings.TrimSpace(req.Path) != ""

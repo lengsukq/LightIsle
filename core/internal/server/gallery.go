@@ -17,7 +17,7 @@ import (
 
 func (a *API) galleryReady(w http.ResponseWriter) bool {
 	if a.gallery == nil {
-		jsonReply(w, 503, map[string]string{"error": "gallery_unavailable"})
+		writeAPIErrorCode(w, 503, "gallery_unavailable")
 		return false
 	}
 	return true
@@ -75,7 +75,7 @@ func (a *API) galleryPersonalFavorite(w http.ResponseWriter, r *http.Request) {
 	}
 	viewer, authenticated := a.auth.Identity(token(r))
 	if !authenticated {
-		jsonReply(w, 401, map[string]string{"error": "authentication_required"})
+		writeAPIErrorCode(w, 401, "authentication_required")
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 128)
@@ -86,7 +86,7 @@ func (a *API) galleryPersonalFavorite(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&body) != nil || body.Favorite == nil {
-		jsonReply(w, 400, map[string]string{"error": "invalid_request"})
+		writeAPIErrorCode(w, 400, "invalid_request")
 		return
 	}
 	if err := a.gallery.PersonalFavorite(viewer.ID, id, *body.Favorite); err != nil {
@@ -124,12 +124,12 @@ func galleryError(w http.ResponseWriter, err error) {
 		code = "not_found"
 		status = 404
 	}
-	jsonReply(w, status, map[string]string{"error": code})
+	writeAPIErrorCode(w, status, code)
 }
 func galleryID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	id, e := strconv.ParseInt(r.PathValue("id"), 10, 64)
 	if e != nil || id <= 0 {
-		jsonReply(w, 400, map[string]string{"error": "invalid_id"})
+		writeAPIErrorCode(w, 400, "invalid_id")
 		return 0, false
 	}
 	return id, true
@@ -463,6 +463,14 @@ func (a *API) galleryAddToAlbum(w http.ResponseWriter, r *http.Request) {
 	}
 	if json.NewDecoder(r.Body).Decode(&body) != nil || body.AssetID <= 0 {
 		jsonReply(w, 400, map[string]string{"error": "invalid_asset"})
+		return
+	}
+	asset, err := a.gallery.Asset(body.AssetID)
+	if err != nil {
+		galleryError(w, err)
+		return
+	}
+	if !a.allowMediaAsset(w, r, asset.Path, false) {
 		return
 	}
 	if err := a.gallery.AddToAlbum(id, body.AssetID); err != nil {

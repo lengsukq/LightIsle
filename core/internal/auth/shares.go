@@ -2,6 +2,7 @@ package auth
 
 import (
 	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
@@ -84,7 +85,7 @@ func SharePasswordOK(verifier []byte, password string) bool {
 		return false
 	}
 	candidate := derive(password, verifier[:16])
-	return string(candidate) == string(verifier[16:])
+	return subtle.ConstantTimeCompare(candidate, verifier[16:]) == 1
 }
 
 type ShareAccess struct {

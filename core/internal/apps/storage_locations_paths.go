@@ -3,6 +3,7 @@ package apps
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -10,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lengsukq/lightisle/core/internal/pathutil"
 	"github.com/lengsukq/lightisle/core/internal/storageidentity"
 )
 
@@ -179,25 +181,7 @@ func isUnderExternalPrefix(cleanPath string, prefixes []string) bool {
 }
 
 func pathsOverlap(a, b string) bool {
-	ca := filepath.Clean(a)
-	cb := filepath.Clean(b)
-	if ra, err := resolvePathWithExistingParent(ca); err == nil {
-		ca = ra
-	}
-	if rb, err := resolvePathWithExistingParent(cb); err == nil {
-		cb = rb
-	}
-	if ca == cb {
-		return true
-	}
-	return strings.HasPrefix(ca, caWithSep(cb)) || strings.HasPrefix(cb, caWithSep(ca))
-}
-
-func caWithSep(p string) string {
-	if strings.HasSuffix(p, string(filepath.Separator)) {
-		return p
-	}
-	return p + string(filepath.Separator)
+	return pathutil.OverlapResolved(a, b)
 }
 
 func inferExternalStorageName(cleanPath string, volumes []AppStorageVolumeOption) string {
@@ -226,7 +210,7 @@ func matchVolumeOption(cleanPath string, volumes []AppStorageVolumeOption) (AppS
 		if mount == "" {
 			continue
 		}
-		if cleanPath == mount || strings.HasPrefix(cleanPath, caWithSep(mount)) {
+		if pathutil.Inside(mount, cleanPath) {
 			if len(mount) > bestLen {
 				bestLen = len(mount)
 				best = v
@@ -247,7 +231,10 @@ func statfsBytes(path string) (total uint64, free uint64, err error) {
 
 // ResolveInstallTarget validates and returns the storage location where a new app should be installed.
 func (m *Manager) ResolveInstallTarget(requestedID string) (storageScanRoot, error) {
-	cfg, _ := readSystemConfigFile(m.configPath)
+	cfg, err := readSystemConfigFile(m.configPath)
+	if err != nil {
+		return storageScanRoot{}, err
+	}
 	return resolveInstallTargetWithProvider(m.dataDir, cfg, requestedID, m.getStorageProvider(), m.getAvailableVolumes())
 }
 
@@ -273,7 +260,10 @@ func resolveInstallTargetWithProvider(dataDir string, cfg AppsSystemConfig, requ
 			spec.Name = inferExternalStorageName(spec.Path, volumes)
 		}
 		if spec.Binding != nil {
-			if err := provider.Verify(context.Background(), *spec.Binding); err != nil {
+			verifyCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			err := provider.Verify(verifyCtx, *spec.Binding)
+			cancel()
+			if err != nil {
 				return storageScanRoot{}, fmt.Errorf("%w: %s", ErrStorageOffline, describeStorageVerifyError(err, spec.Name))
 			}
 		}
@@ -310,7 +300,10 @@ func resolveInstallTargetWithProvider(dataDir string, cfg AppsSystemConfig, requ
 }
 
 func (m *Manager) listConfiguredScanRoots() []storageScanRoot {
-	cfg, _ := readSystemConfigFile(m.configPath)
+	cfg, err := readSystemConfigFile(m.configPath)
+	if err != nil {
+		slog.Warn("failed to read apps-config.json for scan roots", "path", m.configPath, "error", err)
+	}
 	return listConfiguredScanRootsWithConfig(m.dataDir, cfg, m.getStorageProvider(), m.getAvailableVolumes())
 }
 
@@ -345,7 +338,10 @@ func listConfiguredScanRootsWithConfig(dataDir string, cfg AppsSystemConfig, pro
 		}
 		verified := true
 		if extSpec.Binding != nil && provider != nil {
-			if err := provider.Verify(context.Background(), *extSpec.Binding); err != nil {
+			verifyCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			err := provider.Verify(verifyCtx, *extSpec.Binding)
+			cancel()
+			if err != nil {
 				verified = false
 			}
 		}
@@ -392,7 +388,11 @@ func resolveScanRootsForMCP(dataDir string, mgr *Manager) []storageScanRoot {
 	if mgr != nil {
 		return mgr.listConfiguredScanRoots()
 	}
-	cfg, _ := readSystemConfigFile(filepath.Join(dataDir, "apps-config.json"))
+	cfgPath := filepath.Join(dataDir, "apps-config.json")
+	cfg, err := readSystemConfigFile(cfgPath)
+	if err != nil {
+		slog.Warn("failed to read apps-config.json for MCP scan roots", "path", cfgPath, "error", err)
+	}
 	return listConfiguredScanRootsWithConfig(dataDir, cfg, storageidentity.SystemProvider{}, nil)
 }
 
@@ -400,7 +400,10 @@ func resolveInstallTargetForMCP(dataDir string, mgr *Manager, requestedID string
 	if mgr != nil {
 		return mgr.ResolveInstallTarget(requestedID)
 	}
-	cfg, _ := readSystemConfigFile(filepath.Join(dataDir, "apps-config.json"))
+	cfg, err := readSystemConfigFile(filepath.Join(dataDir, "apps-config.json"))
+	if err != nil {
+		return storageScanRoot{}, err
+	}
 	return resolveInstallTargetWithProvider(dataDir, cfg, requestedID, storageidentity.SystemProvider{}, nil)
 }
 

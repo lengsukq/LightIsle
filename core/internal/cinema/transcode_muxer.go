@@ -73,9 +73,10 @@ func duplicateTranscodeSource(source *os.File) (*os.File, error) {
 // decideProfile classifies the source after ffprobe. Copyable video is
 // muxed into fMP4 untouched; incompatible audio is re-encoded to AAC while
 // the video stays untouched (cheap and broadly compatible).
-func decideProfile(info TrackInfo) (profile string, videoCopy, audioCopy, tagHevc bool) {
+func decideProfile(info TrackInfo, audioTrack int) (profile string, videoCopy, audioCopy, tagHevc bool) {
 	videoCopy = videoCopyable(info.VideoCodec)
-	audioCopy = len(info.Audio) == 0 || audioCopyable(info.Audio[0].Codec)
+	audioCopy = len(info.Audio) == 0 || audioTrack < 0 ||
+		(audioTrack < len(info.Audio) && audioCopyable(info.Audio[audioTrack].Codec))
 	tagHevc = info.VideoCodec == "hevc" || info.VideoCodec == "hvc1"
 	if videoCopy {
 		return "remux", videoCopy, audioCopy, tagHevc

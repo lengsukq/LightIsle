@@ -144,32 +144,3 @@ func rootQuotaUsageTx(tx *sql.Tx, userID int64, rootID string, gen uint64) (used
 		WHERE user_id=? AND root_id=? AND root_generation=?`, userID, rootID, int64(gen)).Scan(&reserved)
 	return
 }
-
-func (s *Store) StorageRootMeter(session string, userID int64, rootID string, generation uint64) (StorageMeter, error) {
-	actor, ok := s.Identity(session)
-	if !ok || (actor.Role != RoleAdmin && actor.ID != userID) {
-		return StorageMeter{}, ErrForbidden
-	}
-	if userID < 1 || !validRootID(rootID) || generation < 1 || generation > math.MaxInt64 {
-		return StorageMeter{}, ErrInput
-	}
-	policy, err := s.storagePolicy(userID)
-	if err != nil {
-		return StorageMeter{}, err
-	}
-	for _, q := range policy.RootQuotas {
-		if q.RootID != rootID || q.RootGeneration != generation {
-			continue
-		}
-		meter := StorageMeter{UsedBytes: q.AccountedBytes, ReservedBytes: q.ReservedBytes}
-		if q.QuotaBytes != nil {
-			remaining := *q.QuotaBytes - q.AccountedBytes - q.ReservedBytes
-			if remaining < 0 {
-				remaining = 0
-			}
-			meter.AvailableBytes = &remaining
-		}
-		return meter, nil
-	}
-	return StorageMeter{}, ErrStorageUnassigned
-}

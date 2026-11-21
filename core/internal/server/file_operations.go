@@ -14,10 +14,6 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/files"
 )
 
-type spotlightSearchProvider interface {
-	SearchSpotlightOrFallback(context.Context, string, string, int) ([]files.Entry, bool, error)
-}
-
 type spotlightSearchKindProvider interface {
 	SearchSpotlightKindOrFallback(context.Context, string, string, string, int) ([]files.Entry, bool, error)
 }
@@ -281,8 +277,6 @@ func (a *API) searchFiles(w http.ResponseWriter, r *http.Request) {
 		var err error
 		if spotlightKind, ok := a.files.(spotlightSearchKindProvider); ok && engine == "spotlight" {
 			results, more, err = spotlightKind.SearchSpotlightKindOrFallback(r.Context(), root, query, kind, limit)
-		} else if spotlight, ok := a.files.(spotlightSearchProvider); ok && engine == "spotlight" {
-			results, more, err = spotlight.SearchSpotlightOrFallback(r.Context(), root, query, limit)
 		} else if kindSearcher, ok := a.files.(interface {
 			SearchKind(string, string, string, int) ([]files.Entry, bool, error)
 		}); ok && kind != "" && kind != "all" {

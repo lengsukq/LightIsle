@@ -214,3 +214,100 @@ func TestCinemaPosterUnsupportedProbeDoesNotReturnPlaceholderAsReady(t *testing.
 		t.Fatalf("unsupported poster response = %d, worker poster calls=%d", w.Code, worker.calls())
 	}
 }
+
+func TestCinemaPosterServesSidecarAndScrapedTMDBPosterForMKV(t *testing.T) {
+	dataDir := t.TempDir()
+	accounts, err := auth.Open(filepath.Join(dataDir, "accounts.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer accounts.Close()
+	if err := accounts.Setup("owner", "valid-owner-password"); err != nil {
+		t.Fatal(err)
+	}
+	adminToken, err := accounts.Login("owner", "valid-owner-password")
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared, err := files.NewManager(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer shared.Close()
+	share, _ := shared.State()
+	movieDir := filepath.Join(share, "Dune (2021)")
+	if err := os.MkdirAll(movieDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(movieDir, "Dune.2021.mkv"), []byte("mkv-bytes"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	sidecarBytes := []byte{0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 'J', 'F', 'I', 'F', 0xff, 0xd9}
+	if err := os.WriteFile(filepath.Join(movieDir, "poster.jpg"), sidecarBytes, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tmdbHits := 0
+	tmdbPosterBytes := []byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n', 1, 2, 3, 4}
+	imgSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/dune_poster.png" {
+			tmdbHits++
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write(tmdbPosterBytes)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer imgSrv.Close()
+
+	photos, err := gallery.Open(dataDir, shared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer photos.Close()
+	films, err := cinema.Open(dataDir, shared)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer films.Close()
+	films.SetTMDBImageSource(imgSrv.URL, imgSrv.Client())
+	worker := &posterAPIWorker{}
+	photos.SetMediaWorker(worker)
+	films.SetMediaWorker(worker)
+	if err := films.StartScan(); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for films.Status().Running && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	items, _, err := films.List(1, "", "", 20, 0)
+	if err != nil || len(items) != 1 {
+		t.Fatalf("scan result = %+v, %v", items, err)
+	}
+	filmID := items[0].ID
+	handler := NewWithCinema("", accounts, shared, photos, films)
+
+	req1 := httptest.NewRequest(http.MethodGet, "/api/v2/cinema/"+strconv.FormatInt(filmID, 10)+"/poster", nil)
+	req1.Header.Set("X-LightIsle-Request", "1")
+	req1.AddCookie(&http.Cookie{Name: sessionCookie, Value: adminToken})
+	rec1 := httptest.NewRecorder()
+	handler.ServeHTTP(rec1, req1)
+	if rec1.Code != http.StatusOK || rec1.Header().Get("Content-Type") != "image/jpeg" || rec1.Body.Len() != len(sidecarBytes) {
+		t.Fatalf("expected sidecar poster 200 OK, got %d %s len=%d", rec1.Code, rec1.Header().Get("Content-Type"), rec1.Body.Len())
+	}
+
+	for i := 0; i < 2; i++ {
+		reqP := httptest.NewRequest(http.MethodGet, "/api/v2/cinema/tmdb-poster?path=/dune_poster.png", nil)
+		reqP.Header.Set("X-LightIsle-Request", "1")
+		reqP.AddCookie(&http.Cookie{Name: sessionCookie, Value: adminToken})
+		recP := httptest.NewRecorder()
+		handler.ServeHTTP(recP, reqP)
+		if recP.Code != http.StatusOK || recP.Header().Get("Content-Type") != "image/png" || recP.Body.Len() != len(tmdbPosterBytes) {
+			t.Fatalf("iter %d: expected cached TMDB poster 200 OK, got %d %s", i, recP.Code, recP.Header().Get("Content-Type"))
+		}
+	}
+	if tmdbHits != 1 {
+		t.Fatalf("expected TMDB image upstream to be hit once and cached, got %d", tmdbHits)
+	}
+}

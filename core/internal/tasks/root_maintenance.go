@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"errors"
 	"time"
+
+	"github.com/lengsukq/lightisle/core/internal/idutil"
 )
 
 // RootMaintenance describes the last code-verifiable background media
@@ -19,7 +21,7 @@ type RootMaintenance struct {
 
 func rootMaintenanceStatusAllowed(status string) bool {
 	switch status {
-	case "running", "ok", "offline", "busy", "failed":
+	case StatusRunning, StatusOK, StatusOffline, StatusBusy, StatusFailed:
 		return true
 	}
 	return false
@@ -29,14 +31,14 @@ func rootMaintenanceStatusAllowed(status string) bool {
 // Changing a physical generation resets the last-success claim, so an old
 // folder's clean index is never advertised as a new binding's success.
 func (j *Journal) UpdateRootMaintenance(id string, generation uint64, status string) error {
-	if j == nil || j.db == nil || !validRootID(id) || generation == 0 || !rootMaintenanceStatusAllowed(status) {
+	if j == nil || j.db == nil || !idutil.ValidRootID(id) || generation == 0 || !rootMaintenanceStatusAllowed(status) {
 		return errors.New("invalid_root_maintenance")
 	}
 	j.mu.Lock()
 	defer j.mu.Unlock()
 	now := time.Now().Unix()
 	success := int64(0)
-	if status == "ok" {
+	if status == StatusOK {
 		success = now
 	}
 	_, err := j.db.Exec(`INSERT INTO root_maintenance(root_id,generation,status,last_attempt,last_success,updated_at)
@@ -53,8 +55,8 @@ func (j *Journal) UpdateRootMaintenance(id string, generation uint64, status str
 // RootMaintenanceStatus reads the current physical generation's status;
 // absent rows and prior-generation history are always reported as pending.
 func (j *Journal) RootMaintenanceStatus(id string, generation uint64) (RootMaintenance, error) {
-	pending := RootMaintenance{RootID: id, Generation: generation, Status: "pending"}
-	if j == nil || j.db == nil || !validRootID(id) || generation == 0 {
+	pending := RootMaintenance{RootID: id, Generation: generation, Status: StatusPending}
+	if j == nil || j.db == nil || !idutil.ValidRootID(id) || generation == 0 {
 		return pending, errors.New("invalid_root_maintenance")
 	}
 	j.mu.Lock()

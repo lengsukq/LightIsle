@@ -143,12 +143,9 @@ func handleBackupIPC(
 		return true
 	}
 	if strings.HasPrefix(command, "backup metadata start ") || strings.HasPrefix(command, "backup restore ") {
-		kind := "backup start "
+		kind := "backup restore "
 		if strings.HasPrefix(command, "backup metadata start ") {
 			kind = "backup metadata start "
-		}
-		if strings.HasPrefix(command, "backup restore ") {
-			kind = "backup restore "
 		}
 		raw, err := base64.RawURLEncoding.DecodeString(strings.TrimPrefix(command, kind))
 		if err == nil && len(raw) > 0 && len(raw) < 4096 {

@@ -131,9 +131,8 @@ func TestMediaMemberScopedBeforePaginationAndPerAssetRequest(t *testing.T) {
 	if got := call("GET", "/api/v2/cinema", "", child); got.Code != 403 {
 		t.Fatalf("ungranted member has cinema access %d", got.Code)
 	}
-	grant := "/api/v2/users/" + strconv.FormatInt(member.ID, 10) + "/file-grants"
-	if got := call("PUT", grant, `{"path":"family","canWrite":false}`, admin); got.Code != 200 {
-		t.Fatalf("cannot grant media folder: %d %s", got.Code, got.Body.String())
+	if err := accounts.SetFileGrant(admin, member.ID, "family", false); err != nil {
+		t.Fatalf("cannot grant media folder: %v", err)
 	}
 	for _, route := range []string{"/api/v2/photos?limit=1", "/api/v2/cinema?limit=1"} {
 		got := call("GET", route, "", child)
@@ -248,8 +247,8 @@ func TestMediaMemberScopedBeforePaginationAndPerAssetRequest(t *testing.T) {
 	if got = call("DELETE", albumPath+"/items/"+strconv.FormatInt(familyPhotoID, 10), "", child); got.Code != 200 {
 		t.Fatalf("private album member removal failed: %d", got.Code)
 	}
-	if got = call("DELETE", grant+"?path=family", "", admin); got.Code != 200 {
-		t.Fatal("revoke media grant failed")
+	if err := accounts.RemoveFileGrant(admin, member.ID, "family"); err != nil {
+		t.Fatalf("revoke media grant failed: %v", err)
 	}
 	if got = call("GET", "/api/v2/cinema", "", child); got.Code != 403 {
 		t.Fatalf("revoked member still can browse cinema: %d", got.Code)

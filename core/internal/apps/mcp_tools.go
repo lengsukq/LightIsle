@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -55,7 +57,11 @@ func toolGetEnvironment(dataDir, execPath string, mgr *Manager) mcpToolResult {
 			runtimes[bin] = p
 		}
 	}
-	cfg, _ := readSystemConfigFile(filepath.Join(dataDir, "apps-config.json"))
+	cfgPath := filepath.Join(dataDir, "apps-config.json")
+	cfg, cfgErr := readSystemConfigFile(cfgPath)
+	if cfgErr != nil {
+		slog.Warn("failed to read apps-config.json in MCP get_environment", "path", cfgPath, "error", cfgErr)
+	}
 	if !cfg.MCPEnabled {
 		cfg.MCPLanEnabled = false
 	}
@@ -84,6 +90,9 @@ func toolGetEnvironment(dataDir, execPath string, mgr *Manager) mcpToolResult {
 		"mcpEnabled":           cfg.MCPEnabled,
 		"mcpLanEnabled":        cfg.MCPLanEnabled,
 		"runtimes":             runtimes,
+	}
+	if cfgErr != nil {
+		payload["configError"] = cfgErr.Error()
 	}
 	if mgr != nil {
 		localURL, lanURL := mgr.Endpoints()
@@ -301,8 +310,9 @@ func toolScaffoldApp(dataDir string, mgr *Manager, rawArgs json.RawMessage) mcpT
 		}
 		uiDir := filepath.Join(pluginDir, "ui")
 		_ = os.MkdirAll(uiDir, 0700)
-		html := fmt.Sprintf("<!doctype html><html><head><meta charset=\"utf-8\"><title>%s</title></head><body><h1>%s</h1></body></html>\n", args.Name, args.Name)
-		_ = os.WriteFile(filepath.Join(uiDir, "index.html"), []byte(html), 0600)
+		escapedName := html.EscapeString(args.Name)
+		pageHTML := fmt.Sprintf("<!doctype html><html><head><meta charset=\"utf-8\"><title>%s</title></head><body><h1>%s</h1></body></html>\n", escapedName, escapedName)
+		_ = os.WriteFile(filepath.Join(uiDir, "index.html"), []byte(pageHTML), 0600)
 		createdFiles = append(createdFiles, "ui/index.html")
 		if args.HasCron {
 			cronFiles, err := writeCronScaffold(pluginDir, args.ID, args.Runtime)

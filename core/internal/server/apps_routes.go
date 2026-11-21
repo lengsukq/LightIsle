@@ -364,12 +364,12 @@ func (h *appsManagementHandler) handleTriggerCron(w http.ResponseWriter, r *http
 func (h *appsManagementHandler) handleServeIcon(w http.ResponseWriter, r *http.Request) {
 	user, ok := h.resolveSession(r)
 	if !ok {
-		http.Error(w, "unauthorized", http.StatusUnauthorized)
+		writeAPIErrorCode(w, http.StatusUnauthorized, "authentication_required")
 		return
 	}
 	id := r.PathValue("id")
 	if !h.appsMgr.CanAccess(id, user.ID, user.Role) {
-		http.Error(w, "forbidden", http.StatusForbidden)
+		writeAPIErrorCode(w, http.StatusForbidden, "app_access_forbidden")
 		return
 	}
 	h.appsMgr.ServeIcon(w, r, id)

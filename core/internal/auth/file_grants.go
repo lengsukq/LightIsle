@@ -62,7 +62,11 @@ func (s *Store) SetFileGrant(actorToken string, userID int64, name string, write
 		ON CONFLICT(user_id,path) DO UPDATE SET can_write=excluded.can_write`, userID, name, w); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.bumpAccessEpoch()
+	return nil
 }
 
 func (s *Store) RemoveFileGrant(actorToken string, userID int64, name string) error {
@@ -89,7 +93,11 @@ func (s *Store) RemoveFileGrant(actorToken string, userID int64, name string) er
 	if _, err := tx.Exec("DELETE FROM file_shares WHERE user_id=?", userID); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.bumpAccessEpoch()
+	return nil
 }
 
 func (s *Store) FileGrants(actorToken string, userID int64) ([]FileGrant, error) {

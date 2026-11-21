@@ -409,7 +409,7 @@ func handleHTTPMCPEndpoint(
 
 	if r.Method != http.MethodPost {
 		w.Header().Set("Allow", "GET, POST, DELETE")
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		writeAPIErrorCode(w, http.StatusMethodNotAllowed, "method_not_allowed")
 		return
 	}
 	if version := strings.TrimSpace(r.Header.Get("MCP-Protocol-Version")); version != "" && !managementMCPVersion(version) {
@@ -471,15 +471,12 @@ func handleHTTPMCPEndpoint(
 func serveMCPSSEStream(w http.ResponseWriter, r *http.Request, sseHub *mcpSSEHub, ownerKey string) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		http.Error(w, "streaming unsupported", http.StatusInternalServerError)
+		writeAPIErrorCode(w, http.StatusInternalServerError, "mcp_streaming_unsupported")
 		return
 	}
 	sess, registered := sseHub.register(ownerKey)
 	if !registered {
-		jsonReply(w, http.StatusTooManyRequests, map[string]string{
-			"error":   "mcp_sse_limit_reached",
-			"message": "活动 MCP SSE 会话已达上限 (16)",
-		})
+		writeAPIErrorCode(w, http.StatusTooManyRequests, "mcp_sse_limit_reached")
 		return
 	}
 	defer sseHub.remove(sess.id)

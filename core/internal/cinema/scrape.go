@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lengsukq/lightisle/core/internal/safego"
 	"github.com/lengsukq/lightisle/core/internal/tasks"
 )
 
@@ -105,11 +106,6 @@ func (l *Library) CancelScrapeIfRunning() {
 // scrape; retryMisses re-queues items whose earlier automatic attempt found
 // no confident match.
 func (l *Library) StartScrape(retryMisses bool) error {
-	release, ok := l.files.TryAcquireLegacyRequest()
-	if !ok {
-		return ErrScanning
-	}
-	defer release()
 	if _, err := l.share(); err != nil {
 		return err
 	}
@@ -145,7 +141,7 @@ func (l *Library) StartScrape(retryMisses bool) error {
 	l.jobCancel = cancel
 	l.status = Status{Running: true, Operation: "scrape"}
 	l.wg.Add(1)
-	go func() { defer cancel(); l.scrape(job) }()
+	safego.Go("cinema-scrape", func() { defer cancel(); l.scrape(job) })
 	return nil
 }
 

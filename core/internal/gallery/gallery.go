@@ -15,7 +15,9 @@ import (
 	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/files"
+	"github.com/lengsukq/lightisle/core/internal/idutil"
 	"github.com/lengsukq/lightisle/core/internal/mediascope"
+	"github.com/lengsukq/lightisle/core/internal/safego"
 	"github.com/lengsukq/lightisle/core/internal/tasks"
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -54,36 +56,6 @@ type Asset struct {
 	ExposureSeconds  float64  `json:"exposureSeconds,omitempty"`
 	FocalLength      float64  `json:"focalLength,omitempty"`
 	LiveVideoAssetID int64    `json:"liveVideoAssetId,omitempty"`
-}
-
-// ForgetLegacyShare removes only an explicitly selected legacy share's
-// derived photo index and associated albums/favorites. It cannot touch source
-// files. Root-scoped multi-root libraries are intentionally not supported.
-func (l *Library) ForgetLegacyShare(path string) error {
-	if path == "" || !filepath.IsAbs(path) || l.shareScope != "" {
-		return ErrUnavailable
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.status.Running {
-		return ErrBusy
-	}
-	tx, err := l.db.Begin()
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	for _, sqlText := range []string{
-		"DELETE FROM persons WHERE share=?",
-		"DELETE FROM private_albums WHERE share=?",
-		"DELETE FROM albums WHERE share=?",
-		"DELETE FROM assets WHERE share=?",
-	} {
-		if _, err := tx.Exec(sqlText, path); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
 }
 
 // SetJournal must be called before the first scan is started.
@@ -166,7 +138,7 @@ func OpenWithOptions(dir string, store *files.Manager, options Options) (*Librar
 // files stay flat so the offline metadata backup allowlist can enumerate them
 // without recursively trusting arbitrary state directories.
 func OpenRootScoped(dir string, store *files.Manager, rootID string, options ...Options) (*Library, error) {
-	if !validRootID(rootID) {
+	if !idutil.ValidRootID(rootID) {
 		return nil, errors.New("invalid_root_id")
 	}
 	var option Options
@@ -291,22 +263,11 @@ func openWithOptions(dir string, store *files.Manager, options Options, database
 		return nil, err
 	}
 	library.wg.Add(2)
-	go library.backfillLoop()
-	go library.aiIndexLoop()
+	safego.Go("gallery-backfill", library.backfillLoop)
+	safego.Go("gallery-ai-index", library.aiIndexLoop)
 	return library, nil
 }
 
-func validRootID(id string) bool {
-	if len(id) != 32 {
-		return false
-	}
-	for _, c := range id {
-		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
-			return false
-		}
-	}
-	return true
-}
 func (l *Library) readDB() *sql.DB {
 	if l != nil && l.rdb != nil {
 		return l.rdb
@@ -382,11 +343,6 @@ func (l *Library) StartScan() error {
 
 // StartScanDirs reconciles only complete, bounded changed subtrees.
 func (l *Library) StartScanDirs(input []string) error {
-	release, ok := l.storage.TryAcquireLegacyRequest()
-	if !ok {
-		return ErrBusy
-	}
-	defer release()
 	dirs, err := mediascope.ScanDirectories(input)
 	if err != nil {
 		return err
@@ -410,7 +366,7 @@ func (l *Library) StartScanDirs(input []string) error {
 	l.status = Status{Running: true}
 	l.wg.Add(1)
 	l.mu.Unlock()
-	go func() { defer l.wg.Done(); defer cancel(); l.scan(job, dirs) }()
+	safego.Go("gallery-scan", func() { defer l.wg.Done(); defer cancel(); l.scan(job, dirs) })
 	return nil
 }
 func (l *Library) scan(job context.Context, dirs []string) {

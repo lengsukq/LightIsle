@@ -2,7 +2,9 @@ package gallery
 
 import (
 	"context"
+	"database/sql"
 	"errors"
+	"log/slog"
 	"os"
 	"path"
 	"strings"
@@ -90,12 +92,6 @@ func (l *Library) aiIndexStep() time.Duration {
 		l.setAIRunning(false)
 		return aiIndexActiveDelay
 	}
-	release, ok := l.storage.TryAcquireLegacyRequest()
-	if !ok {
-		l.setAIRunning(false)
-		return aiIndexActiveDelay
-	}
-	defer release()
 
 	share, err := l.share()
 	if err != nil {
@@ -353,13 +349,19 @@ func (l *Library) setAIRunning(running bool) {
 func (l *Library) refreshAIStatus(share string, running bool) {
 	rdb := l.readDB()
 	var total, remaining int
-	_ = rdb.QueryRow(`SELECT COUNT(*) FROM assets WHERE share=? AND missing_path='' AND type='photo'`, share).Scan(&total)
-	_ = rdb.QueryRow(`
+	if err := rdb.QueryRow(`SELECT COUNT(*) FROM assets WHERE share=? AND missing_path='' AND type='photo'`, share).Scan(&total); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		slog.Warn("gallery AI total count query failed", "share", share, "error", err)
+		return
+	}
+	if err := rdb.QueryRow(`
 		SELECT COUNT(*) FROM assets a
 		LEFT JOIN ai_index_state s ON s.asset_id=a.id
 		WHERE a.share=? AND a.missing_path='' AND a.type='photo'
 		  AND (s.asset_id IS NULL OR s.ai_version<? OR s.source_size<>a.size OR s.source_modified<>a.modified)`,
-		share, aiSchemaVersion).Scan(&remaining)
+		share, aiSchemaVersion).Scan(&remaining); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		slog.Warn("gallery AI remaining count query failed", "share", share, "error", err)
+		return
+	}
 	l.mu.Lock()
 	l.aiStatus = AIIndexStatus{
 		Running:   running && remaining > 0 && !l.aiPaused,

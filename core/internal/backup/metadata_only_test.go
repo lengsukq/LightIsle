@@ -43,7 +43,7 @@ func TestMetadataWeeklyScheduleWithRootRegistryAndNoLegacyManager(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(destination)
-	service := New(nil, dataDir)
+	service := New(dataDir)
 	service.ProtectDestinations(registry)
 	defer service.Close()
 	schedule, err := NewScheduler(service, dataDir)
@@ -92,7 +92,7 @@ func TestMetadataOnlyBackupAndRestoreNeverCopiesSharedFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(destination)
-	service := New(manager, dataDir)
+	service := New(dataDir)
 	defer service.Close()
 
 	if err := service.StartMetadataBackup(destination); err != nil {
@@ -188,7 +188,7 @@ func TestMetadataWeeklyScheduleKeepsFiveConfigurationSnapshots(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(destination)
-	service := New(manager, dataDir)
+	service := New(dataDir)
 	defer service.Close()
 	schedule, err := NewScheduler(service, dataDir)
 	if err != nil {

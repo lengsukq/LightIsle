@@ -116,7 +116,11 @@ func (s *Store) abandonUserStorageLocation(userID int64, category, expectedRootI
 		userID, expectedRootID, gen); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.bumpAccessEpoch()
+	return nil
 }
 
 // AbandonUserStorageRoot retires a removed disk's quota allocation when no
@@ -206,7 +210,11 @@ func (s *Store) abandonUserStorageRoot(userID int64, expectedRootID string, expe
 			return err
 		}
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.bumpAccessEpoch()
+	return nil
 }
 
 type StoragePolicy struct {

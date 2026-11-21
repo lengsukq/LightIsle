@@ -81,9 +81,9 @@ func (l *Library) VideoThumbnailFromFileContext(parent context.Context, assetPat
 	if l.worker == nil {
 		return nil, mediaworker.ErrUnavailable
 	}
-	share, online := l.storage.State()
-	if !online {
-		return nil, ErrUnavailable
+	share, err := l.share()
+	if err != nil {
+		return nil, err
 	}
 	before, err := source.Stat()
 	if err != nil || !before.Mode().IsRegular() || before.Size() != expected.Size() || !before.ModTime().Equal(expected.ModTime()) {
@@ -184,8 +184,8 @@ func (l *Library) verifyCurrentVideoSource(ctx context.Context, share, assetPath
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	currentShare, online := l.storage.State()
-	if !online || currentShare != share {
+	currentShare, err := l.share()
+	if err != nil || currentShare != share {
 		return ErrAssetChanged
 	}
 	current, _, err := l.storage.Read(assetPath)
@@ -201,8 +201,8 @@ func (l *Library) verifyCurrentVideoSource(ctx context.Context, share, assetPath
 	if err != nil || currentFingerprint != fingerprint {
 		return ErrAssetChanged
 	}
-	currentShare, online = l.storage.State()
-	if !online || currentShare != share {
+	currentShare, err = l.share()
+	if err != nil || currentShare != share {
 		return ErrAssetChanged
 	}
 	return nil

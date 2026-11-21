@@ -32,7 +32,7 @@ func TestScriptTimeoutTerminatesTaskAndRecordsFailure(t *testing.T) {
 	}
 	defer manager.Close()
 	started := time.Now()
-	manager.run("slow-script")
+	manager.run("slow-script", false)
 	if elapsed := time.Since(started); elapsed > 4*time.Second {
 		t.Fatalf("script timeout did not terminate process group: %s", elapsed)
 	}
@@ -73,7 +73,7 @@ func TestLocalScriptReloadEditAndHistory(t *testing.T) {
 	if len(tasks) != 1 || !tasks[0].Enabled || tasks[0].NextRun == 0 {
 		t.Fatalf("unexpected tasks %+v", tasks)
 	}
-	m.run("sample")
+	m.run("sample", false)
 	records, err := m.History("sample")
 	if err != nil || len(records) != 1 || records[0].State != "success" || !strings.Contains(records[0].Output, "lightisle-script-ok") {
 		t.Fatalf("unexpected history %+v: %v", records, err)
@@ -168,7 +168,7 @@ func TestLoadedTaskDirectoryCannotBeReplacedBySymlink(t *testing.T) {
 	if err := os.Symlink(other, dir); err != nil {
 		t.Fatal(err)
 	}
-	m.run("sample")
+	m.run("sample", false)
 	records, err := m.History("sample")
 	if err != nil || len(records) != 1 || records[0].State != "failure" || strings.Contains(records[0].Output, "replacement-executed") {
 		t.Fatalf("replacement directory was used: %+v %v", records, err)
@@ -273,11 +273,11 @@ func TestAutomationRejectsStaleEditAndRecordsSkippedRunAndDelivery(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager.run(task.ID)
+	manager.run(task.ID, false)
 	if err := lock.Close(); err != nil {
 		t.Fatal(err)
 	}
-	manager.run(task.ID)
+	manager.run(task.ID, false)
 	runs, err := manager.History(task.ID)
 	if err != nil || len(runs) != 2 || runs[0].State != "success" || runs[0].Deliveries["bark"] != "backoff" || runs[1].State != "skipped" {
 		t.Fatalf("unexpected run and delivery records: %+v %v", runs, err)

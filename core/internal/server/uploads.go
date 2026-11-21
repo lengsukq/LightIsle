@@ -46,14 +46,14 @@ func admitFileUpload(w http.ResponseWriter, source io.Reader) (*fileUploadBody, 
 		return body, true
 	default:
 		w.Header().Set("Retry-After", "2")
-		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "upload_server_busy"})
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "upload_server_busy")
 		return nil, false
 	}
 }
 
 func uploadStreamError(w http.ResponseWriter, err error) {
 	if errors.Is(err, os.ErrDeadlineExceeded) {
-		jsonReply(w, http.StatusRequestTimeout, map[string]string{"error": "upload_timed_out"})
+		writeAPIErrorCode(w, http.StatusRequestTimeout, "upload_timed_out")
 		return
 	}
 	fileError(w, err)
@@ -66,7 +66,7 @@ func (a *API) uploader(w http.ResponseWriter, r *http.Request) (files.Access, in
 	}
 	user, ok := a.auth.Identity(token(r))
 	if !ok {
-		jsonReply(w, 401, map[string]string{"error": "authentication_required"})
+		writeAPIErrorCode(w, 401, "authentication_required")
 		return nil, 0, false
 	}
 	return a.files, user.ID, true

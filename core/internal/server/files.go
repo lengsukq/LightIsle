@@ -94,9 +94,21 @@ func (a *API) previewFile(w http.ResponseWriter, r *http.Request) {
 	defer f.Close()
 	types := map[string]string{
 		".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
-		".gif": "image/gif", ".webp": "image/webp",
+		".gif": "image/gif", ".webp": "image/webp", ".avif": "image/avif",
+		".bmp": "image/bmp", ".heic": "image/heic", ".heif": "image/heif",
 		".txt": "text/plain; charset=utf-8", ".md": "text/plain; charset=utf-8",
 		".json": "text/plain; charset=utf-8", ".log": "text/plain; charset=utf-8",
+		".csv": "text/plain; charset=utf-8", ".yaml": "text/plain; charset=utf-8",
+		".yml": "text/plain; charset=utf-8", ".xml": "text/plain; charset=utf-8",
+		".toml": "text/plain; charset=utf-8", ".ini": "text/plain; charset=utf-8",
+		".conf": "text/plain; charset=utf-8", ".properties": "text/plain; charset=utf-8",
+		".css": "text/plain; charset=utf-8", ".js": "text/plain; charset=utf-8",
+		".dart": "text/plain; charset=utf-8",
+		".go": "text/plain; charset=utf-8", ".swift": "text/plain; charset=utf-8",
+		".kt": "text/plain; charset=utf-8", ".java": "text/plain; charset=utf-8",
+		".py": "text/plain; charset=utf-8", ".sh": "text/plain; charset=utf-8",
+		".sql": "text/plain; charset=utf-8", ".srt": "text/plain; charset=utf-8",
+		".vtt": "text/plain; charset=utf-8",
 		".mp4": "video/mp4", ".webm": "video/webm", ".m4v": "video/mp4",
 		".mov": "video/quicktime", ".mkv": "video/x-matroska",
 		".avi": "video/x-msvideo", ".ts": "video/mp2t", ".mts": "video/mp2t",
@@ -161,7 +173,7 @@ func fileError(w http.ResponseWriter, err error) {
 		code = "permission_denied"
 		status = 403
 	}
-	jsonReply(w, status, map[string]string{"error": code})
+	writeAPIErrorCode(w, status, code)
 }
 func (a *API) listFiles(w http.ResponseWriter, r *http.Request) {
 	if a.files == nil {

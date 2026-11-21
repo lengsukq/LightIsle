@@ -215,6 +215,9 @@ func verifyAllTrashFilesInspected(item *os.File, itemInfo os.FileInfo, inspected
 			}
 			expected, ok := inspected[rel]
 			if !ok {
+				if IsSystemMetadataName(name) && MediaFileHasSingleLink(childInfo) {
+					continue
+				}
 				return ErrTrashIdentityUnknown
 			}
 			if !MediaFileHasSingleLink(childInfo) || MediaFileIdentity(childInfo) != expected.Identity || childInfo.Size() != expected.Size {

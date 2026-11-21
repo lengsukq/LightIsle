@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"strings"
 	"unicode/utf8"
 
@@ -198,13 +199,15 @@ func (l *Library) getPersonShareSummary(share string, shareID, viewerID int64) (
 	}
 	args := []any{v.OwnerUserID, v.PersonID, share, v.SinceTakenAt}
 	args = append(args, scopedArgs...)
-	_ = l.readDB().QueryRow(`
+	if err := l.readDB().QueryRow(`
 		SELECT COUNT(DISTINCT a.id), COALESCE(MAX(a.id), 0)
 		FROM person_face_links pfl
 		JOIN asset_faces af ON af.id = pfl.face_id
 		JOIN assets a ON a.id = af.asset_id
 		WHERE pfl.user_id=? AND pfl.person_id=? AND a.share=? AND a.missing_path='' AND a.taken_at>=?`+fragment,
-		args...).Scan(&v.PhotoCount, &v.CoverAssetID)
+		args...).Scan(&v.PhotoCount, &v.CoverAssetID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return PersonShareView{}, err
+	}
 	return v, nil
 }
 
@@ -240,7 +243,9 @@ func (l *Library) ListPersonShareAssets(viewerID, shareID, cursor int64, limit i
 		return []Asset{}, 0, summary, nil
 	}
 	// Refresh owner's face links so newly indexed photos automatically appear!
-	_ = l.syncUserPersons(share, summary.OwnerUserID, roots)
+	if syncErr := l.syncUserPersons(share, summary.OwnerUserID, roots); syncErr != nil {
+		slog.Warn("gallery person share sync failed", "shareID", shareID, "ownerUserID", summary.OwnerUserID, "error", syncErr)
+	}
 
 	fragment, scopedArgs, err := mediascope.Clause("a.path", roots)
 	if err != nil {

@@ -44,7 +44,7 @@ func acquireArchiveSlot(w http.ResponseWriter, public bool) bool {
 		if public {
 			http.Error(w, "当前打包下载较多，请稍后重试。", http.StatusTooManyRequests)
 		} else {
-			jsonReply(w, http.StatusTooManyRequests, map[string]string{"error": "archive_busy"})
+			writeAPIErrorCode(w, http.StatusTooManyRequests, "archive_busy")
 		}
 		return false
 	}

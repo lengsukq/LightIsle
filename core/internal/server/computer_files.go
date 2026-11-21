@@ -4,11 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"context"
 	"io"
 	"io/fs"
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -43,6 +45,8 @@ func registerComputerFiles(mux *http.ServeMux, a *API) {
 	mux.HandleFunc("HEAD /api/v2/computer-files/content", a.requireLogin(a.computerFileContent))
 	mux.HandleFunc("GET /api/v2/computer-files/preview", a.requireLogin(a.computerFilePreview))
 	mux.HandleFunc("HEAD /api/v2/computer-files/preview", a.requireLogin(a.computerFilePreview))
+	mux.HandleFunc("GET /api/v2/computer-files/thumbnail", a.requireLogin(a.computerFileThumbnail))
+	mux.HandleFunc("HEAD /api/v2/computer-files/thumbnail", a.requireLogin(a.computerFileThumbnail))
 	mux.HandleFunc("GET /api/v2/computer-files/archive", a.requireLogin(a.computerFolderArchive))
 	mux.HandleFunc("HEAD /api/v2/computer-files/archive", a.requireLogin(a.computerFolderArchive))
 	mux.HandleFunc("GET /api/v2/computer-files/grants/{id}", a.requireAdmin(a.getComputerFileGrant))
@@ -480,6 +484,100 @@ func (a *API) computerFileContent(w http.ResponseWriter, r *http.Request) {
 func (a *API) computerFilePreview(w http.ResponseWriter, r *http.Request) {
 	a.serveComputerFile(w, r, true)
 }
+
+var computerThumbSlots = make(chan struct{}, 2)
+
+func (a *API) computerFileThumbnail(w http.ResponseWriter, r *http.Request) {
+	size := 512
+	if raw := r.URL.Query().Get("size"); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || (parsed != 512 && parsed != 2048) {
+			jsonReply(w, 400, map[string]string{"error": "invalid_request"})
+			return
+		}
+		size = parsed
+	}
+	f, access, err := a.openComputerFile(r, r.URL.Query().Get("path"))
+	if err != nil {
+		computerFileError(w, err)
+		return
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil || !computerfiles.IsRegular(info) {
+		computerFileError(w, computerfiles.ErrPath)
+		return
+	}
+	ext := strings.ToLower(filepath.Ext(info.Name()))
+	switch ext {
+	case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".bmp", ".heic", ".heif":
+	default:
+		jsonReply(w, 404, map[string]string{"error": "thumbnail_unsupported"})
+		return
+	}
+	if info.Size() <= 0 || info.Size() > 64<<20 {
+		jsonReply(w, 404, map[string]string{"error": "thumbnail_unavailable"})
+		return
+	}
+	if r.Method == http.MethodHead {
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Header().Set("Cache-Control", "no-store")
+		w.WriteHeader(http.StatusOK)
+		return
+	}
+	select {
+	case computerThumbSlots <- struct{}{}:
+		defer func() { <-computerThumbSlots }()
+	case <-r.Context().Done():
+		return
+	}
+	inTmp, err := os.CreateTemp("", "lightisle-cfile-in-*"+ext)
+	if err != nil {
+		jsonReply(w, 404, map[string]string{"error": "thumbnail_unavailable"})
+		return
+	}
+	inName := inTmp.Name()
+	defer os.Remove(inName)
+	copied, copyErr := io.Copy(inTmp, io.LimitReader(computerReader{f: f, access: access}, (64<<20)+1))
+	closeErr := inTmp.Close()
+	if copyErr != nil || closeErr != nil || copied != info.Size() || !access.valid() {
+		jsonReply(w, 404, map[string]string{"error": "thumbnail_unavailable"})
+		return
+	}
+	outTmp, err := os.CreateTemp("", "lightisle-cfile-out-*.jpg")
+	if err != nil {
+		jsonReply(w, 404, map[string]string{"error": "thumbnail_unavailable"})
+		return
+	}
+	outName := outTmp.Name()
+	_ = outTmp.Close()
+	defer os.Remove(outName)
+	renderCtx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(renderCtx, "/usr/bin/sips", "-s", "format", "jpeg", "-s", "formatOptions", "82", "-Z", strconv.Itoa(size), inName, "--out", outName)
+	if err := cmd.Run(); err != nil || !access.valid() {
+		jsonReply(w, 404, map[string]string{"error": "thumbnail_unavailable"})
+		return
+	}
+	outFile, err := os.Open(outName)
+	if err != nil {
+		jsonReply(w, 404, map[string]string{"error": "thumbnail_unavailable"})
+		return
+	}
+	defer outFile.Close()
+	outInfo, err := outFile.Stat()
+	if err != nil || outInfo.Size() <= 0 {
+		jsonReply(w, 404, map[string]string{"error": "thumbnail_unavailable"})
+		return
+	}
+	w.Header().Set("Content-Disposition", "inline")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Type", "image/jpeg")
+	w.Header().Set("Cache-Control", "no-store")
+	http.ServeContent(w, r, "thumbnail.jpg", info.ModTime(), outFile)
+}
+
 func (a *API) serveComputerFile(w http.ResponseWriter, r *http.Request, preview bool) {
 	f, access, err := a.openComputerFile(r, r.URL.Query().Get("path"))
 	if err != nil {
@@ -494,7 +592,32 @@ func (a *API) serveComputerFile(w http.ResponseWriter, r *http.Request, preview 
 	}
 	mediaType := "application/octet-stream"
 	if preview {
-		types := map[string]string{".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png", ".gif": "image/gif", ".webp": "image/webp", ".txt": "text/plain; charset=utf-8", ".md": "text/plain; charset=utf-8", ".json": "text/plain; charset=utf-8", ".log": "text/plain; charset=utf-8", ".mp4": "video/mp4", ".webm": "video/webm", ".m4v": "video/mp4", ".pdf": "application/pdf"}
+		types := map[string]string{
+			".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png",
+			".gif": "image/gif", ".webp": "image/webp", ".avif": "image/avif",
+			".bmp": "image/bmp", ".heic": "image/heic", ".heif": "image/heif",
+			".txt": "text/plain; charset=utf-8", ".md": "text/plain; charset=utf-8",
+			".json": "text/plain; charset=utf-8", ".log": "text/plain; charset=utf-8",
+			".csv": "text/plain; charset=utf-8", ".yaml": "text/plain; charset=utf-8",
+			".yml": "text/plain; charset=utf-8", ".xml": "text/plain; charset=utf-8",
+			".toml": "text/plain; charset=utf-8", ".ini": "text/plain; charset=utf-8",
+			".conf": "text/plain; charset=utf-8", ".properties": "text/plain; charset=utf-8",
+			".css": "text/plain; charset=utf-8", ".js": "text/plain; charset=utf-8",
+			".ts": "text/plain; charset=utf-8", ".tsx": "text/plain; charset=utf-8",
+			".jsx": "text/plain; charset=utf-8", ".vue": "text/plain; charset=utf-8",
+			".html": "text/plain; charset=utf-8", ".htm": "text/plain; charset=utf-8",
+			".dart": "text/plain; charset=utf-8", ".go": "text/plain; charset=utf-8",
+			".swift": "text/plain; charset=utf-8", ".kt": "text/plain; charset=utf-8",
+			".java": "text/plain; charset=utf-8", ".py": "text/plain; charset=utf-8",
+			".sh": "text/plain; charset=utf-8", ".sql": "text/plain; charset=utf-8",
+			".srt": "text/plain; charset=utf-8", ".vtt": "text/plain; charset=utf-8",
+			".mp4": "video/mp4", ".webm": "video/webm", ".m4v": "video/mp4",
+			".mov": "video/quicktime", ".mkv": "video/x-matroska",
+			".avi": "video/x-msvideo", ".mpeg": "video/mpeg", ".mpg": "video/mpeg",
+			".mts": "video/mp2t", ".m2ts": "video/mp2t", ".3gp": "video/3gpp",
+			".wmv": "video/x-ms-wmv", ".flv": "video/x-flv",
+			".pdf": "application/pdf",
+		}
 		var ok bool
 		mediaType, ok = types[strings.ToLower(filepath.Ext(info.Name()))]
 		if !ok || (strings.HasPrefix(mediaType, "text/") && info.Size() > 1<<20) {
@@ -503,6 +626,7 @@ func (a *API) serveComputerFile(w http.ResponseWriter, r *http.Request, preview 
 		}
 		w.Header().Set("Content-Disposition", "inline")
 		w.Header().Set("Content-Security-Policy", "default-src 'none'; sandbox")
+		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "SAMEORIGIN")
 	} else {
 		w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename*=UTF-8''%s", url.PathEscape(info.Name())))

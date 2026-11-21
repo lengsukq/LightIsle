@@ -18,8 +18,16 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/auth"
 )
 
+func testPrivateIP() net.IP {
+	return physicalPrivateIP(upInterfaceCandidates())
+}
+
+func testCertificate(dir string, ip net.IP) (tls.Certificate, string, error) {
+	return certificateWithSANs(dir, []net.IP{ip}, nil)
+}
+
 func TestExplicitLocalHTTPListenerAndShutdown(t *testing.T) {
-	if privateIP() == nil {
+	if testPrivateIP() == nil {
 		t.Skip("No usable private IPv4 interface is available in this test environment")
 	}
 	dir := t.TempDir()
@@ -79,7 +87,7 @@ func TestExplicitLocalHTTPListenerAndShutdown(t *testing.T) {
 }
 
 func TestTLSListenerUsesSamePortAsLoopbackAndValidatesCertificate(t *testing.T) {
-	if privateIP() == nil {
+	if testPrivateIP() == nil {
 		t.Skip("No usable private IPv4 interface")
 	}
 	dir := t.TempDir()
@@ -137,7 +145,7 @@ func TestTLSListenerUsesSamePortAsLoopbackAndValidatesCertificate(t *testing.T) 
 }
 
 func TestRemoteDoesNotFallBackToRandomPortWhenConfiguredPortBusy(t *testing.T) {
-	if privateIP() == nil {
+	if testPrivateIP() == nil {
 		t.Skip("No private IPv4 interface")
 	}
 	dir := t.TempDir()
@@ -149,7 +157,7 @@ func TestRemoteDoesNotFallBackToRandomPortWhenConfiguredPortBusy(t *testing.T) {
 	if err := store.Setup("admin", "CorrectHorseBatteryStaple123"); err != nil {
 		t.Fatal(err)
 	}
-	busy, err := net.Listen("tcp4", net.JoinHostPort(privateIP().String(), "0"))
+	busy, err := net.Listen("tcp4", net.JoinHostPort(testPrivateIP().String(), "0"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +174,7 @@ func TestRemoteDoesNotFallBackToRandomPortWhenConfiguredPortBusy(t *testing.T) {
 func TestCertificatePersistsFingerprintAndIPSubjectAlternativeName(t *testing.T) {
 	dir := t.TempDir()
 	ip := net.ParseIP("192.168.10.22")
-	first, fingerprint, err := certificate(dir, ip)
+	first, fingerprint, err := testCertificate(dir, ip)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -188,7 +196,7 @@ func TestCertificatePersistsFingerprintAndIPSubjectAlternativeName(t *testing.T)
 		t.Fatalf("fingerprint %q does not match certificate", fingerprint)
 	}
 
-	second, secondFingerprint, err := certificate(dir, ip)
+	second, secondFingerprint, err := testCertificate(dir, ip)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -196,7 +204,7 @@ func TestCertificatePersistsFingerprintAndIPSubjectAlternativeName(t *testing.T)
 		t.Fatal("matching certificate was not reused")
 	}
 
-	_, changedFingerprint, err := certificate(dir, net.ParseIP("192.168.10.23"))
+	_, changedFingerprint, err := testCertificate(dir, net.ParseIP("192.168.10.23"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,7 +260,7 @@ func TestSelectRemoteIPsIncludesUtunPrivateAndExcludesBenchmarkingRange(t *testi
 }
 
 func TestRemoteCompanionListenersServeHTTPAndTLSWithSANs(t *testing.T) {
-	lanIP := privateIP()
+	lanIP := testPrivateIP()
 	if lanIP == nil {
 		t.Skip("No usable private IPv4 interface")
 	}

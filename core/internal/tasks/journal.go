@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lengsukq/lightisle/core/internal/idutil"
 	_ "github.com/mattn/go-sqlite3"
 )
 
@@ -57,22 +58,10 @@ func Open(dataDir string) (*Journal, error) {
 // OpenRootScoped persists task and alert state in a flat database dedicated to
 // one logical root, leaving the legacy single-root journal untouched.
 func OpenRootScoped(dataDir, rootID string) (*Journal, error) {
-	if !validRootID(rootID) {
+	if !idutil.ValidRootID(rootID) {
 		return nil, errors.New("invalid_root_id")
 	}
 	return open(dataDir, "tasks-root-"+rootID+".sqlite")
-}
-
-func validRootID(id string) bool {
-	if len(id) != 32 {
-		return false
-	}
-	for _, c := range id {
-		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
-			return false
-		}
-	}
-	return true
 }
 
 func open(dataDir, databaseName string) (*Journal, error) {
@@ -231,7 +220,11 @@ func (j *Journal) Finish(kind string, runErr error) error {
 		status = runErr.Error()
 	}
 	if len(status) > 512 {
-		status = status[:512]
+		limit := 512
+		for limit > 0 && (status[limit]&0xC0) == 0x80 {
+			limit--
+		}
+		status = status[:limit]
 	}
 	j.mu.Lock()
 	defer j.mu.Unlock()

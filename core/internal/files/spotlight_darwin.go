@@ -15,13 +15,9 @@ import (
 	"time"
 )
 
-// SpotlightSearch is an optional macOS-backed search for a *pre-authorized*
+// SpotlightSearchKind is an optional macOS-backed search for a *pre-authorized*
 // subtree. Unlike global mdfind queries, -onlyin never scans sibling shares.
 // Paths are rechecked through the pinned os.Root and safePath before return.
-func (m *Manager) SpotlightSearch(ctx context.Context, base, term string, limit int) ([]Entry, bool, error) {
-	return m.SpotlightSearchKind(ctx, base, term, "", limit)
-}
-
 func (m *Manager) SpotlightSearchKind(ctx context.Context, base, term, kind string, limit int) ([]Entry, bool, error) {
 	var out []Entry
 	var more bool

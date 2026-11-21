@@ -6,42 +6,29 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/lengsukq/lightisle/core/internal/auth"
-	"github.com/lengsukq/lightisle/core/internal/files"
 )
 
 func TestPublicSharePasswordAndDownloadCount(t *testing.T) {
-	data := t.TempDir()
-	accounts, err := auth.Open(filepath.Join(data, "accounts.sqlite"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer accounts.Close()
-	store, err := files.NewManager(data)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	share := filepath.Join(data, "SharedFiles")
+	f := newRootRoutingFixture(t)
+	share := f.pathA
 	if err := os.WriteFile(filepath.Join(share, "secret.txt"), []byte("top-secret"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := accounts.Setup("owner", "long-owner-password"); err != nil {
-		t.Fatal(err)
-	}
-	handler := NewWithCinema("", accounts, store, nil, nil)
+	handler := f.server
+	publicPrefix := rootRoute(f.rootA.ID, "/public/file/")
 	call := func(method, url, body string, cookie *http.Cookie) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(method, url, strings.NewReader(body))
 		if method != "GET" && method != "HEAD" {
-			if strings.HasPrefix(url, "/api/v2/public/file/") {
+			if strings.HasPrefix(url, publicPrefix) {
 				// A real HTML form cannot attach X-LightIsle-Request.
 				req.Header.Set("Origin", "http://example.com")
 			} else {
 				req.Header.Set("X-LightIsle-Request", "1")
+				req.Header.Set("X-LightIsle-Root-Generation", strconv.FormatUint(f.rootA.Generation, 10))
 			}
 			if strings.HasPrefix(body, "{") {
 				req.Header.Set("Content-Type", "application/json")
@@ -56,9 +43,8 @@ func TestPublicSharePasswordAndDownloadCount(t *testing.T) {
 		handler.ServeHTTP(out, req)
 		return out
 	}
-	login := call("POST", "/api/v2/auth/login", `{"username":"owner","password":"long-owner-password"}`, nil)
-	cookie := login.Result().Cookies()[0]
-	created := call("POST", "/api/v2/file-shares",
+	cookie := &http.Cookie{Name: sessionCookie, Value: f.admin}
+	created := call("POST", rootRoute(f.rootA.ID, "/file-shares"),
 		`{"path":"secret.txt","hours":1,"password":"open-sesame","maxDownloads":1}`, cookie)
 	if created.Code != 201 {
 		t.Fatalf("create share %d %s", created.Code, created.Body.String())
@@ -69,7 +55,7 @@ func TestPublicSharePasswordAndDownloadCount(t *testing.T) {
 	if err := json.Unmarshal(created.Body.Bytes(), &payload); err != nil || payload.Token == "" {
 		t.Fatalf("payload: %s", created.Body.String())
 	}
-	link := "/api/v2/public/file/" + payload.Token
+	link := publicPrefix + payload.Token
 
 	// Without a grant the link answers the password form, never the file.
 	challenge := call("GET", link, "", nil)
@@ -103,8 +89,8 @@ func TestPublicSharePasswordAndDownloadCount(t *testing.T) {
 	if grant == nil {
 		t.Fatal("grant cookie missing")
 	}
-	if right.Header().Get("Location") != link || grant.Path != "/api/v2/public/file/" {
-		t.Fatalf("bad v1 grant redirect/cookie path: %s %+v", right.Header().Get("Location"), grant)
+	if right.Header().Get("Location") != link || grant.Path != publicPrefix {
+		t.Fatalf("bad grant redirect/cookie path: %s %+v", right.Header().Get("Location"), grant)
 	}
 	// An unavailable file may not spend the link's one allowed download.
 	away := filepath.Join(share, "temporarily-offline.txt")

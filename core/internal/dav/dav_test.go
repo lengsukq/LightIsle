@@ -440,21 +440,6 @@ func TestOfflineRootRejected(t *testing.T) {
 	}
 }
 
-func TestRelativePath(t *testing.T) {
-	cases := map[string]string{
-		"/":          ".",
-		"/photos":    "photos",
-		"/photos/a":  "photos/a",
-		"/a/b/c.txt": "a/b/c.txt",
-		"a/b/c.txt":  "a/b/c.txt",
-	}
-	for input, want := range cases {
-		if got := relativePath(input); got != want {
-			t.Errorf("relativePath(%q) = %q, want %q", input, got, want)
-		}
-	}
-}
-
 type interruptedReader struct {
 	data []byte
 	done bool

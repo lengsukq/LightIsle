@@ -36,6 +36,7 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/mediaworker"
 	"github.com/lengsukq/lightisle/core/internal/notify"
 	"github.com/lengsukq/lightisle/core/internal/roots"
+	"github.com/lengsukq/lightisle/core/internal/safego"
 	"github.com/lengsukq/lightisle/core/internal/server"
 	"github.com/lengsukq/lightisle/core/internal/system"
 	"github.com/lengsukq/lightisle/core/internal/tasks"
@@ -187,7 +188,7 @@ func main() {
 	}
 
 	mediaWorker := mediaworker.New(*mediaWorkerPath)
-	backupService := backup.New(nil, dataDir)
+	backupService := backup.New(dataDir)
 	backupService.ProtectDestinations(rootRegistry)
 	defer backupService.Close()
 	backupService.SetJournal(taskJournal)
@@ -199,7 +200,7 @@ func main() {
 	}
 
 	var externalTransferRunning atomic.Bool
-	configureSMBRootProvider(rootRegistry)
+	configureSMBRootProvider(rootRegistry, dataDir)
 	installDiskProtectionGuard(rootRegistry, backupService, backupSchedule, appsManager, &externalTransferRunning)
 
 	downloadPublisher := downloads.NewRegistryPublisher(rootRegistry, accountStore)
@@ -238,12 +239,23 @@ func main() {
 		monitors.Wait()
 	}()
 	monitors.Go(func() {
+		defer safego.Recover("monitor-alerts")
 		monitorAlerts(ctx, rootRegistry, rootServer, taskJournal, alertThresholds, accountStore, dispatchAlert)
 	})
 	if taskJournal != nil {
-		monitors.Go(func() { monitorMetricHistory(ctx, taskJournal) })
+		monitors.Go(func() {
+			defer safego.Recover("monitor-metrics")
+			monitorMetricHistory(ctx, taskJournal)
+		})
 	}
-	monitors.Go(func() { newRootMediaMaintenance(rootRegistry, rootServer, taskJournal).Run(ctx) })
+	monitors.Go(func() {
+		defer safego.Recover("monitor-smb")
+		monitorSMBShares(ctx)
+	})
+	monitors.Go(func() {
+		defer safego.Recover("monitor-root-media-maintenance")
+		newRootMediaMaintenance(rootRegistry, rootServer, taskJournal).Run(ctx)
+	})
 	// Preserve any legacy LightIsle trash during the transition to the macOS
 	// Trash, including when an older installation enabled automatic purging.
 	// The existing restore/inspection endpoints remain available.
@@ -582,7 +594,9 @@ func shutdownHTTPOnCancel(ctx context.Context, httpServer *http.Server) {
 func syncInitialRootGenerations(ctx context.Context, rootRegistry *roots.Registry, accountStore *auth.Store) {
 	for _, r := range rootRegistry.List() {
 		if lease, err := rootRegistry.Acquire(ctx, r.ID); err == nil {
-			_ = accountStore.SyncVerifiedRootGeneration(r.ID, r.Generation)
+			if syncErr := accountStore.SyncVerifiedRootGeneration(r.ID, r.Generation); syncErr != nil {
+				slog.Warn("failed to sync initial verified root generation", "rootID", r.ID, "generation", r.Generation, "error", syncErr)
+			}
 			_ = lease.Close()
 		}
 	}

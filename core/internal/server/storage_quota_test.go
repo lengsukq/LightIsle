@@ -186,9 +186,21 @@ func TestScopedQuotaDirectResumableAbortAndCommit(t *testing.T) {
 	if err != nil || meter.UsedBytes != 5 || meter.ReservedBytes != 0 || meter.AvailableBytes != nil {
 		t.Fatalf("completed budget: %+v %v", meter, err)
 	}
-	perDisk, err := accounts.StorageRootMeter(admin, member.ID, root.ID, root.Generation)
-	if err != nil || perDisk.AvailableBytes == nil || *perDisk.AvailableBytes != 0 {
-		t.Fatalf("completed per-disk budget: %+v %v", perDisk, err)
+	policy, err := accounts.StoragePolicy(admin, member.ID)
+	if err != nil {
+		t.Fatalf("storage policy: %v", err)
+	}
+	foundRootQuota := false
+	for _, rq := range policy.RootQuotas {
+		if rq.RootID == root.ID && rq.RootGeneration == root.Generation {
+			foundRootQuota = true
+			if rq.QuotaBytes == nil || *rq.QuotaBytes-rq.AccountedBytes-rq.ReservedBytes != 0 {
+				t.Fatalf("completed per-disk budget: %+v", rq)
+			}
+		}
+	}
+	if !foundRootQuota {
+		t.Fatalf("missing root quota entry in policy: %+v", policy.RootQuotas)
 	}
 	response = call("PUT", url("no.txt"), admin, []byte("A"), nil)
 	if response.Code != http.StatusInsufficientStorage {

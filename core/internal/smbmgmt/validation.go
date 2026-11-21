@@ -5,7 +5,6 @@ import (
 	"context"
 	"errors"
 	"io"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -172,37 +171,6 @@ func isSudoPasswordError(stderr []byte, code int) bool {
 		strings.Contains(msg, "no tty present") ||
 		strings.Contains(msg, "must be run as root") ||
 		strings.Contains(msg, "not allowed to execute")
-}
-
-func detectPrivateLANIPv4() string {
-	interfaces, err := net.Interfaces()
-	if err != nil {
-		return ""
-	}
-	for _, iface := range interfaces {
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagPointToPoint != 0 {
-			continue
-		}
-		if !(strings.HasPrefix(iface.Name, "en") || strings.HasPrefix(iface.Name, "bridge")) {
-			continue
-		}
-		addrs, err := iface.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, addr := range addrs {
-			ip, _, parseErr := net.ParseCIDR(addr.String())
-			if parseErr != nil || ip == nil {
-				continue
-			}
-			ip4 := ip.To4()
-			if ip4 == nil || ip4.IsLoopback() || ip4.IsLinkLocalUnicast() || !ip4.IsPrivate() {
-				continue
-			}
-			return ip4.String()
-		}
-	}
-	return ""
 }
 
 func runCommand(ctx context.Context, binary string, args ...string) ([]byte, []byte, int, error) {

@@ -39,11 +39,6 @@ func (m *Manager) ScanDirectory(ctx context.Context, raw string, visit func([]En
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	release, ok := m.TryAcquireLegacyRequest()
-	if !ok {
-		return ErrRootBusy
-	}
-	defer release()
 	var target string
 	var dir *os.File
 	var original os.FileInfo

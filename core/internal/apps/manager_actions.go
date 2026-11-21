@@ -66,9 +66,7 @@ func (m *Manager) ApproveApp(appID string) (PublicApp, error) {
 		m.syncAllCronTasks()
 	}
 	if persistentInst != nil {
-		go func(target *Instance) {
-			_, _, _ = target.Wake(context.Background())
-		}(persistentInst)
+		m.wakeInstanceAsync(persistentInst)
 	}
 	return m.GetForUser(appID, 0, "admin")
 }

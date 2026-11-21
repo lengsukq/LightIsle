@@ -310,8 +310,10 @@ func (l *Library) applySeriesCandidate(share string, seriesID int64, oldName str
 	}
 	source := fmt.Sprintf("tmdb:tv:%d", candidate.ID)
 	var existingID int64
-	_ = l.db.QueryRow("SELECT id FROM series WHERE share=? AND (name=? OR (tmdb_id=? AND tmdb_id<>0)) ORDER BY id LIMIT 1",
-		share, candidate.Title, candidate.ID).Scan(&existingID)
+	if err := l.db.QueryRow("SELECT id FROM series WHERE share=? AND (name=? OR (tmdb_id=? AND tmdb_id<>0)) ORDER BY id LIMIT 1",
+		share, candidate.Title, candidate.ID).Scan(&existingID); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, err
+	}
 	targetID := seriesID
 	if existingID != 0 && existingID != seriesID {
 		targetID = existingID
@@ -419,16 +421,49 @@ func hasSequelDigitTail(longer, shorter string) bool {
 // Candidates whose release year disagrees by more than ±1 are always rejected.
 func pickTMBDCandidate(candidates []TMDBCandidate, title string, year int) *TMDBCandidate {
 	variants := titleSearchVariants(title)
+	wants := normalizedWantTitles(title, variants)
+	if len(wants) == 0 {
+		return nil
+	}
+
+	rawWants := make([]string, 0, 1+len(variants))
+	rawWants = append(rawWants, title)
+	rawWants = append(rawWants, variants...)
+	wantPrefixes := colonMainTitlePrefixes(rawWants)
+
+	// Tier 1: Exact normalized title match.
+	if hit := pickBestTMDBCandidate(candidates, year, func(c *TMDBCandidate, _ bool) bool {
+		return slicesShareValue(candidateNormalizedTitles(c), wants)
+	}); hit != nil {
+		return hit
+	}
+
+	// Tier 2: Main title before colon subtitle matches on either side.
+	if hit := pickBestTMDBCandidate(candidates, year, func(c *TMDBCandidate, knownYear bool) bool {
+		return matchesSubtitlePrefix(c, wants, wantPrefixes, year, knownYear)
+	}); hit != nil {
+		return hit
+	}
+
+	// Tier 3: Safe prefix containment only when release year agrees within ±1.
+	return pickBestTMDBCandidate(candidates, year, func(c *TMDBCandidate, knownYear bool) bool {
+		return matchesSafePrefix(candidateNormalizedTitles(c), wants, year, knownYear)
+	})
+}
+
+func normalizedWantTitles(title string, variants []string) []string {
 	wants := make([]string, 0, len(variants)+2)
 	addWant := func(raw string) {
-		if norm := normalizeTitle(raw); norm != "" {
-			for _, existing := range wants {
-				if existing == norm {
-					return
-				}
-			}
-			wants = append(wants, norm)
+		norm := normalizeTitle(raw)
+		if norm == "" {
+			return
 		}
+		for _, existing := range wants {
+			if existing == norm {
+				return
+			}
+		}
+		wants = append(wants, norm)
 	}
 	for _, v := range variants {
 		addWant(v)
@@ -440,124 +475,113 @@ func pickTMBDCandidate(candidates []TMDBCandidate, title string, year int) *TMDB
 		addWant(trimmed)
 	}
 	addWant(title)
-	if len(wants) == 0 {
-		return nil
-	}
-	yearDiff := func(c *TMDBCandidate) (diff int, known bool, ok bool) {
-		if year > 0 && c.Year != "" {
-			if parsed, err := strconv.Atoi(c.Year); err == nil {
-				d := absInt(parsed - year)
-				return d, true, d <= 1
-			}
-		}
+	return wants
+}
+
+func candidateYearDiff(c *TMDBCandidate, year int) (diff int, known bool, ok bool) {
+	if year <= 0 || c.Year == "" {
 		return 0, false, true
 	}
-	candidateNorms := func(c *TMDBCandidate) []string {
-		out := make([]string, 0, 2)
-		for _, raw := range []string{c.Title, c.OriginalTitle} {
-			if n := normalizeTitle(raw); n != "" {
-				out = append(out, n)
-			}
-		}
-		return out
+	parsed, err := strconv.Atoi(c.Year)
+	if err != nil {
+		return 0, false, true
 	}
-	pickBest := func(matchFn func(*TMDBCandidate) bool) *TMDBCandidate {
-		var best *TMDBCandidate
-		bestRank := 99
-		for i := range candidates {
-			c := &candidates[i]
-			d, known, ok := yearDiff(c)
-			if !ok || !matchFn(c) {
+	d := absInt(parsed - year)
+	return d, true, d <= 1
+}
+
+func candidateNormalizedTitles(c *TMDBCandidate) []string {
+	out := make([]string, 0, 2)
+	for _, raw := range []string{c.Title, c.OriginalTitle} {
+		if n := normalizeTitle(raw); n != "" {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+func colonMainTitlePrefixes(rawTitles []string) []string {
+	prefixes := make([]string, 0, len(rawTitles))
+	for _, raw := range rawTitles {
+		for _, sep := range []string{"：", ":"} {
+			idx := strings.Index(raw, sep)
+			if idx <= 0 {
 				continue
 			}
-			rank := 2
-			if known {
-				rank = d
-			}
-			if best == nil || rank < bestRank {
-				best = c
-				bestRank = rank
-				if bestRank == 0 {
-					return best
-				}
+			prefixNorm := normalizeTitle(raw[:idx])
+			if len([]rune(prefixNorm)) >= 2 {
+				prefixes = append(prefixes, prefixNorm)
 			}
 		}
-		return best
 	}
+	return prefixes
+}
 
-	// Tier 1: Exact normalized title match.
-	if hit := pickBest(func(c *TMDBCandidate) bool {
-		for _, cNorm := range candidateNorms(c) {
-			for _, want := range wants {
-				if cNorm == want {
-					return true
-				}
+func slicesShareValue(a, b []string) bool {
+	for _, av := range a {
+		for _, bv := range b {
+			if av == bv {
+				return true
 			}
 		}
-		return false
-	}); hit != nil {
-		return hit
 	}
+	return false
+}
 
-	// Tier 2: Main title before colon subtitle matches on either side.
-	if hit := pickBest(func(c *TMDBCandidate) bool {
-		_, knownYear, _ := yearDiff(c)
-		cNorms := candidateNorms(c)
-		for _, raw := range []string{c.Title, c.OriginalTitle} {
-			for _, sep := range []string{"：", ":"} {
-				if idx := strings.Index(raw, sep); idx > 0 {
-					prefixNorm := normalizeTitle(raw[:idx])
-					if len([]rune(prefixNorm)) >= 2 {
-						for _, want := range wants {
-							if prefixNorm == want && ((year > 0 && knownYear) || hasInstallmentMarker(want)) {
-								return true
-							}
-						}
-					}
-				}
+func pickBestTMDBCandidate(candidates []TMDBCandidate, year int, matchFn func(*TMDBCandidate, bool) bool) *TMDBCandidate {
+	var best *TMDBCandidate
+	bestRank := 99
+	for i := range candidates {
+		c := &candidates[i]
+		d, known, ok := candidateYearDiff(c, year)
+		if !ok || !matchFn(c, known) {
+			continue
+		}
+		rank := 2
+		if known {
+			rank = d
+		}
+		if best == nil || rank < bestRank {
+			best = c
+			bestRank = rank
+			if bestRank == 0 {
+				return best
 			}
 		}
-		for _, rawWant := range append([]string{title}, variants...) {
-			for _, sep := range []string{"：", ":"} {
-				if idx := strings.Index(rawWant, sep); idx > 0 {
-					prefixNorm := normalizeTitle(rawWant[:idx])
-					if len([]rune(prefixNorm)) >= 2 {
-						for _, cNorm := range cNorms {
-							if prefixNorm == cNorm {
-								return true
-							}
-						}
-					}
-				}
-			}
-		}
-		return false
-	}); hit != nil {
-		return hit
 	}
+	return best
+}
 
-	// Tier 3: Safe prefix containment only when release year agrees within ±1.
-	return pickBest(func(c *TMDBCandidate) bool {
-		_, knownYear, _ := yearDiff(c)
-		if year <= 0 || !knownYear {
-			return false
-		}
-		for _, cNorm := range candidateNorms(c) {
-			for _, want := range wants {
-				shorter := min(len([]rune(want)), len([]rune(cNorm)))
-				if shorter < 2 {
-					continue
-				}
-				if strings.HasPrefix(cNorm, want) && !hasSequelDigitTail(cNorm, want) {
-					return true
-				}
-				if strings.HasPrefix(want, cNorm) && !hasSequelDigitTail(want, cNorm) {
-					return true
-				}
+func matchesSubtitlePrefix(c *TMDBCandidate, wants, wantPrefixes []string, year int, knownYear bool) bool {
+	candidatePrefixes := colonMainTitlePrefixes([]string{c.Title, c.OriginalTitle})
+	for _, prefix := range candidatePrefixes {
+		for _, want := range wants {
+			if prefix == want && ((year > 0 && knownYear) || hasInstallmentMarker(want)) {
+				return true
 			}
 		}
+	}
+	return slicesShareValue(wantPrefixes, candidateNormalizedTitles(c))
+}
+
+func matchesSafePrefix(cNorms, wants []string, year int, knownYear bool) bool {
+	if year <= 0 || !knownYear {
 		return false
-	})
+	}
+	for _, cNorm := range cNorms {
+		for _, want := range wants {
+			if min(len([]rune(want)), len([]rune(cNorm))) < 2 {
+				continue
+			}
+			if strings.HasPrefix(cNorm, want) && !hasSequelDigitTail(cNorm, want) {
+				return true
+			}
+			if strings.HasPrefix(want, cNorm) && !hasSequelDigitTail(want, cNorm) {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func normalizeTitle(value string) string {

@@ -3,12 +3,13 @@ package auth
 import (
 	"crypto/sha256"
 	"database/sql"
-	"encoding/hex"
 	"errors"
 	"fmt"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/lengsukq/lightisle/core/internal/idutil"
 )
 
 // RootGrant belongs to exactly one registered physical root. Legacy grants
@@ -54,11 +55,7 @@ func (s *Store) detachedHomeIntersects(rootID, name string, includeDescendants b
 }
 
 func validRootID(id string) bool {
-	if len(id) != 32 {
-		return false
-	}
-	_, err := hex.DecodeString(id)
-	return err == nil
+	return idutil.ValidHexID32(id)
 }
 func (s *Store) SetRootGrant(session string, userID int64, rootID, relative string, write bool) error {
 	actor, ok := s.Identity(session)
@@ -117,7 +114,11 @@ func (s *Store) SetRootGrant(session string, userID int64, rootID, relative stri
 	if affected != 1 {
 		return ErrForbidden
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.bumpAccessEpoch()
+	return nil
 }
 func (s *Store) RemoveRootGrant(session string, userID int64, rootID, relative string) error {
 	actor, ok := s.Identity(session)
@@ -154,7 +155,11 @@ func (s *Store) RemoveRootGrant(session string, userID int64, rootID, relative s
 		userID, rootID, RoleMember); err != nil {
 		return err
 	}
-	return tx.Commit()
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	s.bumpAccessEpoch()
+	return nil
 }
 
 func (s *Store) RootGrants(session string, userID int64, rootID string) ([]RootGrant, error) {

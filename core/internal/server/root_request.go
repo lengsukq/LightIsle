@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"sync"
@@ -14,6 +15,7 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/cinema"
 	"github.com/lengsukq/lightisle/core/internal/gallery"
 	"github.com/lengsukq/lightisle/core/internal/roots"
+	"github.com/lengsukq/lightisle/core/internal/safego"
 )
 
 type rootGuard uint8
@@ -56,20 +58,20 @@ func rootAPIForRequest(w http.ResponseWriter, r *http.Request, base *API, public
 
 func rootError(w http.ResponseWriter, err error) {
 	if errors.Is(err, roots.ErrMissing) {
-		jsonReply(w, http.StatusNotFound, map[string]string{"error": "root_not_found"})
+		writeAPIErrorCode(w, http.StatusNotFound, "root_not_found")
 		return
 	}
 	if errors.Is(err, roots.ErrOffline) || errors.Is(err, roots.ErrStale) {
-		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "root_unavailable"})
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "root_unavailable")
 		return
 	}
-	jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "root_services_unavailable"})
+	writeAPIErrorCode(w, http.StatusServiceUnavailable, "root_services_unavailable")
 }
 
 func rootLeaseForRequest(w http.ResponseWriter, r *http.Request, api *API, public bool) (*API, func()) {
 	s := api.rootServer
 	if s == nil || s.registry == nil || !s.beginRequest() {
-		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "root_services_unavailable"})
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "root_services_unavailable")
 		return nil, nil
 	}
 	var finish sync.Once
@@ -84,7 +86,7 @@ func rootLeaseForRequest(w http.ResponseWriter, r *http.Request, api *API, publi
 	}
 	if !public && (api.auth == nil || !api.auth.Session(token(r))) {
 		endRequest()
-		jsonReply(w, http.StatusUnauthorized, map[string]string{"error": "authentication_required"})
+		writeAPIErrorCode(w, http.StatusUnauthorized, "authentication_required")
 		return nil, nil
 	}
 	rootID := r.PathValue("rootID")
@@ -158,6 +160,8 @@ func rootLeaseForRequest(w http.ResponseWriter, r *http.Request, api *API, publi
 		return nil, nil
 	}
 	child := *api
+	child.collector = nil
+	child.backup = nil
 	child.rootID = rootID
 	child.rootLease = lease
 	child.rootRuntime = runtime
@@ -187,11 +191,11 @@ func rootGenerationMatches(w http.ResponseWriter, r *http.Request, current uint6
 	queryValues, queryPresent := r.URL.Query()["rootGeneration"]
 	mutating := rootRequestMutates(r.Method)
 	if mutating && len(headerValues) == 0 {
-		jsonReply(w, http.StatusPreconditionRequired, map[string]string{"error": "root_generation_required"})
+		writeAPIErrorCode(w, http.StatusPreconditionRequired, "root_generation_required")
 		return false
 	}
 	if len(headerValues) > 1 || (queryPresent && len(queryValues) != 1) {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_root_generation"})
+		writeAPIErrorCode(w, http.StatusBadRequest, "invalid_root_generation")
 		return false
 	}
 	values := make([]string, 0, 2)
@@ -204,11 +208,11 @@ func rootGenerationMatches(w http.ResponseWriter, r *http.Request, current uint6
 	for _, provided := range values {
 		generation, err := strconv.ParseUint(provided, 10, 64)
 		if err != nil || generation == 0 {
-			jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_root_generation"})
+			writeAPIErrorCode(w, http.StatusBadRequest, "invalid_root_generation")
 			return false
 		}
 		if generation != current {
-			jsonReply(w, http.StatusConflict, map[string]string{"error": "root_generation_changed"})
+			writeAPIErrorCode(w, http.StatusConflict, "root_generation_changed")
 			return false
 		}
 	}
@@ -218,7 +222,7 @@ func rootGenerationMatches(w http.ResponseWriter, r *http.Request, current uint6
 func (a *API) requireRootTraverse(next http.HandlerFunc) http.HandlerFunc {
 	return a.requireLogin(func(w http.ResponseWriter, r *http.Request) {
 		if a.auth == nil || !a.auth.CanAccessRoot(token(r), a.rootID, ".", false, true) {
-			jsonReply(w, http.StatusForbidden, map[string]string{"error": "file_permission_denied"})
+			writeAPIErrorCode(w, http.StatusForbidden, "file_permission_denied")
 			return
 		}
 		next(w, r)
@@ -227,11 +231,11 @@ func (a *API) requireRootTraverse(next http.HandlerFunc) http.HandlerFunc {
 
 func (a *API) rootDiscovery(w http.ResponseWriter, r *http.Request) {
 	if a.rootServer == nil || a.rootServer.registry == nil {
-		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "root_services_unavailable"})
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "root_services_unavailable")
 		return
 	}
 	if a.auth == nil || !a.auth.Session(token(r)) {
-		jsonReply(w, http.StatusUnauthorized, map[string]string{"error": "authentication_required"})
+		writeAPIErrorCode(w, http.StatusUnauthorized, "authentication_required")
 		return
 	}
 	viewer, _ := a.auth.Identity(token(r))
@@ -249,7 +253,9 @@ func (a *API) rootDiscovery(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			online = true
 			if a.auth != nil {
-				_ = a.auth.SyncVerifiedRootGeneration(item.ID, item.Generation)
+				if syncErr := a.auth.SyncVerifiedRootGeneration(item.ID, item.Generation); syncErr != nil {
+					slog.Warn("failed to sync verified root generation on root discovery", "rootID", item.ID, "generation", item.Generation, "error", syncErr)
+				}
 			}
 			// This is free space of the underlying filesystem, NOT a
 			// dedicated allocation to this LightIsle root or user. Multiple
@@ -293,7 +299,7 @@ func (a *API) rootDiscovery(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) rootDiscoveryRequest(w http.ResponseWriter, r *http.Request) {
 	if a.rootServer == nil || !a.rootServer.beginRequest() {
-		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "root_services_unavailable"})
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "root_services_unavailable")
 		return
 	}
 	defer a.rootServer.requests.Done()
@@ -307,7 +313,7 @@ func (a *API) rootFileGrants(w http.ResponseWriter, r *http.Request) {
 	}
 	grants, err := a.auth.RootGrants(token(r), userID, a.rootID)
 	if err != nil {
-		jsonReply(w, http.StatusForbidden, map[string]string{"error": "cannot_list_grants"})
+		writeAPIErrorCode(w, http.StatusForbidden, "cannot_list_grants")
 		return
 	}
 	jsonReply(w, http.StatusOK, map[string]any{"grants": grants})
@@ -327,7 +333,7 @@ func (a *API) rootSetFileGrant(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&request) != nil || a.files == nil {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
+		writeAPIErrorCode(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
 	if _, _, err := a.files.Page(request.Path, "", 1); err != nil {
@@ -339,7 +345,7 @@ func (a *API) rootSetFileGrant(w http.ResponseWriter, r *http.Request) {
 		if errors.Is(err, auth.ErrForbidden) {
 			status = http.StatusForbidden
 		}
-		jsonReply(w, status, map[string]string{"error": "invalid_grant"})
+		writeAPIErrorCode(w, status, "invalid_grant")
 		return
 	}
 	jsonReply(w, http.StatusOK, map[string]bool{"saved": true})
@@ -351,7 +357,7 @@ func (a *API) rootDeleteFileGrant(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := a.auth.RemoveRootGrant(token(r), userID, a.rootID, r.URL.Query().Get("path")); err != nil {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_grant"})
+		writeAPIErrorCode(w, http.StatusBadRequest, "invalid_grant")
 		return
 	}
 	jsonReply(w, http.StatusOK, map[string]bool{"removed": true})
@@ -360,7 +366,7 @@ func (a *API) rootDeleteFileGrant(w http.ResponseWriter, r *http.Request) {
 func rootGrantUserID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	id, err := strconv.ParseInt(r.PathValue("userID"), 10, 64)
 	if err != nil || id <= 0 {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_user"})
+		writeAPIErrorCode(w, http.StatusBadRequest, "invalid_user")
 		return 0, false
 	}
 	return id, true
@@ -424,7 +430,7 @@ func (a *API) startRootScanDirs(kind string, dirs []string) error {
 	}
 	runtime.scans[kind] = lease
 	runtime.scanWG.Add(1)
-	go func() {
+	safego.Go("root-scan-lease:"+kind, func() {
 		defer runtime.scanWG.Done()
 		ticker := time.NewTicker(50 * time.Millisecond)
 		defer ticker.Stop()
@@ -442,6 +448,6 @@ func (a *API) startRootScanDirs(kind string, dirs []string) error {
 		}
 		runtime.scanMu.Unlock()
 		a.rootServer.mu.Unlock()
-	}()
+	})
 	return nil
 }

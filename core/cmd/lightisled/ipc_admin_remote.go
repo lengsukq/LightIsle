@@ -170,10 +170,14 @@ func handleAdminShareRemoteIPC(
 				return true
 			}
 			if accountStore != nil {
-				_ = accountStore.SyncVerifiedRootGeneration(rebound.ID, rebound.Generation)
+				if err := accountStore.SyncVerifiedRootGeneration(rebound.ID, rebound.Generation); err != nil {
+					slog.Warn("failed to sync verified root generation after share retry rebind", "rootID", rebound.ID, "generation", rebound.Generation, "error", err)
+				}
 			}
 		} else if accountStore != nil {
-			_ = accountStore.SyncVerifiedRootGeneration(selected.ID, selected.Generation)
+			if err := accountStore.SyncVerifiedRootGeneration(selected.ID, selected.Generation); err != nil {
+				slog.Warn("failed to sync verified root generation on share retry", "rootID", selected.ID, "generation", selected.Generation, "error", err)
+			}
 		}
 		queueDefaultMediaRefresh(rootRegistry, rootServer, []string{"."})
 		writeStdoutLine("LIGHTISLE_SHARE_ON " + sanitizeIPCText(filepath.Base(selected.Path)))

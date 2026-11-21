@@ -1,8 +1,16 @@
 package server
 
 import (
+	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
+
+	"github.com/lengsukq/lightisle/core/internal/cinema"
+	"github.com/lengsukq/lightisle/core/internal/files"
+	"github.com/lengsukq/lightisle/core/internal/gallery"
+	"github.com/lengsukq/lightisle/core/internal/roots"
+	"github.com/lengsukq/lightisle/core/internal/tasks"
 )
 
 // Task center summarizes existing backend jobs without exposing native-only
@@ -93,7 +101,7 @@ func (a *API) taskCancel(w http.ResponseWriter, r *http.Request) {
 			cancelled = a.cinema.CancelScan()
 		}
 	default:
-		jsonReply(w, 403, map[string]string{"error": "native_only_or_unknown_task"})
+		writeAPIErrorCode(w, http.StatusForbidden, "native_only_or_unknown_task")
 		return
 	}
 	if !cancelled {
@@ -104,10 +112,11 @@ func (a *API) taskCancel(w http.ResponseWriter, r *http.Request) {
 }
 func (a *API) taskRetry(w http.ResponseWriter, r *http.Request) {
 	var err error
-	switch r.PathValue("kind") {
+	kind := r.PathValue("kind")
+	switch kind {
 	case "gallery":
 		if a.gallery == nil {
-			jsonReply(w, 503, map[string]string{"error": "gallery_unavailable"})
+			writeAPIErrorCode(w, http.StatusServiceUnavailable, "gallery_unavailable")
 			return
 		}
 		if a.rootID != "" {
@@ -117,7 +126,7 @@ func (a *API) taskRetry(w http.ResponseWriter, r *http.Request) {
 		}
 	case "cinema":
 		if a.cinema == nil {
-			jsonReply(w, 503, map[string]string{"error": "cinema_unavailable"})
+			writeAPIErrorCode(w, http.StatusServiceUnavailable, "cinema_unavailable")
 			return
 		}
 		if a.rootID != "" {
@@ -126,11 +135,19 @@ func (a *API) taskRetry(w http.ResponseWriter, r *http.Request) {
 			err = a.cinema.StartScan()
 		}
 	default:
-		jsonReply(w, 403, map[string]string{"error": "native_only_or_unknown_task"})
+		writeAPIErrorCode(w, http.StatusForbidden, "native_only_or_unknown_task")
 		return
 	}
 	if err != nil {
-		jsonReply(w, 409, map[string]string{"error": err.Error()})
+		switch {
+		case errors.Is(err, gallery.ErrBusy), errors.Is(err, cinema.ErrScanning), errors.Is(err, tasks.ErrRunning):
+			writeAPIErrorCode(w, http.StatusConflict, "task_already_running")
+		case errors.Is(err, gallery.ErrUnavailable), errors.Is(err, cinema.ErrOffline), errors.Is(err, files.ErrOffline), errors.Is(err, roots.ErrOffline):
+			writeAPIErrorCode(w, http.StatusConflict, "root_unavailable")
+		default:
+			slog.Warn("task retry failed", "kind", kind, "error", err)
+			writeAPIErrorCode(w, http.StatusConflict, "task_retry_failed")
+		}
 		return
 	}
 	jsonReply(w, 202, map[string]bool{"started": true})

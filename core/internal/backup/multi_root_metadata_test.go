@@ -82,7 +82,7 @@ func TestBackupMetadataBoundsAndCapturesSixteenRegisteredRootDatabases(t *testin
 	}
 	defer snapshot.Close()
 	manifest := &Manifest{}
-	service := New(nil, dataDir)
+	service := New(dataDir)
 	defer service.Close()
 	if err := service.backupMetadata(context.Background(), snapshot, "snapshot", manifest); err != nil {
 		t.Fatal(err)

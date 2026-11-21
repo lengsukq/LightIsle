@@ -18,6 +18,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/lengsukq/lightisle/core/internal/idutil"
 )
 
 type Schedule struct {
@@ -543,21 +545,7 @@ func validPlanID(value string) bool {
 }
 
 func validUUID(value string) bool {
-	if len(value) != 36 {
-		return false
-	}
-	for i, r := range value {
-		if i == 8 || i == 13 || i == 18 || i == 23 {
-			if r != '-' {
-				return false
-			}
-			continue
-		}
-		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
-			return false
-		}
-	}
-	return true
+	return idutil.ValidUUID(value)
 }
 
 func readDiskutilVolumeInfo(path string) (diskutilVolumeInfo, error) {

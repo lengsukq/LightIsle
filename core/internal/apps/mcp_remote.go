@@ -16,6 +16,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/lengsukq/lightisle/core/internal/netutil"
 )
 
 const maxProbePreviewBytes = 16 << 10
@@ -154,43 +156,7 @@ func extractPortOrDefault(rawURL, fallback string) string {
 }
 
 func detectPrivateLANIPv4() string {
-	faces, err := net.Interfaces()
-	if err != nil {
-		return ""
-	}
-	var fallback string
-	for _, face := range faces {
-		if face.Flags&net.FlagUp == 0 || face.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		if strings.HasPrefix(face.Name, "utun") || strings.HasPrefix(face.Name, "bridge") ||
-			strings.HasPrefix(face.Name, "vnic") || strings.HasPrefix(face.Name, "awdl") {
-			continue
-		}
-		addrs, _ := face.Addrs()
-		for _, addr := range addrs {
-			var ip net.IP
-			switch a := addr.(type) {
-			case *net.IPNet:
-				ip = a.IP
-			case *net.IPAddr:
-				ip = a.IP
-			}
-			ip = ip.To4()
-			if ip == nil {
-				continue
-			}
-			if ip[0] == 10 || (ip[0] == 172 && ip[1] >= 16 && ip[1] <= 31) || (ip[0] == 192 && ip[1] == 168) {
-				if face.Name == "en0" || face.Name == "en1" {
-					return ip.String()
-				}
-				if fallback == "" {
-					fallback = ip.String()
-				}
-			}
-		}
-	}
-	return fallback
+	return netutil.DetectPrivateLANIPv4()
 }
 
 // GetSystemConfig reads apps-config.json without mutating files on disk.

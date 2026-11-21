@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,7 +16,9 @@ import (
 
 	"github.com/lengsukq/lightisle/core/internal/ffmpegbin"
 	"github.com/lengsukq/lightisle/core/internal/files"
+	"github.com/lengsukq/lightisle/core/internal/idutil"
 	"github.com/lengsukq/lightisle/core/internal/mediascope"
+	"github.com/lengsukq/lightisle/core/internal/safego"
 	"github.com/lengsukq/lightisle/core/internal/tasks"
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -67,22 +70,6 @@ type Film struct {
 	IsStrm    bool  `json:"isStrm,omitempty"`
 }
 
-// ForgetLegacyShare deletes the chosen disconnected share's film rows;
-// SQLite foreign-key cascading also removes its watch progress. The actual
-// video files are never accessed or deleted.
-func (l *Library) ForgetLegacyShare(path string) error {
-	if path == "" || !filepath.IsAbs(path) || l.shareScope != "" {
-		return ErrOffline
-	}
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	if l.status.Running {
-		return ErrScanning
-	}
-	_, err := l.db.Exec("DELETE FROM films WHERE share=?", path)
-	return err
-}
-
 func (l *Library) SetJournal(j *tasks.Journal) { l.journal = j }
 
 type Progress struct {
@@ -110,11 +97,14 @@ type Library struct {
 	ctx           context.Context
 	cancel        context.CancelFunc
 	wg            sync.WaitGroup
-	mu            sync.Mutex
-	status        Status
-	jobCancel     context.CancelFunc
-	tmdbMu        sync.Mutex
-	tmdbToken     string
+	mu                sync.Mutex
+	status            Status
+	jobCancel         context.CancelFunc
+	tmdbMu            sync.Mutex
+	tmdbToken         string
+	tmdbImageEndpoint string
+	tmdbImageClient   *http.Client
+	posterCacheDir    string
 }
 
 func Open(dataDir string, store *files.Manager) (*Library, error) {
@@ -130,7 +120,7 @@ func OpenWithTranscodeTools(dataDir string, store *files.Manager, tools *ffmpegb
 // OpenRootScoped creates one flat, root-specific cinema database. It never
 // reads or migrates the legacy single-root database.
 func OpenRootScoped(dataDir string, store *files.Manager, rootID string, generations ...uint64) (*Library, error) {
-	if !validRootID(rootID) {
+	if !idutil.ValidRootID(rootID) {
 		return nil, errors.New("invalid_root_id")
 	}
 	var generation uint64
@@ -139,18 +129,6 @@ func OpenRootScoped(dataDir string, store *files.Manager, rootID string, generat
 	}
 	scope := fmt.Sprintf("root:%s:generation:%d", rootID, generation)
 	return open(dataDir, store, "cinema-root-"+rootID+".sqlite", scope, nil)
-}
-
-func validRootID(id string) bool {
-	if len(id) != 32 {
-		return false
-	}
-	for _, c := range id {
-		if !(c >= '0' && c <= '9' || c >= 'a' && c <= 'f') {
-			return false
-		}
-	}
-	return true
 }
 
 func open(dataDir string, store *files.Manager, databaseName, shareScope string, tools *ffmpegbin.Tools) (*Library, error) {
@@ -226,8 +204,9 @@ func open(dataDir string, store *files.Manager, databaseName, shareScope string,
 		return nil, err
 	}
 	transcoder := NewTranscoder(filepath.Join(dataDir, "transcode-cache", cacheSlug), tools)
+	posterCacheDir := filepath.Join(dataDir, "poster-cache")
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Library{db: db, rdb: rdb, files: store, shareScope: shareScope, transcoder: transcoder, ctx: ctx, cancel: cancel}, nil
+	return &Library{db: db, rdb: rdb, files: store, shareScope: shareScope, transcoder: transcoder, posterCacheDir: posterCacheDir, ctx: ctx, cancel: cancel}, nil
 }
 
 // InUse includes retained HLS sessions between segment requests, even when
@@ -309,11 +288,6 @@ func (l *Library) StartScan() error {
 }
 func (l *Library) StartScanDirs(input []string) error {
 	l.CancelScrapeIfRunning()
-	release, ok := l.files.TryAcquireLegacyRequest()
-	if !ok {
-		return ErrScanning
-	}
-	defer release()
 	dirs, err := mediascope.ScanDirectories(input)
 	if err != nil {
 		return err
@@ -335,7 +309,7 @@ func (l *Library) StartScanDirs(input []string) error {
 	l.jobCancel = cancel
 	l.status = Status{Running: true, Operation: "scan"}
 	l.wg.Add(1)
-	go func() { defer cancel(); l.scan(job, dirs) }()
+	safego.Go("cinema-scan", func() { defer cancel(); l.scan(job, dirs) })
 	return nil
 }
 func (l *Library) scan(job context.Context, scope []string) {
@@ -361,7 +335,7 @@ func (l *Library) scan(job context.Context, scope []string) {
 			l.status = Status{Running: true, Operation: "scrape", LastDone: st.LastDone}
 			l.wg.Add(1)
 			l.mu.Unlock()
-			go func() { defer scrapeCancel(); l.scrape(scrapeJob) }()
+			safego.Go("cinema-scrape", func() { defer scrapeCancel(); l.scrape(scrapeJob) })
 			return
 		}
 		l.status = st

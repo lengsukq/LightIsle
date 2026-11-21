@@ -21,6 +21,7 @@ import (
 
 	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/roots"
+	"github.com/lengsukq/lightisle/core/internal/safego"
 	"github.com/lengsukq/lightisle/core/internal/tasks"
 	_ "github.com/mattn/go-sqlite3"
 )
@@ -57,15 +58,11 @@ func (s *Service) metadataSource() (string, bool) {
 		if selected, ok := s.protectedRegistry.Default(); ok {
 			return selected.Path, true
 		}
-		if s.dataDir != "" {
-			return s.dataDir, true
-		}
-		return "", false
 	}
-	if s.files == nil {
-		return "", false
+	if s.dataDir != "" {
+		return s.dataDir, true
 	}
-	return s.files.State()
+	return "", false
 }
 
 // StartMetadataBackup exports the application's consistent SQLite/settings.
@@ -120,7 +117,6 @@ type Status struct {
 }
 type Service struct {
 	journal      *tasks.Journal
-	files        *files.Manager
 	dataDir      string
 	ctx          context.Context
 	cancel       context.CancelFunc
@@ -133,12 +129,11 @@ type Service struct {
 	// Production uses diskutil and never falls back to a path or device number.
 	readVolumeInfo    func(string) (diskutilVolumeInfo, error)
 	protectedRegistry *roots.Registry
-	startGuard        func() (func(), bool)
 }
 
-func New(files *files.Manager, dataDir ...string) *Service {
+func New(dataDir ...string) *Service {
 	ctx, cancel := context.WithCancel(context.Background())
-	s := &Service{files: files, ctx: ctx, cancel: cancel}
+	s := &Service{ctx: ctx, cancel: cancel}
 	if len(dataDir) > 0 {
 		s.dataDir = dataDir[0]
 	}
@@ -314,18 +309,6 @@ func normalizeTaskSnapshot(ctx context.Context, file string) error {
 func (s *Service) Close()         { s.cancel(); s.wg.Wait() }
 func (s *Service) Status() Status { s.mu.Lock(); defer s.mu.Unlock(); return s.status }
 
-// SetStartGuard installs an optional nonblocking gate around the transition
-// from idle to running. A rejected acquisition prevents the job from starting.
-// The gate is released immediately after Running becomes true.
-func (s *Service) SetStartGuard(guard func() (func(), bool)) {
-	if s == nil {
-		return
-	}
-	s.mu.Lock()
-	s.startGuard = guard
-	s.mu.Unlock()
-}
-
 func (s *Service) Cancel() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -334,17 +317,6 @@ func (s *Service) Cancel() bool {
 	}
 	s.jobCancel()
 	return true
-}
-func (s *Service) progress(f int, b int64) {
-	s.mu.Lock()
-	s.status.Files = f
-	s.status.Bytes = b
-	s.mu.Unlock()
-	if s.journal != nil && f%32 == 0 {
-		if err := s.journal.Progress("backup", int64(f), b); err != nil {
-			s.recordJournalError("progress", err)
-		}
-	}
 }
 
 func (s *Service) recordJournalError(stage string, err error) {
@@ -374,23 +346,6 @@ func (s *Service) start(kind, target string, work func(context.Context, string) 
 // overwrite as soon as the service returns to idle.
 func (s *Service) startWithCompletion(kind, target string, work func(context.Context, string) (string, error)) (<-chan Status, error) {
 	s.mu.Lock()
-	guard := s.startGuard
-	s.mu.Unlock()
-	var releaseGuard func()
-	if guard != nil {
-		var ok bool
-		releaseGuard, ok = guard()
-		if !ok {
-			return nil, files.ErrLegacyTransitionBusy
-		}
-	}
-	defer func() {
-		if releaseGuard != nil {
-			releaseGuard()
-		}
-	}()
-
-	s.mu.Lock()
 	if s.status.Running {
 		s.mu.Unlock()
 		return nil, ErrBusy
@@ -412,11 +367,7 @@ func (s *Service) startWithCompletion(kind, target string, work func(context.Con
 	completion := make(chan Status, 1)
 	s.wg.Add(1)
 	s.mu.Unlock()
-	if releaseGuard != nil {
-		releaseGuard()
-		releaseGuard = nil
-	}
-	go func() {
+	safego.Go("backup:"+kind, func() {
 		var completed Status
 		defer func() {
 			cancel()
@@ -455,7 +406,7 @@ func (s *Service) startWithCompletion(kind, target string, work func(context.Con
 		}
 		completed = s.status
 		s.mu.Unlock()
-	}()
+	})
 	return completion, nil
 }
 
@@ -598,7 +549,7 @@ func boundedCopy(ctx context.Context, dst *os.File, src *os.File, expected int64
 	return hex.EncodeToString(hash.Sum(nil)), nil
 }
 func (s *Service) createMetadataSnapshot(ctx context.Context, folder, planID string, retentionCount int, expected *destinationIdentity) (string, error) {
-	if s.dataDir == "" || (s.files == nil && s.protectedRegistry == nil) {
+	if s.dataDir == "" {
 		return "", ErrInvalid
 	}
 	source, online := s.metadataSource()

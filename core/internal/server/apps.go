@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
@@ -193,35 +194,56 @@ func replyAppsList(w http.ResponseWriter, appsMgr *apps.Manager, store *auth.Sto
 	jsonReply(w, http.StatusOK, resp)
 }
 
+func safeAppDomainDetail(err, sentinel error, fallback string) string {
+	if err == nil || sentinel == nil {
+		return fallback
+	}
+	prefix := sentinel.Error() + ": "
+	raw := err.Error()
+	if !strings.HasPrefix(raw, prefix) {
+		return fallback
+	}
+	detail := strings.TrimSpace(strings.TrimPrefix(raw, prefix))
+	if detail == "" || strings.Contains(detail, "/") || strings.Contains(detail, "permission denied") {
+		return fallback
+	}
+	return detail
+}
+
 func appsErrorReply(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, apps.ErrInvalid):
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "app_invalid", "message": err.Error()})
+		g := apiErrorCatalog["app_invalid"]
+		writeAPIError(w, http.StatusBadRequest, "app_invalid", safeAppDomainDetail(err, apps.ErrInvalid, g.message), g.dataSafe, g.nextAction)
 	case errors.Is(err, apps.ErrStorageSlotLimit):
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "app_storage_slot_limit", "message": err.Error()})
+		g := apiErrorCatalog["app_storage_slot_limit"]
+		writeAPIError(w, http.StatusConflict, "app_storage_slot_limit", safeAppDomainDetail(err, apps.ErrStorageSlotLimit, g.message), g.dataSafe, g.nextAction)
 	case errors.Is(err, apps.ErrStorageOffline):
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "app_storage_offline", "message": err.Error()})
+		g := apiErrorCatalog["app_storage_offline"]
+		writeAPIError(w, http.StatusConflict, "app_storage_offline", safeAppDomainDetail(err, apps.ErrStorageOffline, g.message), g.dataSafe, g.nextAction)
 	case errors.Is(err, apps.ErrTemplateNotFound):
-		jsonReply(w, http.StatusNotFound, map[string]string{"error": "app_template_not_found"})
+		writeAPIErrorCode(w, http.StatusNotFound, "app_template_not_found")
 	case errors.Is(err, apps.ErrAlreadyInstalled):
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "app_already_exists", "message": "该精选模板已安装，无需重复添加"})
+		writeAPIErrorCode(w, http.StatusConflict, "app_already_exists")
 	case errors.Is(err, apps.ErrNotFound):
-		jsonReply(w, http.StatusNotFound, map[string]string{"error": "app_not_found"})
+		writeAPIErrorCode(w, http.StatusNotFound, "app_not_found")
 	case errors.Is(err, apps.ErrForbidden):
-		jsonReply(w, http.StatusForbidden, map[string]string{"error": "app_access_forbidden"})
+		writeAPIErrorCode(w, http.StatusForbidden, "app_access_forbidden")
 	case errors.Is(err, apps.ErrPendingActivation):
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "app_pending_activation", "message": "该轻应用尚未经管理员首次激活确认"})
+		writeAPIErrorCode(w, http.StatusConflict, "app_pending_activation")
 	case errors.Is(err, apps.ErrRunning):
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "app_running", "message": err.Error()})
+		g := apiErrorCatalog["app_running"]
+		writeAPIError(w, http.StatusConflict, "app_running", safeAppDomainDetail(err, apps.ErrRunning, g.message), g.dataSafe, g.nextAction)
 	case errors.Is(err, apps.ErrDisabled):
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "app_disabled"})
+		writeAPIErrorCode(w, http.StatusConflict, "app_disabled")
 	case errors.Is(err, apps.ErrBusy):
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "app_busy"})
+		writeAPIErrorCode(w, http.StatusConflict, "app_busy")
 	case errors.Is(err, apps.ErrChanged):
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "app_changed"})
+		writeAPIErrorCode(w, http.StatusConflict, "app_changed")
 	case errors.Is(err, apps.ErrUnavailable):
-		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "app_unavailable"})
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "app_unavailable")
 	default:
-		jsonReply(w, http.StatusBadGateway, map[string]string{"error": "app_operation_failed", "message": err.Error()})
+		slog.Warn("app operation failed", "error", err)
+		writeAPIErrorCode(w, http.StatusBadGateway, "app_operation_failed")
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/lengsukq/lightisle/core/internal/pathutil"
 	"github.com/lengsukq/lightisle/core/internal/roots"
 )
 
@@ -64,8 +65,7 @@ func (s *Service) validateExternalFolder(ctx context.Context, folder string, ope
 }
 
 func pathsOverlap(a, b string) bool {
-	a, b = filepath.Clean(a), filepath.Clean(b)
-	return inside(a, b) || inside(b, a)
+	return pathutil.Overlap(a, b)
 }
 
 func (s *Service) ensureExternalFolderDisjoint(folder string) error {

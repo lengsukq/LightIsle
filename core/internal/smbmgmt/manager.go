@@ -15,6 +15,9 @@ import (
 	"sort"
 	"strings"
 	"sync"
+
+	"github.com/lengsukq/lightisle/core/internal/netutil"
+	"github.com/lengsukq/lightisle/core/internal/storageidentity"
 )
 
 const (
@@ -94,6 +97,8 @@ type SharePoint struct {
 	RootName            string `json:"rootName,omitempty"`
 	ExposesPersonalDirs bool   `json:"exposesPersonalDirs"`
 	PathExists          bool   `json:"pathExists"`
+	SyncedInMacOS       bool   `json:"syncedInMacOS"`
+	NeedsRestore        bool   `json:"needsRestore,omitempty"`
 }
 
 type CandidateRoot struct {
@@ -129,10 +134,18 @@ type UpdateRequest struct {
 type execFunc func(ctx context.Context, binary string, args ...string) ([]byte, []byte, int, error)
 
 type Manager struct {
-	mu           sync.Mutex
+	// mu guards in-memory configuration and desired share state ONLY; it must
+	// never be held while executing external processes or rootProvider probes.
+	mu sync.Mutex
+	// opMu serializes mutating SMB operations (SetService/AddShare/UpdateShare/
+	// RemoveShare/Reconcile) without blocking read-only Status queries.
+	opMu         sync.Mutex
 	exec         execFunc
 	rootProvider func() []RootInfo
 	lanIP        func() string
+	storePath    string
+	desired      map[string]DesiredShare
+	identity     storageidentity.Provider
 }
 
 var shared = New()
@@ -141,8 +154,41 @@ func Shared() *Manager { return shared }
 
 func New() *Manager {
 	return &Manager{
-		exec:  runCommand,
-		lanIP: detectPrivateLANIPv4,
+		exec:    runCommand,
+		lanIP:   netutil.DetectPrivateLANIPv4,
+		desired: make(map[string]DesiredShare),
+	}
+}
+
+type managerStateSnapshot struct {
+	exec         execFunc
+	rootProvider func() []RootInfo
+	lanIP        func() string
+	identity     storageidentity.Provider
+	desired      map[string]DesiredShare
+}
+
+func (m *Manager) snapshotState() managerStateSnapshot {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	execFn := m.exec
+	if execFn == nil {
+		execFn = runCommand
+	}
+	idProvider := m.identity
+	if idProvider == nil {
+		idProvider = storageidentity.SystemProvider{}
+	}
+	desiredCopy := make(map[string]DesiredShare, len(m.desired))
+	for k, v := range m.desired {
+		desiredCopy[k] = v
+	}
+	return managerStateSnapshot{
+		exec:         execFn,
+		rootProvider: m.rootProvider,
+		lanIP:        m.lanIP,
+		identity:     idProvider,
+		desired:      desiredCopy,
 	}
 }
 
@@ -156,10 +202,8 @@ func (m *Manager) SetRootProvider(fn func() []RootInfo) {
 // com.apple.smbd is loaded in launchd, avoiding TCP connects to port 445 that
 // would spawn smbd on every poll.
 func (m *Manager) ServiceEnabledQuick(ctx context.Context) bool {
-	m.mu.Lock()
-	execFn := m.exec
-	m.mu.Unlock()
-	return isServiceEnabled(ctx, execFn)
+	snap := m.snapshotState()
+	return isServiceEnabled(ctx, snap.exec)
 }
 
 func isServiceEnabled(ctx context.Context, execFn execFunc) bool {
@@ -174,24 +218,40 @@ func isServiceEnabled(ctx context.Context, execFn execFunc) bool {
 	return false
 }
 
+// Status performs a strictly read-only inspection of macOS File Sharing and
+// LightIsle's desired SMB share inventory. It never modifies system share
+// points and never holds the state lock across external command executions.
 func (m *Manager) Status(ctx context.Context) (Status, error) {
-	m.mu.Lock()
-	execFn := m.exec
-	provider := m.rootProvider
-	lanIPFn := m.lanIP
-	m.mu.Unlock()
-
+	snap := m.snapshotState()
 	var roots []RootInfo
-	if provider != nil {
-		roots = provider()
+	if snap.rootProvider != nil {
+		roots = snap.rootProvider()
 	}
-	return collectStatus(ctx, execFn, roots, lanIPFn)
+	st, err := collectStatus(ctx, snap.exec, roots, snap.lanIP)
+	if err != nil {
+		return Status{}, err
+	}
+	needsRestore := computeReadOnlyNeedsRestore(ctx, st.Shares, snap.desired, roots, snap.identity)
+	st.Shares = mergeDesiredIntoStatusShares(ctx, st.Shares, snap.desired, roots, snap.identity, needsRestore)
+	return st, nil
 }
 
 func collectStatus(ctx context.Context, execFn execFunc, roots []RootInfo, lanIPFn func() string) (Status, error) {
+	remoteReady := isRemoteManageReady(ctx, execFn)
+	return collectStatusWithRemoteReady(ctx, execFn, roots, lanIPFn, remoteReady, false, nil)
+}
+
+func collectStatusWithRemoteReady(
+	ctx context.Context,
+	execFn execFunc,
+	roots []RootInfo,
+	lanIPFn func() string,
+	remoteReady bool,
+	reuseShares bool,
+	preloadedShares []SharePoint,
+) (Status, error) {
 	enabled := isServiceEnabled(ctx, execFn)
 	listening, listeningState := detectSMBListening(ctx, execFn, enabled)
-	remoteReady := isRemoteManageReady(ctx, execFn)
 	compName := readScutil(ctx, execFn, "ComputerName")
 	localHost := readScutil(ctx, execFn, "LocalHostName")
 
@@ -206,16 +266,20 @@ func collectStatus(ctx context.Context, execFn execFunc, roots []RootInfo, lanIP
 		}
 	}
 
-	rawShares, _, _, err := execFn(ctx, "/usr/sbin/sharing", "-l", "-f", "json")
 	var shares []SharePoint
-	if err == nil {
-		parsed, parseErr := parseSharingJSON(rawShares, roots)
-		if parseErr != nil {
-			return Status{}, parseErr
-		}
-		shares = parsed
+	if reuseShares {
+		shares = preloadedShares
 	} else {
-		shares = []SharePoint{}
+		rawShares, _, _, err := execFn(ctx, "/usr/sbin/sharing", "-l", "-f", "json")
+		if err == nil {
+			parsed, parseErr := parseSharingJSON(rawShares, roots)
+			if parseErr != nil {
+				return Status{}, parseErr
+			}
+			shares = parsed
+		} else {
+			shares = []SharePoint{}
+		}
 	}
 
 	candidates := buildCandidateRoots(roots)
@@ -273,18 +337,25 @@ func parseSharingJSON(raw []byte, roots []RootInfo) ([]SharePoint, error) {
 			smbName = recordName
 		}
 		sp := SharePoint{
-			RecordName:  recordName,
-			SMBName:     smbName,
-			Path:        cleanPath,
-			Shared:      item.Shared != 0,
-			GuestAccess: item.GuestAccess != 0,
-			ReadOnly:    item.ReadOnly != 0,
-			Sealed:      item.Sealed != 0,
+			RecordName:    recordName,
+			SMBName:       smbName,
+			Path:          cleanPath,
+			Shared:        item.Shared != 0,
+			GuestAccess:   item.GuestAccess != 0,
+			ReadOnly:      item.ReadOnly != 0,
+			Sealed:        item.Sealed != 0,
+			SyncedInMacOS: true,
 		}
 		if info, err := os.Stat(cleanPath); err == nil && info.IsDir() {
 			sp.PathExists = true
 		}
 		matchRootAndPersonalExposure(&sp, roots)
+		for _, r := range roots {
+			if r.ID == sp.RootID && !r.Online {
+				sp.PathExists = false
+				break
+			}
+		}
 		result = append(result, sp)
 	}
 	sort.Slice(result, func(i, j int) bool {
@@ -379,16 +450,17 @@ func buildCandidateRoots(roots []RootInfo) []CandidateRoot {
 }
 
 func (m *Manager) SetService(ctx context.Context, enabled bool) (Status, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
 
+	snap := m.snapshotState()
 	var roots []RootInfo
-	if m.rootProvider != nil {
-		roots = m.rootProvider()
+	if snap.rootProvider != nil {
+		roots = snap.rootProvider()
 	}
 	subcmd := "unload"
 	if enabled {
-		raw, _, code, err := m.exec(ctx, "/usr/sbin/sharing", "-l", "-f", "json")
+		raw, _, code, err := snap.exec(ctx, "/usr/sbin/sharing", "-l", "-f", "json")
 		if err != nil || code != 0 {
 			return Status{}, ErrOperationFailed
 		}
@@ -406,26 +478,28 @@ func (m *Manager) SetService(ctx context.Context, enabled bool) (Status, error) 
 		}
 		subcmd = "load"
 	}
-	_, stderr, code, err := m.exec(ctx, "/usr/bin/sudo", "-n", "/bin/launchctl", subcmd, "-w", smbdPlistPath)
+	_, stderr, code, err := snap.exec(ctx, "/usr/bin/sudo", "-n", "/bin/launchctl", subcmd, "-w", smbdPlistPath)
 	if err != nil || code != 0 {
 		if isSudoPasswordError(stderr, code) {
 			return Status{}, ErrElevationRequired
 		}
 		// launchctl load -w may return non-zero if already loaded; check actual state.
-		if isServiceEnabled(ctx, m.exec) != enabled {
+		if isServiceEnabled(ctx, snap.exec) != enabled {
 			return Status{}, ErrOperationFailed
 		}
 	}
-	return collectStatus(ctx, m.exec, roots, m.lanIP)
+	st, _, stErr := m.reconcileAndCollectWithOpLock(ctx, roots, "")
+	return st, stErr
 }
 
 func (m *Manager) AddShare(ctx context.Context, req AddRequest) (Status, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
 
+	snap := m.snapshotState()
 	var roots []RootInfo
-	if m.rootProvider != nil {
-		roots = m.rootProvider()
+	if snap.rootProvider != nil {
+		roots = snap.rootProvider()
 	}
 
 	targetPath, err := resolveAndValidateTargetPath(req, roots)
@@ -444,7 +518,7 @@ func (m *Manager) AddShare(ctx context.Context, req AddRequest) (Status, error) 
 		return Status{}, ErrInvalid
 	}
 
-	rawShares, _, _, listErr := m.exec(ctx, "/usr/sbin/sharing", "-l", "-f", "json")
+	rawShares, _, _, listErr := snap.exec(ctx, "/usr/sbin/sharing", "-l", "-f", "json")
 	if listErr == nil {
 		existing, parseErr := parseSharingJSON(rawShares, roots)
 		if parseErr == nil {
@@ -455,28 +529,20 @@ func (m *Manager) AddShare(ctx context.Context, req AddRequest) (Status, error) 
 			}
 		}
 	}
-
-	guestFlag := "000"
-	if req.GuestAccess {
-		guestFlag = "001"
-	}
-	roFlag := "0"
-	if req.ReadOnly {
-		roFlag = "1"
-	}
-	sealFlag := "0"
-	if req.Sealed {
-		sealFlag = "1"
+	for _, d := range snap.desired {
+		if strings.EqualFold(d.Path, targetPath) || strings.EqualFold(d.SMBName, smbName) || strings.EqualFold(d.RecordName, smbName) {
+			return Status{}, ErrAlreadyExists
+		}
 	}
 
-	_, stderr, code, err := m.exec(ctx, "/usr/bin/sudo", "-n", "/usr/sbin/sharing",
+	_, stderr, code, err := snap.exec(ctx, "/usr/bin/sudo", "-n", "/usr/sbin/sharing",
 		"-a", targetPath,
 		"-S", smbName,
 		"-n", smbName,
 		"-s", "001",
-		"-g", guestFlag,
-		"-R", roFlag,
-		"-E", sealFlag,
+		"-g", boolFlag3(req.GuestAccess),
+		"-R", boolFlag1(req.ReadOnly),
+		"-E", boolFlag1(req.Sealed),
 	)
 	if err != nil || code != 0 {
 		if isSudoPasswordError(stderr, code) {
@@ -485,24 +551,55 @@ func (m *Manager) AddShare(ctx context.Context, req AddRequest) (Status, error) 
 		return Status{}, ErrOperationFailed
 	}
 
-	return collectStatus(ctx, m.exec, roots, m.lanIP)
+	st, stErr := collectStatus(ctx, snap.exec, roots, snap.lanIP)
+	if stErr != nil {
+		return Status{}, stErr
+	}
+	var targetSP SharePoint
+	recorded := false
+	for _, sp := range st.Shares {
+		if strings.EqualFold(sp.Path, targetPath) || strings.EqualFold(sp.SMBName, smbName) {
+			targetSP = sp
+			recorded = true
+			break
+		}
+	}
+	if !recorded {
+		targetSP = SharePoint{
+			RecordName:  smbName,
+			SMBName:     smbName,
+			Path:        targetPath,
+			Shared:      true,
+			GuestAccess: req.GuestAccess,
+			ReadOnly:    req.ReadOnly,
+			Sealed:      req.Sealed,
+			PathExists:  true,
+		}
+		matchRootAndPersonalExposure(&targetSP, roots)
+	}
+	entry := buildDesiredFromShare(ctx, targetSP, snap.desired[targetSP.RecordName], snap.identity, req.LocalConfirmation)
+	snap.desired[targetSP.RecordName] = entry
+	m.commitDesired(snap.desired)
+	st.Shares = mergeDesiredIntoStatusShares(ctx, st.Shares, snap.desired, roots, snap.identity, nil)
+	return st, nil
 }
 
 func (m *Manager) UpdateShare(ctx context.Context, recordName string, req UpdateRequest) (Status, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
 
 	recordName = strings.TrimSpace(recordName)
 	if recordName == "" || !shareNameRule.MatchString(recordName) {
 		return Status{}, ErrInvalid
 	}
 
+	snap := m.snapshotState()
 	var roots []RootInfo
-	if m.rootProvider != nil {
-		roots = m.rootProvider()
+	if snap.rootProvider != nil {
+		roots = snap.rootProvider()
 	}
 
-	rawShares, _, _, listErr := m.exec(ctx, "/usr/sbin/sharing", "-l", "-f", "json")
+	rawShares, _, _, listErr := snap.exec(ctx, "/usr/sbin/sharing", "-l", "-f", "json")
 	if listErr != nil {
 		return Status{}, ErrOperationFailed
 	}
@@ -516,6 +613,22 @@ func (m *Manager) UpdateShare(ctx context.Context, recordName string, req Update
 			found = &existing[i]
 			break
 		}
+	}
+	desiredKey := findDesiredKeyByRecordOrPath(snap.desired, recordName, "")
+	if found == nil && desiredKey != "" {
+		d := snap.desired[desiredKey]
+		sp := SharePoint{
+			RecordName:  d.RecordName,
+			SMBName:     d.SMBName,
+			Path:        d.Path,
+			Shared:      d.Shared,
+			GuestAccess: d.GuestAccess,
+			ReadOnly:    d.ReadOnly,
+			Sealed:      d.Sealed,
+			RootID:      d.RootID,
+		}
+		matchRootAndPersonalExposure(&sp, roots)
+		found = &sp
 	}
 	if found == nil {
 		return Status{}, ErrNotFound
@@ -546,31 +659,37 @@ func (m *Manager) UpdateShare(ctx context.Context, recordName string, req Update
 		return Status{}, ErrInvalid
 	}
 
-	shareFlag := "000"
-	if req.Shared {
-		shareFlag = "001"
-	}
-	guestFlag := "000"
-	if req.GuestAccess {
-		guestFlag = "001"
-	}
-	roFlag := "0"
-	if req.ReadOnly {
-		roFlag = "1"
-	}
-	sealFlag := "0"
-	if req.Sealed {
-		sealFlag = "1"
+	inLive := false
+	for i := range existing {
+		if existing[i].RecordName == recordName {
+			inLive = true
+			break
+		}
 	}
 
-	_, stderr, code, err := m.exec(ctx, "/usr/bin/sudo", "-n", "/usr/sbin/sharing",
-		"-e", recordName,
-		"-S", smbName,
-		"-s", shareFlag,
-		"-g", guestFlag,
-		"-R", roFlag,
-		"-E", sealFlag,
-	)
+	var stderr []byte
+	var code int
+	var err error
+	if inLive {
+		_, stderr, code, err = snap.exec(ctx, "/usr/bin/sudo", "-n", "/usr/sbin/sharing",
+			"-e", recordName,
+			"-S", smbName,
+			"-s", boolFlag3(req.Shared),
+			"-g", boolFlag3(req.GuestAccess),
+			"-R", boolFlag1(req.ReadOnly),
+			"-E", boolFlag1(req.Sealed),
+		)
+	} else if req.Shared {
+		_, stderr, code, err = snap.exec(ctx, "/usr/bin/sudo", "-n", "/usr/sbin/sharing",
+			"-a", found.Path,
+			"-S", smbName,
+			"-n", recordName,
+			"-s", "001",
+			"-g", boolFlag3(req.GuestAccess),
+			"-R", boolFlag1(req.ReadOnly),
+			"-E", boolFlag1(req.Sealed),
+		)
+	}
 	if err != nil || code != 0 {
 		if isSudoPasswordError(stderr, code) {
 			return Status{}, ErrElevationRequired
@@ -578,7 +697,26 @@ func (m *Manager) UpdateShare(ctx context.Context, recordName string, req Update
 		return Status{}, ErrOperationFailed
 	}
 
-	return collectStatus(ctx, m.exec, roots, m.lanIP)
+	updatedSP := *found
+	updatedSP.SMBName = smbName
+	updatedSP.Shared = req.Shared
+	updatedSP.GuestAccess = req.GuestAccess
+	updatedSP.ReadOnly = req.ReadOnly
+	updatedSP.Sealed = req.Sealed
+	prev := snap.desired[updatedSP.RecordName]
+	if desiredKey != "" && desiredKey != recordName {
+		prev = snap.desired[desiredKey]
+		delete(snap.desired, desiredKey)
+	}
+	snap.desired[updatedSP.RecordName] = buildDesiredFromShare(ctx, updatedSP, prev, snap.identity, req.LocalConfirmation)
+	m.commitDesired(snap.desired)
+
+	st, stErr := collectStatus(ctx, snap.exec, roots, snap.lanIP)
+	if stErr != nil {
+		return Status{}, stErr
+	}
+	st.Shares = mergeDesiredIntoStatusShares(ctx, st.Shares, snap.desired, roots, snap.identity, nil)
+	return st, nil
 }
 
 func (m *Manager) RemoveShare(ctx context.Context, recordName string) (Status, error) {
@@ -592,20 +730,21 @@ func (m *Manager) RemoveShareLocal(ctx context.Context, recordName string) (Stat
 }
 
 func (m *Manager) removeShare(ctx context.Context, recordName string, allowUnmanaged bool) (Status, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.opMu.Lock()
+	defer m.opMu.Unlock()
 
 	recordName = strings.TrimSpace(recordName)
 	if recordName == "" || !shareNameRule.MatchString(recordName) {
 		return Status{}, ErrInvalid
 	}
 
+	snap := m.snapshotState()
 	var roots []RootInfo
-	if m.rootProvider != nil {
-		roots = m.rootProvider()
+	if snap.rootProvider != nil {
+		roots = snap.rootProvider()
 	}
 
-	rawShares, _, _, listErr := m.exec(ctx, "/usr/sbin/sharing", "-l", "-f", "json")
+	rawShares, _, _, listErr := snap.exec(ctx, "/usr/sbin/sharing", "-l", "-f", "json")
 	if listErr != nil {
 		return Status{}, ErrOperationFailed
 	}
@@ -620,20 +759,38 @@ func (m *Manager) removeShare(ctx context.Context, recordName string, allowUnman
 			break
 		}
 	}
-	if found == nil {
+	desiredKey := findDesiredKeyByRecordOrPath(snap.desired, recordName, "")
+	if found == nil && desiredKey == "" {
 		return Status{}, ErrNotFound
 	}
-	if !allowUnmanaged && len(roots) > 0 && found.RootID == "" {
+	rootID := ""
+	if found != nil {
+		rootID = found.RootID
+	} else if desiredKey != "" {
+		rootID = snap.desired[desiredKey].RootID
+	}
+	if !allowUnmanaged && len(roots) > 0 && rootID == "" {
 		return Status{}, ErrUnmanagedShare
 	}
 
-	_, stderr, code, err := m.exec(ctx, "/usr/bin/sudo", "-n", "/usr/sbin/sharing", "-r", recordName)
-	if err != nil || code != 0 {
-		if isSudoPasswordError(stderr, code) {
-			return Status{}, ErrElevationRequired
+	if found != nil {
+		_, stderr, code, err := snap.exec(ctx, "/usr/bin/sudo", "-n", "/usr/sbin/sharing", "-r", recordName)
+		if err != nil || code != 0 {
+			if isSudoPasswordError(stderr, code) {
+				return Status{}, ErrElevationRequired
+			}
+			return Status{}, ErrOperationFailed
 		}
-		return Status{}, ErrOperationFailed
+	}
+	if desiredKey != "" {
+		delete(snap.desired, desiredKey)
+		m.commitDesired(snap.desired)
 	}
 
-	return collectStatus(ctx, m.exec, roots, m.lanIP)
+	st, stErr := collectStatus(ctx, snap.exec, roots, snap.lanIP)
+	if stErr != nil {
+		return Status{}, stErr
+	}
+	st.Shares = mergeDesiredIntoStatusShares(ctx, st.Shares, snap.desired, roots, snap.identity, nil)
+	return st, nil
 }

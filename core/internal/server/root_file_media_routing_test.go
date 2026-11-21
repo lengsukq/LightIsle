@@ -276,17 +276,31 @@ func TestRootMediaIDsAlbumsFavoritesAndRebindGenerationStayScoped(t *testing.T) 
 	if visibleFilmID == 0 || secretFilmID == 0 {
 		t.Fatalf("missing indexed films: %+v", filmPage.Films)
 	}
-	for _, item := range []struct {
-		path, missingBody string
+	for _, pair := range []struct {
+		hiddenPath, missingPath, wantCode string
 	}{
-		{rootRoute(f.rootA.ID, "/photos/"+strconv.FormatInt(secretPhotoID, 10)+"/thumbnail"), `{"error":"not_found"}`},
-		{rootRoute(f.rootA.ID, "/photos/999999/thumbnail"), `{"error":"not_found"}`},
-		{rootRoute(f.rootA.ID, "/cinema/"+strconv.FormatInt(secretFilmID, 10)), `{"error":"film_not_found"}`},
-		{rootRoute(f.rootA.ID, "/cinema/999999"), `{"error":"film_not_found"}`},
+		{
+			rootRoute(f.rootA.ID, "/photos/"+strconv.FormatInt(secretPhotoID, 10)+"/thumbnail"),
+			rootRoute(f.rootA.ID, "/photos/999999/thumbnail"),
+			"not_found",
+		},
+		{
+			rootRoute(f.rootA.ID, "/cinema/"+strconv.FormatInt(secretFilmID, 10)),
+			rootRoute(f.rootA.ID, "/cinema/999999"),
+			"film_not_found",
+		},
 	} {
-		response := f.call(f.member, http.MethodGet, item.path, "")
-		if response.Code != http.StatusNotFound || strings.TrimSpace(response.Body.String()) != item.missingBody {
-			t.Errorf("hidden media ID response for %s = %d %s", item.path, response.Code, response.Body.String())
+		hiddenResp := f.call(f.member, http.MethodGet, pair.hiddenPath, "")
+		missingResp := f.call(f.member, http.MethodGet, pair.missingPath, "")
+		if hiddenResp.Code != http.StatusNotFound || missingResp.Code != http.StatusNotFound {
+			t.Errorf("expected 404 for %s (%d) and %s (%d)", pair.hiddenPath, hiddenResp.Code, pair.missingPath, missingResp.Code)
+		}
+		if hiddenResp.Body.String() != missingResp.Body.String() {
+			t.Errorf("existence oracle between hidden %s (%s) and missing %s (%s)", pair.hiddenPath, hiddenResp.Body.String(), pair.missingPath, missingResp.Body.String())
+		}
+		var payload APIError
+		if err := json.Unmarshal(hiddenResp.Body.Bytes(), &payload); err != nil || payload.Error != pair.wantCode {
+			t.Errorf("unexpected error payload for %s: %s (%v)", pair.hiddenPath, hiddenResp.Body.String(), err)
 		}
 	}
 	visibleFilm := f.call(f.member, http.MethodGet, rootRoute(f.rootA.ID, "/cinema/"+strconv.FormatInt(visibleFilmID, 10)), "")

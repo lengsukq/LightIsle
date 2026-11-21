@@ -328,6 +328,7 @@ func (a *API) galleryTrashSimilar(w http.ResponseWriter, r *http.Request) {
 
 	var trashedCount int
 	var stagedBytes int64
+	trashedCompanions := make(map[int64]bool)
 	for _, asset := range targets {
 		if err := a.trashCurrentFile(asset.Path); err != nil {
 			fileError(w, err)
@@ -338,6 +339,18 @@ func (a *API) galleryTrashSimilar(w http.ResponseWriter, r *http.Request) {
 		_ = a.gallery.ReconcileRemovedAsset(asset.ID)
 		if a.rootServer != nil {
 			a.rootServer.QueueMediaRefresh(a.rootID, asset.Path)
+		}
+		if compID := asset.LiveVideoAssetID; compID > 0 && compID != body.KeepAssetID && !seen[compID] && !trashedCompanions[compID] {
+			if comp, compErr := a.gallery.LookupAssetForTrash(compID); compErr == nil && a.canAccess(token(r), comp.Path, true, false) {
+				if a.trashCurrentFile(comp.Path) == nil {
+					trashedCompanions[compID] = true
+					stagedBytes += comp.Size
+					_ = a.gallery.ReconcileRemovedAsset(comp.ID)
+					if a.rootServer != nil {
+						a.rootServer.QueueMediaRefresh(a.rootID, comp.Path)
+					}
+				}
+			}
 		}
 	}
 	jsonReply(w, http.StatusOK, map[string]any{

@@ -17,6 +17,7 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/gallery"
 	"github.com/lengsukq/lightisle/core/internal/roots"
+	"github.com/lengsukq/lightisle/core/internal/safego"
 	"github.com/lengsukq/lightisle/core/internal/tasks"
 )
 
@@ -69,15 +70,10 @@ func (s *RootServer) ClearTMDBToken() {
 }
 
 func (s *RootServer) SetProtectedHostDirsProvider(fn func() []string) {
-	if s == nil {
+	if s == nil || s.api == nil {
 		return
 	}
-	if s.baseAPI != nil {
-		s.baseAPI.protectedHostDirs = fn
-	}
-	if s.rootAPI != nil {
-		s.rootAPI.protectedHostDirs = fn
-	}
+	s.api.protectedHostDirs = fn
 }
 
 func (s *RootServer) TMDBTokenConfigured() bool {
@@ -206,8 +202,7 @@ type rootRuntime struct {
 
 type RootServer struct {
 	handler  http.Handler
-	baseAPI  *API
-	rootAPI  *API
+	api      *API
 	accounts *auth.Store
 	registry *roots.Registry
 	factory  RootServicesFactory
@@ -252,25 +247,37 @@ func NewWithRoots(
 	if len(options) > 0 {
 		option = options[0]
 	}
-	base, baseAPI := newWithDownloadsAndAPI(webRoot, store, fileStore, photos, films, journal, option.TrashRetention, option.DownloadCenter, option.LegacyBackup)
-	rootAPI := &API{collector: nil, webRoot: webRoot, auth: store, files: fileStore, gallery: photos, cinema: films, journal: journal,
-		limiter: newLoginLimiter(), shareGrants: newShareGrantStore(), duplicateScans: newDuplicateScanStore(), retention: option.TrashRetention, downloads: option.DownloadCenter}
-	s := &RootServer{baseAPI: baseAPI, rootAPI: rootAPI, registry: registry, factory: factory, accounts: store, options: option, duplicateScans: rootAPI.duplicateScans, runtimes: map[string]*rootRuntime{}, initializing: map[string]chan struct{}{}, sweepStop: make(chan struct{})}
-	rootAPI.rootServer = s
+	api := newAPI(webRoot, store, fileStore, photos, films, journal, option.TrashRetention, option.DownloadCenter, option.LegacyBackup)
+	s := &RootServer{
+		api:            api,
+		registry:       registry,
+		factory:        factory,
+		accounts:       store,
+		options:        option,
+		duplicateScans: api.duplicateScans,
+		runtimes:       map[string]*rootRuntime{},
+		initializing:   map[string]chan struct{}{},
+		sweepStop:      make(chan struct{}),
+	}
+	api.rootServer = s
+
+	globalMux := http.NewServeMux()
+	registerGlobalRoutes(globalMux, api)
+	globalMux.HandleFunc("/", api.static)
+
 	rootMux := http.NewServeMux()
-	registerComputerFiles(rootMux, rootAPI)
-	registerRootRoutes(rootMux, rootAPI)
+	registerRootRoutes(rootMux, api)
 	rootMux.HandleFunc("POST /api/v2/storage/users/{id}/categories/{category}/abandon",
-		rootAPI.requireAdmin(rootAPI.abandonRemovedStorageCategory))
+		api.requireAdmin(api.abandonRemovedStorageCategory))
 	rootMux.HandleFunc("POST /api/v2/storage/users/{id}/roots/{rootID}/abandon",
-		rootAPI.requireAdmin(rootAPI.abandonRemovedStorageRoot))
+		api.requireAdmin(api.abandonRemovedStorageRoot))
 	rootMux.HandleFunc("POST /api/v2/users/{id}/storage/switch-root",
-		rootAPI.requireAdmin(rootAPI.switchUserStorageRoot))
+		api.requireAdmin(api.switchUserStorageRoot))
 	// Path-only grants and public share URLs belong to the retired single-root
 	// model. Never issue or accept them against whichever registered disk
 	// happens to be the new default; each operation must name rootID.
 	retiredSingleRoot := func(w http.ResponseWriter, r *http.Request) {
-		jsonReply(w, http.StatusGone, map[string]string{"error": "registered_root_required"})
+		writeAPIErrorCode(w, http.StatusGone, "registered_root_required")
 	}
 	rootMux.HandleFunc("GET /api/v2/users/{id}/file-grants", retiredSingleRoot)
 	rootMux.HandleFunc("PUT /api/v2/users/{id}/file-grants", retiredSingleRoot)
@@ -283,28 +290,20 @@ func NewWithRoots(
 			http.NotFound(w, r)
 			return
 		}
-		rootAPI.rootDiscoveryRequest(w, r)
+		api.rootDiscoveryRequest(w, r)
 	})
-	rootMux.HandleFunc("GET /api/v2/downloads/status", rootAPI.requireLogin(rootAPI.downloadStatus))
-	rootMux.HandleFunc("GET /api/v2/downloads", rootAPI.requireLogin(rootAPI.downloadList))
-	rootMux.HandleFunc("POST /api/v2/downloads", rootAPI.requireAdmin(rootAPI.downloadCreate))
-	rootMux.HandleFunc("POST /api/v2/downloads/{id}/actions", rootAPI.requireLogin(rootAPI.downloadAction))
-	rootMux.HandleFunc("DELETE /api/v2/downloads/{id}", rootAPI.requireLogin(rootAPI.downloadDelete))
-	rootMux.HandleFunc("GET /api/v2/cache/status", rootAPI.requireLogin(rootAPI.cacheStatus))
-	rootMux.HandleFunc("POST /api/v2/admin/cache/clear", rootAPI.requireAdmin(rootAPI.adminCacheClear))
-	// Root-scoped requests are handled above; the remaining /api/v2/
-	// endpoints (authentication, settings, diagnostics, etc.) belong to the
-	// global API. Do not swallow them with a catch-all 404.
-	// Default file/media routes are aliases of the physical RootRegistry
-	// selection. They must never address the old independently mutable share.
+	// Root-scoped requests are handled above; the remaining /api/v2/ endpoints
+	// (authentication, settings, diagnostics, downloads, cache, etc.) belong
+	// to globalMux. Default file/media aliases rewrite onto the physical
+	// RootRegistry default selection before dispatching through rootMux.
 	rootMux.Handle("/api/v2/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !defaultRootMediaRoute(r.URL.Path) {
-			base.ServeHTTP(w, r)
+			globalMux.ServeHTTP(w, r)
 			return
 		}
 		selected, ok := registry.Default()
 		if !ok {
-			jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "default_root_not_configured"})
+			writeAPIErrorCode(w, http.StatusServiceUnavailable, "default_root_not_configured")
 			return
 		}
 		forwarded := r.Clone(r.Context())
@@ -313,7 +312,7 @@ func NewWithRoots(
 		forwarded.Header.Set("X-LightIsle-Root-Generation", strconv.FormatUint(selected.Generation, 10))
 		rootMux.ServeHTTP(w, forwarded)
 	}))
-	securedRoots := securityHeaders(rootAPI.auditMiddleware(rootMux))
+	securedRoots := securityHeaders(api.auditMiddleware(rootMux))
 	mux := http.NewServeMux()
 	mux.Handle("/api/v2/", securedRoots)
 	mux.HandleFunc("/api/v2", http.NotFound)
@@ -321,10 +320,10 @@ func NewWithRoots(
 	mux.Handle("/dav-roots/", registryDAV)
 	mux.Handle("/dav/", registryDAV)
 	mux.Handle("/dav", registryDAV)
-	mux.Handle("/", base)
+	mux.Handle("/", securityHeaders(http.HandlerFunc(api.static)))
 	s.handler = mux
 	s.sweepWG.Add(1)
-	go s.sweepIdleRuntimes()
+	safego.Go("root-idle-sweeper", s.sweepIdleRuntimes)
 	return s
 }
 

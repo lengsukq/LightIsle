@@ -33,6 +33,10 @@ func (l *Library) FindSubtitle(film Film, lang string) (*os.File, string, error)
 			candidate := stem + langSuffix + format
 			f, info, err := l.files.Read(candidate)
 			if err == nil {
+				if !info.Mode().IsRegular() {
+					f.Close()
+					continue
+				}
 				if info.Size() > 2<<20 {
 					f.Close()
 					return nil, "", ErrInvalid

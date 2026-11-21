@@ -183,7 +183,7 @@ func TestPersonalConfigurationBackupRestoreAndRollbackJourney(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	service := New(nil, dataDir)
+	service := New(dataDir)
 	if err := service.ProtectDestinations(registry); err != nil {
 		t.Fatal(err)
 	}

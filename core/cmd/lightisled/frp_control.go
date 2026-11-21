@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/frpclient"
 )
@@ -49,7 +50,11 @@ func (c *frpControl) failure(err error) {
 	// Never return raw subprocess output or configuration file contents.
 	message := err.Error()
 	if len(message) > 300 {
-		message = message[:300]
+		limit := 300
+		for limit > 0 && (message[limit]&0xC0) == 0x80 {
+			limit--
+		}
+		message = message[:limit]
 	}
 	fmt.Fprintln(c.output, "LIGHTISLE_FRP_ERROR "+base64.RawURLEncoding.EncodeToString([]byte(message)))
 }
@@ -68,7 +73,9 @@ func (c *frpControl) handle(command string) bool {
 	case "frp versions":
 		// Do not block the private stdin command loop on GitHub networking.
 		go func() {
-			items, err := c.manager.FetchVersions(c.ctx)
+			fetchCtx, cancel := context.WithTimeout(c.ctx, 20*time.Second)
+			defer cancel()
+			items, err := c.manager.FetchVersions(fetchCtx)
 			if err != nil {
 				c.failure(err)
 				return

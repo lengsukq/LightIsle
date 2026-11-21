@@ -279,7 +279,7 @@ func (a *API) missingMediaAttach(w http.ResponseWriter, r *http.Request) {
 		err = a.gallery.AttachMissingGuarded(id, roots, a.missingMediaCommitGuard(r))
 	case "cinema":
 		if a.cinema == nil {
-			jsonReply(w, 503, map[string]string{"error": "cinema_unavailable"})
+			writeAPIErrorCode(w, http.StatusServiceUnavailable, "cinema_unavailable")
 			return
 		}
 		err = a.cinema.AttachMissingGuarded(id, roots, a.missingMediaCommitGuard(r))
@@ -292,19 +292,23 @@ func (a *API) missingMediaAttach(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if errors.Is(err, mediapending.ErrRootUnavailable) {
-		jsonReply(w, 503, map[string]string{"error": "root_unavailable"})
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "root_unavailable")
 		return
 	}
-	if errors.Is(err, mediapending.ErrTargetUnavailable) || errors.Is(err, mediapending.ErrConflict) {
-		jsonReply(w, http.StatusConflict, map[string]string{"error": err.Error()})
+	if errors.Is(err, mediapending.ErrTargetUnavailable) {
+		writeAPIErrorCode(w, http.StatusConflict, "missing_media_target_unavailable")
+		return
+	}
+	if errors.Is(err, mediapending.ErrConflict) {
+		writeAPIErrorCode(w, http.StatusConflict, "missing_media_metadata_conflict")
 		return
 	}
 	if err != nil {
-		jsonReply(w, 503, map[string]string{"error": "missing_media_unavailable"})
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "missing_media_unavailable")
 		return
 	}
 	if !a.rootLease.Valid(r.Context()) {
-		jsonReply(w, 503, map[string]string{"error": "missing_media_operation_uncertain"})
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "missing_media_operation_uncertain")
 		return
 	}
 	jsonReply(w, 200, map[string]bool{"attached": true})

@@ -15,6 +15,7 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/apps"
 	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/automation"
+	"github.com/lengsukq/lightisle/core/internal/safego"
 )
 
 var appsIPCWorkerSem = make(chan struct{}, 4)
@@ -250,6 +251,7 @@ func runAppsIPCAsync(parentCtx context.Context, requestID, operation string, fn 
 	}
 	go func() {
 		defer func() { <-appsIPCWorkerSem }()
+		defer safego.Recover("apps-ipc:" + operation)
 		ctx, cancel := context.WithTimeout(parentCtx, 40*time.Second)
 		defer cancel()
 		fn(ctx)
@@ -303,6 +305,29 @@ func exportAppDataAtomically(ctx context.Context, appsMgr *apps.Manager, appID, 
 	return target, nil
 }
 
+type appsIPCHandler struct {
+	parentCtx    context.Context
+	appsMgr      *apps.Manager
+	autoMgr      *automation.Manager
+	accountStore *auth.Store
+}
+
+func (h appsIPCHandler) overview() nativeAppsOverview {
+	return buildNativeAppsOverview(h.appsMgr, h.autoMgr, h.accountStore)
+}
+
+func (h appsIPCHandler) attachAppLogs(ov *nativeAppsOverview, appID string) {
+	if appID == "" || h.appsMgr == nil {
+		return
+	}
+	logs, err := h.appsMgr.GetWebLogs(appID)
+	if err != nil {
+		return
+	}
+	runs, _ := h.appsMgr.GetCronRuns(appID, 30)
+	ov.AppLogs = &nativeAppLogsResult{AppID: appID, WebOutput: logs, CronRuns: runs}
+}
+
 func handleAppsIPC(
 	parentCtx context.Context,
 	command string,
@@ -313,303 +338,317 @@ func handleAppsIPC(
 	if command != "apps" && !strings.HasPrefix(command, "apps ") {
 		return false
 	}
-	words := strings.Fields(command)
-	operation := "list"
-	if len(words) > 1 {
-		operation = words[1]
-	}
-	var encoded string
-	if len(words) > 2 {
-		encoded = words[2]
-	}
+	operation, encoded := parseAppsIPCCommand(command)
 	req, err := decodeAppsIPCRequest(encoded)
 	if err != nil {
 		emitAppsReply(req.RequestID, operation, nil, err)
 		return true
 	}
-	isAutomationOp := strings.HasPrefix(operation, "automation-")
-	if appsMgr == nil && !isAutomationOp {
+
+	handler := appsIPCHandler{
+		parentCtx:    parentCtx,
+		appsMgr:      appsMgr,
+		autoMgr:      autoMgr,
+		accountStore: accountStore,
+	}
+	if strings.HasPrefix(operation, "automation-") {
+		handler.handleAutomationOp(operation, req)
+		return true
+	}
+	if appsMgr == nil {
 		emitAppsReply(req.RequestID, operation, nil, errors.New("轻应用服务尚未就绪"))
 		return true
 	}
-	overview := func() nativeAppsOverview {
-		return buildNativeAppsOverview(appsMgr, autoMgr, accountStore)
+	if handler.handleInventoryOp(operation, req) ||
+		handler.handleMCPOp(operation, req) ||
+		handler.handleRuntimeOp(operation, req) {
+		return true
 	}
+	emitAppsReply(req.RequestID, operation, nil, errors.New("未知轻应用指令："+operation))
+	return true
+}
 
+func parseAppsIPCCommand(command string) (operation, encoded string) {
+	words := strings.Fields(command)
+	operation = "list"
+	if len(words) > 1 {
+		operation = words[1]
+	}
+	if len(words) > 2 {
+		encoded = words[2]
+	}
+	return operation, encoded
+}
+
+func (h appsIPCHandler) handleInventoryOp(operation string, req appsIPCRequest) bool {
 	switch operation {
 	case "list":
-		emitAppsReply(req.RequestID, operation, overview(), nil)
-		return true
-
+		emitAppsReply(req.RequestID, operation, h.overview(), nil)
 	case "refresh":
-		err := appsMgr.Reload()
-		if err == nil && autoMgr != nil {
-			_ = autoMgr.Reload()
+		err := h.appsMgr.Reload()
+		if err == nil && h.autoMgr != nil {
+			_ = h.autoMgr.Reload()
 		}
-		emitAppsReply(req.RequestID, operation, overview(), err)
-		return true
-
-	case "set-mcp":
-		_, err := appsMgr.SetMCPConfig(req.MCPEnabled, req.MCPLanEnabled)
-		emitAppsReply(req.RequestID, operation, overview(), err)
-		return true
-
-	case "rotate-mcp-token":
-		_, err := appsMgr.RotateMCPToken()
-		emitAppsReply(req.RequestID, operation, overview(), err)
-		return true
-
-	case "action":
-		id := strings.TrimSpace(req.AppID)
-		act := strings.ToLower(strings.TrimSpace(req.Action))
-		if act == "start" || act == "wake" || act == "restart" || act == "approve" || act == "activate" {
-			runAppsIPCAsync(parentCtx, req.RequestID, operation, func(ctx context.Context) {
-				_, opErr := appsMgr.ExecuteAction(ctx, id, req.Action)
-				ov := overview()
-				if opErr != nil && id != "" {
-					if logs, logErr := appsMgr.GetWebLogs(id); logErr == nil {
-						runs, _ := appsMgr.GetCronRuns(id, 30)
-						ov.AppLogs = &nativeAppLogsResult{AppID: id, WebOutput: logs, CronRuns: runs}
-					}
-				}
-				emitAppsReply(req.RequestID, operation, ov, opErr)
-			})
-			return true
-		}
-		ctx, cancel := context.WithTimeout(parentCtx, 10*time.Second)
-		defer cancel()
-		_, opErr := appsMgr.ExecuteAction(ctx, id, req.Action)
-		emitAppsReply(req.RequestID, operation, overview(), opErr)
-		return true
-
+		emitAppsReply(req.RequestID, operation, h.overview(), err)
 	case "update":
 		if req.Update == nil {
 			emitAppsReply(req.RequestID, operation, nil, errors.New("缺少更新参数"))
 			return true
 		}
-		_, err := appsMgr.UpdateApp(req.AppID, *req.Update)
-		emitAppsReply(req.RequestID, operation, overview(), err)
-		return true
-
+		_, err := h.appsMgr.UpdateApp(req.AppID, *req.Update)
+		emitAppsReply(req.RequestID, operation, h.overview(), err)
 	case "scaffold":
 		if len(req.Scaffold) == 0 {
 			emitAppsReply(req.RequestID, operation, nil, errors.New("缺少新建插件参数"))
 			return true
 		}
-		_, err := appsMgr.ScaffoldApp(req.Scaffold, true)
-		emitAppsReply(req.RequestID, operation, overview(), err)
-		return true
-
+		_, err := h.appsMgr.ScaffoldApp(req.Scaffold, true)
+		emitAppsReply(req.RequestID, operation, h.overview(), err)
 	case "set-storage":
 		if req.Storage == nil {
 			emitAppsReply(req.RequestID, operation, nil, errors.New("缺少应用存储位置参数"))
 			return true
 		}
-		_, err := appsMgr.MutateStorageLocation(*req.Storage)
-		emitAppsReply(req.RequestID, operation, overview(), err)
-		return true
-
+		_, err := h.appsMgr.MutateStorageLocation(*req.Storage)
+		emitAppsReply(req.RequestID, operation, h.overview(), err)
 	case "install-template":
 		tplID := strings.TrimSpace(req.TemplateID)
 		if tplID == "" {
 			tplID = strings.TrimSpace(req.AppID)
 		}
-		_, err := appsMgr.InstallTemplateAt(tplID, req.LocationID)
-		emitAppsReply(req.RequestID, operation, overview(), err)
-		return true
-
+		_, err := h.appsMgr.InstallTemplateAt(tplID, req.LocationID)
+		emitAppsReply(req.RequestID, operation, h.overview(), err)
 	case "delete":
-		err := appsMgr.DeleteApp(req.AppID, req.DeleteData)
-		emitAppsReply(req.RequestID, operation, overview(), err)
-		return true
+		err := h.appsMgr.DeleteApp(req.AppID, req.DeleteData)
+		emitAppsReply(req.RequestID, operation, h.overview(), err)
+	default:
+		return false
+	}
+	return true
+}
 
-	case "logs":
-		logs, err := appsMgr.GetWebLogs(req.AppID)
-		runs, _ := appsMgr.GetCronRuns(req.AppID, 30)
-		ov := overview()
-		if err == nil {
-			ov.AppLogs = &nativeAppLogsResult{
-				AppID:     req.AppID,
-				WebOutput: logs,
-				CronRuns:  runs,
-			}
-		}
-		emitAppsReply(req.RequestID, operation, ov, err)
-		return true
-
-	case "probe":
-		probeReq := apps.AppProbeRequest{}
-		if req.Probe != nil {
-			probeReq = *req.Probe
-		}
-		runAppsIPCAsync(parentCtx, req.RequestID, operation, func(ctx context.Context) {
-			res, err := appsMgr.ProbeApp(ctx, req.AppID, probeReq)
-			ov := overview()
-			ov.ProbeResult = &res
-			emitAppsReply(req.RequestID, operation, ov, err)
-		})
-		return true
-
+func (h appsIPCHandler) handleMCPOp(operation string, req appsIPCRequest) bool {
+	switch operation {
+	case "set-mcp":
+		_, err := h.appsMgr.SetMCPConfig(req.MCPEnabled, req.MCPLanEnabled)
+		emitAppsReply(req.RequestID, operation, h.overview(), err)
+	case "rotate-mcp-token":
+		_, err := h.appsMgr.RotateMCPToken()
+		emitAppsReply(req.RequestID, operation, h.overview(), err)
 	case "mcp-debug":
 		debugReq := apps.MCPDebugExecRequest{}
 		if req.MCPDebug != nil {
 			debugReq = *req.MCPDebug
 		}
-		runAppsIPCAsync(parentCtx, req.RequestID, operation, func(ctx context.Context) {
-			res := appsMgr.ExecuteDebugMCP(ctx, debugReq, "127.0.0.1")
-			ov := overview()
+		runAppsIPCAsync(h.parentCtx, req.RequestID, operation, func(ctx context.Context) {
+			res := h.appsMgr.ExecuteDebugMCP(ctx, debugReq, "127.0.0.1")
+			ov := h.overview()
 			ov.MCPDebugResult = &res
 			emitAppsReply(req.RequestID, operation, ov, nil)
 		})
-		return true
-
 	case "mcp-clear-logs":
-		err := appsMgr.ClearMCPCallLogs()
-		emitAppsReply(req.RequestID, operation, overview(), err)
-		return true
+		err := h.appsMgr.ClearMCPCallLogs()
+		emitAppsReply(req.RequestID, operation, h.overview(), err)
+	default:
+		return false
+	}
+	return true
+}
 
+func (h appsIPCHandler) handleRuntimeOp(operation string, req appsIPCRequest) bool {
+	switch operation {
+	case "action":
+		h.handleAction(operation, req)
+	case "logs":
+		h.handleLogs(operation, req)
+	case "probe":
+		h.handleProbe(operation, req)
 	case "issue-ticket":
-		id := strings.TrimSpace(req.AppID)
-		runAppsIPCAsync(parentCtx, req.RequestID, operation, func(ctx context.Context) {
-			app, err := appsMgr.GetForUser(id, 0, auth.RoleAdmin)
-			if err != nil {
-				emitAppsReply(req.RequestID, operation, overview(), err)
-				return
-			}
-			if app.PendingActivation {
-				emitAppsReply(req.RequestID, operation, overview(), apps.ErrPendingActivation)
-				return
-			}
-			if app.Web.Enabled && app.Web.Mode != apps.WebModeStatic && app.Web.Mode != "none" {
-				app, err = appsMgr.WakeApp(ctx, id)
-			}
-			ov := overview()
-			if err == nil {
-				adminUser := resolveNativeAdminIdentity(accountStore)
-				ticket := appsMgr.IssueTicket(id, adminUser)
-				localBase, _ := appsMgr.Endpoints()
-				if localBase == "" {
-					localBase = "http://127.0.0.1:16666"
-				}
-				ov.LaunchTicket = &nativeAppLaunchResult{
-					AppID:     id,
-					Ticket:    ticket,
-					LaunchURL: strings.TrimRight(localBase, "/") + "/apps/" + id + "/?__li_ticket=" + ticket,
-				}
-			} else if id != "" {
-				if logs, logErr := appsMgr.GetWebLogs(id); logErr == nil {
-					runs, _ := appsMgr.GetCronRuns(id, 30)
-					ov.AppLogs = &nativeAppLogsResult{AppID: id, WebOutput: logs, CronRuns: runs}
-				}
-			}
-			emitAppsReply(req.RequestID, operation, ov, err)
-		})
-		return true
-
+		h.handleIssueTicket(operation, req)
 	case "export-data":
-		runAppsIPCAsync(parentCtx, req.RequestID, operation, func(ctx context.Context) {
-			target, exportErr := exportAppDataAtomically(ctx, appsMgr, req.AppID, req.FilePath)
-			ov := overview()
+		runAppsIPCAsync(h.parentCtx, req.RequestID, operation, func(ctx context.Context) {
+			target, exportErr := exportAppDataAtomically(ctx, h.appsMgr, req.AppID, req.FilePath)
+			ov := h.overview()
 			if exportErr == nil {
 				ov.BackupPath = target
 			}
 			emitAppsReply(req.RequestID, operation, ov, exportErr)
 		})
-		return true
-
 	case "restore-data":
-		source := filepath.Clean(strings.TrimSpace(req.FilePath))
-		if source == "" || !filepath.IsAbs(source) {
-			emitAppsReply(req.RequestID, operation, nil, errors.New("请选择有效的备份归档文件"))
-			return true
-		}
-		runAppsIPCAsync(parentCtx, req.RequestID, operation, func(ctx context.Context) {
-			f, err := os.Open(source)
-			if err != nil {
-				emitAppsReply(req.RequestID, operation, nil, err)
-				return
+		h.handleRestoreData(operation, req)
+	default:
+		return false
+	}
+	return true
+}
+
+func isAsyncAppAction(act string) bool {
+	switch act {
+	case "start", "wake", "restart", "approve", "activate":
+		return true
+	default:
+		return false
+	}
+}
+
+func (h appsIPCHandler) handleAction(operation string, req appsIPCRequest) {
+	id := strings.TrimSpace(req.AppID)
+	act := strings.ToLower(strings.TrimSpace(req.Action))
+	if isAsyncAppAction(act) {
+		runAppsIPCAsync(h.parentCtx, req.RequestID, operation, func(ctx context.Context) {
+			_, opErr := h.appsMgr.ExecuteAction(ctx, id, req.Action)
+			ov := h.overview()
+			if opErr != nil {
+				h.attachAppLogs(&ov, id)
 			}
-			restoreErr := appsMgr.RestoreAppData(ctx, req.AppID, f)
-			_ = f.Close()
-			ov := overview()
-			if restoreErr == nil {
-				ov.BackupPath = source
-			}
-			emitAppsReply(req.RequestID, operation, ov, restoreErr)
+			emitAppsReply(req.RequestID, operation, ov, opErr)
 		})
-		return true
+		return
+	}
+	ctx, cancel := context.WithTimeout(h.parentCtx, 10*time.Second)
+	defer cancel()
+	_, opErr := h.appsMgr.ExecuteAction(ctx, id, req.Action)
+	emitAppsReply(req.RequestID, operation, h.overview(), opErr)
+}
 
-	case "automation-refresh":
-		if autoMgr == nil {
-			emitAppsReply(req.RequestID, operation, nil, automation.ErrUnavailable)
-			return true
+func (h appsIPCHandler) handleLogs(operation string, req appsIPCRequest) {
+	logs, err := h.appsMgr.GetWebLogs(req.AppID)
+	runs, _ := h.appsMgr.GetCronRuns(req.AppID, 30)
+	ov := h.overview()
+	if err == nil {
+		ov.AppLogs = &nativeAppLogsResult{
+			AppID:     req.AppID,
+			WebOutput: logs,
+			CronRuns:  runs,
 		}
-		err := autoMgr.Reload()
-		emitAppsReply(req.RequestID, operation, overview(), err)
-		return true
+	}
+	emitAppsReply(req.RequestID, operation, ov, err)
+}
 
+func (h appsIPCHandler) handleProbe(operation string, req appsIPCRequest) {
+	probeReq := apps.AppProbeRequest{}
+	if req.Probe != nil {
+		probeReq = *req.Probe
+	}
+	runAppsIPCAsync(h.parentCtx, req.RequestID, operation, func(ctx context.Context) {
+		res, err := h.appsMgr.ProbeApp(ctx, req.AppID, probeReq)
+		ov := h.overview()
+		ov.ProbeResult = &res
+		emitAppsReply(req.RequestID, operation, ov, err)
+	})
+}
+
+func (h appsIPCHandler) handleIssueTicket(operation string, req appsIPCRequest) {
+	id := strings.TrimSpace(req.AppID)
+	runAppsIPCAsync(h.parentCtx, req.RequestID, operation, func(ctx context.Context) {
+		app, err := h.appsMgr.GetForUser(id, 0, auth.RoleAdmin)
+		if err != nil {
+			emitAppsReply(req.RequestID, operation, h.overview(), err)
+			return
+		}
+		if app.PendingActivation {
+			emitAppsReply(req.RequestID, operation, h.overview(), apps.ErrPendingActivation)
+			return
+		}
+		if app.Web.Enabled && app.Web.Mode != apps.WebModeStatic && app.Web.Mode != "none" {
+			app, err = h.appsMgr.WakeApp(ctx, id)
+		}
+		ov := h.overview()
+		if err != nil {
+			h.attachAppLogs(&ov, id)
+			emitAppsReply(req.RequestID, operation, ov, err)
+			return
+		}
+		ov.LaunchTicket = h.buildLaunchTicket(id)
+		emitAppsReply(req.RequestID, operation, ov, nil)
+	})
+}
+
+func (h appsIPCHandler) buildLaunchTicket(appID string) *nativeAppLaunchResult {
+	adminUser := resolveNativeAdminIdentity(h.accountStore)
+	ticket := h.appsMgr.IssueTicket(appID, adminUser)
+	localBase, _ := h.appsMgr.Endpoints()
+	if localBase == "" {
+		localBase = "http://127.0.0.1:16666"
+	}
+	return &nativeAppLaunchResult{
+		AppID:     appID,
+		Ticket:    ticket,
+		LaunchURL: strings.TrimRight(localBase, "/") + "/apps/" + appID + "/?__li_ticket=" + ticket,
+	}
+}
+
+func (h appsIPCHandler) handleRestoreData(operation string, req appsIPCRequest) {
+	source := filepath.Clean(strings.TrimSpace(req.FilePath))
+	if source == "" || !filepath.IsAbs(source) {
+		emitAppsReply(req.RequestID, operation, nil, errors.New("请选择有效的备份归档文件"))
+		return
+	}
+	runAppsIPCAsync(h.parentCtx, req.RequestID, operation, func(ctx context.Context) {
+		f, err := os.Open(source)
+		if err != nil {
+			emitAppsReply(req.RequestID, operation, nil, err)
+			return
+		}
+		restoreErr := h.appsMgr.RestoreAppData(ctx, req.AppID, f)
+		_ = f.Close()
+		ov := h.overview()
+		if restoreErr == nil {
+			ov.BackupPath = source
+		}
+		emitAppsReply(req.RequestID, operation, ov, restoreErr)
+	})
+}
+
+func (h appsIPCHandler) handleAutomationOp(operation string, req appsIPCRequest) {
+	if h.autoMgr == nil {
+		emitAppsReply(req.RequestID, operation, nil, automation.ErrUnavailable)
+		return
+	}
+	id := strings.TrimSpace(req.AutomationTaskID)
+	switch operation {
+	case "automation-refresh":
+		emitAppsReply(req.RequestID, operation, h.overview(), h.autoMgr.Reload())
+	case "automation-runs":
+		runs, err := h.autoMgr.ListScriptRuns(id, 30)
+		if err == nil && runs == nil {
+			runs = []automation.TaskRun{}
+		}
+		ov := h.overview()
+		if err == nil {
+			ov.AutomationRuns = &nativeAutomationRunsResult{TaskID: id, Runs: runs}
+		}
+		emitAppsReply(req.RequestID, operation, ov, err)
 	case "automation-update":
-		if autoMgr == nil || !autoMgr.Ready() {
+		if !h.autoMgr.Ready() {
 			emitAppsReply(req.RequestID, operation, nil, automation.ErrUnavailable)
-			return true
+			return
 		}
 		if req.AutomationUpdate == nil {
 			emitAppsReply(req.RequestID, operation, nil, errors.New("缺少定时脚本更新参数"))
-			return true
+			return
 		}
-		id := strings.TrimSpace(req.AutomationTaskID)
-		err := autoMgr.UpdateRevision(
+		err := h.autoMgr.UpdateRevision(
 			id,
 			req.AutomationUpdate.Enabled,
 			req.AutomationUpdate.Schedule,
 			req.AutomationUpdate.Notification,
 			req.AutomationUpdate.Revision,
 		)
-		emitAppsReply(req.RequestID, operation, overview(), err)
-		return true
-
+		emitAppsReply(req.RequestID, operation, h.overview(), err)
 	case "automation-run":
-		if autoMgr == nil || !autoMgr.Ready() {
+		if !h.autoMgr.Ready() {
 			emitAppsReply(req.RequestID, operation, nil, automation.ErrUnavailable)
-			return true
+			return
 		}
-		id := strings.TrimSpace(req.AutomationTaskID)
-		err := autoMgr.RunScriptTaskNow(id)
-		emitAppsReply(req.RequestID, operation, overview(), err)
-		return true
-
+		emitAppsReply(req.RequestID, operation, h.overview(), h.autoMgr.RunScriptTaskNow(id))
 	case "automation-delete":
-		if autoMgr == nil || !autoMgr.Ready() {
+		if !h.autoMgr.Ready() {
 			emitAppsReply(req.RequestID, operation, nil, automation.ErrUnavailable)
-			return true
+			return
 		}
-		id := strings.TrimSpace(req.AutomationTaskID)
-		err := autoMgr.Delete(id)
-		emitAppsReply(req.RequestID, operation, overview(), err)
-		return true
-
-	case "automation-runs":
-		if autoMgr == nil {
-			emitAppsReply(req.RequestID, operation, nil, automation.ErrUnavailable)
-			return true
-		}
-		id := strings.TrimSpace(req.AutomationTaskID)
-		runs, err := autoMgr.ListScriptRuns(id, 30)
-		if err == nil && runs == nil {
-			runs = []automation.TaskRun{}
-		}
-		ov := overview()
-		if err == nil {
-			ov.AutomationRuns = &nativeAutomationRunsResult{
-				TaskID: id,
-				Runs:   runs,
-			}
-		}
-		emitAppsReply(req.RequestID, operation, ov, err)
-		return true
-
+		emitAppsReply(req.RequestID, operation, h.overview(), h.autoMgr.Delete(id))
 	default:
 		emitAppsReply(req.RequestID, operation, nil, errors.New("未知轻应用指令："+operation))
-		return true
 	}
 }

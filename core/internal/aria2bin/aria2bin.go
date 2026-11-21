@@ -19,7 +19,6 @@ import (
 // them to localized explanations.
 const (
 	ReasonNotInstalled = "aria2_not_installed"
-	ReasonFailed       = "aria2_failed"
 )
 
 var ErrNotInstalled = errors.New(ReasonNotInstalled)

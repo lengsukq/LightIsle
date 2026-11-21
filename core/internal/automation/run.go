@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/lengsukq/lightisle/core/internal/safego"
 	"github.com/robfig/cron/v3"
 )
 
@@ -25,24 +26,43 @@ func (w *limitedWriter) Write(p []byte) (int, error) {
 	}
 	return n, nil
 }
-func (m *Manager) run(id string) { m.runScheduled(id, nil, time.Time{}) }
 
-func (m *Manager) runScheduled(id string, scheduler *cron.Cron, scheduledAt time.Time) {
+func (m *Manager) run(id string, force bool) { m.runScheduled(id, force, nil, time.Time{}) }
+
+func (m *Manager) startRunContext(task Task) (context.Context, context.CancelFunc) {
+	duration := time.Duration(task.TimeoutSeconds) * time.Second
+	if duration == 0 {
+		duration = 10 * time.Minute
+	}
+	return context.WithTimeout(context.Background(), duration)
+}
+
+func (m *Manager) finishReservedRun(id string, cancel context.CancelFunc) {
+	cancel()
+	<-m.slots
+	m.mu.Lock()
+	delete(m.running, id)
+	m.mu.Unlock()
+	m.wg.Done()
+}
+
+func (m *Manager) runScheduled(id string, force bool, scheduler *cron.Cron, scheduledAt time.Time) {
 	m.mu.Lock()
 	task, ok := m.tasks[id]
-	if !ok || !task.Enabled || m.closed || scheduler != nil && scheduler != m.scheduler {
+	if !ok || (!force && !task.Enabled) || m.closed || scheduler != nil && scheduler != m.scheduler {
 		m.mu.Unlock()
 		return
 	}
 	m.wg.Add(1)
-	defer m.wg.Done()
 	if !scheduledAt.IsZero() && time.Since(scheduledAt) >= time.Minute {
 		m.mu.Unlock()
+		defer m.wg.Done()
 		m.recordSkipped(id, "已错过计划执行时间，等待下次调度。")
 		return
 	}
 	if m.running[id] != nil {
 		m.mu.Unlock()
+		defer m.wg.Done()
 		m.recordSkipped(id, "同一任务仍在运行。")
 		return
 	}
@@ -50,23 +70,19 @@ func (m *Manager) runScheduled(id string, scheduler *cron.Cron, scheduledAt time
 	case m.slots <- struct{}{}:
 	default:
 		m.mu.Unlock()
+		defer m.wg.Done()
 		m.recordSkipped(id, "已有两个任务运行，本次跳过。")
 		return
 	}
-	duration := time.Duration(task.TimeoutSeconds) * time.Second
-	if duration == 0 {
-		duration = 10 * time.Minute
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), duration)
+	ctx, cancel := m.startRunContext(task)
 	m.running[id] = cancel
 	m.mu.Unlock()
-	defer func() {
-		cancel()
-		<-m.slots
-		m.mu.Lock()
-		delete(m.running, id)
-		m.mu.Unlock()
-	}()
+	defer m.finishReservedRun(id, cancel)
+	defer safego.Recover("automation:" + id)
+	m.executeTask(ctx, id, task)
+}
+
+func (m *Manager) executeTask(ctx context.Context, id string, task Task) {
 	started := time.Now().Unix()
 	lock, err := m.lockScript(id)
 	if err != nil {

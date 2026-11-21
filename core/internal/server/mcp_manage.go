@@ -351,7 +351,11 @@ func mcpAuditTarget(toolName, connID string) string {
 		combined = t + " " + c
 	}
 	if len(combined) > 120 {
-		combined = combined[:120]
+		limit := 120
+		for limit > 0 && (combined[limit]&0xC0) == 0x80 {
+			limit--
+		}
+		combined = combined[:limit]
 	}
 	if len(combined) < 2 {
 		combined = "mcp_call"

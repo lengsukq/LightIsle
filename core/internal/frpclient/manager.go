@@ -20,6 +20,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/lengsukq/lightisle/core/internal/safego"
 )
 
 const (
@@ -86,6 +88,7 @@ type Manager struct {
 	releases   map[string]Release
 	state      State
 	notify     func(State)
+	notifier   safego.OrderedNotifier[State]
 	restarts   int
 	restartSeq uint64
 	startedAt  time.Time
@@ -210,8 +213,7 @@ func (m *Manager) Status() State {
 
 func (m *Manager) emitLocked() {
 	if m.notify != nil {
-		s := m.snapshotLocked()
-		go m.notify(s)
+		m.notifier.Enqueue("frpclient-notify", m.notify, m.snapshotLocked())
 	}
 }
 

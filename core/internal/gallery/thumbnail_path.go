@@ -34,7 +34,7 @@ func ThumbnailSizeSupported(size int) bool {
 // pipeline. The HTTP layer uses it to answer 404 before opening anything.
 func ThumbnailPathSupported(name string) bool {
 	switch strings.ToLower(filepath.Ext(name)) {
-	case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".heic", ".heif",
+	case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".avif", ".heic", ".heif",
 		".mp4", ".mov", ".m4v":
 		return true
 	}

@@ -15,7 +15,7 @@ import (
 func (a *API) downloadStatus(w http.ResponseWriter, r *http.Request) {
 	user, ok := a.auth.Identity(token(r))
 	if !ok {
-		jsonReply(w, http.StatusUnauthorized, map[string]string{"error": "authentication_required"})
+		writeAPIErrorCode(w, http.StatusUnauthorized, "authentication_required")
 		return
 	}
 	networkAllowed := user.Role == auth.RoleAdmin
@@ -36,11 +36,11 @@ func (a *API) downloadStatus(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) downloadsUnavailable(w http.ResponseWriter) bool {
 	if a.downloads == nil {
-		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "download_unavailable"})
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "download_unavailable")
 		return true
 	}
 	if available, _ := a.downloads.Available(); !available {
-		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "download_unavailable"})
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "download_unavailable")
 		return true
 	}
 	return false
@@ -48,17 +48,17 @@ func (a *API) downloadsUnavailable(w http.ResponseWriter) bool {
 
 func (a *API) downloadList(w http.ResponseWriter, r *http.Request) {
 	if a.downloads == nil {
-		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "download_unavailable"})
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "download_unavailable")
 		return
 	}
 	user, ok := a.auth.Identity(token(r))
 	if !ok {
-		jsonReply(w, http.StatusUnauthorized, map[string]string{"error": "authentication_required"})
+		writeAPIErrorCode(w, http.StatusUnauthorized, "authentication_required")
 		return
 	}
 	tasks, err := a.downloads.List(user.ID)
 	if err != nil {
-		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "download_list_failed"})
+		writeAPIErrorCode(w, http.StatusInternalServerError, "download_list_failed")
 		return
 	}
 	jsonReply(w, http.StatusOK, map[string]any{"tasks": tasks})
@@ -70,7 +70,7 @@ func (a *API) downloadCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	user, ok := a.auth.Identity(token(r))
 	if !ok {
-		jsonReply(w, http.StatusUnauthorized, map[string]string{"error": "authentication_required"})
+		writeAPIErrorCode(w, http.StatusUnauthorized, "authentication_required")
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 4096)
@@ -82,8 +82,8 @@ func (a *API) downloadCreate(w http.ResponseWriter, r *http.Request) {
 	}
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
-	if decoder.Decode(&request) != nil {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "download_invalid_request"})
+	if decoder.Decode(&request) != nil || downloads.ValidateDestination(request.Destination) != nil {
+		writeAPIErrorCode(w, http.StatusBadRequest, "download_invalid_request")
 		return
 	}
 	// Only members with a write grant on the destination may create tasks;
@@ -91,11 +91,11 @@ func (a *API) downloadCreate(w http.ResponseWriter, r *http.Request) {
 	if a.rootServer != nil && a.rootServer.registry != nil {
 		root, ok := a.rootServer.registry.Default()
 		if !ok {
-			jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "default_root_not_configured"})
+			writeAPIErrorCode(w, http.StatusServiceUnavailable, "default_root_not_configured")
 			return
 		}
 		if !a.auth.CanAccessRoot(token(r), root.ID, request.Destination, true, false) {
-			jsonReply(w, http.StatusForbidden, map[string]string{"error": "file_permission_denied"})
+			writeAPIErrorCode(w, http.StatusForbidden, "file_permission_denied")
 			return
 		}
 	} else if !a.allowFile(w, r, request.Destination, true) {
@@ -108,26 +108,26 @@ func (a *API) downloadCreate(w http.ResponseWriter, r *http.Request) {
 	case errors.Is(err, downloads.ErrFetchForbidden):
 		downloadError(w, err)
 	case errors.Is(err, downloads.ErrInput):
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "download_invalid_request"})
+		writeAPIErrorCode(w, http.StatusBadRequest, "download_invalid_request")
 	case errors.Is(err, downloads.ErrBusy):
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "download_limit_reached"})
+		writeAPIErrorCode(w, http.StatusConflict, "download_limit_reached")
 	case errors.Is(err, downloads.ErrPermission):
-		jsonReply(w, http.StatusForbidden, map[string]string{"error": "download_permission_revoked"})
+		writeAPIErrorCode(w, http.StatusForbidden, "download_permission_revoked")
 	case errors.Is(err, downloads.ErrAccountingPending):
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "download_storage_accounting_pending"})
+		writeAPIErrorCode(w, http.StatusConflict, "download_storage_accounting_pending")
 	default:
-		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "download_unavailable"})
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "download_unavailable")
 	}
 }
 
 func (a *API) downloadAction(w http.ResponseWriter, r *http.Request) {
 	if a.downloads == nil {
-		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "download_unavailable"})
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "download_unavailable")
 		return
 	}
 	user, ok := a.auth.Identity(token(r))
 	if !ok {
-		jsonReply(w, http.StatusUnauthorized, map[string]string{"error": "authentication_required"})
+		writeAPIErrorCode(w, http.StatusUnauthorized, "authentication_required")
 		return
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, 512)
@@ -138,7 +138,7 @@ func (a *API) downloadAction(w http.ResponseWriter, r *http.Request) {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&request) != nil {
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "download_invalid_request"})
+		writeAPIErrorCode(w, http.StatusBadRequest, "download_invalid_request")
 		return
 	}
 	task, err := a.downloads.Action(user.ID, r.PathValue("id"), request.Action)
@@ -151,12 +151,12 @@ func (a *API) downloadAction(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) downloadDelete(w http.ResponseWriter, r *http.Request) {
 	if a.downloads == nil {
-		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "download_unavailable"})
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "download_unavailable")
 		return
 	}
 	user, ok := a.auth.Identity(token(r))
 	if !ok {
-		jsonReply(w, http.StatusUnauthorized, map[string]string{"error": "authentication_required"})
+		writeAPIErrorCode(w, http.StatusUnauthorized, "authentication_required")
 		return
 	}
 	if err := a.downloads.Delete(user.ID, r.PathValue("id")); err != nil {
@@ -169,22 +169,22 @@ func (a *API) downloadDelete(w http.ResponseWriter, r *http.Request) {
 func downloadError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, downloads.ErrNotFound):
-		jsonReply(w, http.StatusNotFound, map[string]string{"error": "download_not_found"})
+		writeAPIErrorCode(w, http.StatusNotFound, "download_not_found")
 	case errors.Is(err, downloads.ErrInput):
-		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "download_invalid_request"})
+		writeAPIErrorCode(w, http.StatusBadRequest, "download_invalid_request")
 	case errors.Is(err, downloads.ErrNotAvailable):
-		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "download_unavailable"})
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "download_unavailable")
 	case errors.Is(err, downloads.ErrFetchForbidden):
-		jsonReply(w, http.StatusForbidden, map[string]string{"error": "download_network_admin_only"})
+		writeAPIErrorCode(w, http.StatusForbidden, "download_network_admin_only")
 	case errors.Is(err, downloads.ErrPermission):
-		jsonReply(w, http.StatusForbidden, map[string]string{"error": "download_permission_revoked"})
+		writeAPIErrorCode(w, http.StatusForbidden, "download_permission_revoked")
 	case errors.Is(err, downloads.ErrRootChanged):
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "download_root_changed"})
+		writeAPIErrorCode(w, http.StatusConflict, "download_root_changed")
 	case errors.Is(err, downloads.ErrRootUnbound):
-		jsonReply(w, http.StatusConflict, map[string]string{"error": "download_root_unbound"})
+		writeAPIErrorCode(w, http.StatusConflict, "download_root_unbound")
 	case errors.Is(err, downloads.ErrRootUnavailable):
-		jsonReply(w, http.StatusServiceUnavailable, map[string]string{"error": "download_root_unavailable"})
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "download_root_unavailable")
 	default:
-		jsonReply(w, http.StatusInternalServerError, map[string]string{"error": "download_action_failed"})
+		writeAPIErrorCode(w, http.StatusInternalServerError, "download_action_failed")
 	}
 }

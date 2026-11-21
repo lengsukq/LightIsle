@@ -87,7 +87,7 @@ func TestPasswordWorkSaturationKeepsAttemptBudget(t *testing.T) {
 		}
 	}
 	login := func() *httptest.ResponseRecorder {
-		return f.call(http.MethodPost, "/api/v2/auth/login", `{"username":"owner","password":"owner-password-12345"}`, nil)
+		return f.call(http.MethodPost, "/api/v2/auth/login", `{"username":"owner","password":"long-initial-password"}`, nil)
 	}
 	func() {
 		defer func() {
@@ -109,14 +109,14 @@ func TestPasswordWorkSaturationKeepsAttemptBudget(t *testing.T) {
 
 func TestDownloadCreateRequiresAdminEvenWithWriteGrant(t *testing.T) {
 	f := newFolderShareFixture(t)
-	member, err := f.accounts.CreateUser(f.admin.Value, "member", "member-password-12345", auth.RoleMember)
+	member, err := f.accounts.CreateUser(f.admin.Value, "dl-member", "member-password-12345", auth.RoleMember)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := f.accounts.SetFileGrant(f.admin.Value, member.ID, ".", true); err != nil {
+	if err := f.accounts.SetRootGrant(f.admin.Value, member.ID, f.rootID, ".", true); err != nil {
 		t.Fatal(err)
 	}
-	cookie := f.login("member", "member-password-12345")
+	cookie := f.login("dl-member", "member-password-12345")
 	got := f.call(http.MethodPost, "/api/v2/downloads", `{"url":"http://127.0.0.1/private","destination":"."}`, cookie)
 	if got.Code != http.StatusForbidden || !strings.Contains(got.Body.String(), "admin_only") {
 		t.Fatalf("member reached network download handler: %d %s", got.Code, got.Body.String())
@@ -146,8 +146,11 @@ func TestLegacyPublicShareCannotExposePrivateHomes(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := f.call(http.MethodHead, "/api/v2/public/file/"+capability, "", nil)
-	if got.Code != http.StatusNotFound {
-		t.Fatalf("legacy share exposed private storage: %d", got.Code)
+	if got.Code != http.StatusGone {
+		t.Fatalf("retired legacy public share should return 410 Gone, got %d", got.Code)
+	}
+	if _, _, rootErr := f.accounts.CreateRootFileShare(t.Context(), f.admin.Value, f.rootID, f.rootGen, name, identity, auth.ShareKindDir, 1, auth.SharePolicy{}); rootErr == nil {
+		t.Fatal("root public share unexpectedly accepted reserved Users/ private storage")
 	}
 }
 
@@ -163,7 +166,7 @@ func TestLoginOnlyAcceptsHTTPSForwardingFromLoopback(t *testing.T) {
 		{"192.168.1.4:1234", []string{"https"}, false},
 	} {
 		req := httptest.NewRequest(http.MethodPost, "/api/v2/auth/login",
-			strings.NewReader(`{"username":"owner","password":"owner-password-12345"}`))
+			strings.NewReader(`{"username":"owner","password":"long-initial-password"}`))
 		req.RemoteAddr = tc.remote
 		req.Header.Set("X-LightIsle-Request", "1")
 		for _, value := range tc.proto {

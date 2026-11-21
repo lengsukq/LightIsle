@@ -8,11 +8,8 @@ func (s *RootServer) SetTailscaleURLProvider(fn func() (string, bool)) {
 	}
 	s.mu.Lock()
 	s.tailscaleBoundURL = fn
-	if s.baseAPI != nil {
-		s.baseAPI.tailscaleBoundURL = fn
-	}
-	if s.rootAPI != nil {
-		s.rootAPI.tailscaleBoundURL = fn
+	if s.api != nil {
+		s.api.tailscaleBoundURL = fn
 	}
 	s.mu.Unlock()
 }

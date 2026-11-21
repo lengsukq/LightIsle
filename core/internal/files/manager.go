@@ -15,14 +15,8 @@ import (
 )
 
 var ErrOffline = errors.New("shared_directory_unavailable")
-var ErrRootConfirmation = errors.New("shared_directory_confirmation_required")
 var ErrRootPersistence = errors.New("shared_directory_save_uncertain_restart_required")
 var ErrRootBusy = errors.New("shared_directory_busy")
-var ErrLegacyTransitionBusy = errors.New("shared_directory_transition_busy")
-var ErrLegacyTransitionRequired = errors.New("legacy_share_transition_required")
-var ErrLegacyAccessRevocationUncertain = errors.New("legacy_share_access_revocation_uncertain")
-var ErrLegacyAccessRevokedRootSwitchFailed = errors.New("legacy_share_access_revoked_root_switch_failed")
-var ErrLegacyAccessRevokedRootConfigUncertain = errors.New("legacy_share_access_revoked_root_config_uncertain")
 
 // Access is the subset required by HTTP handlers. The Manager serializes
 // root switching against file operations; already open file handles remain valid.
@@ -161,7 +155,6 @@ func (s *Store) DisplayName() string { return filepath.Base(s.root.Name()) }
 
 type Manager struct {
 	mu                sync.RWMutex
-	legacyRequestGate sync.RWMutex
 	opMu              sync.Mutex
 	uploadMu          sync.Mutex
 	store             *Store
@@ -332,14 +325,6 @@ func (m *Manager) saveRootConfig(cfg rootConfig) error {
 	}
 	return nil
 }
-
-func legacyRootPublicationError(cause error) error {
-	kind := ErrLegacyAccessRevokedRootSwitchFailed
-	if errors.Is(cause, ErrRootPersistence) {
-		kind = ErrLegacyAccessRevokedRootConfigUncertain
-	}
-	return &legacyTransitionError{kind: kind, cause: cause}
-}
 func openExisting(dir string) (*Store, error) {
 	info, err := os.Stat(dir)
 	if err != nil {
@@ -408,46 +393,6 @@ func (m *Manager) onlineLocked() bool {
 		storageidentity.MatchesDirectory(*m.binding, current))
 }
 
-// Reconnect attempts to reopen the configured removable folder, only when the
-// administrator explicitly requests retry (e.g. after reconnecting the drive).
-func (m *Manager) Reconnect() error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.configFault != nil {
-		return m.configFault
-	}
-	if m.onlineLocked() {
-		return nil
-	}
-	if m.pinned {
-		return ErrOffline
-	}
-	if m.binding == nil {
-		return ErrRootConfirmation
-	}
-	if err := m.identity.Verify(context.Background(), *m.binding); err != nil {
-		return err
-	}
-	next, err := openExisting(m.rootPath)
-	if err != nil {
-		return err
-	}
-	if err := m.identity.Verify(context.Background(), *m.binding); err != nil {
-		next.Close()
-		return err
-	}
-	info, statErr := next.root.Stat(".")
-	if statErr != nil || !storageidentity.MatchesDirectory(*m.binding, info) {
-		next.Close()
-		return ErrOffline
-	}
-	old := m.store
-	m.store = next
-	if old != nil {
-		old.Close()
-	}
-	return nil
-}
 func allowedSelectedFolder(folder string) (string, error) {
 	if !filepath.IsAbs(folder) {
 		return "", ErrPath
@@ -478,131 +423,6 @@ func allowedSelectedFolder(folder string) (string, error) {
 		return "", ErrPath
 	}
 	return resolved, nil
-}
-func (m *Manager) selectedFolder(folder string) (string, error) {
-	if m.pinned {
-		return "", ErrPath
-	}
-	resolved, err := allowedSelectedFolder(folder)
-	if err != nil {
-		return "", err
-	}
-	privateDir, err := filepath.EvalSymlinks(filepath.Dir(m.configFile))
-	if err != nil {
-		return "", err
-	}
-	inside := func(child, parent string) bool {
-		return child == parent || strings.HasPrefix(child, parent+string(filepath.Separator))
-	}
-	if (inside(resolved, privateDir) || inside(privateDir, resolved)) &&
-		!inside(resolved, filepath.Join(privateDir, "SharedFiles")) {
-		return "", ErrPath
-	}
-	return resolved, nil
-}
-
-// SetRoot rejects legacy callers that cannot atomically clear root-relative
-// ACLs. An already-online no-op remains safe; every actual change must use
-// SetRootWithLegacyTransition and provide the owner-approved revocation.
-func (m *Manager) SetRoot(folder string) error {
-	resolved, err := m.selectedFolder(folder)
-	if err != nil {
-		return err
-	}
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-	if m.configFault != nil {
-		return m.configFault
-	}
-	if resolved == m.rootPath && m.binding != nil && m.onlineLocked() {
-		return nil
-	}
-	return ErrLegacyTransitionRequired
-}
-
-// SetRootWithLegacyTransition switches the single-root compatibility share.
-// Unknown old bindings are treated as different roots and require revocation;
-// a matching physical directory preserves its ACLs but still checks that all
-// legacy work is idle.
-func (m *Manager) SetRootWithLegacyTransition(folder string, validateIdle, revokeLegacyAccess func() error) error {
-	if validateIdle == nil {
-		return ErrLegacyTransitionRequired
-	}
-	resolved, err := m.selectedFolder(folder)
-	if err != nil {
-		return err
-	}
-	unlock, err := m.tryLockLegacyTransition()
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	if m.configFault != nil {
-		return m.configFault
-	}
-	if m.store != nil {
-		pending, _, err := m.store.ListUploads("", 1)
-		if err != nil {
-			return err
-		}
-		if len(pending) != 0 {
-			return ErrRootBusy
-		}
-	}
-	binding, err := m.identity.Capture(context.Background(), resolved)
-	if err != nil {
-		return err
-	}
-	if binding.Validate() != nil || binding.Path != resolved {
-		return ErrOffline
-	}
-	next, err := openExisting(resolved)
-	if err != nil {
-		return err
-	}
-	if err := m.identity.Verify(context.Background(), binding); err != nil {
-		next.Close()
-		return err
-	}
-	info, statErr := next.root.Stat(".")
-	if statErr != nil || !storageidentity.MatchesDirectory(binding, info) {
-		next.Close()
-		return ErrOffline
-	}
-	published := false
-	defer func() {
-		if !published {
-			_ = next.Close()
-		}
-	}()
-	if err := validateIdle(); err != nil {
-		return err
-	}
-	legacyAccessRevoked := false
-	if m.binding == nil || !storageidentity.SameObject(*m.binding, binding) {
-		if revokeLegacyAccess == nil {
-			return ErrLegacyTransitionRequired
-		}
-		if err := revokeLegacyAccess(); err != nil {
-			return &legacyTransitionError{kind: ErrLegacyAccessRevocationUncertain, cause: err}
-		}
-		legacyAccessRevoked = true
-	}
-	if err := m.saveRootConfig(rootConfig{Path: binding.Path, Binding: &binding}); err != nil {
-		if legacyAccessRevoked {
-			return legacyRootPublicationError(err)
-		}
-		return err
-	}
-	old := m.store
-	m.store = next
-	m.rootPath = binding.Path
-	m.binding = &binding
-	if old != nil {
-		old.Close()
-	}
-	published = true
-	return nil
 }
 func (m *Manager) withRead(fn func(*Store) error) error {
 	m.mu.RLock()

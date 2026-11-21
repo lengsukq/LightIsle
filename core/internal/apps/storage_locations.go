@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
@@ -123,17 +124,22 @@ func (m *Manager) getAvailableVolumes() []AppStorageVolumeOption {
 		})
 	}
 	provider := m.getStorageProvider()
+	const captureTimeout = 5 * time.Second
 	if len(out) == 1 {
-		if b, err := provider.Capture(context.Background(), out[0].Mount); err == nil {
+		captureCtx, cancel := context.WithTimeout(context.Background(), captureTimeout)
+		if b, err := provider.Capture(captureCtx, out[0].Mount); err == nil {
 			out[0].VolumeUUID = b.VolumeUUID
 		}
+		cancel()
 	} else if len(out) > 1 {
 		var wg sync.WaitGroup
 		for i := range out {
 			wg.Add(1)
 			go func(idx int) {
 				defer wg.Done()
-				if b, err := provider.Capture(context.Background(), out[idx].Mount); err == nil {
+				captureCtx, cancel := context.WithTimeout(context.Background(), captureTimeout)
+				defer cancel()
+				if b, err := provider.Capture(captureCtx, out[idx].Mount); err == nil {
 					out[idx].VolumeUUID = b.VolumeUUID
 				}
 			}(i)
@@ -147,19 +153,26 @@ func (m *Manager) getAvailableVolumes() []AppStorageVolumeOption {
 }
 
 func readAppsStorageSnapshotFromConfig(dataDir string) AppStorageSnapshot {
-	cfg, _ := readSystemConfigFile(filepath.Join(dataDir, "apps-config.json"))
+	cfgPath := filepath.Join(dataDir, "apps-config.json")
+	cfg, err := readSystemConfigFile(cfgPath)
+	if err != nil {
+		slog.Warn("failed to read apps-config.json for storage snapshot", "path", cfgPath, "error", err)
+	}
 	mgr := &Manager{
 		dataDir:        dataDir,
 		pluginsDir:     filepath.Join(dataDir, "plugins"),
 		pluginDataRoot: filepath.Join(dataDir, "plugin-data"),
-		configPath:     filepath.Join(dataDir, "apps-config.json"),
+		configPath:     cfgPath,
 		apps:           map[string]*appRecord{},
 	}
 	return mgr.buildStorageSnapshot(cfg, false)
 }
 
 func (m *Manager) GetStorageSnapshot() AppStorageSnapshot {
-	cfg, _ := readSystemConfigFile(m.configPath)
+	cfg, err := readSystemConfigFile(m.configPath)
+	if err != nil {
+		slog.Warn("failed to read apps-config.json for storage snapshot", "path", m.configPath, "error", err)
+	}
 	return m.buildStorageSnapshot(cfg, true)
 }
 

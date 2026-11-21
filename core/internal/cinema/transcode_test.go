@@ -58,22 +58,24 @@ func TestParseTrackInfoDurationFallbacksAndEventPlaylistArgs(t *testing.T) {
 
 func TestDecideProfile(t *testing.T) {
 	cases := []struct {
-		name      string
-		info      TrackInfo
-		profile   string
-		videoCopy bool
-		audioCopy bool
-		tagHevc   bool
+		name       string
+		info       TrackInfo
+		audioTrack int
+		profile    string
+		videoCopy  bool
+		audioCopy  bool
+		tagHevc    bool
 	}{
-		{"mkv h264 aac", TrackInfo{VideoCodec: "h264", Audio: []AudioTrack{{Codec: "aac"}}}, "remux", true, true, false},
-		{"mkv hevc aac", TrackInfo{VideoCodec: "hevc", Audio: []AudioTrack{{Codec: "aac"}}}, "remux", true, true, true},
-		{"dts audio re-encode", TrackInfo{VideoCodec: "h264", Audio: []AudioTrack{{Codec: "dts"}}}, "remux", true, false, false},
-		{"mpeg2 avi", TrackInfo{VideoCodec: "mpeg2video", Audio: []AudioTrack{{Codec: "mp3"}}}, "transcode", false, true, false},
-		{"prores mov", TrackInfo{VideoCodec: "prores", Audio: []AudioTrack{{Codec: "pcm_s16le"}}}, "transcode", false, false, false},
-		{"no audio", TrackInfo{VideoCodec: "h264"}, "remux", true, true, false},
+		{"mkv h264 aac", TrackInfo{VideoCodec: "h264", Audio: []AudioTrack{{Codec: "aac"}}}, 0, "remux", true, true, false},
+		{"mkv hevc aac", TrackInfo{VideoCodec: "hevc", Audio: []AudioTrack{{Codec: "aac"}}}, 0, "remux", true, true, true},
+		{"dts audio re-encode", TrackInfo{VideoCodec: "h264", Audio: []AudioTrack{{Codec: "dts"}}}, 0, "remux", true, false, false},
+		{"secondary ac3 audio re-encode", TrackInfo{VideoCodec: "h264", Audio: []AudioTrack{{Codec: "aac"}, {Codec: "ac3"}}}, 1, "remux", true, false, false},
+		{"mpeg2 avi", TrackInfo{VideoCodec: "mpeg2video", Audio: []AudioTrack{{Codec: "mp3"}}}, 0, "transcode", false, true, false},
+		{"prores mov", TrackInfo{VideoCodec: "prores", Audio: []AudioTrack{{Codec: "pcm_s16le"}}}, 0, "transcode", false, false, false},
+		{"no audio", TrackInfo{VideoCodec: "h264"}, -1, "remux", true, true, false},
 	}
 	for _, c := range cases {
-		profile, videoCopy, audioCopy, tagHevc := decideProfile(c.info)
+		profile, videoCopy, audioCopy, tagHevc := decideProfile(c.info, c.audioTrack)
 		if profile != c.profile || videoCopy != c.videoCopy || audioCopy != c.audioCopy || tagHevc != c.tagHevc {
 			t.Errorf("%s: got (%s %v %v %v)", c.name, profile, videoCopy, audioCopy, tagHevc)
 		}

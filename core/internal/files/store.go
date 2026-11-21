@@ -96,7 +96,6 @@ type Store struct {
 	// production implementations below.
 	syncFile  func(*os.File) error
 	syncDir   func(*os.File) error
-	link      func(string, string) error
 	rename    func(string, string) error
 	remove    func(string) error
 	statEntry func(*os.File, string) (os.FileInfo, error)
@@ -208,13 +207,6 @@ func (s *Store) renameDurable(from, to string) error {
 		return fmt.Errorf("%w: published rename is not durable: %v", ErrStorageSync, err)
 	}
 	return nil
-}
-
-func (s *Store) linkFile(oldname, newname string) error {
-	if s.link != nil {
-		return s.link(oldname, newname)
-	}
-	return s.root.Link(oldname, newname)
 }
 
 func (s *Store) renameFile(oldname, newname string) error {

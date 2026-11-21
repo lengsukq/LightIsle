@@ -458,12 +458,24 @@ echo "$CPE_HOST" > "$LIGHTISLE_PLUGIN_DATA_DIR/last_host.txt"
 		t.Fatal("expected app-cpe-watchdog to remain registered after automation.Reload()")
 	}
 
-	if err := autoMgr.RunSync("app-cpe-watchdog"); err != nil {
+	if err := autoMgr.RunNow("app-cpe-watchdog"); err != nil {
 		t.Fatal(err)
 	}
-	runs, err := mgr.GetCronRuns("cpe-watchdog", 10)
-	if err != nil || len(runs) != 1 || runs[0].State != "success" || !strings.Contains(runs[0].Output, "host=192.168.8.1") {
-		t.Fatalf("unexpected plugin cron run history: %+v %v", runs, err)
+	var runs []automation.TaskRun
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		var rErr error
+		runs, rErr = mgr.GetCronRuns("cpe-watchdog", 10)
+		if rErr == nil && len(runs) >= 1 && runs[0].State != "running" {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("timed out waiting for plugin cron run history: %+v %v", runs, rErr)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+	if len(runs) != 1 || runs[0].State != "success" || !strings.Contains(runs[0].Output, "host=192.168.8.1") {
+		t.Fatalf("unexpected plugin cron run history: %+v", runs)
 	}
 	savedHost, err := os.ReadFile(filepath.Join(dataDir, "plugin-data", "cpe-watchdog", "last_host.txt"))
 	if err != nil || strings.TrimSpace(string(savedHost)) != "192.168.8.1" {

@@ -242,12 +242,49 @@ func (t *Transcoder) ExtractSubtitle(source *os.File, share string, film Film, t
 		extension = ".vtt"
 	}
 	target := filepath.Join(subsDir, identityKey(share, film)+"-"+strconv.Itoa(track.StreamIndex)+extension)
-	if file, err := os.Open(target); err == nil {
+	openCachedSubtitle := func() (*os.File, bool) {
+		file, err := os.Open(target)
+		if err != nil {
+			return nil, false
+		}
 		if info, statErr := file.Stat(); statErr == nil && info.Size() > 0 && info.Size() <= maxSubtitleBytes {
-			return file, extension, nil
+			return file, true
 		}
 		file.Close()
 		_ = os.Remove(target)
+		return nil, false
+	}
+	for {
+		if file, ok := openCachedSubtitle(); ok {
+			return file, extension, nil
+		}
+		t.subMu.Lock()
+		if file, ok := openCachedSubtitle(); ok {
+			t.subMu.Unlock()
+			return file, extension, nil
+		}
+		if wait, inflight := t.subInFlight[target]; inflight {
+			t.subMu.Unlock()
+			select {
+			case <-wait:
+				if file, ok := openCachedSubtitle(); ok {
+					return file, extension, nil
+				}
+				continue
+			case <-t.ctx.Done():
+				return nil, "", t.ctx.Err()
+			}
+		}
+		done := make(chan struct{})
+		t.subInFlight[target] = done
+		t.subMu.Unlock()
+		defer func() {
+			t.subMu.Lock()
+			delete(t.subInFlight, target)
+			close(done)
+			t.subMu.Unlock()
+		}()
+		break
 	}
 	if !tryMediaInspection() {
 		return nil, "", ErrTranscodeBusy

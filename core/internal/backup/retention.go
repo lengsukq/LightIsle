@@ -139,9 +139,33 @@ func retainScheduledSnapshotsWithHooks(ctx context.Context, root *os.Root, desti
 		return 0, err
 	}
 	deadline := time.Now().Add(retentionScanTimeBudget)
+	targets, err := discoverRetentionTargets(ctx, root, currentName, planID, sourceRootID, keep, deadline)
+	if err != nil || len(targets) == 0 {
+		return 0, err
+	}
+	if err := preVerifyRetentionTargets(ctx, root, targets); err != nil {
+		return 0, err
+	}
+	removed := 0
+	for _, candidate := range targets {
+		if err := quarantineAndDeleteSnapshot(ctx, root, destination, candidate, *expectedDestination, reader, hooks); err != nil {
+			return removed, err
+		}
+		removed++
+		if err := syncBackupRoot(root); err != nil {
+			return removed, fmt.Errorf("backup_retention_sync_failed: %w", err)
+		}
+		if err := ctx.Err(); err != nil {
+			return removed, err
+		}
+	}
+	return removed, nil
+}
+
+func discoverRetentionTargets(ctx context.Context, root *os.Root, currentName, planID, sourceRootID string, keep int, deadline time.Time) ([]retentionCandidate, error) {
 	entries, err := boundedRootEntries(ctx, root, deadline)
 	if err != nil {
-		return 0, err
+		return nil, err
 	}
 	names := make([]string, 0, 16)
 	for _, entry := range entries {
@@ -149,44 +173,77 @@ func retainScheduledSnapshotsWithHooks(ctx context.Context, root *os.Root, desti
 			continue
 		}
 		if len(names) == maxRetentionSnapshots {
-			return 0, ErrRetentionScanLimit
+			return nil, ErrRetentionScanLimit
 		}
 		names = append(names, entry.Name())
 	}
 	sort.Strings(names)
 
+	owners, currentFound, err := loadOwnedRetentionCandidates(ctx, root, names, currentName, planID, sourceRootID, deadline)
+	if err != nil {
+		return nil, err
+	}
+	if !currentFound {
+		return nil, ErrRetentionSnapshotUntrusted
+	}
+	sortRetentionCandidatesNewestFirst(owners, currentName)
+
+	currentRank := -1
+	for index, candidate := range owners {
+		if candidate.name == currentName {
+			currentRank = index
+			break
+		}
+	}
+	if currentRank < 0 || currentRank >= keep {
+		return nil, ErrRetentionSnapshotUntrusted
+	}
+	if len(owners) <= keep {
+		return nil, nil
+	}
+	targets := append([]retentionCandidate(nil), owners[keep:]...)
+	// Remove the oldest first so cancellation or a later filesystem error leaves
+	// the newest excess snapshots available for recovery.
+	for left, right := 0, len(targets)-1; left < right; left, right = left+1, right-1 {
+		targets[left], targets[right] = targets[right], targets[left]
+	}
+	return targets, nil
+}
+
+func loadOwnedRetentionCandidates(ctx context.Context, root *os.Root, names []string, currentName, planID, sourceRootID string, deadline time.Time) ([]retentionCandidate, bool, error) {
 	owners := make([]retentionCandidate, 0, len(names))
 	manifestBytes := int64(0)
 	currentFound := false
 	for _, name := range names {
 		if err := ctx.Err(); err != nil {
-			return 0, err
+			return nil, false, err
 		}
 		if time.Now().After(deadline) {
-			return 0, ErrRetentionScanLimit
+			return nil, false, ErrRetentionScanLimit
 		}
 		candidate, err := inspectRetentionCandidate(root, name, manifestBytes)
 		if err != nil {
-			return 0, err
+			return nil, false, err
 		}
 		manifestBytes += int64(len(candidate.manifestRaw))
 		if manifestBytes > maxRetentionTotalManifest {
-			return 0, ErrRetentionScanLimit
+			return nil, false, ErrRetentionScanLimit
 		}
 		if candidate.manifest.PlanID != planID || candidate.manifest.SourceRootID != sourceRootID {
 			continue
 		}
 		if candidate.manifest.Format != format || candidate.manifest.Created <= 0 || candidate.manifest.Source == "" || len(candidate.manifest.Source) > 1024 {
-			return 0, ErrRetentionSnapshotUntrusted
+			return nil, false, ErrRetentionSnapshotUntrusted
 		}
 		if name == currentName {
 			currentFound = true
 		}
 		owners = append(owners, candidate)
 	}
-	if !currentFound {
-		return 0, ErrRetentionSnapshotUntrusted
-	}
+	return owners, currentFound, nil
+}
+
+func sortRetentionCandidatesNewestFirst(owners []retentionCandidate, currentName string) {
 	sort.Slice(owners, func(i, j int) bool {
 		if owners[i].manifest.Created != owners[j].manifest.Created {
 			return owners[i].manifest.Created > owners[j].manifest.Created
@@ -199,129 +256,135 @@ func retainScheduledSnapshotsWithHooks(ctx context.Context, root *os.Root, desti
 		}
 		return owners[i].name > owners[j].name
 	})
-	currentRank := -1
-	for index, candidate := range owners {
-		if candidate.name == currentName {
-			currentRank = index
-			break
-		}
-	}
-	if currentRank < 0 || currentRank >= keep {
-		return 0, ErrRetentionSnapshotUntrusted
-	}
-	if len(owners) <= keep {
-		return 0, nil
-	}
-	targets := append([]retentionCandidate(nil), owners[keep:]...)
-	// Remove the oldest first so cancellation or a later filesystem error leaves
-	// the newest excess snapshots available for recovery.
-	for left, right := 0, len(targets)-1; left < right; left, right = left+1, right-1 {
-		targets[left], targets[right] = targets[right], targets[left]
-	}
+}
 
+func preVerifyRetentionTargets(ctx context.Context, root *os.Root, targets []retentionCandidate) error {
 	var verifyBytes int64
 	for _, candidate := range targets {
 		if err := ctx.Err(); err != nil {
-			return 0, err
+			return err
 		}
 		size := manifestSize(candidate.manifest)
 		if size < 0 || size > maxRetentionVerifyBytes-verifyBytes {
-			return 0, ErrRetentionScanLimit
+			return ErrRetentionScanLimit
 		}
 		verifyBytes += size
 		if err := verifyRetentionCandidate(ctx, root, candidate); err != nil {
-			return 0, err
+			return err
 		}
 	}
+	return nil
+}
 
-	removed := 0
-	for _, candidate := range targets {
-		if err := ctx.Err(); err != nil {
-			return removed, err
-		}
-		if err := verifyPinnedDestination(root, destination, *expectedDestination, reader); err != nil {
-			return removed, err
-		}
-		if err := verifyRetentionCandidate(ctx, root, candidate); err != nil {
-			return removed, err
-		}
-		if err := verifyPinnedDestination(root, destination, *expectedDestination, reader); err != nil {
-			return removed, err
-		}
-		currentInfo, statErr := root.Lstat(candidate.name)
-		if statErr != nil || currentInfo.Mode()&os.ModeSymlink != 0 || !currentInfo.IsDir() || !os.SameFile(candidate.info, currentInfo) {
-			return removed, ErrRetentionSnapshotChanged
-		}
-		if err := ctx.Err(); err != nil {
-			return removed, err
-		}
-		if hooks != nil && hooks.beforeRename != nil {
-			if err := hooks.beforeRename(candidate.name); err != nil {
-				return removed, err
-			}
-		}
-		quarantineName, err := newRetentionQuarantineName()
-		if err != nil {
-			return removed, err
-		}
-		if err := retentionRenameNoReplace(root, candidate.name, quarantineName); err != nil {
-			return removed, err
-		}
-		quarantinePath := filepath.Join(destination, quarantineName)
-		quarantineInfo, statErr := root.Lstat(quarantineName)
-		restore := func(cause error) error {
-			return restoreRetentionQuarantine(root, candidate.name, quarantineName, destination, quarantineInfo, cause)
-		}
-		if statErr != nil {
-			return removed, fmt.Errorf("backup_retention_quarantine_identity_unavailable: %s: %w", quarantinePath, statErr)
-		}
-		if err := syncBackupRoot(root); err != nil {
-			return removed, restore(fmt.Errorf("backup_retention_quarantine_sync_failed: %w", err))
-		}
-		currentQuarantineInfo, err := root.Lstat(quarantineName)
-		if err != nil || currentQuarantineInfo.Mode()&os.ModeSymlink != 0 || !currentQuarantineInfo.IsDir() ||
-			!os.SameFile(quarantineInfo, currentQuarantineInfo) || !os.SameFile(candidate.info, currentQuarantineInfo) {
-			return removed, restore(ErrRetentionSnapshotChanged)
-		}
-		if hooks != nil && hooks.afterRename != nil {
-			if err := hooks.afterRename(candidate.name, quarantineName); err != nil {
-				return removed, restore(err)
-			}
-		}
-		if err := ctx.Err(); err != nil {
-			return removed, restore(err)
-		}
-		if err := verifyPinnedDestination(root, destination, *expectedDestination, reader); err != nil {
-			return removed, restore(err)
-		}
-		quarantined := candidate
-		quarantined.name = quarantineName
-		if err := verifyRetentionCandidate(ctx, root, quarantined); err != nil {
-			return removed, restore(err)
-		}
-		if err := verifyPinnedDestination(root, destination, *expectedDestination, reader); err != nil {
-			return removed, restore(err)
-		}
-		currentQuarantineInfo, err = root.Lstat(quarantineName)
-		if err != nil || currentQuarantineInfo.Mode()&os.ModeSymlink != 0 || !currentQuarantineInfo.IsDir() ||
-			!os.SameFile(quarantineInfo, currentQuarantineInfo) || !os.SameFile(candidate.info, currentQuarantineInfo) {
-			return removed, restore(ErrRetentionSnapshotChanged)
-		}
-		if err := ctx.Err(); err != nil {
-			return removed, restore(err)
-		}
-		if err := root.RemoveAll(quarantineName); err != nil {
-			return removed, fmt.Errorf("backup_retention_quarantine_cleanup_failed: %s: %w", quarantinePath, err)
-		}
-		removed++
-		if err := syncBackupRoot(root); err != nil {
-			return removed, fmt.Errorf("backup_retention_sync_failed: %w", err)
-		}
-		if err := ctx.Err(); err != nil {
-			return removed, err
+func verifySnapshotDirIdentity(root *os.Root, name string, expected ...os.FileInfo) error {
+	info, err := root.Lstat(name)
+	if err != nil || info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return ErrRetentionSnapshotChanged
+	}
+	for _, want := range expected {
+		if !os.SameFile(want, info) {
+			return ErrRetentionSnapshotChanged
 		}
 	}
-	return removed, nil
+	return nil
+}
+
+func quarantineAndDeleteSnapshot(
+	ctx context.Context,
+	root *os.Root,
+	destination string,
+	candidate retentionCandidate,
+	expectedDestination destinationIdentity,
+	reader func(string) (diskutilVolumeInfo, error),
+	hooks *retentionQuarantineHooks,
+) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := verifyPinnedDestination(root, destination, expectedDestination, reader); err != nil {
+		return err
+	}
+	if err := verifyRetentionCandidate(ctx, root, candidate); err != nil {
+		return err
+	}
+	if err := verifyPinnedDestination(root, destination, expectedDestination, reader); err != nil {
+		return err
+	}
+	if err := verifySnapshotDirIdentity(root, candidate.name, candidate.info); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if hooks != nil && hooks.beforeRename != nil {
+		if err := hooks.beforeRename(candidate.name); err != nil {
+			return err
+		}
+	}
+	quarantineName, err := newRetentionQuarantineName()
+	if err != nil {
+		return err
+	}
+	if err := retentionRenameNoReplace(root, candidate.name, quarantineName); err != nil {
+		return err
+	}
+	quarantinePath := filepath.Join(destination, quarantineName)
+	quarantineInfo, statErr := root.Lstat(quarantineName)
+	if statErr != nil {
+		return fmt.Errorf("backup_retention_quarantine_identity_unavailable: %s: %w", quarantinePath, statErr)
+	}
+	restore := func(cause error) error {
+		return restoreRetentionQuarantine(root, candidate.name, quarantineName, destination, quarantineInfo, cause)
+	}
+	if err := verifyQuarantinedSnapshot(ctx, root, destination, candidate, quarantineName, quarantineInfo, expectedDestination, reader, hooks); err != nil {
+		return restore(err)
+	}
+	if err := root.RemoveAll(quarantineName); err != nil {
+		return fmt.Errorf("backup_retention_quarantine_cleanup_failed: %s: %w", quarantinePath, err)
+	}
+	return nil
+}
+
+func verifyQuarantinedSnapshot(
+	ctx context.Context,
+	root *os.Root,
+	destination string,
+	candidate retentionCandidate,
+	quarantineName string,
+	quarantineInfo os.FileInfo,
+	expectedDestination destinationIdentity,
+	reader func(string) (diskutilVolumeInfo, error),
+	hooks *retentionQuarantineHooks,
+) error {
+	if err := syncBackupRoot(root); err != nil {
+		return fmt.Errorf("backup_retention_quarantine_sync_failed: %w", err)
+	}
+	if err := verifySnapshotDirIdentity(root, quarantineName, quarantineInfo, candidate.info); err != nil {
+		return err
+	}
+	if hooks != nil && hooks.afterRename != nil {
+		if err := hooks.afterRename(candidate.name, quarantineName); err != nil {
+			return err
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := verifyPinnedDestination(root, destination, expectedDestination, reader); err != nil {
+		return err
+	}
+	quarantined := candidate
+	quarantined.name = quarantineName
+	if err := verifyRetentionCandidate(ctx, root, quarantined); err != nil {
+		return err
+	}
+	if err := verifyPinnedDestination(root, destination, expectedDestination, reader); err != nil {
+		return err
+	}
+	if err := verifySnapshotDirIdentity(root, quarantineName, quarantineInfo, candidate.info); err != nil {
+		return err
+	}
+	return ctx.Err()
 }
 
 func newRetentionQuarantineName() (string, error) {

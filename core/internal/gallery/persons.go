@@ -337,7 +337,9 @@ func (l *Library) MergePersons(userID, sourcePersonID, targetPersonID int64) err
 		return err
 	}
 	var totalFaces int
-	_ = tx.QueryRow(`SELECT COUNT(*) FROM person_face_links WHERE user_id=? AND person_id=?`, userID, targetPersonID).Scan(&totalFaces)
+	if err := tx.QueryRow(`SELECT COUNT(*) FROM person_face_links WHERE user_id=? AND person_id=?`, userID, targetPersonID).Scan(&totalFaces); err != nil {
+		return err
+	}
 	if _, err := tx.Exec(`UPDATE persons SET name=?, centroid=?, face_count=?, is_hidden=0, updated_at=? WHERE id=? AND share=? AND user_id=?`,
 		finalName, mergedCentroid, totalFaces, l.currentTime().Unix(), targetPersonID, share, userID); err != nil {
 		return err

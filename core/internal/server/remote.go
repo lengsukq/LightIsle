@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"github.com/lengsukq/lightisle/core/internal/auth"
+	"github.com/lengsukq/lightisle/core/internal/safego"
 )
 
 // Remote never listens on 0.0.0.0 or arbitrary public addresses. The LAN
@@ -202,10 +203,6 @@ func selectRemoteIPs(ifaces []ifaceCandidate) remoteTargets {
 	}
 }
 
-func privateIP() net.IP {
-	return physicalPrivateIP(upInterfaceCandidates())
-}
-
 func NewRemote(handler http.Handler, store *auth.Store, dir string, port int) (*Remote, error) {
 	return newRemoteWithTargets(handler, store, dir, port, true, selectRemoteIPs(upInterfaceCandidates()))
 }
@@ -297,14 +294,18 @@ func newRemoteWithTargets(
 		if targets.tailscaleIP != nil && compIP.Equal(targets.tailscaleIP) {
 			r.TailscaleURL = fmt.Sprintf("%s://%s", scheme, compLn.Addr().String())
 		}
-		go func(s *http.Server, l net.Listener) { _ = s.Serve(l) }(compSrv, compLn)
+		safego.Go("remote-companion-listener", func() {
+			if err := compSrv.Serve(compLn); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				slog.Warn("companion remote listener stopped unexpectedly", "addr", compLn.Addr().String(), "error", err)
+			}
+		})
 	}
-	go func() { _ = srv.Serve(primaryLn) }()
+	safego.Go("remote-primary-listener", func() {
+		if err := srv.Serve(primaryLn); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			slog.Warn("primary remote listener stopped unexpectedly", "addr", primaryLn.Addr().String(), "error", err)
+		}
+	})
 	return r, nil
-}
-
-func certificate(dir string, ip net.IP) (tls.Certificate, string, error) {
-	return certificateWithSANs(dir, []net.IP{ip}, nil)
 }
 
 func certificateWithSANs(dir string, ips []net.IP, dnsNames []string) (tls.Certificate, string, error) {
