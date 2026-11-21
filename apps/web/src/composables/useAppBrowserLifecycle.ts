@@ -1,10 +1,11 @@
 import { onMounted, onUnmounted, watch, type Ref } from "vue";
-import { installImageResourceObserver } from "../useIsleCache.ts";
-import { resolvePermittedPage, resolvePermittedSettingsGroup } from "../shellRouteGuard.ts";
+import { installImageResourceObserver } from "../features/settings/useIsleCache.ts";
+import { resolvePermittedPage, resolvePermittedSettingsGroup } from "../utils/shellRouteGuard.ts";
+import { TIMINGS_MS } from "../constants/timings.ts";
 
-const FAST_POLL_INTERVAL_MS = 5_000;
-const SLOW_POLL_INTERVAL_MS = 30_000;
-const VISIBILITY_ROOT_REFRESH_COOLDOWN_MS = 3_000;
+const FAST_POLL_INTERVAL_MS = TIMINGS_MS.FAST_POLL;
+const SLOW_POLL_INTERVAL_MS = TIMINGS_MS.SLOW_POLL;
+const VISIBILITY_ROOT_REFRESH_COOLDOWN_MS = TIMINGS_MS.VISIBILITY_COOLDOWN;
 
 export interface AppBrowserLifecycleOptions<TPage extends string, TGroup extends string> {
   active: Ref<TPage>;

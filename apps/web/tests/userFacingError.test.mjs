@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { describeUserFacingError } from "../src/userFacingError.ts";
+import { describeUserFacingError } from "../src/api/userFacingError.ts";
 
 test("common storage and permission codes provide specific corrective action", () => {
   assert.match(describeUserFacingError(new Error("volume_offline")), /原硬盘.*重新连接/);

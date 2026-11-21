@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { clampDockOffset, useCinemaDockDrag } from "../src/useCinemaDockDrag.ts";
+import { clampDockOffset, useCinemaDockDrag } from "../src/features/cinema/useCinemaDockDrag.ts";
 
 test("clampDockOffset keeps the floating transport dock within player stage bounds", () => {
   const stage = { width: 1200, height: 700 };

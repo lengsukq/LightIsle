@@ -1,0 +1,573 @@
+/* Account Manager & Settings — Responsive 2-Column Desktop Workspace */
+.settings-page {
+  display: flex;
+  flex-direction: column;
+  max-width: 1120px;
+  margin: 0 auto;
+  width: 100%;
+}
+.settings-workspace {
+  display: grid;
+  grid-template-columns: 204px minmax(0, 1fr);
+  gap: 22px;
+  align-items: start;
+}
+.settings-workspace .settings-nav {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  width: 100%;
+  margin: 0;
+  padding: 6px;
+  border-radius: 14px;
+  position: sticky;
+  top: 76px;
+  gap: 3px;
+}
+.settings-workspace .settings-nav button {
+  width: 100%;
+  justify-content: flex-start;
+  min-height: 36px;
+  padding: 7px 12px;
+  font-size: 13px;
+  text-align: left;
+}
+.settings-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-width: 0;
+}
+@media (max-width: 960px) {
+  .settings-workspace {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+  .settings-workspace .settings-nav {
+    flex-direction: row;
+    position: static;
+    padding: 4px;
+    border-radius: 12px;
+    overflow-x: auto;
+  }
+  .settings-workspace .settings-nav button {
+    width: auto;
+    justify-content: center;
+    min-height: 32px;
+    padding: 5px 13px;
+  }
+}
+.settings-stack > .account-panel,
+.settings-stack > .isle-card,
+.settings-stack > .apple-disclosure-card {
+  margin: 0;
+}
+.settings-row-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.settings-form-subcard {
+  padding: 14px 16px;
+  border-radius: 13px;
+  background: var(--fluid-card-item-fill);
+  border: 1px solid var(--fluid-card-border);
+}
+.settings-form-grid-2 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 14px;
+}
+.settings-form-grid-3 {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr));
+  gap: 14px;
+}
+.settings-form-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.isle-card input:not([type="checkbox"]):not([type="range"]):not([type="file"]),
+.account-panel input:not([type="checkbox"]):not([type="range"]):not([type="file"]) {
+  box-sizing: border-box;
+  padding: 9px 13px;
+  border: 1px solid var(--fluid-card-border);
+  border-radius: 10px;
+  background: var(--fluid-card-item-bottom);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 13px;
+  outline: none;
+  transition: border-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
+}
+.isle-card input:not([type="checkbox"]):not([type="range"]):not([type="file"]):focus,
+.account-panel input:not([type="checkbox"]):not([type="range"]):not([type="file"]):focus {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary) 16%, transparent);
+}
+.file-entry-more { position: relative; flex-shrink: 0; }
+.file-entry-more > summary {
+  width: 32px;
+  height: 32px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  list-style: none;
+  cursor: pointer;
+  font-size: 18px;
+  font-weight: 700;
+  line-height: 1;
+  color: var(--text-secondary);
+}
+.file-entry-more > summary::-webkit-details-marker { display: none; }
+.file-entry-more > summary:hover,
+.file-entry-more[open] > summary {
+  color: var(--text-primary);
+  background: var(--fluid-card-hover, var(--surface-base));
+  border-color: var(--fluid-card-border, var(--stroke-subtle));
+}
+.file-entry-more > summary:focus-visible { outline: 2px solid var(--accent-primary); outline-offset: 2px; }
+.file-entry-more-list {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  right: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 176px;
+  padding: 5px;
+  border-radius: 12px;
+  background: var(--surface-elevated, var(--surface-base));
+  border: 1px solid var(--fluid-card-border-strong, var(--stroke-subtle));
+  box-shadow: var(--shadow-float, 0 10px 30px rgba(0, 0, 0, 0.15));
+}
+.file-entry-more-list button {
+  width: 100%;
+  height: auto;
+  min-height: 34px;
+  padding: 7px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: 12.5px;
+  font-weight: 550;
+  display: block;
+  text-align: left;
+  white-space: nowrap;
+}
+.file-entry-more-list button:hover {
+  background: var(--fluid-card-hover, var(--accent-muted));
+  color: var(--accent-primary);
+}
+.file-entry-more-list .danger { color: var(--error, #c92a2a); }
+.file-entry-more-list .danger:hover {
+  background: color-mix(in srgb, var(--error) 10%, transparent);
+  color: var(--error);
+}
+.file-selected-paths { display:block;box-sizing:border-box;width:100%;max-height:160px;overflow:auto;margin:10px 0;padding:10px 12px;border-radius:10px;border:1px solid var(--stroke-subtle);background:var(--surface-base);color:var(--text-primary);font-size:12px;resize:vertical;user-select:text; }
+@media (max-width: 600px) {
+  .file-entry { padding-inline: 10px; gap: 8px; }
+  .file-entry-actions { gap: 2px; }
+  .file-entry-more-list { min-width: 166px; }
+}
+.account-panel {
+  background: var(--surface-raised);
+  border: 1px solid var(--stroke-subtle);
+  padding: 20px 22px;
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-elevated);
+}
+.account-panel h3 {
+  font-size: 16px;
+  font-weight: 700;
+  margin: 0 0 6px;
+}
+.account-panel p {
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  margin: 0 0 14px;
+}
+.account-form {
+  display: grid;
+  gap: 14px;
+}
+.account-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 0;
+  border-bottom: 0;
+}
+.account-row:last-child {
+  border: 0;
+}
+.account-row strong {
+  font-size: 13.5px;
+  font-weight: 600;
+  display: block;
+}
+.account-row small {
+  display: block;
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  margin-top: 3px;
+}
+.account-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--stroke-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  background: var(--surface-base);
+  padding: 6px 12px;
+  font-size: 12px;
+  font-weight: 550;
+}
+.account-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+/* Apple-style Disclosure Card */
+.apple-disclosure-card {
+  margin-top: 10px;
+  border-radius: var(--radius-md);
+  transition: transform var(--motion-fast) var(--motion-spring), opacity var(--motion-fast) ease;
+}
+.apple-disclosure-card > summary {
+  list-style: none;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px;
+  border-radius: var(--radius-md);
+  background: var(--fluid-card-item-fill, var(--surface-base));
+  border: 1px solid var(--fluid-card-border, var(--stroke-subtle));
+  color: var(--text-primary);
+  font-size: 13px;
+  font-weight: 600;
+  user-select: none;
+  transition: background var(--motion-fast) ease, border-color var(--motion-fast) ease;
+}
+.apple-disclosure-card > summary::-webkit-details-marker,
+.apple-disclosure-card > summary::marker {
+  display: none;
+}
+.apple-disclosure-card > summary:hover {
+  background: var(--fluid-card-hover);
+  border-color: var(--fluid-card-border-strong, var(--stroke-strong));
+}
+.apple-disclosure-card[open] > summary {
+  border-bottom-left-radius: 0;
+  border-bottom-right-radius: 0;
+  border-bottom-color: transparent;
+}
+.apple-disclosure-card .disclosure-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.apple-disclosure-card .disclosure-icon {
+  color: var(--accent-primary);
+}
+.apple-disclosure-card .disclosure-chevron {
+  color: var(--text-tertiary);
+  transition: transform var(--motion-fast) var(--motion-spring);
+}
+.apple-disclosure-card[open] > summary .disclosure-chevron {
+  transform: rotate(90deg);
+}
+.apple-disclosure-card .disclosure-body {
+  padding: 16px;
+  border: 1px solid var(--fluid-card-border, var(--stroke-subtle));
+  border-top: 0;
+  border-bottom-left-radius: var(--radius-md);
+  border-bottom-right-radius: var(--radius-md);
+  background: var(--fluid-card-fill);
+}
+
+/* Eliminate nested card box-in-a-box styling */
+.apple-disclosure-card .account-panel {
+  background: transparent;
+  border: none;
+  box-shadow: none;
+  padding: 8px 0 0 0;
+  margin-bottom: 0;
+}
+
+/* Status Badges */
+.ops-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: var(--radius-pill);
+  font-size: 12px;
+  font-weight: 650;
+  flex-shrink: 0;
+}
+.ops-status-badge.is-healthy {
+  background: color-mix(in srgb, var(--success) 14%, transparent);
+  color: var(--success);
+}
+.ops-healthy-row, .ops-alert-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 0;
+}
+.ops-healthy-info, .ops-alert-info {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+.ops-tools-group {
+  margin-top: 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.grant-details-drawer {
+  margin-top: 14px;
+  padding: 16px 18px;
+  border-radius: 14px;
+  border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-item-fill);
+  box-shadow: var(--fluid-item-card-shadow);
+  display: grid;
+  gap: 10px;
+}
+.grant-details-drawer p {
+  margin: 0 0 6px;
+  font-size: 12.5px;
+  color: var(--text-secondary);
+}
+.grant-details-drawer .account-heading {
+  margin-bottom: 4px;
+}
+.grant-details-drawer .account-heading h3 {
+  font-size: 14.5px;
+  margin: 0;
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.file-open {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  flex: 1;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 0;
+  color: var(--text-primary);
+}
+.file-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  color: var(--text-secondary);
+  background: var(--fluid-card-item-fill, var(--surface-base));
+  flex-shrink: 0;
+}
+.file-icon.folder { background: color-mix(in srgb, var(--accent-primary) 12%, transparent); color: var(--accent-primary); }
+.file-icon.file   { background: color-mix(in srgb, var(--text-primary) 6%, transparent); color: var(--text-secondary); }
+
+.file-name {
+  min-width: 0;
+  flex: 1;
+}
+.file-name strong {
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 13.5px;
+  font-weight: 560;
+}
+.file-name small {
+  display: block;
+  font-size: 11.5px;
+  color: var(--text-tertiary);
+  margin-top: 2px;
+}
+
+.file-entry-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.file-entry-actions button {
+  display: grid;
+  place-items: center;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+}
+.file-entry-actions button:hover {
+  background: var(--fluid-card-hover, var(--surface-base));
+  border-color: var(--fluid-card-border, var(--stroke-subtle));
+  color: var(--text-primary);
+}
+
+.files-empty {
+  display: flex;
+  min-height: 180px;
+  justify-content: center;
+  align-items: center;
+  flex-direction: column;
+  gap: 10px;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+/* Modals & Dialogs (backdrop and modalZoomIn defined in fluid-controls.css) */
+.preview-video {
+  max-width: 100%;
+  max-height: 72vh;
+  object-fit: contain;
+  border-radius: var(--radius-md);
+  align-self: center;
+}
+.preview-text {
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 70vh;
+  padding: 20px;
+  background: var(--surface-base);
+  border-radius: var(--radius-md);
+  font-size: 12.5px;
+  line-height: 1.7;
+}
+
+/* Authentication Scene & Card */
+.auth-scene {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 30px;
+  background: radial-gradient(ellipse at 18% 14%, color-mix(in srgb, var(--accent-primary) 10%, transparent), transparent 50%),
+              radial-gradient(ellipse at 84% 86%, color-mix(in srgb, var(--accent-secondary) 8%, transparent), transparent 48%),
+              var(--surface-base);
+  position: relative;
+}
+.auth-card {
+  width: min(100%, 420px);
+  border: 1px solid var(--fluid-card-border, var(--stroke-glass));
+  border-radius: var(--radius-xl);
+  padding: 32px;
+  background: var(--fluid-card-fill, var(--surface-glass));
+  box-shadow: var(--shadow-float);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.auth-card > .auth-logo {
+  background: linear-gradient(145deg, var(--accent-primary-solid-top, var(--accent-primary)), var(--accent-primary-solid, var(--accent-primary)));
+  color: var(--on-accent-primary, #fff);
+  width: 56px;
+  height: 56px;
+  border-radius: var(--radius-lg);
+  display: grid;
+  place-items: center;
+  margin-bottom: 6px;
+  box-shadow: 0 8px 20px var(--accent-glow);
+}
+.auth-card h1 {
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.5px;
+  margin: 0;
+}
+.auth-card p {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.6;
+  margin: 0 0 8px;
+}
+.auth-card label, .account-form label {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+.auth-card input, .account-form input {
+  width: 100%;
+  padding: 10px 13px;
+  border: 1px solid var(--stroke-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--surface-base);
+  color: var(--text-primary);
+  outline: none;
+  font: inherit;
+  font-size: 13px;
+  transition: border-color var(--motion-fast) ease, box-shadow var(--motion-fast) ease;
+}
+.auth-card input:focus, .account-form input:focus {
+  border-color: var(--accent-primary);
+  box-shadow: 0 0 0 3px var(--accent-muted);
+}
+.auth-card small {
+  margin-top: 4px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  text-align: center;
+}
+.auth-submit {
+  background: var(--accent-primary);
+  color: white;
+  border: 0;
+  border-radius: var(--radius-md);
+  padding: 12px 18px;
+  font-size: 14px;
+  font-weight: 650;
+  box-shadow: 0 6px 18px var(--accent-glow);
+  margin-top: 4px;
+}
+.auth-submit:hover:not(:disabled) {
+  filter: brightness(1.06);
+}
+.form-error,
+.account-panel .form-error,
+.auth-card .form-error {
+  font-size: 12px;
+  color: var(--error);
+  margin: 4px 0;
+}
+@media (prefers-reduced-motion: reduce) {
+  .apple-disclosure-card,
+  .isle-card input,
+  .account-panel input,
+  .auth-card input,
+  .account-form input {
+    transition: none;
+  }
+}

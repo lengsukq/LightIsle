@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { timelineMonth, createPhotoTimelineLayout, getPhotoTimelineWindow } from "../src/photoTimelineLayout.ts";
+import { timelineMonth, createPhotoTimelineLayout, getPhotoTimelineWindow } from "../src/features/photos/photoTimelineLayout.ts";
 
 const stamp = (day) => Date.parse(day + "T12:00:00Z") / 1000;
 

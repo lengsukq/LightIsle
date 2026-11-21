@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {apiErrorFromResponse,readApiFailure} from "../src/apiFailure.ts";
-import {describeUserFacingError} from "../src/userFacingError.ts";
-import {describeRootOperationFailure,readRootDiscoveryResponse} from "../src/rootDiscovery.ts";
+import {apiErrorFromResponse,readApiFailure} from "../src/api/apiFailure.ts";
+import {describeUserFacingError} from "../src/api/userFacingError.ts";
+import {describeRootOperationFailure,readRootDiscoveryResponse} from "../src/api/rootDiscovery.ts";
 
 test("Core error reason wins over HTTP 503 and remains safely diagnosable", async () => {
   const response = new Response('{"error":"default_root_not_configured"}',{

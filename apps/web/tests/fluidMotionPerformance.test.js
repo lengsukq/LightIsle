@@ -3,9 +3,9 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import test from "node:test";
 import { computed, ref } from "vue";
-import { formatDateTime, formatShortDate } from "../src/dateTimeFormat.ts";
-import { useCinemaDockDrag } from "../src/useCinemaDockDrag.ts";
-import { usePhotoTimelineScrubber } from "../src/usePhotoTimelineScrubber.ts";
+import { formatDateTime, formatShortDate } from "../src/utils/dateTimeFormat.ts";
+import { useCinemaDockDrag } from "../src/features/cinema/useCinemaDockDrag.ts";
+import { usePhotoTimelineScrubber } from "../src/features/photos/usePhotoTimelineScrubber.ts";
 
 const SRC_ROOT = new URL("../src/", import.meta.url).pathname;
 
@@ -247,12 +247,12 @@ test("apps/web/src CSS and SFC sources follow compositor-only motion, prefers-re
     }
   }
 
-  const auroraCss = readSrc("fluid-aurora.css");
+  const auroraCss = readSrc("styles/fluid-aurora.css");
   assert.doesNotMatch(auroraCss, /infinite|aurora-float-/);
-  const baseCss = readSrc("style.css");
+  const baseCss = readSrc("styles/style.css");
   assert.doesNotMatch(baseCss, /pulseDot|floatOrb|glassTilt|\binfinite\b/);
 
-  const cinemaCss = readSrc("CinemaView.css");
+  const cinemaCss = readSrc("features/cinema/CinemaView.css");
   assert.match(cinemaCss, /\.cinema-tile\{[^}]*content-visibility:\s*auto/);
   const cinemaPlayRule = cinemaCss.match(/\.cinema-play\{[^}]*\}/)?.[0] ?? "";
   assert.doesNotMatch(cinemaPlayRule, /backdrop-filter/);
@@ -261,15 +261,15 @@ test("apps/web/src CSS and SFC sources follow compositor-only motion, prefers-re
   const cinemaScopeRule = cinemaCss.match(/\.cinema-scope-label\{[^}]*\}/)?.[0] ?? "";
   assert.doesNotMatch(cinemaScopeRule, /backdrop-filter/);
 
-  const photosCss = readSrc("PhotosView.css");
+  const photosCss = readSrc("features/photos/PhotosView.css");
   const liveChipRule = photosCss.match(/\.photo-live-chip\{[^}]*\}/)?.[0] ?? "";
   assert.doesNotMatch(liveChipRule, /backdrop-filter/);
 
-  const buttonVue = readSrc("IsleButton.vue");
+  const buttonVue = readSrc("components/ui/IsleButton.vue");
   const glassBtnRule = buttonVue.match(/\.isle-btn\.variant-glass[\s\S]*?\}/)?.[0] ?? "";
   assert.doesNotMatch(glassBtnRule, /backdrop-filter/);
 
-  const filesCss = readSrc("fluid-files.css");
+  const filesCss = readSrc("styles/fluid-files.css");
   const trashEntryRule = filesCss.match(/(?:^|\n)\.trash-list\s+\.file-entry\s*\{[^}]*\}/)?.[0] ?? "";
   assert.match(trashEntryRule, /content-visibility:\s*auto/);
   const fileEntryRule = filesCss.match(/(?:^|\n)\.file-entry\s*\{[^}]*\}/)?.[0] ?? "";
@@ -279,12 +279,12 @@ test("apps/web/src CSS and SFC sources follow compositor-only motion, prefers-re
   assert.ok(sharedEntryRule.length > 0);
   assert.doesNotMatch(sharedEntryRule, /content-visibility:\s*auto/);
 
-  const selectVue = readSrc("AppleSelect.vue");
+  const selectVue = readSrc("components/ui/AppleSelect.vue");
   assert.match(selectVue, /addEventListener\("scroll",\s*handleScrollOrResize,\s*\{\s*capture:\s*true,\s*passive:\s*true\s*\}/);
 
-  const shellHtml = readSrc("AppShell.html");
-  assert.match(shellHtml, /<Transition name="isle-batch-bar">[\s\S]*class="file-batch-bar"/);
-  assert.match(shellHtml, /!showingTrash && filesLoading && !fileEntries\.length/);
-  assert.match(readSrc("PhotosBatchBar.vue"), /<Transition name="isle-hud-float">[\s\S]*class="photo-batch-hud"/);
-  assert.match(readSrc("CinemaView.vue"), /<Transition name="isle-hud-float">[\s\S]*class="cinema-batch-hud"/);
+  const filesView = readSrc("features/files/FilesView.vue");
+  assert.match(filesView, /<Transition name="isle-batch-bar">[\s\S]*class="file-batch-bar"/);
+  assert.match(filesView, /!showingTrash && filesLoading && !fileEntries\.length/);
+  assert.match(readSrc("features/photos/PhotosBatchBar.vue"), /<Transition name="isle-hud-float">[\s\S]*class="photo-batch-hud"/);
+  assert.match(readSrc("features/cinema/CinemaView.vue"), /<Transition name="isle-hud-float">[\s\S]*class="cinema-batch-hud"/);
 });

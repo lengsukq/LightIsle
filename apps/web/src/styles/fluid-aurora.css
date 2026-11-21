@@ -1,0 +1,387 @@
+/* =========================================================================
+   LightIsle 5-Preset Full-Page Modern Theme System
+   Aligned with Flutter IsleThemePresets across EVERY page & core surface:
+   - AuthScene / Overview / Files / ComputerFiles / Photos / Cinema /
+     Downloads / AppsCenter / AppDetail / Automation / Settings / Modals /
+     ThemePicker / MobileNavDrawer
+   ========================================================================= */
+.aurora-ambient {
+  position: fixed;
+  inset: -18vmax;
+  pointer-events: none;
+  z-index: 0;
+  overflow: hidden;
+  filter: blur(108px) saturate(96%);
+  opacity: 0.065;
+  transition: opacity 0.8s ease, filter 0.8s ease;
+}
+[data-theme="dark"] .aurora-ambient {
+  opacity: 0.11;
+  filter: blur(116px) saturate(106%);
+}
+
+.aurora-orb {
+  position: absolute;
+  border-radius: 50%;
+  mix-blend-mode: normal;
+  transition: background 1s ease, opacity 0.8s ease;
+}
+[data-theme="dark"] .aurora-orb {
+  mix-blend-mode: screen;
+}
+
+/* =========================================================================
+   1. 温润画廊 (warm_gallery — Modern Architectural Alabaster & Obsidian)
+   ========================================================================= */
+:root,
+[data-theme-preset="warm_gallery"] {
+  --aurora-1: radial-gradient(circle, rgba(212, 101, 62, 0.28) 0%, rgba(232, 136, 100, 0.10) 52%, transparent 72%);
+  --aurora-2: radial-gradient(circle, rgba(14, 107, 116, 0.30) 0%, rgba(20, 129, 139, 0.12) 52%, transparent 72%);
+  --aurora-3: radial-gradient(circle, rgba(199, 120, 26, 0.22) 0%, rgba(232, 166, 77, 0.08) 52%, transparent 72%);
+  --aurora-4: radial-gradient(circle, rgba(24, 131, 91, 0.20) 0%, rgba(71, 194, 141, 0.08) 52%, transparent 72%);
+  --aurora-5: radial-gradient(circle, rgba(155, 145, 132, 0.22) 0%, transparent 72%);
+}
+[data-theme="dark"][data-theme-preset="warm_gallery"] {
+  --aurora-1: radial-gradient(circle, rgba(232, 136, 100, 0.32) 0%, rgba(212, 101, 62, 0.12) 52%, transparent 72%);
+  --aurora-2: radial-gradient(circle, rgba(92, 200, 212, 0.34) 0%, rgba(19, 116, 126, 0.14) 52%, transparent 72%);
+  --aurora-3: radial-gradient(circle, rgba(232, 166, 77, 0.24) 0%, transparent 72%);
+  --aurora-4: radial-gradient(circle, rgba(71, 194, 141, 0.24) 0%, transparent 72%);
+  --aurora-5: radial-gradient(circle, rgba(164, 161, 153, 0.18) 0%, transparent 72%);
+}
+
+/* =========================================================================
+   2. 极光玻璃 (nordic_glass — macOS / VisionOS Frosted Liquid Glass)
+   ========================================================================= */
+[data-theme-preset="nordic_glass"] {
+  --aurora-1: radial-gradient(circle, rgba(10, 102, 255, 0.42) 0%, rgba(91, 164, 255, 0.16) 50%, transparent 72%);
+  --aurora-2: radial-gradient(circle, rgba(110, 86, 207, 0.38) 0%, rgba(167, 139, 250, 0.14) 50%, transparent 72%);
+  --aurora-3: radial-gradient(circle, rgba(8, 145, 178, 0.32) 0%, rgba(56, 217, 233, 0.12) 50%, transparent 72%);
+  --aurora-4: radial-gradient(circle, rgba(5, 150, 105, 0.22) 0%, rgba(52, 211, 153, 0.08) 50%, transparent 72%);
+  --aurora-5: radial-gradient(circle, rgba(79, 70, 229, 0.26) 0%, transparent 70%);
+}
+[data-theme-preset="nordic_glass"] .aurora-ambient {
+  opacity: 0.18;
+  filter: blur(96px) saturate(128%);
+}
+[data-theme="dark"][data-theme-preset="nordic_glass"] .aurora-ambient {
+  opacity: 0.26;
+  filter: blur(104px) saturate(135%);
+}
+[data-theme-preset="nordic_glass"] :is(
+  .sidebar, .topbar, .mobile-nav, .mobile-more-sheet,
+  .hero, .sanctuary-card, .vitality-card, .overview-pending-panel,
+  .account-panel, .files-panel, .content-empty, .auth-card,
+  .isle-card.variant-card, .isle-card.variant-glass, .isle-modal, .isle-modal-card,
+  .theme-picker-popover, .file-entry-more-list, .photo-albums-menu-panel,
+  .photos-nav-bar, .photos-filter-drawer, .memory-card, .photo-batch-hud, .viewer-info,
+  .cinema-featured, .cinema-tile, .cinema-batch-hud, .cinema-dialog,
+  .apps-templates-bar, .app-card, .app-workbench, .app-detail-hero, .app-detail-card,
+  .home-app-tile, .home-apps-guide-tile, .auto-card
+) {
+  background: var(--surface-glass);
+  -webkit-backdrop-filter: blur(28px) saturate(180%);
+  backdrop-filter: blur(28px) saturate(180%);
+}
+[data-theme-preset="nordic_glass"] :is(
+  .hero, .auth-card, .gallery-modal, .cinema-dialog, .isle-modal, .isle-modal-card,
+  .vitality-card, .app-workbench
+) {
+  border-radius: var(--radius-xl);
+}
+[data-theme-preset="nordic_glass"] :is(
+  .account-panel, .files-panel, .sanctuary-card, .metric-card,
+  .isle-card.variant-card, .isle-card.variant-glass, .photos-nav-bar,
+  .cinema-featured, .cinema-tile, .apps-templates-bar, .app-card,
+  .app-detail-hero, .app-detail-card, .home-app-tile, .auto-card
+) {
+  border-radius: var(--radius-lg);
+}
+
+/* =========================================================================
+   3. 瑞士印刷 (swiss_editorial — Linear / Vercel Precision Hairline Minimal)
+   ========================================================================= */
+[data-theme-preset="swiss_editorial"] .aurora-ambient {
+  opacity: 0;
+}
+[data-theme-preset="swiss_editorial"] .auth-scene::before {
+  content: "";
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  pointer-events: none;
+  z-index: 60;
+  background: var(--accent-primary);
+}
+[data-theme-preset="swiss_editorial"] :is(.sidebar, .topbar) {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background: var(--fluid-chrome);
+  box-shadow: none;
+}
+[data-theme-preset="swiss_editorial"] :is(
+  .mobile-nav, .mobile-more-sheet,
+  .hero, .hero-glass, .sanctuary-card, .vitality-card, .vitality-chip, .overview-pending-panel,
+  .disk-admin-item, .alert-item, .account-panel, .files-panel, .content-empty, .auth-card,
+  .gallery-modal, .cinema-dialog, .isle-modal, .isle-modal-card, .isle-card,
+  .upload-activity-card, .upload-drop-area,
+  .file-batch-bar, .file-entries-container.file-grid-mode .file-entry,
+  .photos-nav-bar, .photos-filter-drawer, .memory-card, .photo-batch-hud, .viewer-info, .photo-album-cover,
+  .cinema-featured, .cinema-tile, .cinema-episode, .cinema-home-cover, .cinema-overview-poster,
+  .cinema-overview-playlist, .cinema-batch-hud, .cinema-alert,
+  .apps-templates-bar, .app-card, .apps-template-card, .app-workbench,
+  .app-detail-hero, .app-detail-card, .app-option-card, .app-detail-save-bar,
+  .home-app-tile, .home-apps-guide-tile, .auto-card, .auto-switch-row,
+  .download-form, .download-task-list, .settings-nav, .settings-form-subcard,
+  .grant-details-drawer, .apple-disclosure-card
+) {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background: var(--fluid-card-top);
+  border-radius: var(--radius-md);
+  box-shadow: none;
+}
+[data-theme-preset="swiss_editorial"] :is(
+  .theme-picker-popover, .file-entry-more-list, .photo-albums-menu-panel,
+  .isle-modal-card, .gallery-modal, .cinema-dialog
+) {
+  box-shadow: var(--shadow-float);
+}
+[data-theme-preset="swiss_editorial"] :is(
+  .atmosphere-capsule, .circle-action, .status-pill, .user-capsule, .topbar-root-control,
+  .hero-search-bar, .photo-tool-btn, .photo-mode-tabs, .type-tabs, .cinema-tabs,
+  .file-inline-search, .file-view-toggle, .isle-btn, .isle-chip,
+  .account-action, .refresh, .dest-quick-chip, .dest-browse-btn, .home-apps-manage-btn,
+  .photo-month-select
+) {
+  border-radius: var(--radius-sm);
+  box-shadow: none;
+}
+[data-theme-preset="swiss_editorial"] :is(
+  .sanctuary-card, .vitality-chip, .disk-admin-item, .photo-tile,
+  .memory-card, .cinema-tile, .cinema-episode, .app-card, .home-app-tile, .auto-card,
+  .isle-card.is-interactive, .atmosphere-capsule, .circle-action
+):hover {
+  border-color: var(--accent-primary);
+  box-shadow: none;
+}
+[data-theme-preset="swiss_editorial"] :is(
+  .hero h1, .brand b, .cinema-featured-info h3, .cinema-home-heading h3,
+  .isle-card-title, .photo-month-heading
+) {
+  letter-spacing: var(--theme-heading-tracking);
+}
+
+/* =========================================================================
+   4. 新粗野波普 (neo_brutal_pop — Modern Studio Pop, Crisp Ink & Offset)
+   ========================================================================= */
+[data-theme-preset="neo_brutal_pop"] .aurora-ambient {
+  opacity: 0;
+}
+[data-theme-preset="neo_brutal_pop"] body::before,
+[data-theme-preset="neo_brutal_pop"] .auth-scene::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image: radial-gradient(rgba(24, 24, 27, 0.075) 1.1px, transparent 1.1px);
+  background-size: 24px 24px;
+}
+[data-theme="dark"][data-theme-preset="neo_brutal_pop"] body::before,
+[data-theme="dark"][data-theme-preset="neo_brutal_pop"] .auth-scene::before {
+  background-image: radial-gradient(rgba(216, 212, 200, 0.075) 1.1px, transparent 1.1px);
+}
+[data-theme-preset="neo_brutal_pop"] .sidebar {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background: var(--fluid-chrome);
+  border-right: var(--theme-border-width, 1.75px) solid var(--fluid-card-border);
+  box-shadow: none;
+}
+[data-theme-preset="neo_brutal_pop"] .topbar {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  background: var(--fluid-chrome);
+  border-bottom: var(--theme-border-width, 1.75px) solid var(--fluid-card-border);
+  box-shadow: none;
+}
+[data-theme-preset="neo_brutal_pop"] :is(
+  .mobile-nav, .mobile-more-sheet,
+  .hero, .sanctuary-card, .vitality-card, .overview-pending-panel,
+  .account-panel, .files-panel, .content-empty, .auth-card,
+  .gallery-modal, .cinema-dialog, .isle-modal, .isle-modal-card,
+  .isle-card.variant-card, .isle-card.variant-glass,
+  .theme-picker-popover, .file-entry-more-list, .photo-albums-menu-panel,
+  .photos-nav-bar, .photo-batch-hud, .cinema-featured, .cinema-tile, .cinema-batch-hud,
+  .apps-templates-bar, .app-card, .app-workbench, .app-detail-hero, .app-detail-card,
+  .home-app-tile, .home-apps-guide-tile, .auto-card
+) {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border-width: var(--theme-border-width, 1.75px);
+  border-style: solid;
+  border-color: var(--fluid-card-border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--fluid-card-shadow);
+}
+[data-theme-preset="neo_brutal_pop"] :is(
+  .vitality-chip, .disk-admin-item, .alert-item, .isle-card.variant-item,
+  .memory-card, .cinema-episode, .apps-template-card, .app-option-card,
+  .file-entries-container.file-grid-mode .file-entry, .download-form, .download-task-list,
+  .settings-form-subcard, .grant-details-drawer, .upload-activity-card,
+  .atmosphere-capsule, .circle-action, .user-capsule, .status-pill, .topbar-root-control,
+  .hero-search-bar, .photo-tool-btn, .file-inline-search,
+  .isle-btn, .account-action, .refresh, .settings-nav
+) {
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  border-width: 1.5px;
+  border-style: solid;
+  border-color: var(--fluid-card-border);
+  border-radius: var(--radius-md);
+  box-shadow: var(--fluid-item-card-shadow);
+}
+[data-theme-preset="neo_brutal_pop"] :is(
+  .sanctuary-card, .memory-card, .cinema-tile, .cinema-episode,
+  .app-card, .home-app-tile, .auto-card, .isle-card.is-interactive,
+  .atmosphere-capsule, .circle-action, .isle-btn
+):hover:not(:disabled) {
+  transform: translate(-1.5px, -1.5px);
+  box-shadow: var(--fluid-hover-shadow);
+}
+[data-theme-preset="neo_brutal_pop"] .side-nav button.chosen,
+[data-theme-preset="neo_brutal_pop"] .mobile-nav button.chosen,
+[data-theme-preset="neo_brutal_pop"] .settings-nav button.active {
+  border: 1.5px solid var(--fluid-rim);
+  background: var(--accent-primary);
+  color: var(--on-accent-primary);
+  box-shadow: 2px 2px 0 0 var(--neo-shadow);
+}
+[data-theme-preset="neo_brutal_pop"] .side-nav button.chosen .nav-squircle {
+  color: var(--on-accent-primary);
+}
+[data-theme-preset="neo_brutal_pop"] .side-nav button.chosen::after {
+  display: none;
+}
+
+/* =========================================================================
+   5. 赛博终端 (cyber_terminal — Raycast / Warp Precision Carbon & Emerald)
+   ========================================================================= */
+[data-theme-preset="cyber_terminal"] {
+  --aurora-1: radial-gradient(circle, rgba(52, 211, 153, 0.24) 0%, rgba(5, 150, 105, 0.08) 50%, transparent 72%);
+  --aurora-2: radial-gradient(circle, rgba(245, 158, 11, 0.18) 0%, transparent 68%);
+  --aurora-3: radial-gradient(circle, rgba(34, 211, 238, 0.20) 0%, transparent 68%);
+  --aurora-4: radial-gradient(circle, rgba(52, 211, 153, 0.16) 0%, transparent 68%);
+  --aurora-5: radial-gradient(circle, rgba(56, 189, 248, 0.16) 0%, transparent 68%);
+}
+[data-theme-preset="cyber_terminal"] .aurora-ambient {
+  opacity: 0.09;
+  filter: blur(104px) saturate(112%);
+}
+[data-theme="dark"][data-theme-preset="cyber_terminal"] .aurora-ambient {
+  opacity: 0.16;
+}
+[data-theme-preset="cyber_terminal"] body::before,
+[data-theme-preset="cyber_terminal"] .auth-scene::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  background-image:
+    linear-gradient(to right, rgba(5, 150, 105, 0.04) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(5, 150, 105, 0.04) 1px, transparent 1px);
+  background-size: 36px 36px;
+}
+[data-theme="dark"][data-theme-preset="cyber_terminal"] body::before,
+[data-theme="dark"][data-theme-preset="cyber_terminal"] .auth-scene::before {
+  background-image:
+    linear-gradient(to right, rgba(52, 211, 153, 0.044) 1px, transparent 1px),
+    linear-gradient(to bottom, rgba(52, 211, 153, 0.044) 1px, transparent 1px);
+}
+[data-theme-preset="cyber_terminal"] :is(
+  .mobile-nav, .mobile-more-sheet,
+  .hero, .hero-glass, .sanctuary-card, .vitality-card, .vitality-chip, .overview-pending-panel,
+  .disk-admin-item, .alert-item, .account-panel, .files-panel, .content-empty, .auth-card,
+  .gallery-modal, .cinema-dialog, .isle-modal, .isle-modal-card, .isle-card,
+  .upload-activity-card, .upload-drop-area,
+  .file-entries-container.file-grid-mode .file-entry,
+  .photos-nav-bar, .photos-filter-drawer, .memory-card, .photo-batch-hud, .viewer-info, .photo-album-cover,
+  .cinema-featured, .cinema-tile, .cinema-episode, .cinema-home-cover, .cinema-overview-poster,
+  .cinema-overview-playlist, .cinema-batch-hud, .cinema-alert,
+  .apps-templates-bar, .app-card, .apps-template-card, .app-workbench,
+  .app-detail-hero, .app-detail-card, .app-option-card, .home-app-tile, .auto-card,
+  .download-form, .download-task-list, .settings-nav, .apple-disclosure-card,
+  .theme-picker-popover
+) {
+  border-radius: var(--radius-lg);
+}
+[data-theme-preset="cyber_terminal"] :is(
+  .atmosphere-capsule, .circle-action, .status-pill, .user-capsule, .topbar-root-control,
+  .side-nav button, .hero-search-bar, .photo-tool-btn, .photo-mode-tabs, .type-tabs,
+  .cinema-tabs, .file-inline-search, .file-view-toggle,
+  .isle-btn, .isle-chip, .account-action, .refresh, .photo-grid .photo-tile,
+  .dest-quick-chip, .dest-browse-btn, .home-apps-manage-btn
+) {
+  border-radius: var(--radius-md);
+}
+[data-theme-preset="cyber_terminal"] :is(
+  .eyebrow, .chip-val, .sanctuary-chip
+) {
+  font-family: "SF Mono", ui-monospace, "JetBrains Mono", Menlo, monospace;
+  letter-spacing: 0.02em;
+}
+[data-theme-preset="cyber_terminal"] :is(
+  .sanctuary-card, .vitality-chip, .disk-admin-item, .memory-card,
+  .cinema-tile, .cinema-episode, .app-card, .home-app-tile, .auto-card,
+  .isle-card.is-interactive, .atmosphere-capsule
+):hover {
+  border-color: var(--fluid-card-border-strong);
+  box-shadow: var(--fluid-hover-shadow);
+}
+
+.aurora-orb-1 {
+  width: 62vmax;
+  height: 56vmax;
+  top: -12vmax;
+  right: -8vmax;
+  background: var(--aurora-1);
+}
+.aurora-orb-2 {
+  width: 58vmax;
+  height: 52vmax;
+  bottom: -12vmax;
+  left: -10vmax;
+  background: var(--aurora-2);
+}
+.aurora-orb-3 {
+  width: 52vmax;
+  height: 50vmax;
+  top: 25vmax;
+  left: 20vmax;
+  background: var(--aurora-3);
+}
+.aurora-orb-4 {
+  width: 48vmax;
+  height: 46vmax;
+  bottom: 8vmax;
+  right: 18vmax;
+  background: var(--aurora-4);
+}
+.aurora-orb-5 {
+  width: 46vmax;
+  height: 44vmax;
+  top: 8vmax;
+  left: 8vmax;
+  background: var(--aurora-5);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aurora-ambient,
+  .aurora-orb {
+    transition: none;
+    animation: none !important;
+  }
+}

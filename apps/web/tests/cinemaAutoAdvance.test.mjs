@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {continueAfterPlaybackEnd} from "../src/cinemaAutoAdvance.ts";
+import {continueAfterPlaybackEnd} from "../src/features/cinema/cinemaAutoAdvance.ts";
 
 function deferred(){
  let resolve;

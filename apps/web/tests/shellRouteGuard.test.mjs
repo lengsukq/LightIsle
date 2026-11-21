@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resolvePermittedPage, resolvePermittedSettingsGroup } from "../src/shellRouteGuard.ts";
+import { resolvePermittedPage, resolvePermittedSettingsGroup } from "../src/utils/shellRouteGuard.ts";
 
 test("resolvePermittedPage blocks automation for members and clamps computer access once resolved", () => {
   assert.equal(

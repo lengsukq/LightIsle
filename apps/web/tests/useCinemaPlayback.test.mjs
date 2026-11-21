@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { ref } from "vue";
-import { useCinemaPlayback } from "../src/useCinemaPlayback.ts";
+import { useCinemaPlayback } from "../src/features/cinema/useCinemaPlayback.ts";
 
 const movie = {
   id: 7,

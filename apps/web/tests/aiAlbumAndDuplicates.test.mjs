@@ -4,8 +4,8 @@ import {
   appendAISearchParams,
   chooseDuplicateKeepPath,
   selectRecommendedWasteIds,
-} from "../src/usePhotoAISearchAndPeople.ts";
-import { describeUserFacingError } from "../src/userFacingError.ts";
+} from "../src/features/photos/usePhotoAISearchAndPeople.ts";
+import { describeUserFacingError } from "../src/api/userFacingError.ts";
 
 test("appendAISearchParams attaches personId and non-default searchMode cleanly", () => {
   const q1 = new URLSearchParams();

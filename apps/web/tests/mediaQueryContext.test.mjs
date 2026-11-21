@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { mediaQueryKey, transitionMediaQuery } from "../src/mediaQueryContext.ts";
+import { mediaQueryKey, transitionMediaQuery } from "../src/api/mediaQueryContext.ts";
 
 const photoQuery = (overrides = {}) => mediaQueryKey({
   root: "photos-root",

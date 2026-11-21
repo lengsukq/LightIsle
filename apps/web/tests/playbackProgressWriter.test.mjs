@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {createPlaybackProgressWriter} from '../src/playbackProgressWriter.ts';
+import {createPlaybackProgressWriter} from '../src/features/cinema/playbackProgressWriter.ts';
 
 function deferred() {
   let resolve, reject;

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import {timelineYearsFromMonths,timelineJumpIndex} from "../src/photoTimelineJump.ts";
+import {timelineYearsFromMonths,timelineJumpIndex} from "../src/features/photos/photoTimelineJump.ts";
 
 test("the full NAS month index can jump beyond loaded browser pages", () => {
   const index = timelineYearsFromMonths([

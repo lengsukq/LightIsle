@@ -1,13 +1,14 @@
 import { computed, ref, watch } from "vue";
-import { describeUserFacingError } from "../userFacingError.ts";
-import { requestConfirm } from "../useConfirmDialog.ts";
+import { describeUserFacingError } from "../api/userFacingError.ts";
+import { formatUnixDateTime } from "../utils/format.ts";
+import { requestConfirm } from "./useConfirmDialog.ts";
 import {
   createAppsCenterClient,
   getAppDataBackupUrl,
   hasCronModule,
   hasWebModule,
   normalizeAccessPolicy,
-} from "../appsCenterApi.ts";
+} from "../features/apps/appsCenterApi.ts";
 import type {
   AppCronRunEntry,
   AppMemberSummary,
@@ -133,7 +134,7 @@ export function categoryLabel(category?: string): string {
 }
 
 export function localTime(seconds?: number): string {
-  return seconds ? new Date(seconds * 1000).toLocaleString() : "";
+  return formatUnixDateTime(seconds);
 }
 
 export function flipItem<T>(list: T[], value: T): T[] {
@@ -179,11 +180,9 @@ export function useAppsCenterController(
   const iframeKey = ref(0);
   const workbenchFullscreen = ref(false);
 
-  const editingAccessApp = ref<PublicAppItem | null>(null);
   const accessPolicy = ref<"admin_only" | "selected_members" | "all_members">("admin_only");
   const accessAllowedUserIDs = ref<number[]>([]);
 
-  const editingConfigApp = ref<PublicAppItem | null>(null);
   const webEnabled = ref(true);
   const webMode = ref<"static" | "on-demand" | "persistent">("on-demand");
   const webIdleTimeoutSeconds = ref(900);
@@ -313,8 +312,10 @@ export function useAppsCenterController(
     if (target) window.open(target, "_blank", "noopener");
   }
 
-  async function loadLogs(app: PublicAppItem) {
-    viewingLogsApp.value = app;
+  async function loadLogs(app: PublicAppItem, options?: { openModal?: boolean }) {
+    if (options?.openModal) {
+      viewingLogsApp.value = app;
+    }
     logsLoading.value = true;
     modalError.value = "";
     try {
@@ -336,7 +337,7 @@ export function useAppsCenterController(
     modalError.value = "";
     webOutput.value = "";
     cronRuns.value = [];
-    void loadLogs(app);
+    void loadLogs(app, { openModal: true });
   }
 
   async function runAction(app: PublicAppItem, action: "start" | "stop" | "restart" | "run_cron") {
@@ -459,69 +460,6 @@ export function useAppsCenterController(
       populateAccessForm(currentApp);
       populateConfigForm(currentApp);
       notice.value = `已保存「${currentApp.name}」的设置修改。`;
-    } catch (e) {
-      modalError.value = "保存设置失败：" + describeUserFacingError(e);
-    } finally {
-      busy.value = false;
-    }
-  }
-
-  function openAccessModal(app: PublicAppItem) {
-    modalError.value = "";
-    editingAccessApp.value = app;
-    populateAccessForm(app);
-  }
-
-  async function saveAccess() {
-    const app = editingAccessApp.value;
-    if (!app || busy.value) return;
-    busy.value = true;
-    modalError.value = "";
-    try {
-      const res = await apiClient.saveAccess(app, accessPolicy.value, accessAllowedUserIDs.value);
-      if (res.app) upsertSingleApp(res.app);
-      if (Array.isArray(res.apps)) apps.value = res.apps;
-      notice.value = `已保存「${app.name}」的成员访问权限。`;
-      editingAccessApp.value = null;
-    } catch (e) {
-      modalError.value = "保存权限失败：" + describeUserFacingError(e);
-    } finally {
-      busy.value = false;
-    }
-  }
-
-  function openConfigDrawer(app: PublicAppItem) {
-    modalError.value = "";
-    editingConfigApp.value = app;
-    populateConfigForm(app);
-  }
-
-  async function saveConfig() {
-    const app = editingConfigApp.value;
-    if (!app || busy.value) return;
-    busy.value = true;
-    modalError.value = "";
-    try {
-      const res = await apiClient.saveConfig(
-        app,
-        {
-          enabled: webEnabled.value,
-          mode: webMode.value,
-          idleTimeoutSeconds: Math.max(60, Number(webIdleTimeoutSeconds.value) || 900),
-          autoRestart: webAutoRestart.value,
-        },
-        {
-          enabled: cronEnabled.value,
-          cron: cronExpr.value,
-          timezone: cronTimezone.value,
-          events: cronEvents.value,
-          channels: cronChannels.value,
-        },
-      );
-      if (res.app) upsertSingleApp(res.app);
-      if (Array.isArray(res.apps)) apps.value = res.apps;
-      notice.value = `已保存「${app.name}」的生命周期与定时设置。`;
-      editingConfigApp.value = null;
     } catch (e) {
       modalError.value = "保存设置失败：" + describeUserFacingError(e);
     } finally {
@@ -718,11 +656,9 @@ export function useAppsCenterController(
     activeIframeUrl,
     iframeKey,
     workbenchFullscreen,
-    editingAccessApp,
     accessPolicy,
     accessAllowedUserIDs,
     nonAdminMembers,
-    editingConfigApp,
     webEnabled,
     webMode,
     webIdleTimeoutSeconds,
@@ -749,10 +685,6 @@ export function useAppsCenterController(
     refreshWorkbench,
     openInNewTab,
     runAction,
-    openAccessModal,
-    saveAccess,
-    openConfigDrawer,
-    saveConfig,
     activateApp,
     loadLogs,
     openLogsModal,

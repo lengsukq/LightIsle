@@ -6,7 +6,7 @@ import {
   cinemaTimeline,
   resolveBufferedFilmEnd,
   resolveKnownFilmDuration,
-} from "../src/cinemaTimeline.ts";
+} from "../src/features/cinema/cinemaTimeline.ts";
 
 test("HLS at a late offset does not prematurely complete on its short playlist", () => {
   assert.deepEqual(cinemaTimeline(12, 25, 600, 720), {position: 612, duration: 720, nearEnd: false});

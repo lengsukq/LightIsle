@@ -1,20 +1,20 @@
 import { createApp } from "vue";
 import App from "./App.vue";
-import "./style.css";
-import "./style-content.css";
-import "./style-media-responsive.css";
+import "./styles/style.css";
+import "./styles/style-content.css";
+import "./styles/style-media-responsive.css";
 import "./generated-fluid.css";
-import "./fluid-aurora.css";
-import "./fluid.css";
-import "./fluid-files.css";
-import "./fluid-controls.css";
-import "./fluid-dashboard.css";
-import "./fluid-responsive.css";
-import "./CinemaView.css";
-import "./CinemaPlayerStage.css";
-import "./PhotosView.css";
-import "./UserStoragePanel.css";
-import "./AppsCenterView.css";
+import "./styles/fluid-aurora.css";
+import "./styles/fluid.css";
+import "./styles/fluid-files.css";
+import "./styles/fluid-controls.css";
+import "./styles/fluid-dashboard.css";
+import "./styles/fluid-responsive.css";
+import "./features/cinema/CinemaView.css";
+import "./features/cinema/CinemaPlayerStage.css";
+import "./features/photos/PhotosView.css";
+import "./features/storage/UserStoragePanel.css";
+import "./features/apps/AppsCenterView.css";
 
 createApp(App).mount("#app");
 

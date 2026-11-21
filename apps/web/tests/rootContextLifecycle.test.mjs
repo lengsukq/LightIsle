@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createRootContextLifecycle } from '../src/rootContextLifecycle.ts';
+import { createRootContextLifecycle } from '../src/api/rootContextLifecycle.ts';
 
 test('each physical root generation closes previous request signal', () => {
  const life=createRootContextLifecycle();

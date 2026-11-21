@@ -1,8 +1,8 @@
 import { computed, nextTick, onUnmounted, ref, watch, type Ref } from "vue";
-import { pushModalLayer, type ModalLayerHandle } from "../modalStack.ts";
-import { usePhotoViewer } from "../usePhotoViewer.ts";
-import type { BatchAsset } from "../usePhotoBatchActions.ts";
-import type { SharedFileEntry } from "../useFileShares.ts";
+import { pushModalLayer, type ModalLayerHandle } from "../utils/modalStack.ts";
+import { usePhotoViewer } from "../features/photos/usePhotoViewer.ts";
+import type { BatchAsset } from "../features/photos/usePhotoBatchActions.ts";
+import type { SharedFileEntry } from "../features/files/useFileShares.ts";
 
 export function useFileMediaLightbox(options: {
   active: () => boolean;
@@ -15,16 +15,27 @@ export function useFileMediaLightbox(options: {
   scopedMediaPath: (path: string) => string;
   fileEntryForMediaAsset: (asset: BatchAsset | null) => SharedFileEntry | null;
   downloadFile: (entry: SharedFileEntry) => Promise<void> | void;
+  previewEndpoint?: string;
+  thumbnailEndpoint?: string;
 }) {
+  const previewBase = options.previewEndpoint ?? "/api/v2/files/preview";
+  const thumbnailBase = options.thumbnailEndpoint ?? "/api/v2/files/thumbnail";
+
   function originalUrl(asset: BatchAsset): string {
     return options.scopedMediaPath(
-      "/api/v2/files/preview?path=" + encodeURIComponent(asset.path),
+      previewBase + "?path=" + encodeURIComponent(asset.path),
     );
   }
 
   function thumbUrl(asset: BatchAsset): string {
     return options.scopedMediaPath(
-      "/api/v2/files/thumbnail?path=" + encodeURIComponent(asset.path) + "&size=512",
+      thumbnailBase + "?path=" + encodeURIComponent(asset.path) + "&size=512",
+    );
+  }
+
+  function previewUrl(asset: BatchAsset): string {
+    return options.scopedMediaPath(
+      thumbnailBase + "?path=" + encodeURIComponent(asset.path) + "&size=2048",
     );
   }
 
@@ -33,6 +44,7 @@ export function useFileMediaLightbox(options: {
     mediaPath: options.scopedMediaPath,
     original: originalUrl,
     thumb: thumbUrl,
+    preview: previewUrl,
     move: (direction) => options.showAt(options.selectedIndex.value + direction),
   });
 
@@ -87,15 +99,7 @@ export function useFileMediaLightbox(options: {
       active: options.active(),
       selectedIndex: options.selectedIndex.value,
       modalAssets: options.assets.value,
-      viewerInfo: false,
-      albumOrganizerOpen: false,
       admin: options.isAdmin(),
-      canWrite: false,
-      pendingFavorite: false,
-      trashBusy: false,
-      slideshow: false,
-      viewerAIDetail: null,
-      viewerAILoading: false,
       viewerSrc: current ? viewer.viewerSrc(current) : "",
       viewerStage: viewer.viewerStage.value,
       viewerPreviewLoading: viewer.viewerPreviewLoading.value,
@@ -110,23 +114,6 @@ export function useFileMediaLightbox(options: {
       mediaPath: options.scopedMediaPath,
       originalUrl: current ? originalUrl(current) : "",
       thumbFor: thumbUrl,
-      folderAlbums: [],
-      folderAlbumOptions: [],
-      folderTarget: "",
-      albums: [],
-      albumOptions: [],
-      addAlbum: 0,
-      activeAlbum: 0,
-      sharedAlbumsError: "",
-      sharedAlbumsLoading: false,
-      privateAlbums: [],
-      privateAlbumOptions: [],
-      addPrivateAlbum: 0,
-      activePrivateAlbum: 0,
-      privateAlbumsError: "",
-      privateAlbumsLoading: false,
-      albumBusy: false,
-      message: "",
       fileBrowserMode: true,
       setDialogRef: (el: HTMLElement | null) => { dialogRef.value = el; },
       setCloseButtonRef: (el: HTMLButtonElement | null) => { closeButtonRef.value = el; },

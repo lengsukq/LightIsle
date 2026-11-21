@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { ref } from "vue";
-import { useCinemaDirectoryPlaylist } from "../src/useCinemaDirectoryPlaylist.ts";
+import { useCinemaDirectoryPlaylist } from "../src/features/cinema/useCinemaDirectoryPlaylist.ts";
 
 const film = (id, path) => ({ id, path, title: String(id), season: 0, episode: 0 });
 function playlist(selected, api, getEpoch = () => 0) {

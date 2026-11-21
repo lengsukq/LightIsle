@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createLatestRequestGate } from "../src/latestRequestGate.ts";
+import { createLatestRequestGate } from "../src/api/latestRequestGate.ts";
 
 test("starting a reset aborts the old request and invalidates late results", () => {
   const gate = createLatestRequestGate();

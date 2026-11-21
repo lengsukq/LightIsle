@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { readCinemaHomeShelves } from "../src/cinemaHomeShelves.ts";
+import { readCinemaHomeShelves } from "../src/features/cinema/cinemaHomeShelves.ts";
 
 function film(id, overrides={}) {
  return { id, title: String(id), path: "Cinema/"+id+".mp4", kind: "movie",

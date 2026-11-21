@@ -6,9 +6,9 @@ import {
   formatCinemaResumeLabel,
   parseSubtitleToWebVtt,
   pickInitialSeriesSeason,
-} from "../src/cinemaSubtitles.ts";
-import { duplicateCinemaTitleKeys } from "../src/cinemaCatalogDisplay.ts";
-import { createCinemaKeyboardController } from "../src/cinemaKeyboard.ts";
+} from "../src/features/cinema/cinemaSubtitles.ts";
+import { duplicateCinemaTitleKeys } from "../src/features/cinema/cinemaCatalogDisplay.ts";
+import { createCinemaKeyboardController } from "../src/features/cinema/cinemaKeyboard.ts";
 
 test("parseSubtitleToWebVtt parses BOM SRT and shifts offsets with non-negative clamping", () => {
   const srt = "\uFEFF1\r\n00:00:00,500 --> 00:00:02,000\r\n第一行\r\n第二行\r\n\r\n2\r\n00:00:04,000 --> 00:00:06,250\r\n下一句\r\n";
@@ -53,6 +53,19 @@ test("applyTextTracksOffset shifts live cues relative to original baseline witho
   applyTextTracksOffset(video, 0, baselines);
   assert.equal(cue1.startTime, 10);
   assert.equal(cue1.endTime, 13);
+
+  // Negative HLS start offset (-12s): passed cues park past timeline instead of stacking at t=0,
+  // while straddling cues clamp start to 0 and preserve their exact remaining duration.
+  applyTextTracksOffset(video, -12, baselines);
+  assert.equal(cue2.startTime >= 1_000_000, true);
+  assert.equal(cue2.endTime, cue2.startTime);
+  assert.equal(cue1.startTime, 0);
+  assert.equal(cue1.endTime, 1);
+
+  // Seeking back to 0s restores original baseline cues cleanly.
+  applyTextTracksOffset(video, 0, baselines);
+  assert.equal(cue2.startTime, 0.4);
+  assert.equal(cue2.endTime, 2.0);
 });
 
 test("formatCinemaResumeLabel and pickInitialSeriesSeason format series/movie resume hints cleanly", () => {

@@ -3,7 +3,7 @@ import { strict as assert } from 'node:assert';
 import { readFileSync } from 'node:fs';
 
 test('IsleModal encapsulates Teleport to body and ARIA dialog semantics', () => {
-  const source = readFileSync(new URL('../src/IsleModal.vue', import.meta.url), 'utf8');
+  const source = readFileSync(new URL('../src/components/ui/IsleModal.vue', import.meta.url), 'utf8');
 
   // Verify Teleport to body
   assert.match(source, /<Teleport to="body">/, 'IsleModal must mount directly to body via Teleport');
@@ -16,25 +16,15 @@ test('IsleModal encapsulates Teleport to body and ARIA dialog semantics', () => 
   assert.match(source, /--z-modal/, 'IsleModal must use --z-modal token for layer hierarchy');
 });
 
-test('AppsCenterView uses IsleModal for all sub-modals', () => {
-  const source = readFileSync(new URL('../src/AppsCenterView.vue', import.meta.url), 'utf8');
+test('AppsCenterView uses IsleModal for logs modal and removes unreachable dead modals', () => {
+  const source = readFileSync(new URL('../src/features/apps/AppsCenterView.vue', import.meta.url), 'utf8');
 
   // Verify IsleModal is imported
-  assert.match(source, /import IsleModal from ["']\.\/IsleModal\.vue["']/, 'IsleModal must be imported');
+  assert.match(source, /import IsleModal from ["']\.\.\/\.\.\/components\/ui\/IsleModal\.vue["']/, 'IsleModal must be imported');
 
-  // Verify IsleModal wraps access policy modal
-  assert.match(
-    source,
-    /<IsleModal\s+v-if="editingAccessApp"/,
-    'editingAccessApp modal must use IsleModal',
-  );
-
-  // Verify IsleModal wraps config modal
-  assert.match(
-    source,
-    /<IsleModal\s+v-if="editingConfigApp"/,
-    'editingConfigApp modal must use IsleModal',
-  );
+  // Dead modals were removed in favor of inline AppDetailPanel
+  assert.doesNotMatch(source, /editingAccessApp/, 'Dead editingAccessApp modal must remain removed');
+  assert.doesNotMatch(source, /editingConfigApp/, 'Dead editingConfigApp modal must remain removed');
 
   // Verify IsleModal wraps logs modal
   assert.match(
@@ -42,6 +32,10 @@ test('AppsCenterView uses IsleModal for all sub-modals', () => {
     /<IsleModal\s+v-if="viewingLogsApp"/,
     'viewingLogsApp modal must use IsleModal',
   );
+
+  // Verify openAppDetail does not trigger viewingLogsApp modal
+  const controller = readFileSync(new URL('../src/composables/useAppsCenterController.ts', import.meta.url), 'utf8');
+  assert.match(controller, /if\s*\(options\?\.openModal\)\s*\{\s*viewingLogsApp\.value\s*=\s*app;/);
 });
 
 test('generated-fluid.css contains explicit z-index tokens', () => {
@@ -55,7 +49,7 @@ test('generated-fluid.css contains explicit z-index tokens', () => {
 });
 
 test('fluid.css does not trap .main in an integer stacking context below .sidebar', () => {
-  const source = readFileSync(new URL('../src/fluid.css', import.meta.url), 'utf8');
+  const source = readFileSync(new URL('../src/styles/fluid.css', import.meta.url), 'utf8');
 
   // .main should not have z-index: 1
   assert.doesNotMatch(

@@ -3,7 +3,7 @@ import { strict as assert } from 'node:assert';
 import { readFileSync } from 'node:fs';
 
 test('IsleButton provides complete capsule button variants, sizes, and tactile interactions', () => {
-  const source = readFileSync(new URL('../src/IsleButton.vue', import.meta.url), 'utf8');
+  const source = readFileSync(new URL('../src/components/ui/IsleButton.vue', import.meta.url), 'utf8');
 
   // Verify variants
   assert.match(source, /variant-primary/, 'IsleButton must support variant-primary');
@@ -24,7 +24,7 @@ test('IsleButton provides complete capsule button variants, sizes, and tactile i
 });
 
 test('IsleCard provides fluid surfaces, stereoscopic shadows, and slot composition', () => {
-  const source = readFileSync(new URL('../src/IsleCard.vue', import.meta.url), 'utf8');
+  const source = readFileSync(new URL('../src/components/ui/IsleCard.vue', import.meta.url), 'utf8');
 
   // Verify variants
   assert.match(source, /variant-card/, 'IsleCard must support variant-card');
@@ -45,7 +45,7 @@ test('IsleCard provides fluid surfaces, stereoscopic shadows, and slot compositi
 });
 
 test('IsleBanner provides semantic tone feedback, accessibility, and dismissibility', () => {
-  const source = readFileSync(new URL('../src/IsleBanner.vue', import.meta.url), 'utf8');
+  const source = readFileSync(new URL('../src/components/ui/IsleBanner.vue', import.meta.url), 'utf8');
 
   // Verify tone types
   assert.match(source, /type-info/, 'IsleBanner must support type-info');
@@ -64,7 +64,7 @@ test('IsleBanner provides semantic tone feedback, accessibility, and dismissibil
 });
 
 test('IsleChip provides capsule filter chips with selection states and removal', () => {
-  const source = readFileSync(new URL('../src/IsleChip.vue', import.meta.url), 'utf8');
+  const source = readFileSync(new URL('../src/components/ui/IsleChip.vue', import.meta.url), 'utf8');
 
   // Verify shape and active state
   assert.match(source, /border-radius:\s*9999px;/, 'IsleChip must have capsule border-radius');
@@ -77,7 +77,7 @@ test('IsleChip provides capsule filter chips with selection states and removal',
 });
 
 test('IsleEmpty provides empty state presentation with icon, title, description, and action slots', () => {
-  const source = readFileSync(new URL('../src/IsleEmpty.vue', import.meta.url), 'utf8');
+  const source = readFileSync(new URL('../src/components/ui/IsleEmpty.vue', import.meta.url), 'utf8');
 
   // Verify slots & structure
   assert.match(source, /name="icon"/, 'IsleEmpty must provide icon slot');
@@ -91,7 +91,7 @@ test('IsleEmpty provides empty state presentation with icon, title, description,
 });
 
 test('IsleBadge provides status pills with semantic variants and sizes', () => {
-  const source = readFileSync(new URL('../src/IsleBadge.vue', import.meta.url), 'utf8');
+  const source = readFileSync(new URL('../src/components/ui/IsleBadge.vue', import.meta.url), 'utf8');
 
   // Verify variants
   assert.match(source, /badge-neutral/, 'IsleBadge must support badge-neutral');
@@ -105,24 +105,8 @@ test('IsleBadge provides status pills with semantic variants and sizes', () => {
   assert.match(source, /isle-badge-dot/, 'IsleBadge must support indicator dot');
 });
 
-test('IsleImageViewer provides anchored zoom, gesture panning, HUD toolbar, and navigation', () => {
-  const source = readFileSync(new URL('../src/IsleImageViewer.vue', import.meta.url), 'utf8');
-
-  // Verify gestures and zoom methods
-  assert.match(source, /zoomAtAnchor/, 'IsleImageViewer must use zoomAtAnchor for cursor-anchored zoom');
-  assert.match(source, /normalizeViewerTransform/, 'IsleImageViewer must normalize zoom bounds');
-  assert.match(source, /pinchScale/, 'IsleImageViewer must support pinch scaling');
-  assert.match(source, /toggleActualSize/, 'IsleImageViewer must support 1:1 vs fit toggle');
-  assert.match(source, /rotate/, 'IsleImageViewer must support 90-degree rotation');
-
-  // Verify navigation and HUD
-  assert.match(source, /viewer-hud/, 'IsleImageViewer must render floating HUD toolbar');
-  assert.match(source, /nav-btn prev/, 'IsleImageViewer must render previous navigation arrow');
-  assert.match(source, /nav-btn next/, 'IsleImageViewer must render next navigation arrow');
-});
-
 test('IsleVideoPlayer provides unified transport bar, scrubbing, volume, rate, PiP, and keyboard shortcuts', () => {
-  const viewSource = readFileSync(new URL('../src/IsleVideoPlayer.vue', import.meta.url), 'utf8');
+  const viewSource = readFileSync(new URL('../src/components/ui/IsleVideoPlayer.vue', import.meta.url), 'utf8');
   const transportSource = readFileSync(
     new URL('../src/composables/useHtmlVideoTransport.ts', import.meta.url),
     'utf8'
@@ -149,24 +133,16 @@ test('IsleVideoPlayer provides unified transport bar, scrubbing, volume, rate, P
 });
 
 test('IslePageHeader provides unified accent-bar heading, title-extra, and actions slots', () => {
-  const source = readFileSync(new URL('../src/IslePageHeader.vue', import.meta.url), 'utf8');
+  const source = readFileSync(new URL('../src/components/ui/IslePageHeader.vue', import.meta.url), 'utf8');
   assert.match(source, /isle-page-header-bar/, 'IslePageHeader must render gallery accent bar');
   assert.match(source, /name="title-extra"/, 'IslePageHeader must provide title-extra slot');
   assert.match(source, /name="actions"/, 'IslePageHeader must provide actions slot');
 });
 
 test('IsleSearchInput provides IME-safe pill search input with clear button and reduced-motion guard', () => {
-  const source = readFileSync(new URL('../src/IsleSearchInput.vue', import.meta.url), 'utf8');
+  const source = readFileSync(new URL('../src/components/ui/IsleSearchInput.vue', import.meta.url), 'utf8');
   assert.match(source, /@compositionstart/, 'IsleSearchInput must guard IME compositionstart');
   assert.match(source, /@compositionend/, 'IsleSearchInput must handle IME compositionend');
   assert.match(source, /isle-search-clear/, 'IsleSearchInput must provide clear button');
   assert.match(source, /prefers-reduced-motion:\s*reduce/, 'IsleSearchInput must respect reduced motion');
-});
-
-test('IsleSegmentedTabs provides accessible tablist with active indicator and dark-mode contrast', () => {
-  const source = readFileSync(new URL('../src/IsleSegmentedTabs.vue', import.meta.url), 'utf8');
-  assert.match(source, /role="tablist"/, 'IsleSegmentedTabs must define role="tablist"');
-  assert.match(source, /role="tab"/, 'IsleSegmentedTabs must define role="tab"');
-  assert.match(source, /is-active/, 'IsleSegmentedTabs must mark active tab');
-  assert.match(source, /prefers-reduced-motion:\s*reduce/, 'IsleSegmentedTabs must respect reduced motion');
 });

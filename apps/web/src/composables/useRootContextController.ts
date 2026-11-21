@@ -1,16 +1,17 @@
 import { computed, ref } from "vue";
-import { apiFetch } from "../apiClient.ts";
-import { rootApiPath, rootMediaPath } from "../rootApi.ts";
-import { createRootRequestTransport, rootContextKey } from "../rootRequestTransport.ts";
+import { apiFetch } from "../api/apiClient.ts";
+import { rootApiPath, rootMediaPath } from "../api/rootApi.ts";
+import { createRootRequestTransport, rootContextKey } from "../api/rootRequestTransport.ts";
 import {
   chooseDiscoveredRoot,
   describeRootContext,
   describeRootOperationFailure,
   readRootDiscoveryResponse,
   rootDiscoveryNetworkError,
-} from "../rootDiscovery.ts";
-import { routePersonalCategory } from "../personalStorageRouting.ts";
-import { createRootContextLifecycle } from "../rootContextLifecycle.ts";
+} from "../api/rootDiscovery.ts";
+import { routePersonalCategory } from "../features/storage/personalStorageRouting.ts";
+import { createRootContextLifecycle } from "../api/rootContextLifecycle.ts";
+import { requestConfirm } from "./useConfirmDialog.ts";
 
 export interface SharedRoot {
   rootID: string;
@@ -225,8 +226,9 @@ export function useRootContextController(hooks: RootContextControllerHooks) {
     }
     const match = routePersonalCategory(myStoragePolicy.value, sharedRoots.value, section);
     if (match.kind === "offline") {
-      personalRouteError.value =
-        "该分类绑定的硬盘已离线或发生更换。请重新连接原硬盘，或在 Mac 管理端移除登记后手动重建。不会自动改写到其他盘。";
+      personalRouteError.value = hooks.isAdmin()
+        ? "该分类绑定的硬盘已离线或发生更换。请重新连接原硬盘，或在 Mac 管理端「存储 → 存储位置」移除登记后手动重建。不会自动改写到其他盘。"
+        : "该分类绑定的个人硬盘当前离线。请联系管理员检查硬盘连接或重新分配存储位置，期间不会自动改写到其他盘。";
       return;
     }
     personalRouteError.value = "";
@@ -355,14 +357,24 @@ export function useRootContextController(hooks: RootContextControllerHooks) {
     }
   }
 
-  function handleRootChange(event: Event | string) {
-    manualRootSection.value = hooks.activeSection();
-    personalRouteError.value = "";
+  async function handleRootChange(event: Event | string) {
     const val =
       typeof event === "string"
         ? event
         : (event?.target as HTMLSelectElement | null)?.value ?? "";
-    void switchRoot(val);
+    if (!val || val === selectedRootID.value) return;
+    if (hooks.isUploadBusy() || hooks.hasActiveUpload()) {
+      const confirmed = await requestConfirm({
+        title: "切换共享目录？",
+        message: "当前有正在进行的上传任务。切换共享目录将取消当前上传（已完成的文件不受影响），确认继续切换吗？",
+        confirmText: "取消上传并切换",
+        variant: "danger",
+      });
+      if (!confirmed) return;
+    }
+    manualRootSection.value = hooks.activeSection();
+    personalRouteError.value = "";
+    await switchRoot(val);
   }
 
   return {

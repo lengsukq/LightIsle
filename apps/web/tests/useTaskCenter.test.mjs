@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { useTaskCenter } from '../src/useTaskCenter.ts';
+import { useTaskCenter } from '../src/features/settings/useTaskCenter.ts';
 
 function deferred() {
   let resolve;

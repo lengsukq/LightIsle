@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { adoptUploadTask, refreshAfterPublishedUpload } from "../src/uploadLifecycle.ts";
+import { adoptUploadTask, refreshAfterPublishedUpload } from "../src/features/files/uploadLifecycle.ts";
 
 test("new upload task ID is retained before a cancellation check can throw", () => {
   let taskID = "";

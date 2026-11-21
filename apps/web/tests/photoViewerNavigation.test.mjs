@@ -4,7 +4,7 @@ import { ref } from "vue";
 import {
   applyPhotoRangeSelection,
   syncViewerAfterItemRemoval,
-} from "../src/photoViewerNavigation.ts";
+} from "../src/features/photos/photoViewerNavigation.ts";
 
 test("applyPhotoRangeSelection toggles single items and Shift+Click inclusive ranges capped at maxCount", () => {
   const assets = Array.from({ length: 12 }, (_, idx) => ({ id: idx + 1 }));

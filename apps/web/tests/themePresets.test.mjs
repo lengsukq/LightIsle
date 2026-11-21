@@ -4,11 +4,11 @@ import fs from "node:fs";
 import path from "node:path";
 
 const webSrc = path.resolve(import.meta.dirname, "../src");
-const themeSource = fs.readFileSync(path.join(webSrc, "theme.ts"), "utf8");
-const presetsSource = fs.readFileSync(path.join(webSrc, "themePresets.ts"), "utf8");
-const auroraCss = fs.readFileSync(path.join(webSrc, "fluid-aurora.css"), "utf8");
-const controlsCss = fs.readFileSync(path.join(webSrc, "fluid-controls.css"), "utf8");
-const appearanceSource = fs.readFileSync(path.join(webSrc, "useShellAppearance.ts"), "utf8");
+const themeSource = fs.readFileSync(path.join(webSrc, "styles/theme.ts"), "utf8");
+const presetsSource = fs.readFileSync(path.join(webSrc, "styles/themePresets.ts"), "utf8");
+const auroraCss = fs.readFileSync(path.join(webSrc, "styles/fluid-aurora.css"), "utf8");
+const controlsCss = fs.readFileSync(path.join(webSrc, "styles/fluid-controls.css"), "utf8");
+const appearanceSource = fs.readFileSync(path.join(webSrc, "styles/useShellAppearance.ts"), "utf8");
 
 const EXPECTED_PRESETS = [
   "warm_gallery",

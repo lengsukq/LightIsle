@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildTimelineYears, timelineJumpIndex, timelineScrubIndexAt } from "../src/photoTimelineJump.ts";
-import { createPhotoTimelineLayout } from "../src/photoTimelineLayout.ts";
+import { buildTimelineYears, timelineJumpIndex, timelineScrubIndexAt } from "../src/features/photos/photoTimelineJump.ts";
+import { createPhotoTimelineLayout } from "../src/features/photos/photoTimelineLayout.ts";
 
 // Local-time helpers keep the fixtures deterministic regardless of the
 // machine's timezone, matching how the viewer formats its month headers.

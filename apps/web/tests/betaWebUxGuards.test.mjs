@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { describeUserFacingError } from "../src/userFacingError.ts";
+import { describeUserFacingError } from "../src/api/userFacingError.ts";
 
 const SRC_DIR = new URL("../src/", import.meta.url).pathname;
 
@@ -46,17 +46,17 @@ test("apps/web/src maintains Clean Code guardrails (0 native select/prompt/alert
 });
 
 test("AppsCenterView, MobileNavDrawer, and UserStoragePanel maintain Beta UX & role isolation", () => {
-  const appsView = readFileSync(join(SRC_DIR, "AppsCenterView.vue"), "utf8");
+  const appsView = readFileSync(join(SRC_DIR, "features/apps/AppsCenterView.vue"), "utf8");
   assert.match(appsView, /<AppleSelect/);
   assert.match(appsView, /modalError/);
   assert.match(appsView, /确认激活/);
   assert.doesNotMatch(appsView, /writeAppsClipboard/);
 
-  const mobileNav = readFileSync(join(SRC_DIR, "MobileNavDrawer.vue"), "utf8");
+  const mobileNav = readFileSync(join(SRC_DIR, "components/ui/MobileNavDrawer.vue"), "utf8");
   assert.match(mobileNav, /["']computer["']/);
   assert.match(mobileNav, /showComputerFilesNav/);
 
-  const storagePanel = readFileSync(join(SRC_DIR, "UserStoragePanel.vue"), "utf8");
+  const storagePanel = readFileSync(join(SRC_DIR, "features/storage/UserStoragePanel.vue"), "utf8");
   assert.doesNotMatch(storagePanel, /登记代次|历史账本/);
 });
 

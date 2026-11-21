@@ -3,11 +3,11 @@ import { strict as assert } from 'node:assert';
 import { readFileSync } from 'node:fs';
 
 test('trash entries do not depend on retention-policy visibility', () => {
-  const source = readFileSync(new URL('../src/AppShell.html', import.meta.url), 'utf8');
+  const source = readFileSync(new URL('../src/features/files/FilesView.vue', import.meta.url), 'utf8');
   const marker = source.indexOf('class="trash-list"');
   assert.ok(marker >= 0);
-  const trash = source.slice(marker, source.indexOf('</div>\n              <div v-if="!showingTrash', marker));
+  const trash = source.slice(marker, source.indexOf('</div>\n      <div v-if="!showingTrash', marker));
   assert.match(trash, /v-if="trashRetention"/);
-  assert.match(trash, /v-for="entry in \(trashPresentation==='items' \? trashItems : \[\]\)"/);
+  assert.match(trash, /v-for="entry in \(trashPresentation === 'items' \? trashItems : \[\]\)"/);
   assert.doesNotMatch(trash, /v-else\s+v-for="entry in trashItems"/);
 });

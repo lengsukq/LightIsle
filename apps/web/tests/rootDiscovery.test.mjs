@@ -6,7 +6,7 @@ import {
   describeRootOperationFailure,
   readRootDiscoveryResponse,
   rootDiscoveryNetworkError,
-} from "../src/rootDiscovery.ts";
+} from "../src/api/rootDiscovery.ts";
 
 const root = { rootID: "root-1", name: "家庭资料", generation: 3, online: true };
 

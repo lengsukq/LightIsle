@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { usePendingMediaList } from '../src/usePendingMediaList.ts';
+import { usePendingMediaList } from '../src/features/settings/usePendingMediaList.ts';
 
 function deferred() {
   let resolve, reject;

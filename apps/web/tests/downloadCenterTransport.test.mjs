@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readDownloadCenter } from '../src/downloadCenterTransport.ts';
-import { createMediaStatusPoller } from '../src/mediaStatusPoller.ts';
+import { readDownloadCenter } from '../src/features/downloads/downloadCenterTransport.ts';
+import { createMediaStatusPoller } from '../src/api/mediaStatusPoller.ts';
 
 test('unavailable optional component still exposes owned historical tasks', async () => {
   const calls = [];

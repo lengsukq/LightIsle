@@ -12,7 +12,7 @@ import {
   recordFileSearchHistory,
   removeFileSearchHistory,
   tokenizeSearchQuery,
-} from "../src/fileSearchUtils.ts";
+} from "../src/features/files/fileSearchUtils.ts";
 
 function makeMemoryStorage() {
   const map = new Map();

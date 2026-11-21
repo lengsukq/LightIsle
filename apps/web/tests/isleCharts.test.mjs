@@ -8,12 +8,12 @@ import {
   clampRatio,
   formatSharePercent,
   ISLE_CHART_COLORS,
-} from "../src/isleChartsMath.ts";
+} from "../src/components/ui/isleChartsMath.ts";
 import {
   buildHostDiskSegments,
   buildHostMemorySegments,
   buildQuotaSegments,
-} from "../src/overviewPageModels.ts";
+} from "../src/features/overview/overviewPageModels.ts";
 
 test("clampRatio and formatSharePercent handle boundaries honestly", () => {
   assert.equal(clampRatio(5, 0), 0);
@@ -144,7 +144,7 @@ test("overview model chart builders accurately partition memory, disk, and pendi
 });
 
 test("IsleCharts enforces zero transition: all, prefers-reduced-motion, and aria-labels", () => {
-  const sfc = readFileSync(new URL("../src/IsleCharts.vue", import.meta.url), "utf8");
+  const sfc = readFileSync(new URL("../src/components/ui/IsleCharts.vue", import.meta.url), "utf8");
   assert.doesNotMatch(sfc, /transition:\s*all/);
   assert.match(sfc, /@media\s*\(prefers-reduced-motion:\s*reduce\)/);
   assert.match(sfc, /role="img"/);

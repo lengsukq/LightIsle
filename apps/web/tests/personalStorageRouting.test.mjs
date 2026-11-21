@@ -1,6 +1,6 @@
 import {test} from 'node:test';
 import {strict as assert} from 'node:assert';
-import {routePersonalCategory} from '../src/personalStorageRouting.ts';
+import {routePersonalCategory} from '../src/features/storage/personalStorageRouting.ts';
 const policy={locations:[{category:'files',rootID:'disk-a',rootGeneration:4,relativePath:'Users/u11/files'},
   {category:'photos',rootID:'disk-b',rootGeneration:2,relativePath:'Users/u11/photos'},
   {category:'videos',rootID:'disk-c',rootGeneration:3,relativePath:'Users/u11/videos'}]};

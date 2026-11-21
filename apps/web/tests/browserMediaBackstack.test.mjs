@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import {createBrowserMediaBackstack} from "../src/browserMediaBackstack.ts";
+import {createBrowserMediaBackstack} from "../src/features/photos/browserMediaBackstack.ts";
 
 function fakeHost(){
   const states=[{page:"cinema"}];

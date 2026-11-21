@@ -9,7 +9,7 @@ async function readTemplate(rel = "../src/AppShell.html") {
 test("the move/copy dialog renders inside the logged-in shell, not the auth splash", async () => {
   const [template, authScene] = await Promise.all([
     readTemplate(),
-    readTemplate("../src/AuthScene.vue"),
+    readTemplate("../src/features/auth/AuthScene.vue"),
   ]);
 
   const authBranch = authScene.indexOf('v-if="authChecking"');
@@ -27,7 +27,7 @@ test("the move/copy dialog renders inside the logged-in shell, not the auth spla
 test("the move/copy dialog renders alongside the other shell dialogs", async () => {
   const [template, mobileDrawer] = await Promise.all([
     readTemplate(),
-    readTemplate("../src/MobileNavDrawer.vue"),
+    readTemplate("../src/components/ui/MobileNavDrawer.vue"),
   ]);
 
   const shell = template.indexOf('v-else class="shell"');

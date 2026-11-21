@@ -7,7 +7,7 @@ import {
   formatDiskSize,
   isSystemDiskPartition,
   isSystemVolume,
-} from "../src/diskManagementSupport.ts";
+} from "../src/features/storage/diskManagementSupport.ts";
 
 const SRC_DIR = new URL("../src/", import.meta.url).pathname;
 

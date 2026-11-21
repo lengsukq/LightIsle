@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import { ref } from "vue";
-import { useFileActionsAndGrants } from "../src/useFileActionsAndGrants.ts";
+import { useFileActionsAndGrants } from "../src/features/files/useFileActionsAndGrants.ts";
 
 test("PhotoViewerModal supports fileBrowserMode and AppShell routes file media through it", () => {
-  const modalSfc = readFileSync(new URL("../src/PhotoViewerModal.vue", import.meta.url), "utf8");
+  const modalSfc = readFileSync(new URL("../src/features/photos/PhotoViewerModal.vue", import.meta.url), "utf8");
   const shellHtml = readFileSync(new URL("../src/AppShell.html", import.meta.url), "utf8");
   assert.match(modalSfc, /fileBrowserMode\?:\s*boolean/);
   assert.match(modalSfc, /v-if="!fileBrowserMode"/);

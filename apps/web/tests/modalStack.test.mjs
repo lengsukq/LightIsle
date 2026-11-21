@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { hasActiveModalLayer, pushModalLayer } from "../src/modalStack.ts";
+import { hasActiveModalLayer, pushModalLayer } from "../src/utils/modalStack.ts";
 
 test("modalStack dispatches Escape strictly to the topmost active layer and restores body scroll", (t) => {
   const prevWindow = globalThis.window;
