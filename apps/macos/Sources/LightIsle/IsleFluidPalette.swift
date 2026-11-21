@@ -118,8 +118,8 @@ enum IsleFluidPalette {
     })
     static let accentSecondary = Color(nsColor: NSColor(name: nil) { appearance in
         appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
-            ? NSColor(srgbRed: 154.0 / 255.0, green: 187.0 / 255.0, blue: 255.0 / 255.0, alpha: 1)
-            : NSColor(srgbRed: 37.0 / 255.0, green: 99.0 / 255.0, blue: 217.0 / 255.0, alpha: 1)
+            ? NSColor(srgbRed: 193.0 / 255.0, green: 154.0 / 255.0, blue: 248.0 / 255.0, alpha: 1)
+            : NSColor(srgbRed: 124.0 / 255.0, green: 66.0 / 255.0, blue: 206.0 / 255.0, alpha: 1)
     })
 
     static let cardShadowOpacity: Double = 0.075

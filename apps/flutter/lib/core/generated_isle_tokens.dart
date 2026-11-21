@@ -3,55 +3,55 @@ import 'package:flutter/material.dart';
 
 abstract final class IsleTokens {
   static const colorLight = <String, Color>{
-    'accentPrimary': Color(0xff2563eb),
-    'accentSecondary': Color(0xff7c3aed),
-    'surfaceBase': Color(0xfff8fafd),
+    'accentPrimary': Color(0xff0e6b74),
+    'accentSecondary': Color(0xffd4653e),
+    'surfaceBase': Color(0xfff7f6f3),
     'surfaceElevated': Color(0xffffffff),
-    'surfaceGlassFallback': Color(0xfff8f8fa),
-    'textPrimary': Color(0xff0f172a),
-    'textSecondary': Color(0xff64748b),
-    'textTertiary': Color(0xff94a3b8),
-    'textDisabled': Color(0xffcbd5e1),
-    'success': Color(0xff10b981),
-    'warning': Color(0xfff59e0b),
-    'error': Color(0xffef4444),
+    'surfaceGlassFallback': Color(0xfffcfbf9),
+    'textPrimary': Color(0xff141413),
+    'textSecondary': Color(0xff5c5a55),
+    'textTertiary': Color(0xff8f8c85),
+    'textDisabled': Color(0xffc7c4bc),
+    'success': Color(0xff18835b),
+    'warning': Color(0xffc7781a),
+    'error': Color(0xffc93b3b),
   };
   static const colorDark = <String, Color>{
-    'accentPrimary': Color(0xff3b82f6),
-    'accentSecondary': Color(0xff8b5cf6),
-    'surfaceBase': Color(0xff080b14),
-    'surfaceElevated': Color(0xff131a2b),
-    'surfaceGlassFallback': Color(0xff0f1422),
-    'textPrimary': Color(0xfff8fafc),
-    'textSecondary': Color(0xff94a3b8),
-    'textTertiary': Color(0xff64748b),
-    'textDisabled': Color(0xff475569),
-    'success': Color(0xff34d399),
-    'warning': Color(0xfffbbf24),
-    'error': Color(0xfff87171),
+    'accentPrimary': Color(0xff5cc8d4),
+    'accentSecondary': Color(0xffe88864),
+    'surfaceBase': Color(0xff0e0e0d),
+    'surfaceElevated': Color(0xff1c1c1a),
+    'surfaceGlassFallback': Color(0xff171715),
+    'textPrimary': Color(0xfff5f4f0),
+    'textSecondary': Color(0xffa4a199),
+    'textTertiary': Color(0xff737069),
+    'textDisabled': Color(0xff4d4b46),
+    'success': Color(0xff47c28d),
+    'warning': Color(0xffe8a64d),
+    'error': Color(0xffec6e66),
   };
   static const fluidLight = <String, Color>{
-    'canvasTop': Color(0xfff8fafd),
-    'canvasBottom': Color(0xffeef4fc),
+    'canvasTop': Color(0xfff7f6f3),
+    'canvasBottom': Color(0xfff1efea),
     'cardTop': Color(0xffffffff),
-    'cardBottom': Color(0xfff6f9fe),
-    'cardHover': Color(0xfff0f6ff),
-    'cardItemTop': Color(0xffffffff),
-    'cardItemBottom': Color(0xfff3f7fd),
-    'chrome': Color(0xffffffff),
-    'rim': Color(0xffffffff),
-    'shadow': Color(0xff1e293b),
+    'cardBottom': Color(0xfffdfdfc),
+    'cardHover': Color(0xfff5f4f0),
+    'cardItemTop': Color(0xfff8f7f4),
+    'cardItemBottom': Color(0xfff3f1ec),
+    'chrome': Color(0xfffaf9f6),
+    'rim': Color(0xffe7e4dd),
+    'shadow': Color(0xff141311),
   };
   static const fluidDark = <String, Color>{
-    'canvasTop': Color(0xff080b14),
-    'canvasBottom': Color(0xff04060a),
-    'cardTop': Color(0xff131a2b),
-    'cardBottom': Color(0xff0e1422),
-    'cardHover': Color(0xff1a243b),
-    'cardItemTop': Color(0xff162035),
-    'cardItemBottom': Color(0xff101726),
-    'chrome': Color(0xff0d1322),
-    'rim': Color(0xff3b4d6b),
+    'canvasTop': Color(0xff0e0e0d),
+    'canvasBottom': Color(0xff131311),
+    'cardTop': Color(0xff191917),
+    'cardBottom': Color(0xff161614),
+    'cardHover': Color(0xff22221f),
+    'cardItemTop': Color(0xff20201d),
+    'cardItemBottom': Color(0xff1b1b18),
+    'chrome': Color(0xff141412),
+    'rim': Color(0xff2e2e2a),
     'shadow': Color(0xff000000),
   };
   static const nativeLight = <String, Color>{
@@ -66,6 +66,7 @@ abstract final class IsleTokens {
     'rim': Color(0xffdce4f5),
     'shadow': Color(0xff0f172a),
     'accentPrimary': Color(0xff2563d9),
+    'accentSecondary': Color(0xff7c42ce),
     'brandBlue': Color(0xff2563d9),
     'brandCyan': Color(0xff08739a),
     'brandViolet': Color(0xff7c42ce),
@@ -87,6 +88,7 @@ abstract final class IsleTokens {
     'rim': Color(0xff4a567a),
     'shadow': Color(0xff000000),
     'accentPrimary': Color(0xff9abbff),
+    'accentSecondary': Color(0xffc19af8),
     'brandBlue': Color(0xff9abbff),
     'brandCyan': Color(0xff5ecded),
     'brandViolet': Color(0xffc19af8),
@@ -100,11 +102,11 @@ abstract final class IsleTokens {
   static const heroRadius = 24.0;
   static const itemRadius = 18.0;
   static const controlRadius = 12.0;
-  static const radiusXs = 8.0;
-  static const radiusSm = 12.0;
-  static const radiusMd = 16.0;
-  static const radiusLg = 22.0;
-  static const radiusXl = 30.0;
+  static const radiusXs = 7.0;
+  static const radiusSm = 10.0;
+  static const radiusMd = 14.0;
+  static const radiusLg = 18.0;
+  static const radiusXl = 22.0;
   static const radiusPill = 9999.0;
   static const space1 = 4.0;
   static const space2 = 8.0;
@@ -115,7 +117,7 @@ abstract final class IsleTokens {
   static const space8 = 32.0;
   static const space10 = 40.0;
   static const space12 = 48.0;
-  static const motionFastMs = 150;
+  static const motionFastMs = 160;
   static const motionNormalMs = 260;
   static const motionSlowMs = 420;
   static const cardShadowOpacity = 0.11;
