@@ -8,11 +8,11 @@
 2. **用户能做什么**：消息明确区分设置默认硬盘、原盘重新连接、登录、申请写入授权、检查上传进度、稍后刷新，不要统一建议“重启 NAS”。
 3. **如何排查**：在合适位置提供安全的 `HTTP 503 · default_root_not_configured` 供用户反馈，不暴露请求 URL、Cookie、Access Token、文件真实绝对路径、密码或任意响应文本。
 
-Core API 已识别的错误使用 `{"error":"stable_code"}` JSON（非文件下载本身）；HTTP 状态表达 HTTP 语义，不能代替错误码。未知 5xx/网关响应可能是 HTML，此时客户端仅显示「服务器未提供可识别原因」，不能伪造硬盘离线。
+Core API 已识别的错误统一通过 `writeAPIError` / `writeAPIErrorCode` 输出 JSON（保留稳定 `"error":"stable_code"` 并向后兼容地补充中文 `message`、`dataSafe` 与 `nextAction` 恢复指引，非文件下载本身）；HTTP 状态表达 HTTP 语义，不能代替错误码。未知 5xx/网关响应可能是 HTML，此时客户端仅显示「服务器未提供可识别原因」，不能伪造硬盘离线。
 
 | 类型 | 示例代码 | 实际说明 / 可操作步骤 |
 | --- | --- | --- |
-| 存储初始化 | `default_root_not_configured` | Mac「数据与存储 → NAS 存储空间」登记并选择在线默认根。禁止自动选取其他硬盘 |
+| 存储初始化 | `default_root_not_configured` | Mac「存储 → 存储位置」登记并选择在线默认根。禁止自动选取其他硬盘 |
 | 存储离线 / 身份变化 | `root_unavailable` / `volume_offline` / `root_generation_changed` | 核实并重连**原硬盘**，重新选择根；禁止旧请求写入新根 |
 | 服务初始化 | `gallery_unavailable` / `database_not_ready` / `storage_registry_unavailable` | 核对相应服务或数据库，并允许重新刷新；不能笼统提示硬盘故障 |
 | 安全 / 授权 | `authentication_required` / `file_permission_denied` | 重登或联系管理员检查原目录 ACL |

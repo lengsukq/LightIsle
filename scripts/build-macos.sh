@@ -40,15 +40,15 @@ assert_arm64_only "$APP/Contents/Resources/core/lightisle-recovery"
 
 echo "[3/6] Build native SwiftUI app"
 swift build -c release --product LightIsle
-swiftc apps/macos/Sources/LightIsle/CoreLineFramer.swift tests/CoreLineFramerCheck.swift -o "$ROOT/.build/lightisle-core-framer-check"
+swiftc -swift-version 6 apps/macos/Sources/LightIsle/CoreLineFramer.swift tests/CoreLineFramerCheck.swift -o "$ROOT/.build/lightisle-core-framer-check"
 "$ROOT/.build/lightisle-core-framer-check"
-swiftc apps/macos/Sources/LightIsle/MediaScanScope.swift tests/MediaScanScopeCheck.swift -o "$ROOT/.build/lightisle-media-scope-check"
+swiftc -swift-version 6 apps/macos/Sources/LightIsle/MediaScanScope.swift tests/MediaScanScopeCheck.swift -o "$ROOT/.build/lightisle-media-scope-check"
 "$ROOT/.build/lightisle-media-scope-check"
-swiftc apps/macos/Sources/LightIsle/StorageVolumeSelection.swift tests/StorageVolumeSelectionCheck.swift -o "$ROOT/.build/lightisle-storage-volume-check"
+swiftc -swift-version 6 apps/macos/Sources/LightIsle/StorageVolumeSelection.swift tests/StorageVolumeSelectionCheck.swift -o "$ROOT/.build/lightisle-storage-volume-check"
 "$ROOT/.build/lightisle-storage-volume-check"
-swiftc apps/macos/Sources/LightIsle/NativeUpgradePreflight.swift tests/NativeUpgradePreflightCheck.swift -lsqlite3 -o "$ROOT/.build/lightisle-upgrade-check"
+swiftc -swift-version 6 apps/macos/Sources/LightIsle/NativeUpgradePreflight.swift tests/NativeUpgradePreflightCheck.swift -lsqlite3 -o "$ROOT/.build/lightisle-upgrade-check"
 "$ROOT/.build/lightisle-upgrade-check"
-swiftc -swift-version 5 -parse-as-library \
+swiftc -DDEBUG -swift-version 6 -parse-as-library \
   apps/macos/Sources/LightIsle/NotifySupport.swift \
   apps/macos/Sources/LightIsle/MapServiceSupport.swift \
   apps/macos/Sources/LightIsle/TmdbSupport.swift \

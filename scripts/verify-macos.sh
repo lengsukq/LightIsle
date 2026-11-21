@@ -25,7 +25,7 @@ run_swift_check() {
   local out_name="$1"
   shift
   local bin="$ROOT/.build/$out_name"
-  swiftc "$@" -o "$bin"
+  swiftc -swift-version 6 "$@" -o "$bin"
   "$bin"
 }
 
@@ -70,10 +70,11 @@ run_swift_check lightisle-smb-elevation-check -parse-as-library \
   apps/macos/Sources/LightIsle/Base64URLCodec.swift \
   apps/macos/Sources/LightIsle/SmbElevation.swift \
   tests/SmbElevationCheck.swift
-run_swift_check lightisle-window-visibility-check -swift-version 5 -parse-as-library \
+run_swift_check lightisle-window-visibility-check -parse-as-library \
   apps/macos/Sources/LightIsle/ManagementWindowVisibility.swift tests/ManagementWindowVisibilityCheck.swift
 python3 -B scripts/sync-fluid-tokens.py --check
-run_swift_check lightisle-presentation-check -swift-version 5 -parse-as-library \
+python3 -B scripts/sync-flutter-tokens.py --check
+run_swift_check lightisle-presentation-check -parse-as-library \
   apps/macos/Sources/LightIsle/ManagementNavigation.swift \
   apps/macos/Sources/LightIsle/SidebarPage.swift \
   apps/macos/Sources/LightIsle/IsleFluidPalette.swift \
@@ -81,6 +82,23 @@ run_swift_check lightisle-presentation-check -swift-version 5 -parse-as-library 
   apps/macos/Sources/LightIsle/ManagementShell.swift \
   apps/macos/Sources/LightIsle/DetailPreview.swift \
   tests/NativePresentationCheck.swift
+run_swift_check lightisle-chart-views-check -parse-as-library \
+  apps/macos/Sources/LightIsle/ManagementNavigation.swift \
+  apps/macos/Sources/LightIsle/SidebarPage.swift \
+  apps/macos/Sources/LightIsle/IsleFluidPalette.swift \
+  apps/macos/Sources/LightIsle/LiquidComponents.swift \
+  apps/macos/Sources/LightIsle/IsleChartMath.swift \
+  apps/macos/Sources/LightIsle/IsleChartViews.swift \
+  tests/IsleChartViewsCheck.swift
+run_swift_check lightisle-tailscale-ups-check -parse-as-library \
+  apps/macos/Sources/LightIsle/TailscaleAndUPS.swift \
+  tests/TailscaleAndUPSCheck.swift
+run_swift_check lightisle-external-dependency-catalog-check -parse-as-library \
+  apps/macos/Sources/LightIsle/ExternalDependencySupport.swift \
+  tests/external_dependency_catalog_smoke.swift
+run_swift_check lightisle-flutter-session-vault-check -parse-as-library \
+  apps/flutter/shared/SessionVault.swift \
+  tests/FlutterSessionVaultCheck.swift
 run_swift_check lightisle-tunnel-wire-check \
   apps/macos/Sources/LightIsle/Base64URLCodec.swift \
   apps/macos/Sources/LightIsle/TunnelWireCodec.swift \
@@ -91,7 +109,7 @@ run_swift_check lightisle-tunnel-payload-check \
   apps/macos/Sources/LightIsle/TunnelSupport.swift \
   apps/macos/Sources/LightIsle/TunnelPayloadParser.swift \
   tests/TunnelPayloadParserCheck.swift
-run_swift_check lightisle-host-secret-vault-check -swift-version 5 -parse-as-library \
+run_swift_check lightisle-host-secret-vault-check -DDEBUG -parse-as-library \
   apps/macos/Sources/LightIsle/NotifySupport.swift \
   apps/macos/Sources/LightIsle/MapServiceSupport.swift \
   apps/macos/Sources/LightIsle/TmdbSupport.swift \
@@ -104,7 +122,7 @@ python3 -B tests/test_media_worker.py "$(swift build -c debug --show-bin-path)/l
 go build -o "$ROOT/.build/lightisled-ipc-check" ./core/cmd/lightisled
 python3 -B tests/test_native_metrics_ipc.py "$ROOT/.build/lightisled-ipc-check"
 python3 -B tests/test_core_failure_isolation.py "$ROOT/.build/lightisled-ipc-check"
-swiftc -parse-as-library apps/macos/Sources/LightIsle/{CoreSupervisorPolicy,CoreCommandWriter,CoreHealthProbe,CoreLifecycleSignal,CoreProcessBootstrap,CorePortListener}.swift tests/CoreSupervisorCheck.swift -o "$ROOT/.build/lightisle-core-supervisor-check"
+swiftc -swift-version 6 -parse-as-library apps/macos/Sources/LightIsle/{CoreSupervisorPolicy,CoreCommandWriter,CoreHealthProbe,CoreLifecycleSignal,CoreProcessBootstrap,CorePortListener}.swift tests/CoreSupervisorCheck.swift -o "$ROOT/.build/lightisle-core-supervisor-check"
 "$ROOT/.build/lightisle-core-supervisor-check" "$ROOT/.build/lightisled-ipc-check"
 
 echo "Vue TypeScript + build:"

@@ -262,12 +262,12 @@ Authorization: Bearer <MCP_TOKEN>
 
 ## 八、第一示范参考项目：`cpe-monitor` 深度解构与改造方案
 
-1. **反代子路径与 `LIGHTISLE_PROXY_SECRET` 免密鉴权（`src/lib/auth.ts`）**：
+1. **反代子路径与 `LIGHTISLE_PROXY_SECRET` 免密鉴权（`plugins/cpe-monitor/src/lib/auth.ts`）**：
    - 在 `next.config.ts` 中支持 `basePath: process.env.BASE_PATH || ''`；
-   - 在 `src/lib/auth.ts` 的 `getSession()` 中：当 `process.env.LIGHTISLE_PROXY_SECRET` 非空且请求头 `x-lightisle-proxy-secret === process.env.LIGHTISLE_PROXY_SECRET` 时，直接信任 `x-lightisle-user-id` 与 `x-lightisle-username` 免二次登录；未通过网关直连 `127.0.0.1:$PORT` 的请求仍需走原有的密码校验。
+   - 在 `plugins/cpe-monitor/src/lib/auth.ts` 的 `getSession()` 中：当 `process.env.LIGHTISLE_PROXY_SECRET` 非空且请求头 `x-lightisle-proxy-secret === process.env.LIGHTISLE_PROXY_SECRET` 时，直接信任 `x-lightisle-user-id` 与 `x-lightisle-username` 免二次登录；未通过网关直连 `127.0.0.1:$PORT` 的请求仍需走原有的密码校验。
 2. **代码与数据目录分离（`LIGHTISLE_PLUGIN_DATA_DIR`）**：
    - 数据库路径支持优先读取 `process.env.LIGHTISLE_PLUGIN_DATA_DIR`，升级代码时数据库不受影响。
-3. **单次静默采集（`scripts/collect-once.mjs`）**：
+3. **单次静默采集（插件内 `collect-once.mjs`）**：
    - 由 `automation.Manager`（任务 ID：`app-cpe-monitor`）每 15 分钟唤醒运行 1 秒即退，平时 `0 MB` 内存。
 
 ---

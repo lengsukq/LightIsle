@@ -108,8 +108,8 @@
 
 本轮按用户后续反馈采用更活泼的蓝、青、紫点缀，而非全灰外观。颜色来自现有晶屿 Logo 的色系；Logo 图形本身保持原样。
 
-- **单源、分平台输出**：`design-tokens/tokens.json` 的 `nativeMac` 保存原生浅深色、品牌色、圆角与动效值；`scripts/sync-fluid-tokens.py` 生成 Swift 映射。Web CSS 输出保持原值，Flutter 映射不受本轮影响。
-- **六入口**：概览、存储、网络与连接、Docker 与应用、个人空间、设置。文件/照片/影院属于个人空间详情，外部依赖属于设置工具。旧 `⌘1`～`⌘9` 定位对应页面，`⌘,` 进入设置；菜单通过同一草稿保护入口导航。
+- **单源、分平台输出**：`design-tokens/tokens.json` 的 `color`/`fluid`/`radiusPt`/`motion` 保存 Modern Warm Gallery 跨端默认基线（由 `sync-fluid-tokens.py` 与 `sync-flutter-tokens.py` 分别输出 `generated-fluid.css` 与 `generated_isle_tokens.dart`），`nativeMac` 保存 macOS 原生浅深色、品牌色（含 `accentSecondary`）、圆角与动效值并生成 `IsleFluidPalette.swift`。
+- **六入口**：概览、存储、网络与连接、Docker 与应用、个人空间、设置。个人空间提供一键打开浏览器端文件/照片/影院的直达入口（已移除旧版原生 Web 宣传壳页），外部依赖属于设置工具。按顺序提供 `⌘1`～`⌘6`（`⌘7` 直达外部依赖）、`⌘,` 进入设置；菜单通过同一草稿保护入口导航。
 - **连续画布与悬浮导航**：按用户指定的 [Octopus 桌面界面](https://github.com/bestruirui/octopus#-screenshots) 与 Apple Liquid Glass / iOS 视觉规范融合空间关系。窗口框架、标题和内容共享带柔和主题色散射光晕（`IsleFluidBackdrop`）的连续背景；悬浮侧边导航栏与底部状态胶囊采用 `IsleGlassBarSurface`（`.ultraThinMaterial` 半透明毛玻璃 + 顶部高光折射边 Specular Rim + 柔和浮动阴影），默认悬浮图标导航，`⌃⌘S` 展开文字标签，展开态与宽度跨重启持久化。卡片采用顶光渐层表面、连续曲率圆角（`.continuous` Squircle）、1px 晶体高光描边与组内 iOS Inset-Grouped 内缩细分隔线；`AppleSettingsRow` 完整应用各业务行的彩色 `iconTint` 圆角图标底座；减少透明度或增强对比度开启时自动切换为实心高对比表面与清晰边框。页面标题固定，正文仍单独裁切滚动，窗口控制区不与内容重叠。
 - **颜色层次**：蓝色连接与概览、青色存储、紫色个人空间与设置、靛色应用；选中背景、功能图标和指标使用品牌色，正文使用系统主文字与独立的高可读说明文字色；品牌色、状态文字与说明文字在原生四种内容表面上的对比度由 token 生成器检查（至少 4.5:1）。内容为实体表面，导航/短浮层按系统材质呈现。
 - **表单布局**：公共 `SettingsRowLayout` 按可用宽度与操作区实际尺寸选择横排或上下排列。菜单有明确的固有行高；纯说明行和空右列同样参与测量，不用 GeometryReader 修改行宽状态。
@@ -132,7 +132,7 @@ Flutter 独立用户客户端与 SwiftUI 管理端共享 **Logo、蓝/青/紫语
 
 **第二轮已落地（同日）**：不再仅用与 Mac 相近的独立 Flutter 蓝白色板。Flutter 生成器从 `design-tokens/tokens.json` 的 `nativeMac.light/dark/surface` 生成 `IsleTokens.nativeLight/nativeDark` 与 Mac 相同的画布、品牌蓝/青/紫/靛、卡片和圆角。公共 `IslePalette`、`IsleSurface`、`IsleCanvas`、`IslePageHeader`、`IsleAdaptiveGroup` 同时覆盖五个主页面和二级页；Mac 式「家里的 Mac」设备摘要卡在宽屏优先，手机先显示个人空间快捷入口。Mac 客户端标题/侧栏更紧凑，手机仍遵从本机底栏与触控习惯。
 
-**移动端内容层**：短屏、高倍字号优先显示操作和状态，详细的非错误说明使用 `IsleHelpDisclosure` 折叠；**错误、权限后果和破坏性确认不可折叠或省略**。地图屏顶部参数和来源配置可展开、独立滚动，地图/空状态保有剩余高度；目录授权、存储说明、离线照片说明、异常/审计介绍同样采用紧凑层级。全局深浅色取色值自同一生成源而不是各页面自行配制。
+**移动端内容层**：短屏、高倍字号优先显示操作和状态，详细的非错误说明使用紧凑折叠/披露行收起；**错误、权限后果和破坏性确认不可折叠或省略**。地图屏顶部参数和来源配置可展开、独立滚动，地图/空状态保有剩余高度；目录授权、存储说明、离线照片说明、异常/审计介绍同样采用紧凑层级。全局深浅色取色值自同一生成源而不是各页面自行配制。
 
 | 场景 | Flutter 规范 | SwiftUI 对齐点 |
 | --- | --- | --- |

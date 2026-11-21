@@ -40,7 +40,7 @@ LightIsle 的文件、照片、影视、账号、存储与备份等主要功能�
 | **UX-003** | Flutter `features/settings/automation_page.dart` | `_editingRevision` 声明并用于保存，但打开编辑时没有赋值。服务端虽能对缺省版本使用当前版本，客户端可能不能检测旧表单覆盖 | `_startEdit` 固定任务原始 `revision`，保存时带上；版本冲突提示并提供一键重新加载最新配置 | [x] 已修复 |
 | **UX-004** | macOS `PersonalSpacesSheets.swift` 与 Flutter `storage_page_switch.dart` | 长任务主要显示已复制字节和阶段文案，不展示总量、当前文件与完整进度 | Go Core 响应补齐 `totalFiles`/`totalBytes`；以预检/复制/核验/等待确认/清理五阶段展示文件数与字节进度，不捏造百分比 | [x] 已修复（含 `SpaceInputValidationCheck` 与 Go 测试） |
 | **UX-005** | Go `user_storage_transfer.go` 与 Flutter `storage_page_switch.dart` | 一次多阶段换盘可能多次弹出管理员密码确认 | 服务端签发绑定 `(session, userID, taskID)` 的 10 分钟内存一次性短期令牌 `confirmationToken`；`confirm_cleanup` 可复用该令牌免二次输密，绝不持久化密码 | [x] 已修复（含 Go & Flutter 测试） |
-| **UX-006** | Flutter `file_batch_operations.dart` 与 `files_page_selection.dart` | 批量操作逐个请求，仅最终反馈成功数与失败路径，缺乏逐项进度和失败原因 | 显示实时 `X/Y · 当前文件名` 与“停止后续项”按钮；保留逐项失败原因并支持“仅重试失败项” | [x] 已修复（含 `file_batch_operations_test.dart`） |
+| **UX-006** | Flutter `file_batch_operations.dart` 与 `files_batch_coordinator.dart`（及 `files_controller.dart`） | 批量操作逐个请求，仅最终反馈成功数与失败路径，缺乏逐项进度和失败原因 | 显示实时 `X/Y · 当前文件名` 与“停止后续项”按钮；保留逐项失败原因并支持“仅重试失败项” | [x] 已修复（含 `file_batch_operations_test.dart`） |
 | **UX-007** | Flutter `storage_page.dart` 的 `refresh` | 管理员逐成员串行拉取存储策略；单个成员错误可能导致全局失败 | 限制并发（最多 3 路）独立拉取各成员策略；单成员失败仅在该卡片内展示重试入口，不影响其他成员与 `rootsKnown` | [x] 已修复（含 `storage_multi_disk_test.dart`） |
 | **UX-008** | macOS `PersonalSpacesManagementView.swift` 与 `PersonalSpacesSheets.swift` 的配额预设 | 点击“50/100/200 GiB”预设会直接调用 `setRootQuota`，不只是填入草稿 | 预设只更新草稿输入框，显示“草稿未保存”提示，用户点击“保存”后才提交 | [x] 已修复 |
 | **UX-009** | macOS `CreateMemberSpaceSheet`（`PersonalSpacesSheets.swift`） | 创建过程缺少分步等待态；失败弹窗可能已关闭 | 与 UX-001 同步完成，弹窗交由显式状态机控制，展示分步进度、内联错误与“仅重试空间分配” | [x] 已修复 |
@@ -54,7 +54,7 @@ LightIsle 的文件、照片、影视、账号、存储与备份等主要功能�
 | UX-012 | macOS 首次管理员表单 `ContentView+Setup.swift` | 用户名与密码提交前按后端规则实时校验（`AccountInputValidator`），明确指出不合法字符，按钮禁用理由可见 | [x] 已修复（含 `SpaceInputValidationCheck`） |
 | UX-013 | macOS 换盘弹窗 `PersonalSpacesSheets.swift` | 固定宽度下主体改为 `ScrollView` + 底部固定操作栏，确保小窗口、大字体和较长错误/分享列表中按钮始终可访问 | [x] 已修复 |
 | UX-014 | Flutter 传输任务 `upload_task_center.dart` / `upload_task_center_page.dart` | 正在传输或已有进度的取消动作增加确认弹窗，显示“正在取消并清理服务端临时分片…”，清理未确认时保留错误提示 | [x] 已修复 |
-| UX-015 | Web 管理页面及确认逻辑（`ConfirmModal.vue` / `useConfirmDialog.ts`） | 全部 22 处 `window.confirm` 与 1 处 `window.alert` 统一替换为应用内 Liquid Glass 模态确认框，显示标题、影响范围与危险等级 | [x] 已修复（含 `useConfirmDialog.test.ts`） |
+| UX-015 | Web 管理页面及确认逻辑（`ConfirmModal.vue` / `useConfirmDialog.ts`） | 全部 22 处 `window.confirm` 与 1 处 `window.alert` 统一替换为应用内 Liquid Glass 模态确认框，显示标题、影响范围与危险等级 | [x] 已修复（含 `apps/web/tests/useConfirmDialog.test.js`） |
 | UX-016 | macOS / Flutter / Web 文案 | 面向家庭用户优先用“普通文件与下载、照片、视频、成员专属空间”；`enforcement=pending`、`rootGeneration`、`Users/u<ID>` 转化为易懂中文加次要说明 | [x] 已修复 |
 | UX-017 | 首次使用与无在线硬盘引导 | 在 macOS 与 Flutter 新建成员/分配空间弹窗中检测无在线存储硬盘状态，给出先仅建号或先去登记硬盘的可执行引导 | [x] 已修复 |
 

@@ -279,7 +279,7 @@ def main() -> None:
             [
                 "swiftc",
                 "-swift-version",
-                "5",
+                "6",
                 "-parse-as-library",
                 "-suppress-warnings",
                 str(FIXTURE_MAKER),

@@ -1,83 +1,43 @@
 """Compile with this project's cached Kotlin compiler; never install or download tools."""
-from pathlib import Path
 import os
-import re
 import subprocess
 import tempfile
-import xml.etree.ElementTree as ET
 
-ROOT = Path(__file__).resolve().parents[1]
-
-
-def resolve_gradle_cache() -> Path:
-    candidates = []
-    if os.environ.get("GRADLE_USER_HOME"):
-        candidates.append(Path(os.environ["GRADLE_USER_HOME"]))
-    candidates.extend([Path.home() / ".gradle", Path("/Volumes/lightlsle/dependencies/gradle")])
-    for base in candidates:
-        cache = base / "caches/modules-2/files-2.1"
-        if cache.is_dir():
-            return cache
-    return (Path.home() / ".gradle") / "caches/modules-2/files-2.1"
-
-
-CACHE = resolve_gradle_cache()
-configured_version = re.search(
-    r'id\("org.jetbrains.kotlin.android"\) version "([^"]+)"',
-    (ROOT / "apps/flutter/android/settings.gradle.kts").read_text(),
-).group(1)
-embeddable_dir = CACHE / "org.jetbrains.kotlin" / "kotlin-compiler-embeddable"
-if (embeddable_dir / configured_version).is_dir():
-    version = configured_version
-elif embeddable_dir.is_dir() and any(p.is_dir() for p in embeddable_dir.iterdir()):
-    version = sorted(p.name for p in embeddable_dir.iterdir() if p.is_dir())[-1]
-else:
-    version = configured_version
-
-
-def cached(group, artifact, version, suffix):
-    files = sorted((CACHE / group / artifact / version).glob("*/" + artifact + "-" + version + suffix))
-    if not files:
-        raise SystemExit(f"Required project dependency absent from local cache: {group}:{artifact}:{version}; no download attempted")
-    return files[0]
-
-
-compiler = cached("org.jetbrains.kotlin", "kotlin-compiler-embeddable", version, ".jar")
-jars = [compiler]
-pom_files = sorted(
-    (CACHE / "org.jetbrains.kotlin" / "kotlin-compiler-embeddable" / version)
-    .glob("*/kotlin-compiler-embeddable-" + version + ".pom")
+from android_kotlin_test_support import (
+    ROOT,
+    kotlin_compiler_jars,
+    require_java,
+    resolve_configured_kotlin_version,
+    resolve_gradle_cache,
+    resolve_kotlin_compiler_version,
 )
-if pom_files:
-    ns = {"m": "http://maven.apache.org/POM/4.0.0"}
-    for dependency in ET.parse(pom_files[0]).getroot().findall("m:dependencies/m:dependency", ns):
-        group, name, number = (
-            dependency.find("m:" + key, ns).text
-            for key in ("groupId", "artifactId", "version")
+
+
+def main() -> None:
+    java = require_java()
+    cache = resolve_gradle_cache()
+    version = resolve_kotlin_compiler_version(cache, resolve_configured_kotlin_version())
+    jars, stdlib, annotations = kotlin_compiler_jars(cache, version)
+    classpath = os.pathsep.join(map(str, jars))
+
+    with tempfile.TemporaryDirectory(prefix="lightisle-android-response-") as temporary:
+        output = f"{temporary}/classes"
+        subprocess.run(
+            [
+                java, "-cp", classpath, "org.jetbrains.kotlin.cli.jvm.K2JVMCompiler",
+                "-no-stdlib", "-no-reflect", "-jvm-target", "1.8",
+                "-classpath", os.pathsep.join(map(str, [stdlib, annotations])), "-d", output,
+                str(ROOT / "apps/flutter/android/app/src/main/kotlin/top/lengsu/lightisle/BoundedPhotoResponse.kt"),
+                str(ROOT / "tests/BoundedPhotoResponseCheck.kt"),
+            ],
+            check=True,
         )
-        jars.append(cached(group, name, number, ".jar"))
-else:
-    # Some offline Gradle caches contain the compiler JARs without Maven POMs.
-    # Use only already-cached compiler runtime JARs; never resolve or download.
-    jars.extend([
-        cached("org.jetbrains.kotlin", "kotlin-stdlib", version, ".jar"),
-        cached("org.jetbrains.kotlin", "kotlin-script-runtime", version, ".jar"),
-        cached("org.jetbrains.kotlin", "kotlin-reflect", "2.3.0", ".jar"),
-        cached("org.jetbrains.kotlinx", "kotlinx-coroutines-core-jvm", "1.8.1", ".jar"),
-        cached("org.jetbrains.intellij.deps", "trove4j", "1.0.20181211", ".jar"),
-    ])
-annotations = cached("org.jetbrains", "annotations", "13.0", ".jar")
-jars.append(annotations)
-stdlib = cached("org.jetbrains.kotlin", "kotlin-stdlib", version, ".jar")
-classpath = os.pathsep.join(map(str, jars))
-with tempfile.TemporaryDirectory(prefix="lightisle-android-response-") as temporary:
-    output = Path(temporary) / "classes"
-    subprocess.run([
-        "java", "-cp", classpath, "org.jetbrains.kotlin.cli.jvm.K2JVMCompiler",
-        "-no-stdlib", "-no-reflect", "-jvm-target", "1.8",
-        "-classpath", os.pathsep.join(map(str, [stdlib, annotations])), "-d", str(output),
-        str(ROOT / "apps/flutter/android/app/src/main/kotlin/top/lengsu/lightisle/BoundedPhotoResponse.kt"),
-        str(ROOT / "tests/BoundedPhotoResponseCheck.kt"),
-    ], check=True)
-    subprocess.run(["java", "-cp", os.pathsep.join(map(str, [output, stdlib])),
-                    "top.lengsu.lightisle.BoundedPhotoResponseCheckKt"], check=True)
+        subprocess.run(
+            [java, "-cp", os.pathsep.join(map(str, [output, str(stdlib)])),
+             "top.lengsu.lightisle.BoundedPhotoResponseCheckKt"],
+            check=True,
+        )
+
+
+if __name__ == "__main__":
+    main()

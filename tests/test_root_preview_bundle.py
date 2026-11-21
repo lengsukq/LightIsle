@@ -52,7 +52,7 @@ class Fixture:
                 (path / "family").mkdir(mode=0o700)
                 (path / "family/member.txt").write_text(f"family-{'AB'[index]}")
             maker = self.base / "fixture-maker"
-            subprocess.run(["swiftc", "-parse-as-library", str(PROJECT / "tests/MediaWorkerFixtureMaker.swift"), "-o", str(maker)], check=True, capture_output=True)
+            subprocess.run(["swiftc", "-swift-version", "6", "-parse-as-library", str(PROJECT / "tests/MediaWorkerFixtureMaker.swift"), "-o", str(maker)], check=True, capture_output=True)
             subprocess.run([str(maker), "heic", str(self.paths[0] / "same.heic")], check=True)
             shutil.copyfile(self.paths[0] / "same.heic", self.paths[1] / "same.heic")
             self.originals = {str(path): hashlib.sha256(path.read_bytes()).hexdigest()

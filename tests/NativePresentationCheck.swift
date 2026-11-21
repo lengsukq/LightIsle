@@ -10,9 +10,8 @@ struct NativePresentationCheck {
             let primary = SidebarPage.primary(page.section)
             precondition(primary.section == page.section)
         }
-        precondition([SidebarPage.files, .photos, .cinema].allSatisfy { $0.section == .spaces })
         precondition(SidebarPage.dependencies.section == .settings)
-        precondition(Set(SidebarPage.allCases.filter { $0 != .spaces }.map { String($0.shortcut.character) }).count == 9)
+        precondition(Set(SidebarPage.allCases.map { String($0.shortcut.character) }).count == 7)
 
         var state = DetailPreviewState()
         let a = UUID(), b = UUID()

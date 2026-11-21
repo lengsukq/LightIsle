@@ -39,7 +39,7 @@ LightIsle 是完整的 SwiftUI/AppKit macOS 原生**管理端**（Dock 图标、
 
 2026-10-28 补充：轻量模式及普通关窗/最小化后的健康采样使用私有 `stats summary`，保留主机、卷和磁盘告警所需信息，省去 Mac 全进程列表枚举、序列化及传输；重新可见时恢复页面所需采样；完整 `stats` 仅在高级诊断可见时读取。状态行改为分段解析并及时释放拼接缓冲，不变的备份状态/计划和 SMB 状态不重复触发 UI 发布。局部解析基准见 [性能记录](PERFORMANCE.md#2026-10-28-后端与原生-mac-第二轮优化)，不代表完整 SwiftUI 常驻内存测量。
 
-- 已增加「偏好与安全 → 通用 → 轻量模式」和菜单栏入口。手动进入后卸载原生管理页的 SwiftUI 视图树、释放页面级状态和监控图表/历史缓存，并关闭主窗口、暂时隐藏 Dock 图标；菜单栏的叶子图标显示当前轻量状态，选择「恢复正常管理界面」重新创建页面并恢复 Dock 图标。
+- 已增加「设置 → 通用 → 轻量模式」和菜单栏入口。手动进入后卸载原生管理页的 SwiftUI 视图树、释放页面级状态和监控图表/历史缓存，并关闭主窗口、暂时隐藏 Dock 图标；菜单栏的叶子图标显示当前轻量状态，选择「恢复正常管理界面」重新创建页面并恢复 Dock 图标。
 - 正常模式每 3 秒查询一次 UI 状态；轻量模式每 60 秒只查询必要的 Core 告警/共享状态，**不停止 Go Core**。文件上传、后台任务、远程 API 和系统防空闲睡眠设置都沿用正常服务生命周期，退出 App 仍关闭 Core。轻量模式会减少管理端内存占用，但内存回收的具体幅度取决于系统；不承诺释放 Go Core 或系统页面缓存。
 - 已运行的 App 收到 macOS 锁屏通知时默认自动进入轻量模式；在通用设置中可关闭自动切换，仍允许手动进入。屏幕解锁**不会**自动打开管理窗口，以免打断工作。自动触发与现有「登录 Mac 时自动打开轻屿」相互独立：如果 App 已完全退出或 Mac 尚未登录，锁屏本身无法启动应用或提供 NAS。
 - 本功能需要真实 macOS 锁屏/解锁、菜单栏重开、连续服务、睡眠/唤醒以及内存采样的设备验收；编译和单元测试并不证明系统锁屏通知在所有 macOS 版本中都能触发。
@@ -78,10 +78,11 @@ Go Core 默认在 `127.0.0.1:16666` 提供本机 HTTP；管理员初始化后 Ma
 - `TunnelCredentialCoordinator.swift`：配置前暂存 Token，收到 Core 明确验证的 `configure` 响应后才写钥匙串；写入失败保留原凭据并提示错误；Core 重启后通过钥匙串重新验证。
 - `ServicePersistencePolicy.swift`：持久化 FRP 启停偏好（`FRPPersistencePolicy`）与 Cloudflare Tunnel 活动模式及目标隧道（`TunnelPersistencePolicy`，覆盖 `quick` / `named` / `manual` 三种模式与手动 Token 钥匙串存取）。Core 就绪并汇报初始状态后按每个进程代际单次自动重放恢复指令，遇到配置或鉴权错误直接展示原因而不死循环重试。同时持久化导航栏展开态/宽度、Docker 运行时上下文（Docker Desktop / Colima）与镜像加速偏好，并在设置页加载时同步缩略图缓存上限与 SMB 初始状态。
 - `RootManagement.swift` 和 `RootManagementView.swift`：家庭版仅添加、重连或移除额外存储根。已删除逐根计划备份 IPC、备份状态轮询与旧单根迁移预检；不触碰硬盘原始文件。
-- `NativeAppsModel.swift`、`AppsPluginCenterView.swift`、`AppsPluginSheets.swift` 与 `MCPDeveloperCenterView.swift`：通过 `apps <op>` 私有 IPC 通道连接 Go Core 的 `apps.Manager`，在「Docker 与应用」页面提供原生的轻应用插件管理中心（一级列表保留状态监控、首次激活确认、启停唤醒与免密打开；新建插件脚手架保持紧凑弹窗，而成员权限、Web/Cron 生命周期配置、实时控制台/Cron 日志、数据归档导出/恢复与卸载统一收纳至带顶栏返回的二级详情页 `AppPluginDetailView` 并接入 `ManagementEdits` 未保存草稿拦截）以及 MCP 开发者与局域网调试中心（本机 Stdio 与局域网 HTTP/SSE MCP 双开关、Bearer Token 轮换、MCP Inspector 交互式调试器、网关 HTTP 探针与实时调用追踪日志）。Cloudflare Tunnel API 隧道与域名管理（`TunnelManagementView`）及 Docker 容器日志与实时资源采样同样采用全宽原生二级页面承载，避免多分组配置面板超出主窗口。
+- `NativeAppsModel.swift`、`AppsPluginCenterView.swift`、`AppsPluginSheets.swift` 与 `MCPDeveloperCenterView.swift`：通过 `apps <op>` 私有 IPC 通道连接 Go Core 的 `apps.Manager`，在「Docker 与应用」页面提供原生的轻应用与插件管理及本机 Docker/Colima 容器管理，并将「定时脚本」与「AI Agent (MCP)」收纳至默认折叠的「开发者扩展」披露区（`MCPDeveloperCenterView` 通过网关 `tools/list` 与 `resources/list` 动态同步工具与资源目录，支持本机 Stdio 与局域网 HTTP/SSE MCP 双开关、Bearer Token 轮换、交互式调试器、网关 HTTP 探针与实时调用追踪日志）。Cloudflare Tunnel API 隧道与域名管理（`TunnelManagementView`）及 Docker 容器日志与实时资源采样同样采用全宽原生二级页面承载，避免多分组配置面板超出主窗口。
+- `HostMetricsStore.swift`、`PreferencesDraftStore.swift`、`AppPreferenceKeys.swift`、`PasteboardHelper.swift`、`DeviceOwnerAuth.swift`、`UserFacingErrorMapper.swift`：将 3 秒高频宿主机遥测/电源/Tailscale 状态独立为 `HostMetricsStore`（仅遥测相关叶子视图通过 `HostMetricsObserver` 按需订阅，避免设置页等表单随采样重绘），收敛设置草稿与 `UserDefaults` 键名至强类型存储，统一剪贴板/生物识别与面向家庭用户的中文错误映射。
 - `CorePresentationModels.swift` 保存监控、备份、磁盘等只读状态 DTO；`CoreLifecycleSignal.swift` 只解析来自私有 IPC 的生命周期信号。只有严格合法的 `http://127.0.0.1` READY 地址能够让主界面进入服务就绪状态。AppModel 内的 `handleCoreReady` 负责后续密钥恢复、局域网监听与服务状态绑定。此拆分不放宽恢复数据、Core 进程和管理员凭证的 `private` 保护。
 
-原有 `AppModel` 仍负责 SwiftUI 可观察状态和调用上述协调器；这些抽取不是将服务管理移到浏览器，也不允许普通 HTTP 客户端触发系统 IPC。对应可执行回归检查位于 `tests/NativeServicePresenceCheck.swift`、`tests/TunnelWireCodecCheck.swift`、`tests/TunnelPayloadParserCheck.swift`、`tests/TunnelCredentialCoordinatorCheck.swift`，统一纳入 `scripts/verify-macos.sh`。钥匙串授权、实际网络、通知送达和休眠/唤醒行为仍须 Mac 真机人工验收。
+原有 `AppModel` 仍负责 SwiftUI 可观察状态和调用上述协调器；这些抽取不是将服务管理移到浏览器，也不允许普通 HTTP 客户端触发系统 IPC。对应可执行回归检查位于 `tests/NativeServicePresenceCheck.swift`、`tests/TunnelWireCodecCheck.swift`、`tests/TunnelPayloadParserCheck.swift`、`tests/TunnelCredentialCoordinatorCheck.swift`、`tests/HostSecretVaultCheck.swift`、`tests/IsleChartViewsCheck.swift`、`tests/TailscaleAndUPSCheck.swift`、`tests/external_dependency_catalog_smoke.swift`，统一纳入 `scripts/verify-macos.sh`。钥匙串授权、实际网络、通知送达和休眠/唤醒行为仍须 Mac 真机人工验收。
 
 Go Core 的物理根路由在 `root_routes_register.go` 中按文件、照片、影院与管理员操作分组，继续使用 `root_routing.go` 的租约、根代际前置条件和对应权限守卫；未改变路由或默认权限。Go 原生管理员初始化、验证与重置 IPC 的有界 Base64URL/JSON 解码由 `native_admin_payload.go` 统一负责，操作仍仅能从 Mac 原生私有进程控制管道触发。
 
@@ -128,7 +129,7 @@ macOS 不保证父进程崩溃就会自动杀掉子进程，因此同时设计�
 
 ## 原生界面与回归
 
-Mac 管理端的六个主入口（概览、存储、网络与连接、Docker 与应用、个人空间、设置）共用**连续画布和可收起/调宽的悬浮导航**；正文独立滚动、标题固定，窄窗表单垂直排列。`⌃⌘S` 切换导航文字；保留 `⌘1`～`⌘9`、`⌘,` 和返回详情快捷键。减少动态效果、减少透明度与增强对比度需分别生效；深浅主题和高对比文本统一采用设计 token。草稿离开要提供**保存、放弃、继续编辑**，失败不得丢输入。
+Mac 管理端的六个主入口（概览、存储、网络与连接、Docker 与应用、个人空间、设置）共用**连续画布和可收起/调宽的悬浮导航**；正文独立滚动、标题固定，窄窗表单垂直排列。`⌃⌘S` 切换导航文字；按侧栏顺序提供 `⌘1`～`⌘6`（`⌘7` 打开「设置 → 外部依赖」）、`⌘,` 和返回详情快捷键（已移除旧版原生 Web 介绍壳页，菜单栏直达直接通过默认浏览器打开 Web 空间）。减少动态效果、减少透明度与增强对比度需分别生效；深浅主题和高对比文本统一采用设计 token。草稿离开要提供**保存、放弃、继续编辑**，失败不得丢输入。
 
 细节窗口按需请求 SMART/容器日志/诊断进程，浮层一次只打开一个；支持 Escape、页面滚动/切换时关闭、悬停延迟与取消。实现分布在 `ContentView+*.swift`、`ManagementShell.swift`、`DetailPreview.swift` 和 `ManagementEdits.swift`，统一使用 `AppModel` 而不创建第二套宿主控制 API。
 
@@ -143,7 +144,7 @@ python3 -B scripts/preview-macos-design.py --name Accessible --appearance dark -
 python3 -B scripts/preview-macos-design.py --name Offline --scenario offline
 ```
 
-预览为独立 Debug App **模拟数据**，不连接真实 Core、Docker、外置盘或云端。可重现浅深主题、850×570 小窗、1440×900 宽窗、离线、空白和失败态。`scripts/verify-macos.sh` 另检查导航与快捷键、`NativePresentationCheck.swift` 预览状态竞争、`ManagementWindowVisibilityCheck.swift` 隔离窗口释放、`LightweightModePolicyCheck.swift` 隐藏 60 秒/可见 3 秒采样、`sync-fluid-tokens.py --check` 语义色对比度。具体文件路径与参数以脚本实现为准。
+预览为独立 Debug App **模拟数据**，不连接真实 Core、Docker、外置盘或云端。可重现浅深主题、850×570 小窗、1440×900 宽窗、离线、空白和失败态。`Package.swift` 中 `LightIsle` 与 `LightIsleMediaWorker` 均运行在原生 Swift 6 严格并发模式（`@unchecked Sendable` 收敛至带内部锁的 `CoreCommandWriter` 与 `HostSecretVaultStore`，`DirectoryChangeWatcher` 对 `FSEventStreamRef` 显式标注并说明 `nonisolated(unsafe)`）；`scripts/verify-macos.sh` 统一以 `-swift-version 6` 另行检查导航与快捷键、`NativePresentationCheck.swift` 预览状态竞争、`ManagementWindowVisibilityCheck.swift` 隔离窗口释放、`LightweightModePolicyCheck.swift` 隐藏 60 秒/可见 3 秒采样、`sync-fluid-tokens.py --check` 语义色对比度。具体文件路径与参数以脚本实现为准。
 
 **已完成的用户实机验收**：LightIsle 部署在 Mac mini，连续运行 7 天（168 小时）无异常、无自动退出、服务正常（2026-11-05 登记，见 [验收记录](DEVICE_ACCEPTANCE.md)）。**尚未完成的专项验收**：真实管理员/磁盘/通知/容器/云端操作、macOS 14 系统回退、VoiceOver 与全键盘焦点、完整 GUI 页级 Instruments、动画 FPS 和长时间 CPU/RSS 连续曲线。此前 2026-10-28 的截图与基准是**隔离样例历史证据**，未随仓库发布；不要将其当作正式 App 真机验收。
 

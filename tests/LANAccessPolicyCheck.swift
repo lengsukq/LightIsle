@@ -57,6 +57,7 @@ struct LANAccessPolicyCheck {
         precondition(LANAccessPolicy.prefersHTTP(defaults: relaunchedDefaults))
 
         precondition(LANAccessPolicy.canRetryAfterNetworkChange("没有可用的局域网私有 IPv4 地址"))
+        precondition(LANAccessPolicy.canRetryAfterNetworkChange("没有可用的局域网或 Tailscale 私有 IPv4 地址"))
         precondition(LANAccessPolicy.canRetryAfterNetworkChange("Cannot assign requested address"))
         precondition(!LANAccessPolicy.canRetryAfterNetworkChange("address already in use"))
         precondition(!LANAccessPolicy.canRetryAfterNetworkChange("certificate invalid"))

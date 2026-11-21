@@ -1,3 +1,6 @@
+// Compile together with:
+//   ManagementNavigation.swift SidebarPage.swift IsleFluidPalette.swift
+//   LiquidComponents.swift IsleChartMath.swift IsleChartViews.swift
 import AppKit
 import Foundation
 import SwiftUI

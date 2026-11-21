@@ -80,7 +80,8 @@ NAS 仍只运行在 macOS arm64；原生管理端拥有 Go 服务生命周期，
 - **系统返回（Android Back / 侧滑）层级对齐**：`ClientShell`、`PhotosPage` 与 `CinemaPage` 接入 `PopScope`；从仪表盘打开内嵌「文件管理」或在「相册 / 影视 / 设置」页按系统返回优先退回上层视图或「仪表盘」，相册与影视先退出多选、搜索或子分类筛选，避免直接意外退出 App。
 - **文件管理细节顺手度**：修复回收站视图下拉刷新误切回普通目录的问题（`_showingTrash` 时刷新回收站列表）；开启搜索前保存当前目录路径（`_preSearchPath`），清除搜索后精准回到原浏览目录而非根目录；重命名文件弹窗默认仅选中扩展名之前的主文件名（如 `度假照片.jpg` 选中 `度假照片`）；「移动到…」目标目录选择器支持在可写目录内就地「新建文件夹」并自动进入；单文件菜单语义明确拆分为「移动到…」与「重命名」。
 - **相册浏览与多选体验**：在私人相册或管理员查看共享相册时，底部多选栏提供「移出相册」（仅解除相册关联、不删原片）；多选「收藏」按钮根据所选状态动态切换为「取消收藏」；顶部激活的相册胶囊支持点击右侧 `×` 一键清除返回全部照片，「我的收藏」胶囊支持再次点击取消筛选；在全屏 `PhotoGalleryViewer` 中删除或移动单张照片后自动从当前队列移除并平滑切换到下一张，不再中断全屏连看；查看器内修改照片详情（收藏/相册）实时回写外层时间线列表；月份一键全选热区扩大并增加达 50 张上限时的明确提示。
-- **影视详情、播放刷新与播放器文件解耦**：影片海报右下角与首页巨幕 Billboard 新增「详情与简介」独立入口，无需开始播放即可打开 `CinemaFilmOverview` 查看简介或执行豆瓣/TMDB/NFO 资料匹配；退出播放器后同步刷新首页「继续观看」横栏与观看历史；在「剧集」分类下开启搜索框时保持剧集过滤而不强制跳回全部影片。同时将 `cinema_detail_player_view.dart` 按职责拆分为播放舞台、传输控制栏（`cinema_detail_player_controls.dart`）与剧集/详情浮层（`cinema_detail_player_sheets.dart`）；将「关于轻屿（`AboutPage`）」重构为网页级滚动叙事（3D 视差转场、章节进度胶囊与一键「自动巡礼」连续滚动）及 60fps 持续播放的五幕自绘功能演示舞台（序幕星环、Mac 原生核心与双盘 APFS 通道、图库回忆与 GPS 足迹雷达、私人影院巨幕与进度、全端加密互联，拆分为 `about_page.dart`、`about_hero_and_footer.dart`、`about_showcase_sections.dart`、`about_showcase_widgets.dart` 与 `about_showcase_painters.dart`），保持全部 `lib/` 生产源码文件 ≤ 800 行。
+- **影视详情、播放刷新与播放器文件解耦**：影片海报右下角与首页巨幕 Billboard 新增「详情与简介」独立入口，无需开始播放即可打开 `CinemaFilmOverview` 查看简介或执行豆瓣/TMDB/NFO 资料匹配；退出播放器后同步刷新首页「继续观看」横栏与观看历史；在「剧集」分类下开启搜索框时保持剧集过滤而不强制跳回全部影片。同时将 `cinema_detail_player_view.dart` 按职责拆分为播放舞台、传输控制栏（`cinema_detail_player_controls.dart`）与剧集/详情浮层（`cinema_detail_player_sheets.dart`）。
+- **信息架构收敛、零等待启动与单源收口（2026-11-21）**：桌面侧栏展开与折叠态均保留直达「文件工作台」入口，手机端移除重复顶栏头像并压薄内嵌文件头部；「关于轻屿（`about_page.dart`）」精简为轻量实用关于页（保留版本、开源许可与排障导出入口，移除早期多幕营销动画文件）；`StartupCurtain` 在会话恢复完成即平滑淡出（无固定 1.57s 等待）；`StoragePage` 显式展示 `enforcement=pending` 提示；`ClientShell` 通过 `ShellStorageHandle`（`lib/core/shell_storage_state.dart`）作为根与个人存储策略唯一数据源，抽离 `PhotoBackupPrefsSchema`（`photo_backup_prefs_schema.dart`）、`IsleFormatters`（`isle_formatters.dart`）与 `NativeVideoBridge`（`native_video_bridge.dart`），并使全部 `lib/` 生产源文件严格 `< 800` 行。随后同日将 `cinema_detail_dialog`、`photos_page`、`files_page`、`mobile_photo_backup_page` 4 组超大型 `part` 集群（共 `33` 个 `part`/`part of` 文件）全部拆解为独立 `ChangeNotifier` 控制器（`CinemaDetailController`、`PhotosController`、`FilesController`、`MobilePhotoBackupController`）、分域服务/协调器与无状态展示组件（消除 `_updateState` 透传并保持公开入口与导出兼容，由 `test/wave3_controller_decoupling_test.dart` 守门）。
 
 **2026-11-02 响应式审查和修复**：参照 Mac 原生管理端的连续画布、浮动侧栏和实体卡片，Flutter Mac Client 默认使用紧凑图标导航，在够宽的窗口中可展开/收起侧栏（`⌃⌘S`）；浮动侧栏胶囊高度随导航项收缩，不再拉伸到整窗高度。主导航收敛为四主栏目（仪表盘、相册、影视、设置；文件管理集成至仪表盘快捷工作台，可直达与返回），手机底栏在 320px/200% 字号下优先保留可访问的四入口图标和提示，输入键盘弹出时不遮挡页面。文件工具栏保留上传与新建文件夹的图标快捷入口，概览指标按实际栏宽换列，存储成员绑定的操作按钮在窄窗独立换行。高对比与减少动画时浮动导航及确认框改为不透明实体表面，避免模糊和文字对比度下降。图库/影院增加了带真实条目模拟数据的响应式滚动回归，修复 320px 影片海报标题/状态栏溢出；空状态在窄短屏减小无效留白。
 
@@ -136,7 +137,7 @@ NAS 仍只运行在 macOS arm64；原生管理端拥有 Go 服务生命周期，
 - 图库列表 `photos_page.dart` 与 `photo_detail_dialog.dart` 分离；详情复用 `PhotoMediaImage` / `PhotoMediaVideo`，保留相册、收藏与 EXIF 编辑。
 - 文件管理将 `file_models.dart`、`file_pdf_preview.dart`、`file_upload_stream.dart` 单独维护。上传流读取、暂停/取消与页面 UI 不再写在同一组件文件；同一服务器上传会话、目标路径、根代际及冲突规则未改变。
 - 后续将 `FileUploadService` 从 `FilesPage` 剥离，专管原件 SHA-256、上传任务恢复/创建、服务端偏移确认、分块发送、完成/中止与持久化续传提示；`FileUploadJob` 统一暂停门闩、继续、取消、重试的生命周期。页面只负责选择文件、展示进度、错误及返回确认。旧 `lightisle_upload_v3_` 身份规则、同目录改名、根代际保护均不变，新增了暂停中取消及随机范围读取测试。
-- `main.dart` 只负责应用启动/恢复登录入口，登录表单与证书指纹 UI 在 `features/auth/login_page.dart`，成员/管理员导航在 `features/shell/client_shell.dart`。`core/api_models.dart` 独立承载公共 API 错误及根标识值对象，不调整 Cookie、TLS 指纹和本机媒体中继实现。
+- `main.dart` 只负责应用启动/恢复登录入口，登录表单与证书指纹 UI 在 `features/auth/login_page.dart`，成员/管理员导航在 `features/shell/client_shell.dart`。`apps/flutter/lib/core/api_models.dart` 独立承载公共 API 错误及根标识值对象，不调整 Cookie、TLS 指纹和本机媒体中继实现。
 - `photo_backup_hash.dart` 为 Android/iOS 前台原片备份提供独立可测试的有界 SHA-256 流读取、每块摘要、前后文件身份核验及取消回调。后台 WorkManager、游标持久化和失败注册仍使用原有状态机，不把大小相等当作持久备份成功。
 - Web `App.vue` 的管理员任务中心移入 `useTaskCenter.ts`，切换物理根时废弃未完成的状态/历史响应，成员身份禁止加载管理员任务；现有根代际网络请求守卫不变。
 
@@ -166,7 +167,7 @@ NAS 仍只运行在 macOS arm64；原生管理端拥有 Go 服务生命周期，
 - **删除死代码**：`IsleButton`（其按压/悬停模式提炼进 IsleSurface）、`IsleSanctuaryTile`、`IsleSearchField`、`IslePulsingStatusDot`、`IsleAdaptiveGroup`（设置页迁移后无消费者）。
 - 多尺寸截图（320/600/1280 × 明暗 × 1x/2x 溢出矩阵）由 `responsive_shell_test.dart` 的 `LIGHTISLE_CAPTURE_VISUALS` 管线输出到 `build/flutter-mobile-review/`；该目录为构建产物不入库。窗口缩放与真机的悬停/触感仍需 macOS/移动端实机确认。
 
-2026-11-03 二级页面说明收纳（同日晚）：`IsleHelpDisclosure` 全宽度统一为紧凑折叠行，删除桌面端强制展开成整块 Notice 的分支。页面级说明统一收纳到内容之后（状态/错误提示置顶 → 内容 → 底部一条说明）：存储空间页三块顶部说明合并为一块置底、"已登记的存储位置"换统一样式折叠卡；文件分享、安全审计/告警、离线照片同模式调整；离线照片列表收进 inset-grouped 分组卡并改用 `IsleListView`；下载中心顶部介绍行改页面副标题样式。验收截图在 `build/flutter-page-audit/`（二级页面矩阵）与 `build/flutter-mobile-review/`（主页面矩阵）。
+2026-11-03 二级页面说明收纳（同日晚）：二级说明统一为紧凑折叠行，删除桌面端强制展开成整块 Notice 的分支。页面级说明统一收纳到内容之后（状态/错误提示置顶 → 内容 → 底部一条说明）：存储空间页三块顶部说明合并为一块置底、"已登记的存储位置"换统一样式折叠卡；文件分享、安全审计/告警、离线照片同模式调整；离线照片列表收进 inset-grouped 分组卡并改用 `IsleListView`；下载中心顶部介绍行改页面副标题样式。验收截图在 `build/flutter-page-audit/`（二级页面矩阵）与 `build/flutter-mobile-review/`（主页面矩阵）。
 
 同日满宽条目行化：登录会话、安全审计/任务告警的满宽条目大卡改为 `IsleGroupCard` 分组行（图标徽章 + 标题/详情 + 行尾垂直居中的操作按钮或结果胶囊），操作按钮不再悬空在卡片右下；未确认告警行尾直接放"确认已知晓"按钮。表单主按钮（如更新密码）不再拉伸到卡片全宽。新列表页请沿用该模式，不要再用满宽 IsleSurface 包单条记录。
 
@@ -194,7 +195,7 @@ NAS 仍只运行在 macOS arm64；原生管理端拥有 Go 服务生命周期，
 
 ## 手机原片备份的校验与遗漏
 
-- **跨端统一备份页与流式上限升级（2026-11-11）**：原 `android_photo_backup_*.dart` 已重构收敛为 Android/iOS 共用的 `MobilePhotoBackupPage`（`mobile_photo_backup_*.dart`，历史兼容层 `android_photo_backup_page.dart` 已物理移除），支持「仅相机拍摄（过滤截图）」与「全部媒体」切换及可选 `YYYY/MM` 年月分目录。Android 前台与后台 WorkManager（`BackgroundPhotoWorker.kt`）均通过抽离的 `AndroidPhotoChannelHandler.kt` / `AndroidPhotoImport.kt` 使用 `inspectAndHash` 与 `readChunk` 原生流式分块直传（校验 `size + modified + generation` 防读取期间篡改，后台实时同步 `albumScope` 与 `organizeByYearMonth` 配置并自动创建 `YYYY/MM` 子目录），无需先将整片拷贝到临时区占用双倍手机存储，**前台单文件上限已从旧版 2 GiB 提升至 32 GiB**（后台 WorkManager 仍仅备份照片且大于 100 MiB 的条目留待前台处理，不计为成功）。iOS 前台（`IOSPhotoBackup.swift`）准备上限同为 32 GiB，新增确定性 52-bit `assetGeneration` 资源指纹（免除已核验原片重复导出）、RAW 伴侣资源识别（`r.` 前缀）及可选「允许在 Wi-Fi 下从 iCloud 下载原片」（`allowICloudDownload`，默认关闭，未下载项明确标记 `icloud_not_downloaded`）。
+- **跨端统一备份页与流式上限升级（2026-11-11）**：原按平台分开的 Android 相册备份页已重构收敛为 Android/iOS 共用的 `MobilePhotoBackupPage`（`mobile_photo_backup_*.dart`，旧平台兼容壳页已物理移除），支持「仅相机拍摄（过滤截图）」与「全部媒体」切换及可选 `YYYY/MM` 年月分目录。Android 前台与后台 WorkManager（`BackgroundPhotoWorker.kt`）均通过抽离的 `AndroidPhotoChannelHandler.kt` / `AndroidPhotoImport.kt` 使用 `inspectAndHash` 与 `readChunk` 原生流式分块直传（校验 `size + modified + generation` 防读取期间篡改，后台实时同步 `albumScope` 与 `organizeByYearMonth` 配置并自动创建 `YYYY/MM` 子目录），无需先将整片拷贝到临时区占用双倍手机存储，**前台单文件上限已从旧版 2 GiB 提升至 32 GiB**（后台 WorkManager 仍仅备份照片且大于 100 MiB 的条目留待前台处理，不计为成功）。iOS 前台（`IOSPhotoBackup.swift`）准备上限同为 32 GiB，新增确定性 52-bit `assetGeneration` 资源指纹（免除已核验原片重复导出）、RAW 伴侣资源识别（`r.` 前缀）及可选「允许在 Wi-Fi 下从 iCloud 下载原片」（`allowICloudDownload`，默认关闭，未下载项明确标记 `icloud_not_downloaded`）。
 - 2 GiB 以内继续使用完整 SHA-256 接口；大于 2 GiB 的原片在单次流式/本地读取中同时计算完整摘要与 4 MiB 分块摘要，由 NAS 逐块读取实际落盘文件校验全部范围、长度、摘要及文件版本，每块前后检查暂停状态。NAS 同时最多进行两次哈希读取，不能把 HEAD 大小相等当成校验成功。
 - 大原片分块校验目前只开放给通过已打开文件描述符确认的本机 APFS；其他磁盘格式明确返回 `verification_filesystem_unsupported`。文件版本由物理身份、修改/变更时间、大小等组成，不能把它当作文件系统快照；不承诺在内核磁盘读取阻塞时立即取消。
 - 单张原片缺失、iCloud 未落盘或本机原片读取失败，会登记为未完成并继续后续资产；权限撤销、服务/缓存故障、取消、NAS 网络或写入/校验失败仍停止本轮。未解决遗漏存在时不写完整备份时间，扫描到末尾后可从最新照片重新检查重试。
@@ -230,11 +231,11 @@ flutter run -d macos
 ./scripts/verify-flutter.sh android macos ios
 ```
 
-构建输出：
+构建输出（位于 `apps/flutter/` 下，执行对应构建命令后生成）：
 
-- Android：`apps/flutter/build/app/outputs/flutter-apk/app-debug.apk`。
-- macOS：`apps/flutter/build/macos/Build/Products/Debug/LightIsle Client.app`。
-- iOS 模拟器：`apps/flutter/build/ios/iphonesimulator/Runner.app`。
+- Android：`build/app/outputs/flutter-apk/app-debug.apk`。
+- macOS：`build/macos/Build/Products/Debug/LightIsle Client.app`。
+- iOS 模拟器：`build/ios/iphonesimulator/Runner.app`。
 
 以上是开发产物，不是商店发行包。iOS 真机需在 Xcode 自行选择团队签名，仓库未写入个人团队 ID；Android 正式签名、公证与 App Store/Play Store 发布未执行。
 

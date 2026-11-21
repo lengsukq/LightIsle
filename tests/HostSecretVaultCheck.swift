@@ -235,7 +235,7 @@ struct HostSecretVaultCheck {
             precondition(TunnelSecretVault.load() == "facade-cf-api")
             precondition(TunnelSecretVault.loadManualRunToken() == "facade-cf-run")
 
-            TmdbSecretVault.remove()
+            try TmdbSecretVault.remove()
             try MapSecretVault.remove()
             try TunnelSecretVault.remove()
             try TunnelSecretVault.removeManualRunToken()

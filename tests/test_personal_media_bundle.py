@@ -57,7 +57,7 @@ def main() -> None:
         shared.mkdir(parents=True)
         maker = base / "fixture-maker"
         subprocess.run(
-            ["swiftc", "-swift-version", "5", "-parse-as-library", "-suppress-warnings", str(FIXTURE_MAKER), "-o", str(maker)],
+            ["swiftc", "-swift-version", "6", "-parse-as-library", "-suppress-warnings", str(FIXTURE_MAKER), "-o", str(maker)],
             check=True, timeout=60,
         )
         photo = shared / "photo.heic"

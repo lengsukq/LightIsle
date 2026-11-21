@@ -23,7 +23,18 @@ struct CoreSupervisorCheck {
         precondition(CoreSupervisorPolicy.startupBlocker(exitCode: 72) != nil)
         precondition(CoreSupervisorPolicy.startupBlocker(exitCode: 76) != nil)
         precondition(CorePortListener.listeningPIDs(in: "p20\nn192.168.1.2:16666\np21\nn127.0.0.1:16666\np22\nn*:16666\n", port: 16666) == [21, 22])
+        if case .ready(let url)? = CoreLifecycleSignal.decode("LIGHTISLE_READY http://127.0.0.1:16666") {
+            precondition(url.port == 16666)
+        } else {
+            preconditionFailure("Ready URL must parse as loopback HTTP")
+        }
+        precondition(CoreLifecycleSignal.decode("LIGHTISLE_READY http://example.com:16666") == nil)
+        precondition(CoreLifecycleSignal.decode("LIGHTISLE_READY https://127.0.0.1:16666") == nil)
+        precondition(CoreLifecycleSignal.decode("LIGHTISLE_READY garbage") == nil)
         precondition(CoreLifecycleSignal.decode("LIGHTISLE_READY http://127.0.0.1:16666/redirect") == nil)
+        precondition(CoreLifecycleSignal.decode("LIGHTISLE_REMOTE_OFF") == .remoteOff)
+        precondition(CoreLifecycleSignal.decode("LIGHTISLE_REMOTE_ERROR bind_failed") == .remoteError("bind_failed"))
+        precondition(CoreLifecycleSignal.decode("LIGHTISLE_UNKNOWN") == nil)
         precondition(CoreLifecycleSignal.decode("LIGHTISLE_SERVICE_WARNING task_history") != nil)
         try checkCommandWriter()
         print("PASS: Core recovery budget, health failure threshold, startup blockers, and bounded nonblocking control pipe")

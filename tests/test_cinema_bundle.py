@@ -19,7 +19,7 @@ with tempfile.TemporaryDirectory(prefix="lightisle-m4-smoke-") as folder:
     shared=base/"SharedFiles"
     shared.mkdir()
     maker=base/"fixture-maker"
-    subprocess.run(["swiftc","-swift-version","5","-parse-as-library","-suppress-warnings",str(FIXTURE_MAKER),"-o",str(maker)],check=True,timeout=60)
+    subprocess.run(["swiftc","-swift-version","6","-parse-as-library","-suppress-warnings",str(FIXTURE_MAKER),"-o",str(maker)],check=True,timeout=60)
     movie_path=shared/"Example.Movie.2024.mp4"
     run_fixture_maker(maker,"mp4",movie_path)
     movie_bytes=movie_path.read_bytes()

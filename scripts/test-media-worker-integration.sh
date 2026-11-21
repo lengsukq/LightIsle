@@ -2,7 +2,21 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-worker="${LIGHTISLE_MEDIA_WORKER_BIN:-$repo_root/.build/out/Products/Release/lightisle-media-worker}"
+worker="${LIGHTISLE_MEDIA_WORKER_BIN:-}"
+if [[ -z "$worker" ]]; then
+	for candidate in \
+		"$repo_root/.build/arm64-apple-macosx/release/lightisle-media-worker" \
+		"$repo_root/.build/arm64-apple-macosx/debug/lightisle-media-worker" \
+		"$repo_root/dist/LightIsle.app/Contents/Resources/core/lightisle-media-worker"; do
+		if [[ -x "$candidate" ]]; then
+			worker="$candidate"
+			break
+		fi
+	done
+fi
+if [[ -z "$worker" ]]; then
+	worker="$repo_root/.build/arm64-apple-macosx/debug/lightisle-media-worker"
+fi
 if [[ "$worker" != /* ]]; then
 	worker="$repo_root/$worker"
 fi
@@ -21,7 +35,7 @@ trap 'rm -rf "$scratch"' EXIT
 
 # The fixture generator uses only Apple's SDK frameworks and the source tree.
 # It creates deterministic local HEIC/MP4 fixtures and does not fetch assets.
-swiftc -suppress-warnings -parse-as-library "$repo_root/tests/MediaWorkerFixtureMaker.swift" -o "$scratch/media-fixture-maker"
+swiftc -swift-version 6 -suppress-warnings -parse-as-library "$repo_root/tests/MediaWorkerFixtureMaker.swift" -o "$scratch/media-fixture-maker"
 "$scratch/media-fixture-maker" heic "$scratch/synthetic.heic"
 "$scratch/media-fixture-maker" mp4 "$scratch/synthetic.mp4"
 
