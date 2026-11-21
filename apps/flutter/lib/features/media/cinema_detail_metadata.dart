@@ -1,218 +1,118 @@
-part of 'cinema_detail_dialog.dart';
+import 'dart:async';
 
-extension _CinemaDetailMetadata on _CinemaDetailDialogState {
-  Future<void> _importLocalNfo() async {
-    if (!widget.isAdmin ||
-        _metaMatch.busy ||
-        _metaMatch.tmdbSearching ||
-        _metaMatch.tmdbMatching) {
+import 'package:flutter/material.dart';
+
+import '../../core/isle_theme.dart';
+import 'cinema_detail_controller.dart';
+import 'cinema_metadata_cards.dart';
+import 'cinema_metadata_repository.dart';
+import 'media_models.dart';
+import 'media_ui.dart';
+
+/// Executes NFO import, TMDB search/match, and Douban search/match operations
+/// against [CinemaDetailController].
+abstract final class CinemaMetadataActions {
+  static Future<void> importLocalNfo(CinemaDetailController controller) async {
+    final match = controller.metaMatch;
+    if (!controller.isAdmin ||
+        match.busy ||
+        match.tmdbSearching ||
+        match.tmdbMatching) {
       return;
     }
-    final generation = ++_metaMatch.generation;
-    final filmId = _film.id;
-    _updateState(() {
-      _metaMatch.busy = true;
-      _metaMatch.message = null;
-      _metaMatch.isError = false;
+    final generation = ++match.generation;
+    final filmId = controller.film.id;
+    controller.mutate(() {
+      match.busy = true;
+      match.message = null;
+      match.isError = false;
     });
     try {
-      final updated = await _metadataRepository.importNfo(filmId);
-      if (!mounted || generation != _metaMatch.generation) return;
-      _updateState(() {
-        _film = updated;
-        _metaMatch.message = '已导入本地 NFO 资料，原视频和观看进度未修改。';
+      final updated = await controller.metadataRepository.importNfo(filmId);
+      if (!controller.isActive || generation != match.generation) return;
+      controller.mutate(() {
+        controller.film = updated;
+        match.message = '已导入本地 NFO 资料，原视频和观看进度未修改。';
       });
-      widget.onProgressUpdated(updated);
+      controller.onProgressUpdated(updated);
     } catch (error) {
-      if (!mounted || generation != _metaMatch.generation) return;
-      _updateState(() {
-        _metaMatch.message = mediaErrorLabel(error);
-        _metaMatch.isError = true;
+      if (!controller.isActive || generation != match.generation) return;
+      controller.mutate(() {
+        match.message = mediaErrorLabel(error);
+        match.isError = true;
       });
     } finally {
-      if (mounted && generation == _metaMatch.generation) {
-        _updateState(() => _metaMatch.busy = false);
+      if (controller.isActive && generation == match.generation) {
+        controller.mutate(() => match.busy = false);
       }
     }
   }
 
-  Future<void> _searchTmdb() async {
-    if (!widget.isAdmin ||
-        _metaMatch.busy ||
-        _metaMatch.tmdbSearching ||
-        _metaMatch.tmdbMatching) {
+  static Future<void> searchTmdb(CinemaDetailController controller) async {
+    final match = controller.metaMatch;
+    if (!controller.isAdmin ||
+        match.busy ||
+        match.tmdbSearching ||
+        match.tmdbMatching) {
       return;
     }
-    final token = _metaMatch.tmdbTokenController.text.trim();
-    final query = _metaMatch.tmdbQueryController.text.trim();
+    final token = match.tmdbTokenController.text.trim();
+    final query = match.tmdbQueryController.text.trim();
     if (query.isEmpty) {
-      _updateState(() {
-        _metaMatch.tmdbMessage = '请输入影视名称搜索关键词。';
-      });
+      controller.mutate(() => match.tmdbMessage = '请输入影视名称搜索关键词。');
       return;
     }
-    if (token.isNotEmpty &&
-        (token.length < 20 ||
-            token.length > 2048 ||
-            RegExp(r'\s').hasMatch(token))) {
-      _updateState(() {
-        _metaMatch.tmdbMessage =
+    if (_isInvalidTmdbToken(token)) {
+      controller.mutate(() {
+        match.tmdbMessage =
             '填写的 TMDB Read Access Token 格式无效（留空可直接使用 Mac 端已配置的 Token）。';
       });
       return;
     }
-    final generation = ++_metaMatch.generation;
-    final filmId = _film.id;
-    _updateState(() {
-      _metaMatch.tmdbSearching = true;
-      _metaMatch.tmdbCandidates = const [];
-      _metaMatch.tmdbMessage = null;
+    final generation = ++match.generation;
+    final filmId = controller.film.id;
+    controller.mutate(() {
+      match.tmdbSearching = true;
+      match.tmdbCandidates = const [];
+      match.tmdbMessage = null;
     });
     try {
-      final candidates = await _metadataRepository.search(
+      final candidates = await controller.metadataRepository.search(
         filmId,
         token: token,
         query: query,
       );
-      if (!mounted || generation != _metaMatch.generation) return;
-      _updateState(() {
-        _metaMatch.tmdbCandidates = candidates;
+      if (!controller.isActive || generation != match.generation) return;
+      controller.mutate(() {
+        match.tmdbCandidates = candidates;
         if (candidates.isEmpty) {
-          _metaMatch.tmdbMessage = '没有找到相关影视资料，可以调整关键词后再搜索。';
+          match.tmdbMessage = '没有找到相关影视资料，可以调整关键词后再搜索。';
         }
       });
     } catch (error) {
-      if (!mounted || generation != _metaMatch.generation) return;
-      _updateState(
-        () => _metaMatch.tmdbMessage = '搜索失败：${mediaErrorLabel(error)}',
+      if (!controller.isActive || generation != match.generation) return;
+      controller.mutate(
+        () => match.tmdbMessage = '搜索失败：${mediaErrorLabel(error)}',
       );
     } finally {
-      if (mounted && generation == _metaMatch.generation) {
-        _updateState(() => _metaMatch.tmdbSearching = false);
+      if (controller.isActive && generation == match.generation) {
+        controller.mutate(() => match.tmdbSearching = false);
       }
     }
   }
 
-  Future<void> _matchTmdb(TMDBCandidate candidate) async {
-    if (!widget.isAdmin ||
-        _metaMatch.busy ||
-        _metaMatch.tmdbSearching ||
-        _metaMatch.tmdbMatching) {
+  static Future<void> matchTmdb(
+    BuildContext context,
+    CinemaDetailController controller,
+    TMDBCandidate candidate,
+  ) async {
+    final match = controller.metaMatch;
+    if (!controller.isAdmin ||
+        match.busy ||
+        match.tmdbSearching ||
+        match.tmdbMatching) {
       return;
     }
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        shape: IsleShapes.card(
-          side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
-        ),
-        title: const Text('确认匹配影视资料？'),
-        content: Text(
-          '将“${candidate.title}”的 TMDB 简介、评分和海报资料匹配到“${_film.title}”。手动设置的影片名称会保留。',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context, false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(context, true),
-            child: const Text('确认匹配'),
-          ),
-        ],
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-    final token = _metaMatch.tmdbTokenController.text.trim();
-    if (token.isNotEmpty &&
-        (token.length < 20 ||
-            token.length > 2048 ||
-            RegExp(r'\s').hasMatch(token))) {
-      _updateState(() {
-        _metaMatch.tmdbMessage =
-            '填写的 TMDB Read Access Token 格式无效（留空可直接使用 Mac 端已配置的 Token）。';
-      });
-      return;
-    }
-    final hadPageToken = token.isNotEmpty;
-    final generation = ++_metaMatch.generation;
-    final filmId = _film.id;
-    _updateState(() {
-      _metaMatch.tmdbMatching = true;
-      _metaMatch.tmdbMessage = null;
-    });
-    try {
-      final updated = await _metadataRepository.match(
-        filmId,
-        token: token,
-        tmdbId: candidate.id,
-      );
-      if (!mounted || generation != _metaMatch.generation) return;
-      _updateState(() {
-        _film = updated;
-        _metaMatch.tmdbCandidates = const [];
-        _metaMatch.tmdbTokenController.clear();
-        _metaMatch.message = hadPageToken
-            ? '已匹配 TMDB 资料；页面输入的临时凭据已清除。'
-            : '已匹配 TMDB 资料。';
-        _metaMatch.isError = false;
-      });
-      widget.onProgressUpdated(updated);
-    } catch (error) {
-      if (!mounted || generation != _metaMatch.generation) return;
-      _updateState(
-        () => _metaMatch.tmdbMessage = '匹配失败：${mediaErrorLabel(error)}',
-      );
-    } finally {
-      if (mounted && generation == _metaMatch.generation) {
-        _updateState(() => _metaMatch.tmdbMatching = false);
-      }
-    }
-  }
-
-  Future<void> _searchDouban() async {
-    if (!widget.isAdmin || _metaMatch.isAnyBusy) return;
-    final query = _metaMatch.tmdbQueryController.text.trim();
-    if (query.runes.length < 2) {
-      _updateState(() {
-        _metaMatch.doubanMessage = '请输入至少 2 个字符的影视名称进行豆瓣搜索。';
-      });
-      return;
-    }
-    final generation = ++_metaMatch.generation;
-    final filmId = _film.id;
-    _updateState(() {
-      _metaMatch.doubanSearching = true;
-      _metaMatch.doubanCandidates = const [];
-      _metaMatch.doubanMessage = null;
-    });
-    try {
-      final results = await _metadataRepository.searchDouban(
-        filmId,
-        query: query,
-      );
-      if (!mounted || generation != _metaMatch.generation) return;
-      _updateState(() {
-        _metaMatch.doubanCandidates = results;
-        if (results.isEmpty) {
-          _metaMatch.doubanMessage = '豆瓣未返回匹配条目，可尝试调整关键词或使用 TMDB 搜索。';
-        }
-      });
-    } catch (error) {
-      if (!mounted || generation != _metaMatch.generation) return;
-      _updateState(
-        () => _metaMatch.doubanMessage = '豆瓣搜索失败：${mediaErrorLabel(error)}',
-      );
-    } finally {
-      if (mounted && generation == _metaMatch.generation) {
-        _updateState(() => _metaMatch.doubanSearching = false);
-      }
-    }
-  }
-
-  Future<void> _matchDouban(DoubanCandidate candidate) async {
-    if (!widget.isAdmin || _metaMatch.isAnyBusy) return;
     final isDark = Theme.of(context).brightness == Brightness.dark;
     final confirmed = await showDialog<bool>(
       context: context,
@@ -220,9 +120,9 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
         shape: IsleShapes.card(
           side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
         ),
-        title: const Text('确认匹配豆瓣资料？'),
+        title: const Text('确认匹配影视资料？'),
         content: Text(
-          '将“${candidate.title}”的豆瓣资料匹配到“${_film.title}”。手动设置的影片名称会保留。',
+          '将“${candidate.title}”的 TMDB 简介、评分和海报资料匹配到“${controller.film.title}”。手动设置的影片名称会保留。',
         ),
         actions: [
           TextButton(
@@ -236,42 +136,179 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
         ],
       ),
     );
-    if (confirmed != true || !mounted) return;
-    final generation = ++_metaMatch.generation;
-    final filmId = _film.id;
-    _updateState(() {
-      _metaMatch.busy = true;
-      _metaMatch.doubanMessage = null;
+    if (confirmed != true || !controller.isActive) return;
+    final token = match.tmdbTokenController.text.trim();
+    if (_isInvalidTmdbToken(token)) {
+      controller.mutate(() {
+        match.tmdbMessage =
+            '填写的 TMDB Read Access Token 格式无效（留空可直接使用 Mac 端已配置的 Token）。';
+      });
+      return;
+    }
+    final hadPageToken = token.isNotEmpty;
+    final generation = ++match.generation;
+    final filmId = controller.film.id;
+    controller.mutate(() {
+      match.tmdbMatching = true;
+      match.tmdbMessage = null;
     });
     try {
-      final updated = await _metadataRepository.matchDouban(
+      final updated = await controller.metadataRepository.match(
         filmId,
-        query: _metaMatch.tmdbQueryController.text.trim(),
-        doubanId: candidate.id,
+        token: token,
+        tmdbId: candidate.id,
       );
-      if (!mounted || generation != _metaMatch.generation) return;
-      _updateState(() {
-        _film = updated;
-        _metaMatch.doubanCandidates = const [];
-        _metaMatch.message = '已匹配豆瓣资料。';
-        _metaMatch.isError = false;
+      if (!controller.isActive || generation != match.generation) return;
+      controller.mutate(() {
+        controller.film = updated;
+        match.tmdbCandidates = const [];
+        match.tmdbTokenController.clear();
+        match.message = hadPageToken
+            ? '已匹配 TMDB 资料；页面输入的临时凭据已清除。'
+            : '已匹配 TMDB 资料。';
+        match.isError = false;
       });
-      widget.onProgressUpdated(updated);
+      controller.onProgressUpdated(updated);
     } catch (error) {
-      if (!mounted || generation != _metaMatch.generation) return;
-      _updateState(
-        () => _metaMatch.doubanMessage = '匹配失败：${mediaErrorLabel(error)}',
+      if (!controller.isActive || generation != match.generation) return;
+      controller.mutate(
+        () => match.tmdbMessage = '匹配失败：${mediaErrorLabel(error)}',
       );
     } finally {
-      if (mounted && generation == _metaMatch.generation) {
-        _updateState(() => _metaMatch.busy = false);
+      if (controller.isActive && generation == match.generation) {
+        controller.mutate(() => match.tmdbMatching = false);
       }
     }
   }
 
-  Widget _metadataMatchingPanel(BuildContext context) {
-    if (!widget.isAdmin) return const SizedBox.shrink();
-    final busy = _metaMatch.isAnyBusy;
+  static Future<void> searchDouban(CinemaDetailController controller) async {
+    final match = controller.metaMatch;
+    if (!controller.isAdmin || match.isAnyBusy) return;
+    final query = match.tmdbQueryController.text.trim();
+    if (query.runes.length < 2) {
+      controller.mutate(() {
+        match.doubanMessage = '请输入至少 2 个字符的影视名称进行豆瓣搜索。';
+      });
+      return;
+    }
+    final generation = ++match.generation;
+    final filmId = controller.film.id;
+    controller.mutate(() {
+      match.doubanSearching = true;
+      match.doubanCandidates = const [];
+      match.doubanMessage = null;
+    });
+    try {
+      final results = await controller.metadataRepository.searchDouban(
+        filmId,
+        query: query,
+      );
+      if (!controller.isActive || generation != match.generation) return;
+      controller.mutate(() {
+        match.doubanCandidates = results;
+        if (results.isEmpty) {
+          match.doubanMessage = '豆瓣未返回匹配条目，可尝试调整关键词或使用 TMDB 搜索。';
+        }
+      });
+    } catch (error) {
+      if (!controller.isActive || generation != match.generation) return;
+      controller.mutate(
+        () => match.doubanMessage = '豆瓣搜索失败：${mediaErrorLabel(error)}',
+      );
+    } finally {
+      if (controller.isActive && generation == match.generation) {
+        controller.mutate(() => match.doubanSearching = false);
+      }
+    }
+  }
+
+  static Future<void> matchDouban(
+    BuildContext context,
+    CinemaDetailController controller,
+    DoubanCandidate candidate,
+  ) async {
+    final match = controller.metaMatch;
+    if (!controller.isAdmin || match.isAnyBusy) return;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        shape: IsleShapes.card(
+          side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
+        ),
+        title: const Text('确认匹配豆瓣资料？'),
+        content: Text(
+          '将“${candidate.title}”的豆瓣资料匹配到“${controller.film.title}”。手动设置的影片名称会保留。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('确认匹配'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !controller.isActive) return;
+    final generation = ++match.generation;
+    final filmId = controller.film.id;
+    controller.mutate(() {
+      match.busy = true;
+      match.doubanMessage = null;
+    });
+    try {
+      final updated = await controller.metadataRepository.matchDouban(
+        filmId,
+        query: match.tmdbQueryController.text.trim(),
+        doubanId: candidate.id,
+      );
+      if (!controller.isActive || generation != match.generation) return;
+      controller.mutate(() {
+        controller.film = updated;
+        match.doubanCandidates = const [];
+        match.message = '已匹配豆瓣资料。';
+        match.isError = false;
+      });
+      controller.onProgressUpdated(updated);
+    } catch (error) {
+      if (!controller.isActive || generation != match.generation) return;
+      controller.mutate(
+        () => match.doubanMessage = '匹配失败：${mediaErrorLabel(error)}',
+      );
+    } finally {
+      if (controller.isActive && generation == match.generation) {
+        controller.mutate(() => match.busy = false);
+      }
+    }
+  }
+
+  static bool _isInvalidTmdbToken(String token) =>
+      token.isNotEmpty &&
+      (token.length < 20 ||
+          token.length > 2048 ||
+          RegExp(r'\s').hasMatch(token));
+}
+
+/// Admin-only panel for watched quick actions, local NFO import, TMDB search,
+/// and Douban matching.
+class CinemaMetadataMatchingPanel extends StatelessWidget {
+  const CinemaMetadataMatchingPanel({
+    super.key,
+    required this.controller,
+    required this.onNextEpisode,
+  });
+
+  final CinemaDetailController controller;
+  final VoidCallback onNextEpisode;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!controller.isAdmin) return const SizedBox.shrink();
+    final match = controller.metaMatch;
+    final busy = match.isAnyBusy;
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
     return IsleSurface(
@@ -294,30 +331,31 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
           ),
           const SizedBox(height: 16),
           _buildPlaybackQuickActions(busy: busy),
-          if (_metaMatch.message != null) ...[
+          if (match.message != null) ...[
             const SizedBox(height: 8),
             MediaStatusBanner(
-              message: _metaMatch.message!,
-              icon: _metaMatch.isError
+              message: match.message!,
+              icon: match.isError
                   ? Icons.error_outline
                   : Icons.check_circle_outline,
-              isError: _metaMatch.isError,
+              isError: match.isError,
             ),
           ],
           const SizedBox(height: 14),
           Divider(height: 1, color: IsleGlass.rimBorderColor(isDark)),
           const SizedBox(height: 14),
-          _buildTmdbSearchSection(theme, busy: busy),
+          _buildTmdbSearchSection(context, theme, busy: busy),
           const SizedBox(height: 14),
           Divider(height: 1, color: IsleGlass.rimBorderColor(isDark)),
           const SizedBox(height: 14),
-          _buildDoubanSearchSection(theme, busy: busy),
+          _buildDoubanSearchSection(context, theme, busy: busy),
         ],
       ),
     );
   }
 
   Widget _buildPlaybackQuickActions({required bool busy}) {
+    final film = controller.film;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -331,48 +369,51 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
                 style: OutlinedButton.styleFrom(
                   visualDensity: VisualDensity.compact,
                 ),
-                onPressed: () =>
-                    unawaited(_markWatched(completed: !_film.completed)),
+                onPressed: () => unawaited(
+                  controller.markWatched(completed: !film.completed),
+                ),
                 icon: Icon(
-                  _film.completed
+                  film.completed
                       ? Icons.visibility_off_outlined
                       : Icons.check_circle_outline,
                   size: 17,
                 ),
-                label: Text(_film.completed ? '标记未看' : '标记已看'),
+                label: Text(film.completed ? '标记未看' : '标记已看'),
               ),
-              if (_film.position > 5 && !_film.completed)
+              if (film.position > 5 && !film.completed)
                 OutlinedButton.icon(
                   style: OutlinedButton.styleFrom(
                     visualDensity: VisualDensity.compact,
                   ),
-                  onPressed: () => unawaited(_restartFromBeginning()),
+                  onPressed: () => unawaited(controller.restartFromBeginning()),
                   icon: const Icon(Icons.replay_rounded, size: 17),
                   label: const Text('从头播放'),
                 ),
-              if (_film.isSeries)
+              if (film.isSeries)
                 OutlinedButton.icon(
                   style: OutlinedButton.styleFrom(
                     visualDensity: VisualDensity.compact,
                   ),
-                  onPressed: _playback.closing || _playlistState.nextEpisodeBusy
+                  onPressed:
+                      controller.playback.closing ||
+                          controller.playlistState.nextEpisodeBusy
                       ? null
-                      : () => unawaited(_goToNextEpisode()),
+                      : onNextEpisode,
                   icon: const Icon(Icons.skip_next_rounded, size: 17),
                   label: Text(
-                    _playlistState.nextEpisodeBusy ? '查找下一集…' : '下一集',
+                    controller.playlistState.nextEpisodeBusy ? '查找下一集…' : '下一集',
                   ),
                 ),
             ],
           ),
         ),
-        if (_film.isSeries)
+        if (film.isSeries)
           SwitchListTile.adaptive(
             dense: true,
             title: const Text('播完自动下一集'),
             subtitle: const Text('默认关闭；先保存本集进度，再开始下一集。'),
-            value: _playlistState.autoPlayNext,
-            onChanged: _setAutoplayNext,
+            value: controller.playlistState.autoPlayNext,
+            onChanged: (value) => unawaited(controller.setAutoplayNext(value)),
             contentPadding: EdgeInsets.zero,
           ),
         const SizedBox(height: 4),
@@ -382,8 +423,12 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
             style: OutlinedButton.styleFrom(
               visualDensity: VisualDensity.compact,
             ),
-            onPressed: busy ? null : _importLocalNfo,
-            icon: _metaMatch.busy
+            onPressed: busy
+                ? null
+                : () => unawaited(
+                    CinemaMetadataActions.importLocalNfo(controller),
+                  ),
+            icon: controller.metaMatch.busy
                 ? const SizedBox(
                     width: 15,
                     height: 15,
@@ -397,7 +442,12 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
     );
   }
 
-  Widget _buildTmdbSearchSection(ThemeData theme, {required bool busy}) {
+  Widget _buildTmdbSearchSection(
+    BuildContext context,
+    ThemeData theme, {
+    required bool busy,
+  }) {
+    final match = controller.metaMatch;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -423,7 +473,7 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
         ),
         const SizedBox(height: 10),
         TextField(
-          controller: _metaMatch.tmdbTokenController,
+          controller: match.tmdbTokenController,
           obscureText: true,
           autocorrect: false,
           enableSuggestions: false,
@@ -440,44 +490,63 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
           labelText: '影视名称',
           prefixIcon: Icons.search,
           busy: busy,
-          onSubmitted: () => unawaited(_searchTmdb()),
+          onSubmitted: () =>
+              unawaited(CinemaMetadataActions.searchTmdb(controller)),
           button: FilledButton.icon(
             style: FilledButton.styleFrom(visualDensity: VisualDensity.compact),
-            onPressed: busy ? null : _searchTmdb,
-            icon: _metaMatch.tmdbSearching
+            onPressed: busy
+                ? null
+                : () => unawaited(CinemaMetadataActions.searchTmdb(controller)),
+            icon: match.tmdbSearching
                 ? const SizedBox(
                     width: 15,
                     height: 15,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.travel_explore_outlined, size: 17),
-            label: Text(_metaMatch.tmdbSearching ? '搜索中…' : '搜索 TMDB'),
+            label: Text(match.tmdbSearching ? '搜索中…' : '搜索 TMDB'),
           ),
         ),
-        if (_metaMatch.tmdbMessage != null) ...[
+        if (match.tmdbMessage != null) ...[
           const SizedBox(height: 8),
           MediaStatusBanner(
-            message: _metaMatch.tmdbMessage!,
+            message: match.tmdbMessage!,
             icon: Icons.info_outline,
             isError:
-                _metaMatch.tmdbCandidates.isEmpty &&
-                !_metaMatch.tmdbSearching &&
-                _metaMatch.tmdbMessage!.startsWith('搜索失败'),
+                match.tmdbCandidates.isEmpty &&
+                !match.tmdbSearching &&
+                match.tmdbMessage!.startsWith('搜索失败'),
           ),
         ],
-        if (_metaMatch.tmdbCandidates.isNotEmpty) ...[
+        if (match.tmdbCandidates.isNotEmpty) ...[
           const SizedBox(height: 10),
-          for (final candidate in _metaMatch.tmdbCandidates)
+          for (final candidate in match.tmdbCandidates)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
-              child: _tmdbCandidateCard(candidate, busy),
+              child: CinemaTmdbCandidateCard(
+                api: controller.api,
+                candidate: candidate,
+                busy: busy,
+                onMatch: () => unawaited(
+                  CinemaMetadataActions.matchTmdb(
+                    context,
+                    controller,
+                    candidate,
+                  ),
+                ),
+              ),
             ),
         ],
       ],
     );
   }
 
-  Widget _buildDoubanSearchSection(ThemeData theme, {required bool busy}) {
+  Widget _buildDoubanSearchSection(
+    BuildContext context,
+    ThemeData theme, {
+    required bool busy,
+  }) {
+    final match = controller.metaMatch;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -499,37 +568,51 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
           labelText: '影视片名关键词',
           prefixIcon: Icons.search_rounded,
           busy: busy,
-          onSubmitted: () => unawaited(_searchDouban()),
+          onSubmitted: () =>
+              unawaited(CinemaMetadataActions.searchDouban(controller)),
           button: FilledButton.tonalIcon(
             style: FilledButton.styleFrom(visualDensity: VisualDensity.compact),
-            onPressed: busy ? null : _searchDouban,
-            icon: _metaMatch.doubanSearching
+            onPressed: busy
+                ? null
+                : () =>
+                      unawaited(CinemaMetadataActions.searchDouban(controller)),
+            icon: match.doubanSearching
                 ? const SizedBox(
                     width: 15,
                     height: 15,
                     child: CircularProgressIndicator(strokeWidth: 2),
                   )
                 : const Icon(Icons.movie_filter_outlined, size: 17),
-            label: Text(_metaMatch.doubanSearching ? '搜索中…' : '搜索豆瓣（免凭据）'),
+            label: Text(match.doubanSearching ? '搜索中…' : '搜索豆瓣（免凭据）'),
           ),
         ),
-        if (_metaMatch.doubanMessage != null) ...[
+        if (match.doubanMessage != null) ...[
           const SizedBox(height: 8),
           MediaStatusBanner(
-            message: _metaMatch.doubanMessage!,
+            message: match.doubanMessage!,
             icon: Icons.info_outline,
             isError:
-                _metaMatch.doubanCandidates.isEmpty &&
-                !_metaMatch.doubanSearching &&
-                _metaMatch.doubanMessage!.startsWith('豆瓣搜索失败'),
+                match.doubanCandidates.isEmpty &&
+                !match.doubanSearching &&
+                match.doubanMessage!.startsWith('豆瓣搜索失败'),
           ),
         ],
-        if (_metaMatch.doubanCandidates.isNotEmpty) ...[
+        if (match.doubanCandidates.isNotEmpty) ...[
           const SizedBox(height: 10),
-          for (final candidate in _metaMatch.doubanCandidates)
+          for (final candidate in match.doubanCandidates)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
-              child: _doubanCandidateCard(candidate, busy),
+              child: CinemaDoubanCandidateCard(
+                candidate: candidate,
+                busy: busy,
+                onApply: () => unawaited(
+                  CinemaMetadataActions.matchDouban(
+                    context,
+                    controller,
+                    candidate,
+                  ),
+                ),
+              ),
             ),
         ],
       ],
@@ -546,7 +629,7 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
     return LayoutBuilder(
       builder: (context, constraints) {
         final field = TextField(
-          controller: _metaMatch.tmdbQueryController,
+          controller: controller.metaMatch.tmdbQueryController,
           maxLength: 120,
           enabled: !busy,
           textInputAction: TextInputAction.search,
@@ -573,198 +656,6 @@ extension _CinemaDetailMetadata on _CinemaDetailDialogState {
           ],
         );
       },
-    );
-  }
-
-  Widget _doubanCandidateCard(DoubanCandidate candidate, bool busy) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-      decoration: BoxDecoration(
-        color: isDark
-            ? Colors.white.withValues(alpha: 0.04)
-            : theme.colorScheme.surface,
-        border: Border.all(
-          color: IsleGlass.rimBorderColor(isDark),
-          width: 1.0,
-        ),
-        borderRadius: IsleRadius.brMd,
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  '${candidate.title}${candidate.year.isEmpty ? '' : ' (${candidate.year})'}',
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  '豆瓣 ID: ${candidate.id}${candidate.kind.isEmpty ? '' : ' · ${candidate.kind}'}',
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    color: theme.colorScheme.onSurfaceVariant,
-                  ),
-                ),
-              ],
-            ),
-          ),
-          const SizedBox(width: 12),
-          FilledButton.tonal(
-            style: FilledButton.styleFrom(visualDensity: VisualDensity.compact),
-            onPressed: busy ? null : () => unawaited(_matchDouban(candidate)),
-            child: const Text('应用资料'),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _tmdbCandidateCard(TMDBCandidate candidate, bool busy) {
-    final theme = Theme.of(context);
-    final isDark = theme.brightness == Brightness.dark;
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: isDark
-            ? Colors.white.withValues(alpha: 0.04)
-            : theme.colorScheme.surface,
-        border: Border.all(
-          color: IsleGlass.rimBorderColor(isDark),
-          width: 1.0,
-        ),
-        borderRadius: IsleRadius.brMd,
-      ),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final description = Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Text(
-                '${candidate.title}${candidate.year.isEmpty ? '' : ' (${candidate.year})'}',
-                style: theme.textTheme.titleSmall?.copyWith(
-                  fontWeight: FontWeight.w600,
-                ),
-              ),
-              const SizedBox(height: 4),
-              Text(
-                '${candidate.kind == 'tv' || candidate.kind == 'series' ? '剧集' : '电影'} · 评分 ${candidate.rating.toStringAsFixed(1)} / 10',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: theme.colorScheme.onSurfaceVariant,
-                ),
-              ),
-              if (candidate.overview.isNotEmpty) ...[
-                const SizedBox(height: 6),
-                Text(
-                  candidate.overview,
-                  maxLines: 5,
-                  overflow: TextOverflow.ellipsis,
-                ),
-              ],
-            ],
-          );
-          final matchButton = OutlinedButton.icon(
-            style: OutlinedButton.styleFrom(
-              visualDensity: VisualDensity.compact,
-            ),
-            onPressed: busy ? null : () => _matchTmdb(candidate),
-            icon: const Icon(Icons.check_circle_outline, size: 17),
-            label: const Text('选择匹配'),
-          );
-          if (constraints.maxWidth < 440) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [description, const SizedBox(height: 8), matchButton],
-            );
-          }
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Expanded(child: description),
-              const SizedBox(width: 8),
-              matchButton,
-            ],
-          );
-        },
-      ),
-    );
-  }
-
-  Widget _metadata(BuildContext context) {
-    final format = <String>[
-      _film.container.toUpperCase(),
-      _film.videoCodec.toUpperCase(),
-      _film.audioCodec.toUpperCase(),
-    ].where((value) => value.isNotEmpty).join(' · ');
-    final rows = <(IconData, String, String)>[
-      (
-        Icons.video_library_outlined,
-        '类型',
-        _film.isSeries
-            ? '剧集 · 第 ${_film.season} 季 · 第 ${_film.episode} 集'
-            : _film.year > 0
-            ? '电影 · ${_film.year}'
-            : '电影',
-      ),
-      (Icons.storage_outlined, '文件大小', formatMediaSize(_film.size)),
-      (
-        Icons.schedule_outlined,
-        '时长',
-        formatMediaSeconds(
-          _film.durationSeconds > 0 ? _film.durationSeconds : _film.duration,
-        ),
-      ),
-      if (_film.width > 0 && _film.height > 0)
-        (
-          Icons.aspect_ratio_outlined,
-          '画面尺寸',
-          '${_film.width} × ${_film.height}',
-        ),
-      if (format.isNotEmpty) (Icons.movie_outlined, '编码格式', format),
-      if (_film.mime.isNotEmpty)
-        (Icons.insert_drive_file_outlined, '媒体类型', _film.mime),
-    ];
-    return IsleGroupCard(
-      margin: EdgeInsets.zero,
-      children: [
-        for (final row in rows)
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
-            child: Row(
-              children: [
-                Icon(
-                  row.$1,
-                  size: 16,
-                  color: Theme.of(context).colorScheme.onSurfaceVariant,
-                ),
-                const SizedBox(width: 8),
-                SizedBox(
-                  width: 72,
-                  child: Text(
-                    row.$2,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      color: Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-                Expanded(
-                  child: Text(
-                    row.$3,
-                    textAlign: TextAlign.right,
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-      ],
     );
   }
 }

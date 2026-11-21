@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 
 import '../../core/isle_action_menu.dart';
-import '../../core/isle_gallery_layout.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
@@ -12,9 +11,15 @@ import 'new_account_dialog.dart';
 import 'storage_page.dart';
 
 class AccountsPage extends StatefulWidget {
-  const AccountsPage({super.key, required this.api, this.currentUsername});
+  const AccountsPage({
+    super.key,
+    required this.api,
+    this.currentUsername,
+    this.currentAccountId,
+  });
   final LightIsleApi api;
   final String? currentUsername;
+  final String? currentAccountId;
   @override
   State<AccountsPage> createState() => _AccountsPageState();
 }
@@ -210,6 +215,7 @@ class _AccountsPageState extends State<AccountsPage> {
                                       isAdmin: true,
                                       initialUserId: (user['id'] as num?)
                                           ?.toInt(),
+                                      accountId: widget.currentAccountId,
                                     ),
                                   ),
                                 ),

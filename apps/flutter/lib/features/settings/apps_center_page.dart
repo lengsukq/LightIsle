@@ -5,7 +5,6 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../../core/isle_gallery_layout.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
@@ -165,7 +164,9 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
     try {
       final res = await widget.api.get('/api/v2/apps');
       if (mounted) _applySnapshot(res);
-    } catch (_) {}
+    } catch (error) {
+      debugPrint('AppsCenterPage._refreshDiagnosticSnapshot failed: $error');
+    }
   }
 
   Future<void> _reload({required bool refresh}) =>

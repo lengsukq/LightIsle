@@ -36,6 +36,23 @@ void main() {
     expect(resolvePersonalRoute(policy, roots, 'photos').root?.id, 'b');
     expect(resolvePersonalRoute(policy, roots, 'cinema').root?.id, 'c');
   });
+  test('trusts custom server relativePath without hardcoding Users/uN layout', () {
+    final customPolicy = <String, dynamic>{
+      'userId': 7,
+      'locations': [
+        {
+          'category': 'photos',
+          'rootID': 'b',
+          'rootGeneration': 3,
+          'relativePath': 'Family/Alice/Photos',
+        },
+      ],
+    };
+    final route = resolvePersonalRoute(customPolicy, roots, 'photos');
+    expect(route.kind, PersonalRouteKind.personal);
+    expect(route.root?.id, 'b');
+    expect(route.path, 'Family/Alice/Photos');
+  });
   test('offline, replaced disks and forged paths fail closed', () {
     expect(
       resolvePersonalRoute(policy, roots.sublist(1), 'files').kind,
@@ -49,6 +66,24 @@ void main() {
     );
     expect(
       resolvePersonalRoute({...policy, 'userId': 8}, roots, 'files').kind,
+      PersonalRouteKind.offline,
+    );
+    expect(
+      resolvePersonalRoute(
+        {
+          'userId': 7,
+          'locations': [
+            {
+              'category': 'files',
+              'rootID': 'a',
+              'rootGeneration': 2,
+              'relativePath': '../escape',
+            },
+          ],
+        },
+        roots,
+        'files',
+      ).kind,
       PersonalRouteKind.offline,
     );
   });

@@ -6,8 +6,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:video_player/video_player.dart';
 
+import '../../core/native_video_bridge.dart';
 import '../../core/widgets.dart';
 import 'android_pip_session.dart';
+import 'media_ui.dart';
 import 'shared_video_player_controls.dart';
 
 /// Plays a file the user selected on this device. No NAS session, temporary
@@ -23,7 +25,6 @@ class LocalVideoPage extends StatefulWidget {
 
 class _LocalVideoPageState extends State<LocalVideoPage>
     with WidgetsBindingObserver {
-  static const _nativePlayer = MethodChannel('lightisle/native-video');
   static final _videoExtPattern = RegExp(
     r'\.(mp4|m4v|mov|mkv|webm|avi|ts|m2ts)$',
     caseSensitive: false,
@@ -128,9 +129,7 @@ class _LocalVideoPageState extends State<LocalVideoPage>
   Future<void> _openSystemPlayer() async {
     try {
       await _controller?.pause();
-      await _nativePlayer.invokeMethod<bool>('openLocal', {
-        'path': _currentPath,
-      });
+      await NativeVideoBridge.openLocalVideo(_currentPath);
     } on PlatformException catch (error) {
       if (mounted) {
         ScaffoldMessenger.of(
@@ -159,25 +158,35 @@ class _LocalVideoPageState extends State<LocalVideoPage>
     });
     try {
       await controller.initialize();
-      if (!mounted || _controller != controller) return;
+      if (!mounted || _controller != controller) {
+        unawaited(controller.dispose());
+        return;
+      }
       if (_speed != 1) {
         await controller.setPlaybackSpeed(_speed);
       }
       if (_muted || _volume < 0.999) {
         await controller.setVolume(_muted ? 0 : _volume);
       }
+      if (!mounted || _controller != controller) {
+        unawaited(controller.dispose());
+        return;
+      }
       controller.addListener(_updated);
       setState(() {
         _loading = false;
         _error = null;
       });
-    } catch (_) {
-      if (mounted && _controller == controller) {
-        setState(() {
-          _loading = false;
-          _error = '无法播放此本地文件，请检查格式或文件是否仍可访问。';
-        });
+    } catch (error) {
+      debugPrint('LocalVideoPage._open failed: $error');
+      if (!mounted || _controller != controller) {
+        unawaited(controller.dispose());
+        return;
       }
+      setState(() {
+        _loading = false;
+        _error = '无法播放此本地文件，请检查格式或文件是否仍可访问。';
+      });
     }
   }
 
@@ -228,6 +237,7 @@ class _LocalVideoPageState extends State<LocalVideoPage>
   }
 
   Future<void> _toggleMute() async {
+    if (!mounted) return;
     final nextMuted = !_muted;
     final nextVolume = !nextMuted && _volume == 0 ? 1.0 : _volume;
     setState(() {
@@ -240,6 +250,7 @@ class _LocalVideoPageState extends State<LocalVideoPage>
   }
 
   Future<void> _setVolume(double value) async {
+    if (!mounted) return;
     final clamped = value.clamp(0.0, 1.0).toDouble();
     setState(() {
       _volume = clamped;
@@ -515,9 +526,9 @@ class _LocalVideoPageState extends State<LocalVideoPage>
                                 : '播放列表',
                           ),
                         ),
-                        SharedPlayerSpeedMenuPill(
+                        MediaPlaybackSpeedPicker(
                           value: _speed,
-                          onSelected: (value) async {
+                          onChanged: (value) async {
                             try {
                               await player.setPlaybackSpeed(value);
                               if (mounted) {

@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:crypto/crypto.dart';
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 enum DesktopConflictPolicy {
@@ -294,6 +295,9 @@ class DesktopBackupStore {
   static const int maxSavedFailures = 80;
 
   final String _scopePrefix;
+  String? _lastLoadError;
+
+  String? get lastLoadError => _lastLoadError;
 
   String get _tasksKey => '$_scopePrefix.tasks';
   String get _scheduleKey => '$_scopePrefix.schedule';
@@ -307,15 +311,25 @@ class DesktopBackupStore {
   Future<List<DesktopBackupTask>> loadTasks() async {
     final prefs = await SharedPreferences.getInstance();
     final raw = prefs.getString(_tasksKey);
-    if (raw == null || raw.isEmpty) return const <DesktopBackupTask>[];
+    if (raw == null || raw.isEmpty) {
+      _lastLoadError = null;
+      return const <DesktopBackupTask>[];
+    }
     try {
       final decoded = jsonDecode(raw);
-      if (decoded is! List) return const <DesktopBackupTask>[];
+      if (decoded is! List) {
+        _lastLoadError = '本机备份任务配置格式异常，已暂停自动覆盖，请重新检查配置。';
+        debugPrint('DesktopBackupStore.loadTasks: non-list payload for $_tasksKey');
+        return const <DesktopBackupTask>[];
+      }
+      _lastLoadError = null;
       return decoded
           .map(DesktopBackupTask.tryFromJson)
           .whereType<DesktopBackupTask>()
           .toList(growable: false);
-    } catch (_) {
+    } catch (error) {
+      _lastLoadError = '本机备份任务配置读取失败（原始数据未删除），请重新添加或检查本地存储。';
+      debugPrint('DesktopBackupStore.loadTasks decode failed: $error');
       return const <DesktopBackupTask>[];
     }
   }

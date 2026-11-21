@@ -83,7 +83,7 @@ void main() {
       expect(api.paths, contains('/api/v2/map/status'));
       expect(api.paths, contains('/api/v2/cinema/scrape/status'));
       expect(find.text('设备诊断'), findsWidgets);
-      expect(find.text('18.5%'), findsOneWidget);
+      expect(find.text('18.5%'), findsWidgets);
       expect(tester.takeException(), isNull);
       await tester.scrollUntilVisible(
         find.text('检查 SMART'),

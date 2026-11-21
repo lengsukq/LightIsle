@@ -388,7 +388,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('查看历史'));
     await tester.pumpAndSettle();
-    expect(find.text('还没有任务历史。'), findsOneWidget);
+    expect(find.text('还没有任务历史'), findsOneWidget);
     expect(api.calls, contains('/api/v2/tasks/history'));
     expect(tester.takeException(), isNull);
     await tester.pumpWidget(const SizedBox());

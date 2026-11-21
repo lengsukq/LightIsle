@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../core/isle_gallery_layout.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
@@ -137,7 +136,7 @@ class _AdminActivityPageState extends State<AdminActivityPage> {
     final targetText = entry['target']?.toString().trim() ?? '';
     final subtitleText = _audit
         ? '${accountTime(entry['createdAt'])}${targetText.isNotEmpty ? ' · $targetText' : ''}'
-        : '${active ? (acknowledged ? '已确认' : '待确认') : '已恢复'} · ${accountTime(entry['firstSeen'])}';
+        : '${active ? (acknowledged ? '已确认，异常仍存在' : '待确认') : '已恢复'} · ${accountTime(entry['firstSeen'])}';
 
     return (badgeColor, badgeIcon, title, subtitleText, outcome);
   }

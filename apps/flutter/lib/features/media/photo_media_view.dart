@@ -41,6 +41,8 @@ class PhotoMediaImage extends StatefulWidget {
     this.allowHorizontalPageSwipe = false,
     this.onSwipeDown,
     this.onSwipeUp,
+    this.filePreviewEndpoint = '/api/v2/files/preview',
+    this.fileThumbnailEndpoint = '/api/v2/files/thumbnail',
   });
   final LightIsleApi api;
   final MediaImageMemoryCache? memoryCache;
@@ -54,6 +56,8 @@ class PhotoMediaImage extends StatefulWidget {
   final bool allowHorizontalPageSwipe;
   final VoidCallback? onSwipeDown;
   final VoidCallback? onSwipeUp;
+  final String filePreviewEndpoint;
+  final String fileThumbnailEndpoint;
 
   @override
   State<PhotoMediaImage> createState() => PhotoMediaImageState();
@@ -65,6 +69,7 @@ class PhotoMediaImageState extends State<PhotoMediaImage> {
   // once the original frame paints, the underlying 2048px preview unmounts.
   bool _loadOriginal = true;
   bool _originalPainted = false;
+  bool _originalFailed = false;
 
   bool get _canLoadOriginal => photoViewerCanOpenOriginal(widget.asset);
   // PageView also builds neighbouring images for smooth swipes. Only decode
@@ -86,8 +91,10 @@ class PhotoMediaImageState extends State<PhotoMediaImage> {
         oldWidget.api != widget.api) {
       _loadOriginal = true;
       _originalPainted = false;
-    } else if (!_showOriginal && _originalPainted) {
+      _originalFailed = false;
+    } else if (!_showOriginal && (_originalPainted || _originalFailed)) {
       _originalPainted = false;
+      _originalFailed = false;
     }
   }
 
@@ -135,7 +142,7 @@ class PhotoMediaImageState extends State<PhotoMediaImage> {
                       ),
                       api: widget.api,
                       memoryCache: _previewCache,
-                      path: '/api/v2/files/thumbnail',
+                      path: widget.fileThumbnailEndpoint,
                       query: {'path': widget.asset.path, 'size': '2048'},
                       maxBytes: 8 * 1024 * 1024,
                       cacheWidthOverride: portrait ? null : previewCap,
@@ -161,22 +168,30 @@ class PhotoMediaImageState extends State<PhotoMediaImage> {
                           ],
                         ),
                       ),
-                      errorBuilder: (context, error, retry) => Center(
-                        child: Column(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            const Text(
-                              '照片加载失败',
-                              style: TextStyle(color: Colors.white70),
+                      errorBuilder: (context, error, retry) =>
+                          (_showOriginal && !_originalFailed)
+                          ? const Center(
+                              child: CircularProgressIndicator(
+                                color: Colors.white70,
+                                strokeWidth: 2,
+                              ),
+                            )
+                          : Center(
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  const Text(
+                                    '照片加载失败',
+                                    style: TextStyle(color: Colors.white70),
+                                  ),
+                                  TextButton.icon(
+                                    onPressed: retry,
+                                    icon: const Icon(Icons.refresh),
+                                    label: const Text('重试加载照片'),
+                                  ),
+                                ],
+                              ),
                             ),
-                            TextButton.icon(
-                              onPressed: retry,
-                              icon: const Icon(Icons.refresh),
-                              label: const Text('重试加载照片'),
-                            ),
-                          ],
-                        ),
-                      ),
                     ),
                   if (_showOriginal)
                     AuthenticatedMediaImage(
@@ -185,7 +200,7 @@ class PhotoMediaImageState extends State<PhotoMediaImage> {
                       ),
                       api: widget.api,
                       memoryCache: _originalCache,
-                      path: '/api/v2/files/preview',
+                      path: widget.filePreviewEndpoint,
                       query: {'path': widget.asset.path},
                       maxBytes: photoViewerOriginalMaxBytes,
                       cacheWidthOverride: portrait ? null : decodeCap,
@@ -194,12 +209,16 @@ class PhotoMediaImageState extends State<PhotoMediaImage> {
                       fit: BoxFit.contain,
                       frameBuilder:
                           (context, child, frame, wasSynchronouslyLoaded) {
-                            if (frame != null && !_originalPainted) {
+                            if (frame != null &&
+                                (!_originalPainted || _originalFailed)) {
                               WidgetsBinding.instance.addPostFrameCallback((_) {
                                 if (mounted &&
                                     _showOriginal &&
-                                    !_originalPainted) {
-                                  setState(() => _originalPainted = true);
+                                    (!_originalPainted || _originalFailed)) {
+                                  setState(() {
+                                    _originalPainted = true;
+                                    _originalFailed = false;
+                                  });
                                 }
                               });
                             }
@@ -209,10 +228,14 @@ class PhotoMediaImageState extends State<PhotoMediaImage> {
                       // replaced by a spinner or an opaque black placeholder.
                       loadingBuilder: (_) => const SizedBox.shrink(),
                       errorBuilder: (_, error, retry) {
-                        if (_originalPainted) {
+                        if (_originalPainted || !_originalFailed) {
                           WidgetsBinding.instance.addPostFrameCallback((_) {
-                            if (mounted && _originalPainted) {
-                              setState(() => _originalPainted = false);
+                            if (mounted &&
+                                (_originalPainted || !_originalFailed)) {
+                              setState(() {
+                                _originalPainted = false;
+                                _originalFailed = true;
+                              });
                             }
                           });
                         }
@@ -242,7 +265,10 @@ class PhotoMediaImageState extends State<PhotoMediaImage> {
                                         ),
                                       ),
                                       TextButton(
-                                        onPressed: retry,
+                                        onPressed: () {
+                                          setState(() => _originalFailed = false);
+                                          retry();
+                                        },
                                         child: const Text('重试原图'),
                                       ),
                                       TextButton(
@@ -340,6 +366,8 @@ class PhotoMediaVideo extends StatefulWidget {
     this.autoPlay = false,
     this.liveMode = false,
     this.fileBrowserMode = false,
+    this.filePreviewEndpoint = '/api/v2/files/preview',
+    this.fileThumbnailEndpoint = '/api/v2/files/thumbnail',
     this.streamPathOverride,
     this.onCompleted,
   });
@@ -349,6 +377,8 @@ class PhotoMediaVideo extends StatefulWidget {
   final bool autoPlay;
   final bool liveMode;
   final bool fileBrowserMode;
+  final String filePreviewEndpoint;
+  final String fileThumbnailEndpoint;
   final String? streamPathOverride;
   final VoidCallback? onCompleted;
 
@@ -414,7 +444,9 @@ class PhotoMediaVideoState extends State<PhotoMediaVideo>
       try {
         await old.setVolume(0);
         await old.pause();
-      } catch (_) {}
+      } catch (error) {
+        debugPrint('PhotoMediaVideo._disposeController mute/pause skipped: $error');
+      }
       await old.dispose();
     }
   }
@@ -440,7 +472,7 @@ class PhotoMediaVideoState extends State<PhotoMediaVideo>
       final uri = widget.streamPathOverride != null
           ? await widget.api.mediaUri(widget.streamPathOverride!)
           : await widget.api.mediaUri(
-              '/api/v2/files/preview',
+              widget.filePreviewEndpoint,
               query: {'path': widget.asset.path},
             );
       if (!mounted || !widget.active || generation != _generation) return;
@@ -501,6 +533,7 @@ class PhotoMediaVideoState extends State<PhotoMediaVideo>
   }
 
   Future<void> _toggleMute() async {
+    if (!mounted) return;
     final nextMuted = !_muted;
     final nextVolume = !nextMuted && _volume == 0 ? 1.0 : _volume;
     setState(() {
@@ -511,10 +544,13 @@ class PhotoMediaVideoState extends State<PhotoMediaVideo>
     if (player == null || !player.value.isInitialized) return;
     try {
       await player.setVolume(nextMuted ? 0 : nextVolume);
-    } catch (_) {}
+    } catch (error) {
+      debugPrint('PhotoMediaVideo._toggleMute setVolume failed: $error');
+    }
   }
 
   Future<void> _setVolume(double value) async {
+    if (!mounted) return;
     final clamped = value.clamp(0.0, 1.0).toDouble();
     setState(() {
       _volume = clamped;
@@ -524,7 +560,9 @@ class PhotoMediaVideoState extends State<PhotoMediaVideo>
     if (player == null || !player.value.isInitialized) return;
     try {
       await player.setVolume(clamped);
-    } catch (_) {}
+    } catch (error) {
+      debugPrint('PhotoMediaVideo._setVolume failed: $error');
+    }
   }
 
   Future<void> _importSubtitle() async {
@@ -588,7 +626,7 @@ class PhotoMediaVideoState extends State<PhotoMediaVideo>
             memoryCache: IsleCacheManager.instance.sharedThumbnails,
             path: useGalleryThumb
                 ? '/api/v2/photos/${widget.asset.id}/thumbnail'
-                : '/api/v2/files/thumbnail',
+                : widget.fileThumbnailEndpoint,
             query: useGalleryThumb
                 ? null
                 : {'path': widget.asset.path, 'size': '512'},
@@ -715,9 +753,9 @@ class PhotoMediaVideoState extends State<PhotoMediaVideo>
                     ),
                   ],
                 ),
-                SharedPlayerSpeedMenuPill(
+                MediaPlaybackSpeedPicker(
                   value: _speed,
-                  onSelected: (value) => unawaited(_setSpeed(value)),
+                  onChanged: (value) => unawaited(_setSpeed(value)),
                 ),
               ],
             ),

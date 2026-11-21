@@ -5,44 +5,18 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:path_provider/path_provider.dart';
 
-import '../../core/authenticated_media_image.dart';
-import '../../core/isle_action_menu.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
-import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
-import '../media/cinema_detail_dialog.dart';
-import '../media/media_models.dart';
-import '../media/photo_gallery_viewer.dart';
-import '../settings/admin_smb_page.dart';
-import '../settings/dav_page.dart';
-import 'downloads_page.dart';
-import 'duplicate_files_page.dart';
-import 'external_file_opener.dart';
-import 'file_batch_operations.dart';
-import 'file_browser_preferences.dart';
-import 'file_browser_repository.dart';
-import 'file_destination_dialog.dart';
-import 'file_export_service.dart';
-import 'file_media_playlist.dart';
-import 'file_models.dart';
-import 'file_name_validation.dart';
-import 'file_pdf_preview.dart';
-import 'file_preview_support.dart';
-import 'file_search_history_store.dart';
-import 'file_search_widgets.dart';
-import 'file_selection_snapshot.dart';
-import 'file_selection_toolbar.dart';
-import 'file_share_dialog.dart';
-import 'file_text_preview_dialog.dart';
-import 'file_upload_queue_view.dart';
-import 'file_upload_service.dart';
-import 'file_upload_stream.dart';
-import 'files_page_state_models.dart';
+import 'files_browser_view.dart';
+import 'files_controller.dart';
+import 'files_item_cards.dart';
+import 'files_shell_widgets.dart';
+import 'files_status_and_upload_views.dart';
+import 'files_ui_actions.dart';
 import 'upload_task_center.dart';
-import 'upload_task_center_page.dart';
+
 export 'file_export_service.dart'
     show exportOfflineMediaFile, exportMediaFile, exportMediaFiles;
 export 'file_models.dart' show FileEntry, TrashEntry;
@@ -50,31 +24,29 @@ export 'file_name_validation.dart' show validateFileName;
 export 'file_name_validation.dart' show validateRelativePath;
 export 'file_share_dialog.dart' show openMediaFileShare;
 
-part 'files_page_preferences.dart';
-part 'files_page_browser.dart';
-part 'files_page_selection.dart';
-part 'files_page_file_actions.dart';
-part 'files_page_uploads.dart';
-part 'files_page_shell_widgets.dart';
-part 'files_page_file_widgets.dart';
-part 'files_page_item_tiles.dart';
-
-const int _pageSize = 100;
-const int _maxTextPreviewSize = 1024 * 1024;
-
 Future<void> openFileManager(
   BuildContext context, {
   required LightIsleApi api,
   required bool isAdmin,
   required String directory,
   required String title,
+  UploadTaskCenter? taskCenter,
+  String accountName = '',
+  String? accountId,
 }) => Navigator.of(context).push<void>(
   buildIslePageRoute<void>(
     builder: (_) => Scaffold(
       appBar: IsleAppBar(title: Text(title)),
       body: SafeArea(
         top: false,
-        child: FilesPage(api: api, isAdmin: isAdmin, initialPath: directory),
+        child: FilesPage(
+          api: api,
+          isAdmin: isAdmin,
+          initialPath: directory,
+          taskCenter: taskCenter,
+          accountName: accountName,
+          accountId: accountId,
+        ),
       ),
     ),
   ),
@@ -122,11 +94,13 @@ class FilesPage extends StatefulWidget {
     required this.api,
     required this.isAdmin,
     this.accountName = '',
+    this.accountId,
     this.initialPath = '.',
     this.uploadOnly = false,
     this.initialUploadType = FileType.any,
     this.onUploaded,
     this.taskCenter,
+    this.compactEmbeddedHeader = false,
     @visibleForTesting this.mobileExportOverride,
     @visibleForTesting this.exportDirectoryFactory,
     @visibleForTesting this.exportDirectoryCleanup,
@@ -135,6 +109,7 @@ class FilesPage extends StatefulWidget {
   final LightIsleApi api;
   final bool isAdmin;
   final String accountName;
+  final String? accountId;
 
   /// The authenticated user's configured files directory.
   final String initialPath;
@@ -142,6 +117,10 @@ class FilesPage extends StatefulWidget {
   final FileType initialUploadType;
   final VoidCallback? onUploaded;
   final UploadTaskCenter? taskCenter;
+
+  /// When embedded inside ClientShell's mobile file workspace, hides the
+  /// redundant page title row and merges refresh into the breadcrumb bar.
+  final bool compactEmbeddedHeader;
 
   @visibleForTesting
   final bool? mobileExportOverride;
@@ -157,254 +136,109 @@ class FilesPage extends StatefulWidget {
 }
 
 class _FilesPageState extends State<FilesPage> {
-  void _updateState(VoidCallback action) => setState(action);
-
-  late final FilesDirectoryState _dir;
-  final FilesSearchAndTrashState _filter = FilesSearchAndTrashState();
-  final FilesDisplayPrefsState _prefsState = FilesDisplayPrefsState();
-  final FilesSelectionAndTransferState _transfers =
-      FilesSelectionAndTransferState();
   final ScrollController _scrollController = ScrollController();
   final GlobalKey _highlightedItemKey = GlobalKey();
-  Timer? _highlightTimer;
-  bool _disposed = false;
-  late FileUploadService _uploadService;
+  late final FilesController _controller;
+  late final FilesUiActions _actions;
 
-  FileBrowserRepository get _browserRepository =>
-      FileBrowserRepository(widget.api);
-  FileBatchOperations get _batchOperations => FileBatchOperations(widget.api);
-
-  FileUploadService _newUploadService() => FileUploadService(
+  FilesPageConfig _buildConfig() => FilesPageConfig(
     api: widget.api,
+    isAdmin: widget.isAdmin,
     accountName: widget.accountName,
-    allowAutoRename: () => _prefsState.uploadAutoRename,
-    onChanged: () => _refreshState(() {}),
+    accountId: widget.accountId,
+    initialPath: widget.initialPath,
+    uploadOnly: widget.uploadOnly,
+    initialUploadType: widget.initialUploadType,
     onUploaded: widget.onUploaded,
-    formatError: _friendlyError,
+    taskCenter: widget.taskCenter,
+    mobileExportOverride: widget.mobileExportOverride,
+    exportDirectoryFactory: widget.exportDirectoryFactory,
+    exportDirectoryCleanup: widget.exportDirectoryCleanup,
   );
 
   @override
   void initState() {
     super.initState();
-    _dir = FilesDirectoryState(
-      path: widget.initialPath,
-      rootIdentity: widget.api.selectedRoot?.identity ?? 'default',
+    _controller = FilesController(
+      config: _buildConfig(),
+      onHighlightActivated: _scrollToHighlightedItem,
+      onRestoreScrollOffset: _scheduleRestoreScroll,
+      readScrollOffset: () =>
+          _scrollController.hasClients ? _scrollController.offset : 0.0,
+      onNoticeMessage: _showNoticeSnackBar,
     );
-    _uploadService = _newUploadService();
-    _filter.searchFocusNode.addListener(_onSearchFocusChanged);
-    widget.taskCenter?.addListener(_onTaskCenterChange);
-    unawaited(_initialize());
-  }
-
-  void _onSearchFocusChanged() {
-    if (_disposed || !mounted) return;
-    final focused = _filter.searchFocusNode.hasFocus;
-    if (_filter.searchInputFocused != focused) {
-      _refreshState(() => _filter.searchInputFocused = focused);
-    }
+    _actions = FilesUiActions(
+      controller: _controller,
+      openUploadRoute: _openUploadRoute,
+    );
+    unawaited(_controller.initialize(deferInitialNotify: true));
   }
 
   @override
   void didUpdateWidget(covariant FilesPage oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (!identical(oldWidget.taskCenter, widget.taskCenter)) {
-      oldWidget.taskCenter?.removeListener(_onTaskCenterChange);
-      widget.taskCenter?.addListener(_onTaskCenterChange);
-    }
-    final newRootIdentity = widget.api.selectedRoot?.identity ?? 'default';
-    if (oldWidget.api != widget.api ||
-        oldWidget.isAdmin != widget.isAdmin ||
-        oldWidget.accountName != widget.accountName ||
-        oldWidget.initialPath != widget.initialPath ||
-        _dir.rootIdentity != newRootIdentity) {
-      _prefsState.preferencesGeneration++;
-      _cancelUploads();
-      _uploadService = _newUploadService();
-      _dir.resetForIdentity(widget.initialPath, newRootIdentity);
-      _filter.reset();
-      _transfers.resetForRootChange();
-      _prefsState.resetDefaults();
-      unawaited(_initialize());
-    }
+    _controller.updateConfig(_buildConfig());
   }
 
   @override
   void dispose() {
-    _disposed = true;
-    _highlightTimer?.cancel();
-    _highlightTimer = null;
-    _filter.searchFocusNode.removeListener(_onSearchFocusChanged);
+    _controller.dispose();
     _scrollController.dispose();
-    _prefsState.preferencesGeneration++;
-    _filter.dispose();
-    widget.taskCenter?.removeListener(_onTaskCenterChange);
-    if (widget.taskCenter == null) _cancelUploads();
     super.dispose();
   }
 
-  void _refreshState(VoidCallback action) {
-    if (mounted && !_disposed) setState(action);
+  Future<int> _openUploadRoute(
+    BuildContext context, {
+    required String directory,
+    required FileType type,
+    required String title,
+  }) => openFileUpload(
+    context,
+    api: _controller.api,
+    isAdmin: _controller.isAdmin,
+    accountName: _controller.accountName,
+    taskCenter: _controller.taskCenter,
+    directory: directory,
+    type: type,
+    title: title,
+  );
+
+  void _showNoticeSnackBar(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.maybeOf(
+      context,
+    )?.showSnackBar(SnackBar(content: Text(message)));
   }
 
-  void _exitSearchAndRestore() {
-    final target = _filter.preSearchPath ?? widget.initialPath;
-    final offset = _filter.preSearchScrollOffset;
-    _filter.searchFocusNode.unfocus();
-    unawaited(_loadFiles(target: target, restoreScrollOffset: offset));
-  }
-
-  void _activateLocateHighlight(String path) {
-    _highlightTimer?.cancel();
-    _refreshState(() => _dir.highlightedPath = path);
+  void _scrollToHighlightedItem() {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _disposed) return;
+      if (!mounted) return;
       final itemContext = _highlightedItemKey.currentContext;
-      if (itemContext != null) {
-        final reduced = IsleMotion.reducedMotion(context);
-        unawaited(
-          Scrollable.ensureVisible(
-            itemContext,
-            alignment: 0.35,
-            duration: reduced
-                ? Duration.zero
-                : const Duration(milliseconds: 260),
-          ),
-        );
-      }
-    });
-    _highlightTimer = Timer(const Duration(milliseconds: 2800), () {
-      if (mounted && !_disposed && _dir.highlightedPath == path) {
-        _refreshState(() => _dir.highlightedPath = null);
-      }
+      if (itemContext == null) return;
+      final reduced = IsleMotion.reducedMotion(context);
+      unawaited(
+        Scrollable.ensureVisible(
+          itemContext,
+          alignment: 0.35,
+          duration: reduced
+              ? Duration.zero
+              : const Duration(milliseconds: 260),
+        ),
+      );
     });
   }
 
   void _scheduleRestoreScroll(double offset) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted || _disposed || !_scrollController.hasClients) return;
+      if (!mounted || !_scrollController.hasClients) return;
       final maxExtent = _scrollController.position.maxScrollExtent;
       _scrollController.jumpTo(offset.clamp(0.0, maxExtent).toDouble());
     });
   }
 
   void _handlePopInvoked(bool didPop, Object? result) {
-    if (didPop || _dir.loading) return;
-    if (_transfers.selecting) {
-      _refreshState(_transfers.clearSelection);
-    } else if (_filter.showingTrash) {
-      _toggleTrash();
-    } else if (_filter.searching) {
-      _exitSearchAndRestore();
-    } else {
-      final segments = _pathSegments();
-      if (segments.length > 1) {
-        _loadFiles(target: segments[segments.length - 2].$2);
-      }
-    }
-  }
-
-  Widget _buildReadOnlyBanner(
-    BuildContext context,
-    ColorScheme colors, {
-    required bool compact,
-  }) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final palette = IslePalette(isDark);
-    return Padding(
-      padding: const EdgeInsets.only(top: 6),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: ShapeDecoration(
-          shape: IsleShapes.sm(
-            side: BorderSide(color: IsleGlass.rimBorderColor(isDark)),
-          ),
-          color: palette['cardItemBottom'],
-        ),
-        child: Row(
-          children: [
-            Icon(
-              Icons.lock_outline_rounded,
-              size: 15,
-              color: palette['brandAmber'],
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                compact
-                    ? '当前目录为只读 · 可浏览、下载或复制。'
-                    : '当前目录为只读。你可以浏览、预览、下载或复制到有写权限的目录。',
-                style: TextStyle(fontSize: 12, color: colors.onSurfaceVariant),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _buildBatchProgressBanner(BuildContext context, ColorScheme colors) {
-    final progress = _transfers.batchProgress!;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return Padding(
-      padding: const EdgeInsets.only(top: 6),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-        decoration: BoxDecoration(
-          color: colors.primaryContainer.withValues(
-            alpha: isDark ? 0.45 : 0.72,
-          ),
-          borderRadius: BorderRadius.circular(11),
-          border: Border.all(
-            color: colors.primary.withValues(alpha: isDark ? 0.35 : 0.22),
-            width: 1.0,
-          ),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    '正在批量${_transfers.batchActionLabel ?? '处理'} (${progress.index}/${progress.total}) · ${progress.currentName}',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      color: colors.onPrimaryContainer,
-                    ),
-                  ),
-                ),
-                TextButton(
-                  style: TextButton.styleFrom(
-                    visualDensity: VisualDensity.compact,
-                    minimumSize: const Size(0, 26),
-                  ),
-                  onPressed: _transfers.batchStopRequested
-                      ? null
-                      : () => _refreshState(
-                          () => _transfers.batchStopRequested = true,
-                        ),
-                  child: Text(
-                    _transfers.batchStopRequested ? '正在停止…' : '停止后续项',
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 4),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(999),
-              child: LinearProgressIndicator(
-                minHeight: 4,
-                value: progress.total > 0
-                    ? (progress.index / progress.total).clamp(0.0, 1.0)
-                    : null,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+    if (didPop) return;
+    _controller.handlePopBack();
   }
 
   bool _isEditingText() {
@@ -415,274 +249,180 @@ class _FilesPageState extends State<FilesPage> {
   }
 
   void _handleEscapeShortcut() {
-    if (_dir.loading || _transfers.batchBusy) return;
     if (ModalRoute.of(context)?.isCurrent == false) return;
-    if (_filter.searchFocusNode.hasFocus) {
-      if (_filter.searching) {
-        _exitSearchAndRestore();
-      } else {
-        _filter.searchFocusNode.unfocus();
-      }
-      return;
-    }
-    if (_isEditingText()) return;
-    if (_transfers.selecting) {
-      _refreshState(_transfers.clearSelection);
-    } else if (_filter.searching) {
-      _exitSearchAndRestore();
-    } else if (_filter.showingTrash) {
-      _toggleTrash();
-    }
+    _controller.handleEscapeKey(isEditingText: _isEditingText());
   }
 
   void _handleSelectAllShortcut() {
-    if (_isEditingText() ||
-        _dir.loading ||
-        _transfers.batchBusy ||
-        _filter.showingTrash) {
-      return;
-    }
-    final selection = _selectionSnapshot;
-    if (selection.visiblePaths.isEmpty) return;
-    _refreshState(() {
-      _transfers.selecting = true;
-      _transfers.selectedPaths
-        ..clear()
-        ..addAll(selection.toggledVisible());
-    });
+    _controller.handleSelectAllKey(isEditingText: _isEditingText());
   }
 
   @override
   Widget build(BuildContext context) {
-    if (widget.uploadOnly) return _uploadView(context);
-    final colors = Theme.of(context).colorScheme;
     final useMeta =
         defaultTargetPlatform == TargetPlatform.macOS ||
         defaultTargetPlatform == TargetPlatform.iOS;
-    return IsleChildPopScope(
-      canPop:
-          _dir.path == widget.initialPath &&
-          !_filter.showingTrash &&
-          !_filter.searching &&
-          !_transfers.selecting,
-      onPopInvokedWithResult: _handlePopInvoked,
-      child: CallbackShortcuts(
-        bindings: {
-          const SingleActivator(LogicalKeyboardKey.escape):
-              _handleEscapeShortcut,
-          SingleActivator(
-            LogicalKeyboardKey.keyA,
-            meta: useMeta,
-            control: !useMeta,
-          ): _handleSelectAllShortcut,
-        },
-        child: Focus(
-          autofocus: false,
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final compact =
-                  constraints.maxWidth < IsleLayout.compactPageWidth;
-              final inset = IsleLayout.pageInset(constraints.maxWidth);
-              final topInset = IsleLayout.pageTopInset(constraints.maxWidth);
-              final contentWidth =
-                  (constraints.maxWidth - inset * 2).clamp(
+
+    return ListenableBuilder(
+      listenable: _controller,
+      builder: (context, _) {
+        if (widget.uploadOnly) {
+          return FilesUploadOnlyView(
+            controller: _controller,
+            actions: _actions,
+          );
+        }
+        final dir = _controller.dir;
+        final filter = _controller.filter;
+        final transfers = _controller.transfers;
+
+        return IsleChildPopScope(
+          canPop: _controller.canPopPage,
+          onPopInvokedWithResult: _handlePopInvoked,
+          child: CallbackShortcuts(
+            bindings: {
+              const SingleActivator(LogicalKeyboardKey.escape):
+                  _handleEscapeShortcut,
+              SingleActivator(
+                LogicalKeyboardKey.keyA,
+                meta: useMeta,
+                control: !useMeta,
+              ): _handleSelectAllShortcut,
+            },
+            child: Focus(
+              autofocus: false,
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final compact =
+                      constraints.maxWidth < IsleLayout.compactPageWidth;
+                  final inset = IsleLayout.pageInset(constraints.maxWidth);
+                  final topInset = IsleLayout.pageTopInset(
+                    constraints.maxWidth,
+                  );
+                  final contentWidth = (constraints.maxWidth - inset * 2).clamp(
                     0.0,
                     IsleLayout.workbenchMaxWidth,
                   );
-              return RefreshIndicator(
-                onRefresh: _refreshCurrentView,
-                child: ListView(
-                  controller: _scrollController,
-                  physics: const AlwaysScrollableScrollPhysics(),
-                  padding: EdgeInsets.fromLTRB(
-                    inset,
-                    topInset,
-                    inset,
-                    inset + 56,
-                  ),
-                  children: [
-                    Center(
-                      child: ConstrainedBox(
-                        constraints: const BoxConstraints(
-                          maxWidth: IsleLayout.workbenchMaxWidth,
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            _buildHeader(context),
-                            const SizedBox(height: 8),
-                            _buildToolbar(context, compact, contentWidth),
-                            if (_filter.searching) ...[
-                              const SizedBox(height: 6),
-                              Text(
-                                '${_filter.searchScopeSubdir != null && !_filter.searchEntireRoot ? '在当前目录“${_filter.searchScopeSubdir!.split('/').last}”中' : '在当前整盘中'}搜索“${_filter.searchTerm}” · 仅搜索当前账号可访问的名称。',
-                                style: Theme.of(context).textTheme.bodySmall,
-                              ),
-                            ],
-                            if (!_filter.showingTrash &&
-                                !_dir.canWrite &&
-                                !_dir.loading &&
-                                _dir.error == null)
-                              _buildReadOnlyBanner(
-                                context,
-                                colors,
-                                compact: compact,
-                              ),
-                            if (_transfers.batchBusy &&
-                                _transfers.batchProgress != null)
-                              _buildBatchProgressBanner(context, colors),
-                            if (_dir.error != null)
-                              Notice(
-                                _dir.error!,
-                                error: true,
-                                diagnostic: _dir.error!.startsWith('读取目录失败：')
-                                    ? _dir.directoryDiagnostic
-                                    : null,
-                                retryLabel:
-                                    _transfers.lastFailedBatchRetry != null
-                                    ? '仅重试失败项'
-                                    : '重试',
-                                onRetry: _transfers.lastFailedBatchRetry != null
-                                    ? _retryFailedBatchTransfer
-                                    : _filter.showingTrash
-                                    ? _loadTrash
-                                    : _filter.searching
-                                    ? _searchFiles
-                                    : () => _loadFiles(),
-                              ),
-                            if (_transfers.downloadMessage != null)
-                              _downloadNotice(context),
-                            if ((widget.taskCenter?.jobs ??
-                                    _transfers.uploadJobs)
-                                .isNotEmpty) ...[
-                              const SizedBox(height: 8),
-                              _buildUploads(context),
-                            ],
-                            const SizedBox(height: 10),
-                            _buildFileList(context, compact, contentWidth),
-                            const SizedBox(height: 16),
-                          ],
-                        ),
+                  return RefreshIndicator(
+                    onRefresh: _controller.refreshCurrentView,
+                    child: ListView(
+                      controller: _scrollController,
+                      physics: const AlwaysScrollableScrollPhysics(),
+                      padding: EdgeInsets.fromLTRB(
+                        inset,
+                        topInset,
+                        inset,
+                        inset + 56,
                       ),
+                      children: [
+                        Center(
+                          child: ConstrainedBox(
+                            constraints: const BoxConstraints(
+                              maxWidth: IsleLayout.workbenchMaxWidth,
+                            ),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.stretch,
+                              children: [
+                                FilesHeader(
+                                  controller: _controller,
+                                  compactEmbeddedHeader:
+                                      widget.compactEmbeddedHeader,
+                                ),
+                                const SizedBox(height: 8),
+                                FilesToolbar(
+                                  controller: _controller,
+                                  actions: _actions,
+                                  compact: compact,
+                                  availableWidth: contentWidth,
+                                ),
+                                if (filter.searching) ...[
+                                  const SizedBox(height: 6),
+                                  Text(
+                                    '${filter.searchScopeSubdir != null && !filter.searchEntireRoot ? '在当前目录“${filter.searchScopeSubdir!.split('/').last}”中' : '在当前整盘中'}搜索“${filter.searchTerm}” · 仅搜索当前账号可访问的名称。',
+                                    style: Theme.of(
+                                      context,
+                                    ).textTheme.bodySmall,
+                                  ),
+                                ],
+                                if (!filter.showingTrash &&
+                                    !dir.canWrite &&
+                                    !dir.loading &&
+                                    dir.error == null)
+                                  FilesReadOnlyBanner(compact: compact),
+                                if (transfers.batchBusy &&
+                                    transfers.batchProgress != null)
+                                  FilesBatchProgressBanner(
+                                    controller: _controller,
+                                  ),
+                                if (dir.error != null)
+                                  Notice(
+                                    dir.error!,
+                                    error: true,
+                                    diagnostic: dir.error!.startsWith('读取目录失败：')
+                                        ? dir.directoryDiagnostic
+                                        : null,
+                                    retryLabel:
+                                        transfers.lastFailedBatchRetry != null
+                                        ? '仅重试失败项'
+                                        : '重试',
+                                    onRetry:
+                                        transfers.lastFailedBatchRetry != null
+                                        ? () => unawaited(
+                                            _actions.retryFailedBatchTransfer(
+                                              context,
+                                            ),
+                                          )
+                                        : filter.showingTrash
+                                        ? () => unawaited(
+                                            _controller.loadTrash(),
+                                          )
+                                        : filter.searching
+                                        ? () => unawaited(
+                                            _controller.searchFiles(),
+                                          )
+                                        : () => unawaited(
+                                            _controller.loadFiles(),
+                                          ),
+                                  ),
+                                if (transfers.downloadMessage != null)
+                                  FilesDownloadNotice(
+                                    message: transfers.downloadMessage!,
+                                    onCopyPath: (path) => unawaited(
+                                      _actions.copyPathToClipboard(
+                                        context,
+                                        path,
+                                      ),
+                                    ),
+                                  ),
+                                if (_controller.uploadJobs.isNotEmpty) ...[
+                                  const SizedBox(height: 8),
+                                  FilesUploadQueueSection(
+                                    controller: _controller,
+                                    actions: _actions,
+                                  ),
+                                ],
+                                const SizedBox(height: 10),
+                                FilesBrowserSurface(
+                                  controller: _controller,
+                                  actions: _actions,
+                                  highlightedItemKey: _highlightedItemKey,
+                                  compact: compact,
+                                  availableWidth: contentWidth,
+                                ),
+                                const SizedBox(height: 16),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
-                  ],
-                ),
-              );
-            },
+                  );
+                },
+              ),
+            ),
           ),
-        ),
-      ),
+        );
+      },
     );
   }
-}
-
-class _RenameFileDialog extends StatefulWidget {
-  const _RenameFileDialog({required this.initialName, this.isFolder = false});
-  final String initialName;
-  final bool isFolder;
-  @override
-  State<_RenameFileDialog> createState() => _RenameFileDialogState();
-}
-
-class _RenameFileDialogState extends State<_RenameFileDialog> {
-  late final _controller = TextEditingController(text: widget.initialName);
-  String? _issue;
-
-  @override
-  void initState() {
-    super.initState();
-    final name = widget.initialName;
-    final dot = widget.isFolder ? -1 : name.lastIndexOf('.');
-    final end = dot > 0 ? dot : name.length;
-    _controller.selection = TextSelection(baseOffset: 0, extentOffset: end);
-  }
-
-  void _save() {
-    final name = _controller.text.trim();
-    setState(() => _issue = validateFileName(name));
-    if (_issue == null) Navigator.pop(context, name);
-  }
-
-  @override
-  void dispose() {
-    _controller.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return AlertDialog(
-      shape: IsleShapes.card(
-        side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
-      ),
-      title: const Text('重命名'),
-      content: TextField(
-        controller: _controller,
-        autofocus: true,
-        maxLength: 150,
-        textInputAction: TextInputAction.done,
-        onSubmitted: (_) => _save(),
-        decoration: InputDecoration(
-          isDense: true,
-          labelText: '名称',
-          errorText: _issue,
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('取消'),
-        ),
-        FilledButton(onPressed: _save, child: const Text('保存')),
-      ],
-    );
-  }
-}
-
-String _friendlyDownloadError(Object error, bool archive) {
-  if (archive && error is LightIsleApiException) {
-    if (error.code == 'archive_limit_exceeded' || error.statusCode == 413) {
-      return '文件夹超过 ZIP 导出限制（2 GiB 或 2,000 项），请下载较小的子文件夹。';
-    }
-    if (error.code == 'archive_busy') {
-      return '当前打包下载较多，请稍后重试。';
-    }
-    if (error.code == 'archive_source_changed') {
-      return '文件夹内容在下载前发生变化，请刷新目录后重试。';
-    }
-  }
-  return _friendlyError(error);
-}
-
-String _extension(String name) {
-  final dot = name.lastIndexOf('.');
-  return dot < 0 ? '' : name.substring(dot + 1).toLowerCase();
-}
-
-String _joinRelative(String directory, String name) =>
-    directory == '.' || directory.isEmpty ? name : '$directory/$name';
-
-String _friendlyError(Object error) => userFacingError(error);
-
-String _formatDate(DateTime date) {
-  final local = date.toLocal();
-  String two(int number) => number.toString().padLeft(2, '0');
-  return '${local.year}-${two(local.month)}-${two(local.day)} ${two(local.hour)}:${two(local.minute)}';
-}
-
-String _joinNative(String directory, String name) {
-  final separator = Platform.pathSeparator;
-  final clean = directory.endsWith(separator)
-      ? directory.substring(0, directory.length - separator.length)
-      : directory;
-  return '$clean$separator$name';
-}
-
-String _basename(String path) => path.split(Platform.pathSeparator).last;
-
-String _filePickerPath(String path) {
-  final uri = Uri.tryParse(path);
-  if (uri != null && uri.scheme == 'file') return uri.toFilePath();
-  return path;
 }

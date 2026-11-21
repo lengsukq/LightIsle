@@ -61,7 +61,7 @@ class DashboardQuickLinks extends StatelessWidget {
           palette['brandTerracotta'],
           false,
         ),
-        if (!admin && onOpenDownloads != null)
+        if (onOpenDownloads != null)
           (
             'dashboardDownloadsEntry',
             onOpenDownloads!,
@@ -212,6 +212,7 @@ class MemberStorageSummary extends StatelessWidget {
     final quotas = objectList(storage['rootQuotas']);
     final count = objectList(storage['locations']).length;
     final complete = storage['usageComplete'] == true;
+    final enforcementPending = storage['enforcement']?.toString() == 'pending';
     return IsleSurface(
       radius: IsleRadius.card,
       tint: palette['brandAmber'],
@@ -411,10 +412,12 @@ class MemberStorageSummary extends StatelessWidget {
               ],
             ),
           ],
-          if (!complete) ...[
+          if (!complete || enforcementPending) ...[
             const SizedBox(height: 8),
             Text(
-              '仅为已入账用量，部分渠道未统计，不等于硬盘实际占用。',
+              enforcementPending
+                  ? '仅为已入账用量：部分写入渠道尚未计费且未全面实施超额硬限制，不等于硬盘实际占用。'
+                  : '仅为已入账用量，部分渠道未统计，不等于硬盘实际占用。',
               style: theme.textTheme.bodySmall?.copyWith(
                 fontSize: 11.5,
                 color: theme.colorScheme.onSurfaceVariant,

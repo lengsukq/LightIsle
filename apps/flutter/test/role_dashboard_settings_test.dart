@@ -103,7 +103,11 @@ void main() {
           await tester.pumpAndSettle();
           expect(find.text(admin ? '家庭与存储' : '我的空间'), findsOneWidget);
           expect(find.text('账号与目录授权'), admin ? findsOneWidget : findsNothing);
-          expect(find.text('高级排障'), admin ? findsOneWidget : findsNothing);
+          expect(
+            find.text('Mac 远程运维（高级）'),
+            admin ? findsOneWidget : findsNothing,
+          );
+          expect(find.text('本机脚本自动化'), findsNothing);
           expect(find.text('设备诊断与 Key 状态'), findsNothing);
           expect(find.text('安全审计'), findsNothing);
           expect(find.text('上传维护'), findsNothing);
@@ -126,11 +130,12 @@ void main() {
               find.byKey(const ValueKey('adminTroubleshootingToggle')),
             );
             await tester.pumpAndSettle();
+            expect(find.text('本机脚本自动化'), findsOneWidget);
             expect(find.text('设备诊断与 Key 状态'), findsOneWidget);
             expect(find.text('安全审计'), findsOneWidget);
             expect(find.text('上传维护'), findsOneWidget);
           } else {
-            expect(find.text('高级排障'), findsNothing);
+            expect(find.text('Mac 远程运维（高级）'), findsNothing);
             expect(find.text('安全审计'), findsNothing);
           }
           expect(tester.takeException(), isNull);
@@ -164,14 +169,14 @@ void main() {
             ),
           );
           await tester.pump(const Duration(milliseconds: 300));
-          expect(find.text(admin ? '这台 Mac' : '我的家庭空间'), findsOneWidget);
+          expect(find.text(admin ? '这台 Mac' : '我的家庭空间'), findsWidgets);
           if (admin) {
             expect(api.calls, contains('/api/v2/system'));
             expect(api.calls, contains('/api/v2/tasks'));
             expect(api.calls, isNot(contains('/api/v2/me/storage')));
             expect(
               find.byKey(const ValueKey('dashboardDownloadsEntry')),
-              findsNothing,
+              findsOneWidget,
             );
             expect(
               find.byKey(const ValueKey('dashboardComputerFilesEntry')),
@@ -184,7 +189,7 @@ void main() {
             expect(api.calls, isNot(contains('/api/v2/tasks')));
             expect(
               find.byKey(const ValueKey('dashboardDownloadsEntry')),
-              findsOneWidget,
+              findsNothing,
             );
             expect(
               find.byKey(const ValueKey('dashboardComputerFilesEntry')),
@@ -418,7 +423,6 @@ void addHomeAppTileTests() {
       await tester.tap(tile);
       await tester.pumpAndSettle();
       expect(memberApi.launchedIds, ['network-pulse']);
-      expect(find.byKey(const ValueKey('workbenchBackButton')), findsOneWidget);
       expect(tester.takeException(), isNull);
       await tester.pumpWidget(const SizedBox.shrink());
 

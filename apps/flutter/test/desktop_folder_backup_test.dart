@@ -239,6 +239,8 @@ class _InMemoryNasApi extends LightIsleApi {
       moveOperationCalls++;
       final req = body! as Map;
       expect(req['action'], 'move');
+      expect(req.containsKey('conflict'), isTrue);
+      expect(req.containsKey('onConflict'), isFalse);
       final from = req['from'].toString();
       final to = req['to'].toString();
       if (files.containsKey(to)) {

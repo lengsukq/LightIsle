@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../../core/isle_gallery_layout.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
@@ -465,7 +464,7 @@ class _MissingMediaPageState extends State<MissingMediaPage>
                         ),
                       ),
                       subtitle: Text(
-                        '${_reason(item['reason'])} · 保留：${_dataLabel(item['data'])}${item['canManage'] == true ? '' : ' · 只读'}',
+                        '${_reason(item['reason'])} · 保留：${_dataLabel(item['data'])}${item['canManage'] == true ? '' : ' · 当前没有写入权限'}',
                       ),
                       trailing: PopupMenuButton<String>(
                         tooltip: '处理缺失媒体',

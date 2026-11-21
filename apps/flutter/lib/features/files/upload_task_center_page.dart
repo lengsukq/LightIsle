@@ -1,7 +1,6 @@
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 
-import '../../core/isle_gallery_layout.dart';
 import '../../core/isle_theme.dart';
 import '../../core/widgets.dart';
 import 'file_upload_stream.dart';

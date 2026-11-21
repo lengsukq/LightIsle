@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../core/isle_theme.dart';
 import '../../core/widgets.dart';
 
 String _formatStorageGiB(double bytes) =>

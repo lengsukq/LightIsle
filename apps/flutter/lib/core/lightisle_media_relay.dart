@@ -39,7 +39,7 @@ extension _LightIsleMediaRelay on LightIsleApi {
       _ensureOpen();
     }
     _mediaRelay = relay;
-    relay.listen(
+    _mediaRelaySubscription = relay.listen(
       (request) => unawaited(_handleMediaRelayRequest(request)),
       onError: (Object _) {},
       cancelOnError: false,

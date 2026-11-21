@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../../core/authenticated_media_image.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/media_image_memory_cache.dart';
@@ -10,6 +9,7 @@ import '../../core/widgets.dart';
 import '../files/file_share_dialog.dart';
 import 'cinema_catalog_display.dart';
 import 'cinema_metadata_repository.dart';
+import 'cinema_poster_image.dart';
 import 'media_models.dart';
 import 'media_ui.dart';
 
@@ -170,10 +170,10 @@ class _CinemaFilmOverviewState extends State<CinemaFilmOverview> {
       clipBehavior: Clip.antiAlias,
       child: AspectRatio(
         aspectRatio: 2 / 3,
-        child: AuthenticatedMediaImage(
+        child: CinemaPosterImage.film(
           api: widget.api,
+          film: _film,
           memoryCache: widget.memoryCache,
-          path: '/api/v2/cinema/${_film.id}/poster',
           fit: BoxFit.cover,
           maxBytes: 4 * 1024 * 1024,
           loadingBuilder: (_) => ColoredBox(

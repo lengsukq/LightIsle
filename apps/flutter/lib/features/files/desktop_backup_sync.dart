@@ -330,7 +330,7 @@ extension _DesktopBackupSync on DesktopBackupController {
                 'action': 'move',
                 'from': priorStagingPath,
                 'to': targetPath,
-                'onConflict': '',
+                'conflict': '',
               },
             );
             remoteSnapshot.remove(priorStagingName);
@@ -441,7 +441,7 @@ extension _DesktopBackupSync on DesktopBackupController {
         'action': 'move',
         'from': stagingPath,
         'to': targetPath,
-        'onConflict': '',
+        'conflict': '',
       },
     );
     remoteSnapshot.remove(stagingName);

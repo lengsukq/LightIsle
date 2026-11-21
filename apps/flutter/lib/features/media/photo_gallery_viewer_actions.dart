@@ -230,6 +230,9 @@ extension _PhotoGalleryViewerActions on _PhotoGalleryViewerState {
         widget.api,
         path: asset.path,
         name: asset.name,
+        endpoint: widget.fileBrowserMode
+            ? widget.fileContentEndpoint
+            : '/api/v2/files/content',
       );
       if (mounted) {
         ScaffoldMessenger.of(context)

@@ -230,6 +230,7 @@ class DesktopBackupController extends ChangeNotifier {
   Timer? _scheduleTimer;
 
   List<DesktopBackupTask> get tasks => _tasks;
+  String? get loadError => store.lastLoadError;
   DesktopBackupSchedule get schedule => _schedule;
   DesktopBackupProgress? get activeProgress => _activeProgress;
   bool get running => _running;

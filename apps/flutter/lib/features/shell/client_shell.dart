@@ -6,7 +6,9 @@ import 'package:flutter/services.dart';
 
 import '../../core/lightisle_api.dart';
 import '../../core/login_history_store.dart';
+import '../../core/native_video_bridge.dart';
 import '../../core/personal_storage_routing.dart';
+import '../../core/shell_storage_state.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/isle_theme.dart';
 import '../../core/widgets.dart';
@@ -18,6 +20,7 @@ import '../media/photos_page.dart';
 import '../media/cinema_page.dart';
 import '../overview/overview_page.dart';
 import '../settings/settings_page.dart';
+import 'client_shell_navigation_docks.dart';
 
 part 'client_shell_chrome.dart';
 
@@ -44,6 +47,9 @@ class ClientShell extends StatefulWidget {
 
 class _ClientShellState extends State<ClientShell> with WidgetsBindingObserver {
   late final UploadTaskCenter _uploadCenter;
+  late final ShellStorageHandle _storageHandle = ShellStorageHandle(
+    onRefresh: _refreshRoots,
+  );
   DesktopBackupController? _desktopBackupController;
   DateTime? _backgroundedAt;
   int _index = 0;
@@ -61,7 +67,18 @@ class _ClientShellState extends State<ClientShell> with WidgetsBindingObserver {
   int? _manualRootSection;
   List<LightIsleRoot> _roots = const [];
   bool _rootsLoading = false;
+  bool _rootsFetchedOnce = false;
   String? _rootsError;
+
+  void _syncStorageHandle() {
+    _storageHandle.value = ShellStorageSnapshot(
+      roots: _roots,
+      personalStorage: _myStoragePolicy,
+      rootsError: _rootsError,
+      loading: _rootsLoading,
+      hasFetched: _rootsFetchedOnce,
+    );
+  }
   @override
   void initState() {
     super.initState();
@@ -114,6 +131,7 @@ class _ClientShellState extends State<ClientShell> with WidgetsBindingObserver {
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _storageHandle.dispose();
     _desktopBackupController?.dispose();
     _uploadCenter.dispose();
     super.dispose();
@@ -125,6 +143,7 @@ class _ClientShellState extends State<ClientShell> with WidgetsBindingObserver {
       _rootsLoading = true;
       _rootsError = null;
     });
+    _syncStorageHandle();
     try {
       final response = await widget.api.get('/api/v2/roots');
       final raw = response['roots'];
@@ -151,6 +170,7 @@ class _ClientShellState extends State<ClientShell> with WidgetsBindingObserver {
       setState(() {
         _roots = roots;
         _myStoragePolicy = policy;
+        _rootsFetchedOnce = true;
         if (isCurrent) _personalRouteError = null;
         if (!isCurrent) {
           // Never silently show another drive's files after the previously
@@ -162,6 +182,7 @@ class _ClientShellState extends State<ClientShell> with WidgetsBindingObserver {
           _dashboardFilesWidget = null;
         }
       });
+      _syncStorageHandle();
       // Restore persisted uploads independently. The dashboard / storage
       // connection must not stay in a loading state while local picker
       // metadata or a platform preference service is unavailable.
@@ -177,6 +198,7 @@ class _ClientShellState extends State<ClientShell> with WidgetsBindingObserver {
     } on LightIsleApiException catch (error) {
       if (!mounted) return;
       setState(() {
+        _rootsFetchedOnce = true;
         _rootsError = error.statusCode == 404
             ? 'NAS 服务不支持 v2 多硬盘接口，请更新 Mac 端后重试。'
             : error.message;
@@ -185,15 +207,21 @@ class _ClientShellState extends State<ClientShell> with WidgetsBindingObserver {
         // The error layer hides mounted content until the root is verified.
         // A genuinely changed physical root still clears pages above.
       });
+      _syncStorageHandle();
     } catch (error) {
       if (mounted) {
         setState(() {
+          _rootsFetchedOnce = true;
           _rootsError = '读取共享目录失败，请重试：${userFacingError(error)}';
           _personalRouteError = '个人存储配置暂不可用，请重试。';
         });
+        _syncStorageHandle();
       }
     } finally {
-      if (mounted) setState(() => _rootsLoading = false);
+      if (mounted) {
+        setState(() => _rootsLoading = false);
+        _syncStorageHandle();
+      }
     }
   }
 
@@ -339,10 +367,15 @@ class _ClientShellState extends State<ClientShell> with WidgetsBindingObserver {
   ];
   bool get _admin => widget.identity['role'] == 'admin';
 
+  String? get _canonicalAccountId =>
+      widget.identity['id'] is int && (widget.identity['id'] as int) > 0
+      ? 'uid:${widget.identity['id']}'
+      : null;
+
   // Lazy mount tabs on first visit, then keep visited tabs mounted in _pages
   // so IsleFluidTabSwitcher preserves scroll offsets, filter state, and
   // transition animations across tab switches.
-  Widget _page(int index) {
+  Widget _page(int index, {required bool useRail}) {
     if (_personalRouteError != null &&
         (index == 1 || index == 2) &&
         _manualRootSection != index) {
@@ -380,6 +413,8 @@ class _ClientShellState extends State<ClientShell> with WidgetsBindingObserver {
               0 => OverviewPage(
                 api: widget.api,
                 isAdmin: _admin,
+                accountId: _canonicalAccountId,
+                storageHandle: _storageHandle,
                 onNavigate: (target) {
                   if (target < 0) {
                     _openDashboardFiles();
@@ -446,7 +481,7 @@ class _ClientShellState extends State<ClientShell> with WidgetsBindingObserver {
         children: [
           built,
           (_showingDashboardFiles || _dashboardFilesWidget != null)
-              ? _buildDashboardFilesContainer()
+              ? _buildDashboardFilesContainer(compactMobileChrome: !useRail)
               : const SizedBox.shrink(),
         ],
       );
@@ -522,10 +557,13 @@ class _ClientShellState extends State<ClientShell> with WidgetsBindingObserver {
               height: constraints.maxHeight,
               desktop: desktop,
             );
-            _page(_index);
+            _page(_index, useRail: rail);
             final animatedBody = IsleFluidTabSwitcher(
               index: _index,
-              children: List.generate(_labels.length, (i) => _page(i)),
+              children: List.generate(
+                _labels.length,
+                (i) => _page(i, useRail: rail),
+              ),
             );
             final textScale = MediaQuery.textScalerOf(context).scale(14) / 14;
             final canExtendRail = IsleLayout.extendedRail(
@@ -582,7 +620,33 @@ class _ClientShellState extends State<ClientShell> with WidgetsBindingObserver {
                         ),
                         title: Row(
                           children: [
-                            if (!rail) ...[
+                            if (!rail && _index == 0 && _showingDashboardFiles) ...[
+                              IconButton(
+                                key: const ValueKey('backToDashboardFromFiles'),
+                                tooltip: '返回仪表盘',
+                                visualDensity: VisualDensity.compact,
+                                onPressed: () => setState(() {
+                                  _showingDashboardFiles = false;
+                                  _fileEntryOverride = null;
+                                }),
+                                icon: const Icon(
+                                  Icons.arrow_back_ios_new_rounded,
+                                  size: 18,
+                                ),
+                              ),
+                              Flexible(
+                                child: Text(
+                                  '文件工作台',
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: Theme.of(context).textTheme.titleMedium
+                                      ?.copyWith(
+                                        fontSize: 15.5,
+                                        fontWeight: FontWeight.w700,
+                                      ),
+                                ),
+                              ),
+                            ] else if (!rail) ...[
                               const IsleBrandMark(size: 24),
                               const SizedBox(width: 8),
                               Flexible(
@@ -620,8 +684,10 @@ class _ClientShellState extends State<ClientShell> with WidgetsBindingObserver {
                           _rootPicker(showName: constraints.maxWidth >= 680),
                           const SizedBox(width: 6),
                           _taskButton(),
-                          const SizedBox(width: 6),
-                          _accountButton(),
+                          if (rail) ...[
+                            const SizedBox(width: 6),
+                            _accountButton(),
+                          ],
                           const SizedBox(width: 10),
                         ],
                       ),

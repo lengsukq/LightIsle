@@ -21,7 +21,8 @@ extension _CinemaPageHomeRails on _CinemaPageState {
     final matchScore = film.rating > 0
         ? (film.rating * 10).round().clamp(78, 99)
         : 0;
-    final posterWidth = desktop ? 176.0 : 148.0;
+    final showSidePoster = wide || screenWidth >= 340;
+    final posterWidth = desktop ? 176.0 : (wide ? 148.0 : 96.0);
 
     return Padding(
       padding: EdgeInsets.fromLTRB(
@@ -32,9 +33,9 @@ extension _CinemaPageHomeRails on _CinemaPageState {
       ),
       child: Container(
         key: const ValueKey('cinemaFeaturedBanner'),
-        constraints: wide
+        constraints: showSidePoster
             ? BoxConstraints(
-                minHeight: (desktop ? 248 : 210) + 170 * (textScale - 1),
+                minHeight: (desktop ? 248 : (wide ? 210 : 152)) + 170 * (textScale - 1),
               )
             : null,
         clipBehavior: Clip.antiAlias,
@@ -63,26 +64,25 @@ extension _CinemaPageHomeRails on _CinemaPageState {
             onTap: () => _openFilm(film),
             child: Stack(
               children: [
-                if (desktop)
-                  Positioned(
-                    right: -40,
-                    top: -40,
-                    bottom: -40,
-                    width: 420,
-                    child: Opacity(
-                      opacity: 0.16,
-                      child: AuthenticatedMediaImage(
-                        api: widget.api,
-                        memoryCache: _posterCache,
-                        path: '/api/v2/cinema/${film.id}/poster',
-                        fit: BoxFit.cover,
-                        maxBytes: 4 * 1024 * 1024,
-                        loadingBuilder: (_) => const SizedBox.shrink(),
-                        errorBuilder: (_, _, _) => const SizedBox.shrink(),
-                      ),
+                Positioned(
+                  right: -40,
+                  top: -40,
+                  bottom: -40,
+                  width: desktop ? 420 : 240,
+                  child: Opacity(
+                    opacity: desktop ? 0.16 : 0.11,
+                    child: CinemaPosterImage.film(
+                      api: widget.api,
+                      film: film,
+                      memoryCache: _posterCache,
+                      fit: BoxFit.cover,
+                      maxBytes: 4 * 1024 * 1024,
+                      loadingBuilder: (_) => const SizedBox.shrink(),
+                      errorBuilder: (_, _, _) => const SizedBox.shrink(),
                     ),
                   ),
-                if (wide)
+                ),
+                if (showSidePoster)
                   Positioned(
                     left: 0,
                     top: 0,
@@ -91,10 +91,10 @@ extension _CinemaPageHomeRails on _CinemaPageState {
                     child: Stack(
                       fit: StackFit.expand,
                       children: [
-                        AuthenticatedMediaImage(
+                        CinemaPosterImage.film(
                           api: widget.api,
+                          film: film,
                           memoryCache: _posterCache,
-                          path: '/api/v2/cinema/${film.id}/poster',
                           fit: BoxFit.cover,
                           maxBytes: 4 * 1024 * 1024,
                           loadingBuilder: (_) => _continuePlaceholder(),
@@ -108,7 +108,7 @@ extension _CinemaPageHomeRails on _CinemaPageState {
                             gradient: LinearGradient(
                               begin: Alignment.centerLeft,
                               end: Alignment.centerRight,
-                              stops: [0.65, 1.0],
+                              stops: [0.68, 1.0],
                               colors: [Colors.transparent, Color(0xFF18161A)],
                             ),
                           ),
@@ -117,7 +117,7 @@ extension _CinemaPageHomeRails on _CinemaPageState {
                     ),
                   ),
                 Padding(
-                  padding: EdgeInsets.only(left: wide ? posterWidth : 0),
+                  padding: EdgeInsets.only(left: showSidePoster ? posterWidth : 0),
                   child: Padding(
                     padding: EdgeInsets.symmetric(
                       horizontal: desktop ? 28 : (wide ? 20 : 16),
@@ -361,10 +361,10 @@ extension _CinemaPageHomeRails on _CinemaPageState {
                               ),
                             ),
                             clipBehavior: Clip.antiAlias,
-                            child: AuthenticatedMediaImage(
+                            child: CinemaPosterImage.film(
                               api: widget.api,
+                              film: film,
                               memoryCache: _posterCache,
-                              path: '/api/v2/cinema/${film.id}/poster',
                               maxBytes: 4 * 1024 * 1024,
                               fit: BoxFit.cover,
                               loadingBuilder: (_) => _continuePlaceholder(),
@@ -449,7 +449,7 @@ extension _CinemaPageHomeRails on _CinemaPageState {
             ),
           ),
           SizedBox(
-            height: (compact ? 134 : 152) + 74 * (textScale - 1),
+            height: (compact ? 142 : 158) + 84 * (textScale - 1),
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               padding: const EdgeInsets.only(right: 18),
@@ -480,10 +480,10 @@ extension _CinemaPageHomeRails on _CinemaPageState {
                           SizedBox(
                             width: compact ? 88 : 104,
                             height: double.infinity,
-                            child: AuthenticatedMediaImage(
+                            child: CinemaPosterImage.film(
                               api: widget.api,
+                              film: film,
                               memoryCache: _posterCache,
-                              path: '/api/v2/cinema/${film.id}/poster',
                               maxBytes: 4 * 1024 * 1024,
                               fit: BoxFit.cover,
                               loadingBuilder: (_) => _continuePlaceholder(),
@@ -556,6 +556,8 @@ extension _CinemaPageHomeRails on _CinemaPageState {
                                         remaining.isEmpty
                                             ? '已看 ${formatMediaSeconds(film.position)}'
                                             : '剩余 $remaining',
+                                        maxLines: 1,
+                                        overflow: TextOverflow.ellipsis,
                                         style: theme.textTheme.labelSmall
                                             ?.copyWith(
                                               color: const Color(0xFFC8C2B8),
@@ -605,7 +607,7 @@ extension _CinemaPageHomeRails on _CinemaPageState {
         .clamp(1.0, 2.5)
         .toDouble();
     final cardWidth = compact && textScale <= 1.25 ? 128.0 : 156.0;
-    final footerHeight = 88 * textScale + 16;
+    final footerHeight = 98 * textScale + 16;
     return Padding(
       padding: EdgeInsets.fromLTRB(_pageInset, 4, 0, compact ? 12 : 16),
       child: Column(

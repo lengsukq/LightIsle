@@ -156,16 +156,23 @@ class IsleBadgePill extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final style = IsleThemeStyle.of(context);
     final effectiveColor = color ?? Theme.of(context).colorScheme.primary;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
+    final isDark = style.dark;
+    final isSharp = style.preset.cornerStyle == IsleCornerStyle.sharp;
+    final isBrutal = style.preset.surfaceMaterial == IsleSurfaceMaterial.neoBrutal;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8.5, vertical: 3),
       decoration: BoxDecoration(
         color: effectiveColor.withValues(alpha: isDark ? 0.18 : 0.10),
-        borderRadius: IsleRadius.brPill,
+        borderRadius: isSharp
+            ? style.borderRadiusFor(IsleRadius.xs)
+            : IsleRadius.brPill,
         border: Border.all(
-          color: effectiveColor.withValues(alpha: isDark ? 0.34 : 0.22),
-          width: 0.9,
+          color: isBrutal
+              ? style.rimBorderColor()
+              : effectiveColor.withValues(alpha: isDark ? 0.34 : 0.22),
+          width: isBrutal ? 1.25 : 0.9,
         ),
       ),
       child: Row(
@@ -332,20 +339,8 @@ class IsleAppBar extends StatelessWidget implements PreferredSizeWidget {
       backgroundColor: Colors.transparent,
       flexibleSpace: GestureDetector(
         behavior: HitTestBehavior.translucent,
-        onPanStart: isMac
-            ? (_) => unawaited(
-                const MethodChannel('lightisle/native-video')
-                    .invokeMethod<void>('startWindowDrag')
-                    .catchError((_) {}),
-              )
-            : null,
-        onDoubleTap: isMac
-            ? () => unawaited(
-                const MethodChannel('lightisle/native-video')
-                    .invokeMethod<void>('doubleClickTitlebar')
-                    .catchError((_) {}),
-              )
-            : null,
+        onPanStart: isMac ? (_) => NativeVideoBridge.startWindowDrag() : null,
+        onDoubleTap: isMac ? NativeVideoBridge.doubleClickTitlebar : null,
         child: RepaintBoundary(
           child: IsleGlassBackdrop(
             blur: IsleGlass.sigmaRegular,

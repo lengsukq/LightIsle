@@ -1,17 +1,17 @@
-import 'dart:convert';
-
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:video_player/video_player.dart';
 
-import '../../core/isle_gallery_layout.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
+import '../media/photo_gallery_viewer.dart';
 import 'file_export_service.dart';
+import 'file_media_playlist.dart';
 import 'file_models.dart';
 import 'file_pdf_preview.dart';
+import 'file_preview_support.dart';
+import 'file_text_preview_dialog.dart';
 
 const _computerBase = '/api/v2/computer-files';
 
@@ -28,6 +28,8 @@ class ComputerFilesPage extends StatefulWidget {
 }
 
 class _ComputerFilesPageState extends State<ComputerFilesPage> {
+  static const int _maxTextPreviewSize = 1 << 20;
+
   bool _enabled = false,
       _busy = true,
       _saving = false,
@@ -133,7 +135,7 @@ class _ComputerFilesPageState extends State<ComputerFilesPage> {
         });
       }
     } catch (e) {
-      if (mounted && generation == _generation) {
+      if (mounted && _member == id && generation == _grantGeneration) {
         setState(() => _error = userFacingError(e));
       }
     } finally {
@@ -204,50 +206,64 @@ class _ComputerFilesPageState extends State<ComputerFilesPage> {
     }
   }
 
+  IconData _entryIcon(FileEntry entry) {
+    if (entry.isFolder) return Icons.folder_rounded;
+    switch (classifyFilePreview(entry.name)) {
+      case FilePreviewKind.image:
+        return Icons.image_outlined;
+      case FilePreviewKind.video:
+        return Icons.movie_outlined;
+      case FilePreviewKind.pdf:
+        return Icons.picture_as_pdf_outlined;
+      case FilePreviewKind.text:
+        return Icons.description_outlined;
+      case FilePreviewKind.external:
+        return Icons.insert_drive_file_outlined;
+    }
+  }
+
+  Color _entryTint(FileEntry entry, IslePalette palette, ColorScheme colors) {
+    if (entry.isFolder) return palette['brandAmber'];
+    switch (classifyFilePreview(entry.name)) {
+      case FilePreviewKind.image:
+        return palette['brandSage'];
+      case FilePreviewKind.video:
+        return palette['brandViolet'];
+      case FilePreviewKind.pdf:
+        return palette['brandCoral'];
+      case FilePreviewKind.text:
+        return palette['brandBlue'];
+      case FilePreviewKind.external:
+        return colors.onSurfaceVariant;
+    }
+  }
+
   Future<void> _preview(FileEntry item) async {
-    final extension = item.name.split('.').last.toLowerCase();
-    if (const {'jpg', 'jpeg', 'png', 'gif', 'webp'}.contains(extension)) {
-      await showDialog<void>(
-        context: context,
-        builder: (_) => Dialog(
-          shape: IsleShapes.card(
-            side: BorderSide(
-              color: IsleGlass.rimBorderColor(
-                Theme.of(context).brightness == Brightness.dark,
-              ),
-              width: 1.0,
-            ),
-          ),
-          clipBehavior: Clip.antiAlias,
-          child: SizedBox(
-            width: 800,
-            height: 600,
-            child: FutureBuilder(
-              future: widget.api.bytes(
-                '$_computerBase/preview',
-                query: {'path': item.path},
-                maxBytes: 64 << 20,
-              ),
-              builder: (context, snapshot) {
-                if (snapshot.hasError) {
-                  return const Center(child: Text('无法预览，请尝试下载原文件。'));
-                }
-                if (!snapshot.hasData) {
-                  return const IsleLoadingState(compact: true);
-                }
-                return Image.memory(snapshot.data!, fit: BoxFit.contain);
-              },
-            ),
-          ),
-        ),
-      );
-    } else if (const {'mp4', 'm4v', 'webm'}.contains(extension)) {
+    final kind = classifyFilePreview(item.name);
+    if (kind == FilePreviewKind.image || kind == FilePreviewKind.video) {
+      final playlist = FileMediaPlaylist.fromDirectory(_entries, item);
       await Navigator.of(context).push<void>(
-        buildIslePageRoute(
-          builder: (_) => _ComputerVideo(api: widget.api, item: item),
+        PhotoGalleryViewer.route(
+          (_) => PhotoGalleryViewer(
+            api: widget.api,
+            assets: playlist.assets,
+            initialIndex: playlist.initialIndex,
+            fileBrowserMode: true,
+            allowFileShare: false,
+            filePreviewEndpoint: '$_computerBase/preview',
+            fileThumbnailEndpoint: '$_computerBase/thumbnail',
+            fileContentEndpoint: '$_computerBase/content',
+            canEditSharedFavorite: (_) => false,
+            onSharedFavorite: (asset) async => asset,
+            onPersonalFavorite: (asset) async => asset,
+            onDetails: (_) async {},
+            onLoadMore: () async => playlist.assets,
+          ),
         ),
       );
-    } else if (extension == 'pdf') {
+      return;
+    }
+    if (kind == FilePreviewKind.pdf) {
       await showDialog<void>(
         context: context,
         builder: (_) => FilePdfPreviewDialog(
@@ -258,51 +274,58 @@ class _ComputerFilesPageState extends State<ComputerFilesPage> {
           onDownload: () => _download(item),
         ),
       );
-    } else if (const {'txt', 'md', 'json', 'log'}.contains(extension)) {
+      return;
+    }
+    if (kind == FilePreviewKind.text) {
+      final generation = _generation;
+      final directory = _path;
+      String? decodedText;
+      String? failure;
       try {
         final bytes = await widget.api.bytes(
           '$_computerBase/preview',
           query: {'path': item.path},
-          maxBytes: 1 << 20,
+          maxBytes: _maxTextPreviewSize,
         );
-        final text = utf8.decode(bytes);
-        if (!mounted) return;
-        final isDark = Theme.of(context).brightness == Brightness.dark;
-        await showDialog<void>(
-          context: context,
-          builder: (context) => AlertDialog(
-            shape: IsleShapes.card(
-              side: BorderSide(
-                color: IsleGlass.rimBorderColor(isDark),
-                width: 1.0,
-              ),
-            ),
-            title: Text(item.name),
-            content: SizedBox(
-              width: 700,
-              child: SingleChildScrollView(
-                child: SelectableText(
-                  text,
-                  style: const TextStyle(fontFamily: 'monospace', fontSize: 13),
-                ),
-              ),
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('关闭'),
-              ),
-            ],
-          ),
-        );
+        decodedText = decodePreviewText(bytes);
       } catch (e) {
-        if (mounted) {
-          setState(() => _error = '无法预览，请下载后打开：${userFacingError(e)}');
-        }
+        failure = e is FormatException
+            ? '无法识别文本编码，原文件未更改。可下载后使用其他编辑器查看。'
+            : userFacingError(e);
       }
-    } else {
-      setState(() => _message = '暂不支持在线预览，请下载后打开。');
+      if (!mounted || generation != _generation || directory != _path) return;
+      final ext = item.name.contains('.')
+          ? item.name.split('.').last.toUpperCase()
+          : 'TEXT';
+      await showDialog<void>(
+        context: context,
+        barrierColor: Colors.black.withValues(alpha: 0.65),
+        builder: (_) => FileTextPreviewDialog(
+          item: item,
+          badge: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(6),
+              color: Theme.of(context).colorScheme.primaryContainer,
+            ),
+            child: Text(
+              ext,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: Theme.of(context).colorScheme.onPrimaryContainer,
+              ),
+            ),
+          ),
+          text: decodedText,
+          error: failure,
+          onOpenExternal: () => _download(item),
+          onDownload: () => _download(item),
+        ),
+      );
+      return;
     }
+    setState(() => _message = '暂不支持在线预览，请点击右侧下载按钮保存后打开。');
   }
 
   Widget _buildBrowserColumn(
@@ -371,51 +394,50 @@ class _ComputerFilesPageState extends State<ComputerFilesPage> {
                       indent: 50,
                       color: borderColor,
                     ),
-                  ListTile(
-                    dense: true,
-                    visualDensity: VisualDensity.compact,
-                    contentPadding: const EdgeInsets.symmetric(
-                      horizontal: 12,
-                      vertical: 2,
-                    ),
-                    leading: Container(
-                      width: 32,
-                      height: 32,
-                      decoration: ShapeDecoration(
-                        shape: IsleShapes.squircle(9),
-                        color: (_entries[i].isFolder
-                                ? ochre
-                                : colors.onSurfaceVariant)
-                            .withValues(alpha: 0.14),
-                      ),
-                      child: Icon(
-                        _entries[i].isFolder
-                            ? Icons.folder_rounded
-                            : Icons.insert_drive_file_outlined,
-                        size: 17,
-                        color: _entries[i].isFolder
-                            ? ochre
-                            : colors.onSurfaceVariant,
-                      ),
-                    ),
-                    title: Text(
-                      _entries[i].name,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        fontSize: 13.5,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    onTap: () => _entries[i].isFolder
-                        ? _browse(_entries[i].path, push: true)
-                        : _preview(_entries[i]),
-                    trailing: IconButton(
-                      visualDensity: VisualDensity.compact,
-                      onPressed: () => _download(_entries[i]),
-                      tooltip: _entries[i].isFolder ? '下载文件夹' : '下载',
-                      icon: const Icon(Icons.download_outlined, size: 18),
-                    ),
+                  Builder(
+                    builder: (context) {
+                      final entry = _entries[i];
+                      final tint = _entryTint(entry, palette, colors);
+                      return ListTile(
+                        dense: true,
+                        visualDensity: VisualDensity.compact,
+                        contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12,
+                          vertical: 2,
+                        ),
+                        leading: Container(
+                          width: 32,
+                          height: 32,
+                          decoration: ShapeDecoration(
+                            shape: IsleShapes.squircle(9),
+                            color: tint.withValues(alpha: 0.14),
+                          ),
+                          child: Icon(
+                            _entryIcon(entry),
+                            size: 17,
+                            color: tint,
+                          ),
+                        ),
+                        title: Text(
+                          entry.name,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            fontSize: 13.5,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                        onTap: () => entry.isFolder
+                            ? _browse(entry.path, push: true)
+                            : _preview(entry),
+                        trailing: IconButton(
+                          visualDensity: VisualDensity.compact,
+                          onPressed: () => _download(entry),
+                          tooltip: entry.isFolder ? '下载文件夹' : '下载',
+                          icon: const Icon(Icons.download_outlined, size: 18),
+                        ),
+                      );
+                    },
                   ),
                 ],
               ],
@@ -683,75 +705,4 @@ class _ComputerFilesPageState extends State<ComputerFilesPage> {
       ),
     );
   }
-}
-
-class _ComputerVideo extends StatefulWidget {
-  const _ComputerVideo({required this.api, required this.item});
-  final LightIsleApi api;
-  final FileEntry item;
-  @override
-  State<_ComputerVideo> createState() => _ComputerVideoState();
-}
-
-class _ComputerVideoState extends State<_ComputerVideo> {
-  VideoPlayerController? _controller;
-  String? _error;
-  @override
-  void initState() {
-    super.initState();
-    _load();
-  }
-
-  Future<void> _load() async {
-    try {
-      final uri = await widget.api.mediaUri(
-        '$_computerBase/preview',
-        query: {'path': widget.item.path},
-      );
-      final player = VideoPlayerController.networkUrl(
-        uri,
-        httpHeaders: widget.api.nativeMediaHeaders,
-      );
-      _controller = player;
-      await player.initialize();
-      if (!mounted) {
-        await player.dispose();
-        return;
-      }
-      setState(() {});
-      await player.play();
-    } catch (e) {
-      if (mounted) setState(() => _error = userFacingError(e));
-    }
-  }
-
-  @override
-  void dispose() {
-    _controller?.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: IsleAppBar(title: Text(widget.item.name)),
-    body: Center(
-      child: _error != null
-          ? Text('无法播放：$_error')
-          : _controller?.value.isInitialized == true
-          ? AspectRatio(
-              aspectRatio: _controller!.value.aspectRatio,
-              child: GestureDetector(
-                onTap: () {
-                  if (_controller!.value.isPlaying) {
-                    _controller!.pause();
-                  } else {
-                    _controller!.play();
-                  }
-                },
-                child: VideoPlayer(_controller!),
-              ),
-            )
-          : const IsleLoadingState(compact: true),
-    ),
-  );
 }

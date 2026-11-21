@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/lightisle_api.dart';
 import '../../core/widgets.dart';
+import 'photo_backup_prefs_schema.dart';
 
 enum MobileBackupBadgeKind { unconfigured, idle, synced, pendingAttention }
 
@@ -35,7 +36,7 @@ Future<MobileBackupStatusSnapshot> readMobilePhotoBackupSnapshot({
   }
   try {
     final prefs = await SharedPreferences.getInstance();
-    final deviceId = prefs.getString('lightisle.photoBackup.installationId');
+    final deviceId = prefs.getString(PhotoBackupPrefsSchema.installationIdKey);
     if (deviceId == null || deviceId.isEmpty) {
       return const MobileBackupStatusSnapshot(
         kind: MobileBackupBadgeKind.idle,
@@ -43,25 +44,23 @@ Future<MobileBackupStatusSnapshot> readMobilePhotoBackupSnapshot({
         tooltip: '将手机相机照片与原画视频增量备份到 NAS',
       );
     }
-    final rootIdentity = api.selectedRoot?.identity ?? 'unassigned';
-    final scope =
-        'lightisle.photoBackup.${api.uri('/api/v2/me/storage').origin}.$accountName.$deviceId.$rootIdentity.$baseDirectory';
-    final savedScope = prefs.getString('$scope.albumScope');
-    final activeScope = savedScope == 'all'
-        ? scope
-        : (savedScope == 'camera'
-              ? '$scope.camera'
-              : (prefs.containsKey('$scope.lastCompleteAt') ||
-                        prefs.containsKey('$scope.cursor')
-                    ? scope
-                    : '$scope.camera'));
-    final includeVideos = prefs.getBool('$scope.includeVideos') ?? false;
-    final failureKey =
-        '$activeScope.failures.${includeVideos ? "videos" : "photos"}';
-    var failureCount = (prefs.getInt('$failureKey.omitted') ?? 0).clamp(
-      0,
-      1 << 20,
+    final schema = PhotoBackupPrefsSchema(
+      origin: api.uri('/api/v2/me/storage').origin,
+      accountName: accountName,
+      deviceId: deviceId,
+      rootIdentity: api.selectedRoot?.identity ?? 'unassigned',
+      baseDirectory: baseDirectory,
     );
+    final albumScope = schema.resolveAlbumScope(prefs);
+    final includeVideos = prefs.getBool(schema.includeVideosKey) ?? false;
+    final failureKey = schema.failureStorageKey(
+      albumScope,
+      includeVideos: includeVideos,
+    );
+    var failureCount =
+        (prefs.getInt(PhotoBackupPrefsSchema.failureOmittedKey(failureKey)) ??
+                0)
+            .clamp(0, 1 << 20);
     final rawFailures = prefs.getString(failureKey);
     if (rawFailures != null && rawFailures.isNotEmpty) {
       final decoded = jsonDecode(rawFailures);
@@ -74,7 +73,7 @@ Future<MobileBackupStatusSnapshot> readMobilePhotoBackupSnapshot({
         tooltip: '相册备份有 $failureCount 项原片待处理，点击查看或重试',
       );
     }
-    final cursor = prefs.getString('$activeScope.cursor') ?? '';
+    final cursor = prefs.getString(schema.cursorKey(albumScope)) ?? '';
     if (cursor.isNotEmpty) {
       return const MobileBackupStatusSnapshot(
         kind: MobileBackupBadgeKind.idle,
@@ -82,10 +81,7 @@ Future<MobileBackupStatusSnapshot> readMobilePhotoBackupSnapshot({
         tooltip: '上次相册检查尚未到达末尾，点击继续备份',
       );
     }
-    final lastComplete =
-        prefs.getInt('$activeScope.lastCompleteAt') ??
-        prefs.getInt('$scope.lastCompleteAt') ??
-        0;
+    final lastComplete = schema.readLastCompleteAt(prefs, albumScope);
     if (lastComplete > 0) {
       return const MobileBackupStatusSnapshot(
         kind: MobileBackupBadgeKind.synced,

@@ -358,6 +358,8 @@ Dialogue: 0,0:00:02.00,0:00:05.00,Default,,0,0,0,,第一句\\N换行展示
       expect(find.text('重复大文件清理'), findsOneWidget);
       expect(find.text('相似照片去重'), findsOneWidget);
       expect(find.text('Mac 文件共享 (SMB)'), findsNothing);
+      expect(find.text('WebDAV 挂载'), findsNothing);
+      expect(find.text('本地缓存管理'), findsNothing);
 
       await tester.pumpWidget(
         MaterialApp(
@@ -365,6 +367,7 @@ Dialogue: 0,0:00:02.00,0:00:05.00,Default,,0,0,0,,第一句\\N换行展示
             key: const ValueKey('storage-admin'),
             api: api,
             isAdmin: true,
+            accountId: 'uid:1',
           ),
         ),
       );
@@ -373,7 +376,9 @@ Dialogue: 0,0:00:02.00,0:00:05.00,Default,,0,0,0,,第一句\\N换行展示
         find.byKey(const ValueKey('storageQuickJumpStrip')),
         250,
       );
-      expect(find.text('Mac 文件共享 (SMB)'), findsOneWidget);
+      expect(find.text('Mac 文件共享 (SMB)'), findsNothing);
+      expect(find.text('WebDAV 挂载'), findsNothing);
+      expect(find.text('本地缓存管理'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );

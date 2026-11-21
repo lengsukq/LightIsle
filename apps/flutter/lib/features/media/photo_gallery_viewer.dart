@@ -50,6 +50,10 @@ class PhotoGalleryViewer extends StatefulWidget {
     required this.onLoadMore,
     this.offlineAccountId = '',
     this.fileBrowserMode = false,
+    this.allowFileShare = true,
+    this.filePreviewEndpoint = '/api/v2/files/preview',
+    this.fileThumbnailEndpoint = '/api/v2/files/thumbnail',
+    this.fileContentEndpoint = '/api/v2/files/content',
   });
 
   final LightIsleApi api;
@@ -73,6 +77,10 @@ class PhotoGalleryViewer extends StatefulWidget {
   /// Files and Photos share the same full-screen media viewer, but files do
   /// not expose gallery-specific favorites, album editing or offline library.
   final bool fileBrowserMode;
+  final bool allowFileShare;
+  final String filePreviewEndpoint;
+  final String fileThumbnailEndpoint;
+  final String fileContentEndpoint;
 
   static Route<void> route(WidgetBuilder builder) => PageRouteBuilder<void>(
     opaque: false,
@@ -376,6 +384,10 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
                                       active: index == _index,
                                       autoPlay: widget.fileBrowserMode,
                                       fileBrowserMode: widget.fileBrowserMode,
+                                      filePreviewEndpoint:
+                                          widget.filePreviewEndpoint,
+                                      fileThumbnailEndpoint:
+                                          widget.fileThumbnailEndpoint,
                                       onCompleted: widget.fileBrowserMode
                                           ? () => unawaited(_nextVideo())
                                           : null,
@@ -386,6 +398,10 @@ class _PhotoGalleryViewerState extends State<PhotoGalleryViewer>
                                       memoryCache: _imageCache,
                                       originalMemoryCache: _originalCache,
                                       asset: item,
+                                      filePreviewEndpoint:
+                                          widget.filePreviewEndpoint,
+                                      fileThumbnailEndpoint:
+                                          widget.fileThumbnailEndpoint,
                                       active: index == _index,
                                       resetZoomNonce: _resetZoomNonce,
                                       allowHorizontalPageSwipe: true,

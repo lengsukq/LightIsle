@@ -269,11 +269,13 @@ void main() {
       expect(report.categories[IsleCacheCategory.mapTiles]!.effectiveBytes, 0);
 
       // Scroll down to server cache card and clear server thumbnails.
-      await tester.scrollUntilVisible(
-        find.byKey(const ValueKey('clearServerThumbnailsBtn')),
-        200,
+      final clearServerBtn = find.byKey(
+        const ValueKey('clearServerThumbnailsBtn'),
       );
-      await tester.tap(find.byKey(const ValueKey('clearServerThumbnailsBtn')));
+      await tester.scrollUntilVisible(clearServerBtn, 200);
+      await tester.ensureVisible(clearServerBtn);
+      await tester.pumpAndSettle();
+      await tester.tap(clearServerBtn);
       await tester.pumpAndSettle();
       expect(api.lastClearedServerCategories, ['thumbnails']);
       expect(api.serverThumbBytes, 0);

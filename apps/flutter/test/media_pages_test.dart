@@ -84,7 +84,7 @@ void main() {
     expect(personal, findsOneWidget);
     expect(shared, findsOneWidget);
     expect(card, findsOneWidget);
-    expect(tester.widget<AppBar>(find.byType(AppBar)).leadingWidth, 126);
+    expect(tester.widget<AppBar>(find.byType(AppBar)).leadingWidth, 122);
     // Flutter verifies debug foundation flags before running tearDown.
     debugDefaultTargetPlatformOverride = null;
     expect(
@@ -284,14 +284,14 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.text('Selection film A').first);
     await tester.pump();
-    expect(find.text('已选 1 项 · 最多 50 项'), findsOneWidget);
+    expect(find.text('已选 1 项'), findsOneWidget);
     expect(find.byTooltip('关闭'), findsNothing);
     await tester.tap(find.widgetWithText(OutlinedButton, '全选当前页'));
     await tester.pump();
-    expect(find.text('已选 2 项 · 最多 50 项'), findsOneWidget);
+    expect(find.text('已选 2 项'), findsOneWidget);
     await tester.tap(find.widgetWithText(TextButton, '完成'));
     await tester.pumpAndSettle();
-    expect(find.text('已选 2 项 · 最多 50 项'), findsNothing);
+    expect(find.text('已选 2 项'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 

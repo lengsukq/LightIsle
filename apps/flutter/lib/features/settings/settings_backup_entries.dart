@@ -34,6 +34,7 @@ Widget? buildPlatformBackupSettingsEntry(
       onTap: () => _openMobilePhotoBackupFromSettings(
         context,
         api: api,
+        userId: userId,
         accountName: accountName,
         isAdmin: isAdmin,
       ),
@@ -66,6 +67,7 @@ Widget? buildPlatformBackupSettingsEntry(
 Future<void> _openMobilePhotoBackupFromSettings(
   BuildContext context, {
   required LightIsleApi api,
+  required int userId,
   required String accountName,
   required bool isAdmin,
 }) async {
@@ -123,7 +125,11 @@ Future<void> _openMobilePhotoBackupFromSettings(
     if (openStorage == true && context.mounted) {
       await Navigator.of(context).push(
         buildIslePageRoute<void>(
-          builder: (_) => StoragePage(api: api, isAdmin: isAdmin),
+          builder: (_) => StoragePage(
+            api: api,
+            isAdmin: isAdmin,
+            accountId: userId > 0 ? 'uid:$userId' : null,
+          ),
         ),
       );
     }

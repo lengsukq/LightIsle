@@ -1,21 +1,24 @@
 import 'package:flutter/material.dart';
 
-import '../../core/isle_style.dart';
 import '../../core/widgets.dart';
 
-/// Default-collapsed administrator troubleshooting links so low-frequency
-/// diagnostics and maintenance never clutter daily settings or auto-fetch.
+/// Default-collapsed administrator remote-ops & troubleshooting links so
+/// low-frequency Mac host administration never clutters daily settings.
 class AdminTroubleshootingSection extends StatefulWidget {
   const AdminTroubleshootingSection({
     super.key,
     required this.onOpenDiagnostics,
     required this.onOpenAudit,
     required this.onOpenUploadMaintenance,
+    this.onOpenAutomation,
+    this.onOpenSmb,
   });
 
   final VoidCallback onOpenDiagnostics;
   final VoidCallback onOpenAudit;
   final VoidCallback onOpenUploadMaintenance;
+  final VoidCallback? onOpenAutomation;
+  final VoidCallback? onOpenSmb;
 
   @override
   State<AdminTroubleshootingSection> createState() =>
@@ -37,7 +40,7 @@ class _AdminTroubleshootingSectionState
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           const IsleSectionHeader(
-            title: '管理员排障',
+            title: 'Mac 远程运维',
             padding: EdgeInsets.fromLTRB(6, 12, 6, 6),
           ),
           IsleGroupCard(
@@ -62,7 +65,7 @@ class _AdminTroubleshootingSectionState
                       const SizedBox(width: 12),
                       Expanded(
                         child: Text(
-                          '高级排障',
+                          'Mac 远程运维（高级）',
                           style: theme.textTheme.titleSmall?.copyWith(
                             fontWeight: FontWeight.w700,
                             fontSize: 14,
@@ -95,6 +98,20 @@ class _AdminTroubleshootingSectionState
                         theme.brightness == Brightness.dark,
                       ),
                     ),
+                    if (widget.onOpenSmb != null)
+                      IsleGroupTile(
+                        icon: Icons.folder_shared_rounded,
+                        iconBgColor: palette['brandSage'],
+                        title: 'Mac 文件共享 (SMB)',
+                        onTap: widget.onOpenSmb,
+                      ),
+                    if (widget.onOpenAutomation != null)
+                      IsleGroupTile(
+                        icon: Icons.terminal_rounded,
+                        iconBgColor: palette['brandTerracotta'],
+                        title: '本机脚本自动化',
+                        onTap: widget.onOpenAutomation,
+                      ),
                     IsleGroupTile(
                       icon: Icons.monitor_heart_outlined,
                       iconBgColor: palette['brandBlue'],

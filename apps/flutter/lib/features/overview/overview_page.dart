@@ -3,26 +3,21 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart' show LaunchMode;
 
-import '../../core/isle_action_menu.dart';
+import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
+import '../../core/shell_storage_state.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
-import '../../core/isle_theme.dart';
 import '../files/computer_files_page.dart';
 import '../files/downloads_page.dart';
-import '../files/duplicate_files_page.dart';
 import '../files/file_shares_page.dart';
-import '../settings/admin_smb_page.dart';
 import '../settings/apps_center_helpers.dart';
 import '../settings/apps_center_page.dart';
-import '../settings/automation_page.dart';
-import '../settings/dav_page.dart';
-import '../settings/storage_page.dart';
 import 'dashboard_role_widgets.dart';
 import 'overview_apps_tiles.dart';
+import 'overview_header_and_banners.dart';
 import 'overview_telemetry_grid.dart';
 import 'storage_volume_browser.dart';
-import 'task_history_page.dart';
 
 export 'dashboard_role_widgets.dart' show TaskTile, taskName, taskStatus;
 export 'task_history_page.dart' show TaskHistoryPage;
@@ -32,17 +27,23 @@ class OverviewPage extends StatefulWidget {
     super.key,
     required this.api,
     required this.isAdmin,
+    this.accountId,
+    this.storageHandle,
     this.onNavigate,
     this.onBrowseDirectory,
     this.onOpenFiles,
     this.appUrlLauncher,
   });
+
   final LightIsleApi api;
   final bool isAdmin;
+  final String? accountId;
+  final ShellStorageHandle? storageHandle;
   final ValueChanged<int>? onNavigate;
   final OpenStorageDirectory? onBrowseDirectory;
   final VoidCallback? onOpenFiles;
   final Future<bool> Function(Uri uri, {LaunchMode mode})? appUrlLauncher;
+
   @override
   State<OverviewPage> createState() => _OverviewPageState();
 }
@@ -69,19 +70,75 @@ class _OverviewPageState extends State<OverviewPage>
   List<double> _cpuHistory = const [];
   List<double> _netHistory = const [];
   bool _visible = true, _foreground = true;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _attachStorageHandle(widget.storageHandle);
+  }
+
+  void _attachStorageHandle(ShellStorageHandle? handle) {
+    if (handle == null) return;
+    _applySharedStorage(handle.value, notify: false);
+    // ClientShell already initiates root & personal storage discovery on mount;
+    // avoid issuing a duplicate request immediately on first Overview refresh.
+    _lastRootCheck = DateTime.now();
+    handle.addListener(_onSharedStorageChanged);
+  }
+
+  void _onSharedStorageChanged() {
+    final handle = widget.storageHandle;
+    if (handle == null || !mounted) return;
+    _applySharedStorage(handle.value, notify: true);
+  }
+
+  void _applySharedStorage(
+    ShellStorageSnapshot snapshot, {
+    required bool notify,
+  }) {
+    final nextRoots = snapshot.roots;
+    final nextPersonal = snapshot.personalStorage;
+    final nextRootsError = snapshot.rootsError;
+    final nextError = !widget.isAdmin && snapshot.hasFetched
+        ? (nextPersonal == null ? nextRootsError : null)
+        : _error;
+    final changed =
+        !_overviewRootsEqual(_roots, nextRoots) ||
+        !_overviewJsonEqual(_personalStorage, nextPersonal) ||
+        _rootsError != nextRootsError ||
+        _error != nextError;
+    if (!changed) return;
+    void apply() {
+      _roots = nextRoots;
+      _personalStorage = nextPersonal;
+      _rootsError = nextRootsError;
+      if (!widget.isAdmin && snapshot.hasFetched) {
+        _error = nextError;
+      }
+      if (snapshot.hasFetched) {
+        _lastRootCheck = DateTime.now();
+      }
+    }
+
+    if (notify && mounted) {
+      setState(apply);
+    } else {
+      apply();
+    }
   }
 
   @override
   void didUpdateWidget(covariant OverviewPage oldWidget) {
     super.didUpdateWidget(oldWidget);
+    if (oldWidget.storageHandle != widget.storageHandle) {
+      oldWidget.storageHandle?.removeListener(_onSharedStorageChanged);
+      _attachStorageHandle(widget.storageHandle);
+    }
     if (oldWidget.isAdmin != widget.isAdmin || oldWidget.api != widget.api) {
       _cpuHistory = const [];
       _netHistory = const [];
-      _lastRootCheck = null;
+      _lastRootCheck = widget.storageHandle != null ? DateTime.now() : null;
       _lastComputerFilesCheck = null;
       _lastAppsCheck = null;
       _apps = const [];
@@ -107,17 +164,20 @@ class _OverviewPageState extends State<OverviewPage>
   void _schedule() {
     _timer?.cancel();
     if (_visible && _foreground) {
-      _refresh();
+      unawaited(_refresh());
       _timer = Timer.periodic(
         Duration(seconds: widget.isAdmin ? 5 : 60),
-        (_) => _refresh(),
+        (_) => unawaited(_refresh()),
       );
     }
   }
 
-  Future<void> _refresh() async {
+  Future<void> _refresh({bool forceStorage = false}) async {
     if (_busy) return;
     _busyNotifier.value = true;
+    final sharedHandle = widget.storageHandle;
+    final now = DateTime.now();
+
     var nextStats = _stats;
     var nextPersonalStorage = _personalStorage;
     var nextComputerFilesAvailable = _computerFilesAvailable;
@@ -130,18 +190,43 @@ class _OverviewPageState extends State<OverviewPage>
     var nextTaskError = _taskError;
     var nextAppsError = _appsError;
 
-    try {
-      if (widget.isAdmin) {
-        nextStats = await widget.api.get('/api/v2/system');
-        nextError = null;
-      } else {
-        nextPersonalStorage = await widget.api.get('/api/v2/me/storage');
-        nextError = null;
-        final now = DateTime.now();
-        if (_lastComputerFilesCheck == null ||
-            now.difference(_lastComputerFilesCheck!) >=
-                const Duration(seconds: 60)) {
-          _lastComputerFilesCheck = now;
+    final pending = <Future<void>>[];
+
+    if (widget.isAdmin) {
+      pending.add(() async {
+        try {
+          nextStats = await widget.api.get('/api/v2/system');
+          nextError = null;
+        } catch (e) {
+          nextError = userFacingError(e);
+        }
+      }());
+      pending.add(() async {
+        try {
+          final result = await widget.api.get('/api/v2/tasks');
+          nextTasks = objectList(result['tasks']);
+          nextTaskError = null;
+        } catch (e) {
+          nextTaskError = userFacingError(e);
+        }
+      }());
+    } else {
+      if (sharedHandle == null) {
+        pending.add(() async {
+          try {
+            nextPersonalStorage = await widget.api.get('/api/v2/me/storage');
+            nextError = null;
+          } catch (e) {
+            nextError = userFacingError(e);
+          }
+        }());
+      }
+      if (forceStorage ||
+          _lastComputerFilesCheck == null ||
+          now.difference(_lastComputerFilesCheck!) >=
+              const Duration(seconds: 60)) {
+        _lastComputerFilesCheck = now;
+        pending.add(() async {
           try {
             final status = await widget.api.get(
               '/api/v2/computer-files/status',
@@ -149,61 +234,88 @@ class _OverviewPageState extends State<OverviewPage>
             nextComputerFilesAvailable =
                 status['enabled'] == true &&
                 (status['mode']?.toString() ?? 'none') != 'none';
-          } catch (_) {
-            nextComputerFilesAvailable = false;
+          } catch (error) {
+            debugPrint(
+              'OverviewPage computer-files status probe failed: $error',
+            );
+            _lastComputerFilesCheck = null;
           }
-        }
+        }());
       }
-    } catch (e) {
-      nextError = userFacingError(e);
     }
-    final now = DateTime.now();
-    if (_lastRootCheck == null ||
-        now.difference(_lastRootCheck!) >= const Duration(seconds: 30)) {
+
+    final shouldRefreshRoots =
+        forceStorage ||
+        _lastRootCheck == null ||
+        now.difference(_lastRootCheck!) >= const Duration(seconds: 30);
+    if (shouldRefreshRoots) {
       _lastRootCheck = now;
-      try {
-        final response = await widget.api.get('/api/v2/roots');
-        final items = response['roots'];
-        if (items is! List) throw const FormatException('存储根响应无效');
-        nextRoots = items
-            .map(
-              (item) => LightIsleRoot.fromJson(
-                Map<String, dynamic>.from(item as Map),
-              ),
-            )
-            .toList(growable: false);
-        nextRootsError = null;
-      } catch (e) {
-        nextRoots = const [];
-        nextRootsError = userFacingError(e);
+      if (sharedHandle != null) {
+        pending.add(() async {
+          await sharedHandle.refresh();
+          final snapshot = sharedHandle.value;
+          nextRoots = snapshot.roots;
+          nextPersonalStorage = snapshot.personalStorage;
+          nextRootsError = snapshot.rootsError;
+          if (!widget.isAdmin && snapshot.hasFetched) {
+            nextError = nextPersonalStorage == null ? nextRootsError : null;
+          }
+        }());
+      } else {
+        pending.add(() async {
+          try {
+            final response = await widget.api.get('/api/v2/roots');
+            final items = response['roots'];
+            if (items is! List) throw const FormatException('存储根响应无效');
+            nextRoots = items
+                .map(
+                  (item) => LightIsleRoot.fromJson(
+                    Map<String, dynamic>.from(item as Map),
+                  ),
+                )
+                .toList(growable: false);
+            nextRootsError = null;
+          } catch (e) {
+            nextRoots = const [];
+            nextRootsError = userFacingError(e);
+          }
+        }());
       }
     }
-    if (_lastAppsCheck == null ||
+
+    if (forceStorage ||
+        _lastAppsCheck == null ||
         now.difference(_lastAppsCheck!) >= const Duration(seconds: 30)) {
       _lastAppsCheck = now;
-      try {
-        final response = await widget.api.get('/api/v2/apps');
-        nextApps = objectList(response['apps']);
-        nextAppsLoaded = true;
-        nextAppsError = null;
-      } catch (e) {
-        nextAppsLoaded = true;
-        nextAppsError = userFacingError(e);
-      }
+      pending.add(() async {
+        try {
+          final response = await widget.api.get('/api/v2/apps');
+          nextApps = objectList(response['apps']);
+          nextAppsLoaded = true;
+          nextAppsError = null;
+        } catch (e) {
+          nextAppsLoaded = true;
+          nextAppsError = userFacingError(e);
+        }
+      }());
     }
-    if (widget.isAdmin && mounted) {
-      try {
-        final result = await widget.api.get('/api/v2/tasks');
-        nextTasks = objectList(result['tasks']);
-        nextTaskError = null;
-      } catch (e) {
-        nextTaskError = userFacingError(e);
-      }
-    }
+
+    await Future.wait<void>(pending);
+
     if (!mounted) {
       _busyNotifier.value = false;
       return;
     }
+    if (sharedHandle != null) {
+      final latest = sharedHandle.value;
+      nextRoots = latest.roots;
+      nextPersonalStorage = latest.personalStorage;
+      nextRootsError = latest.rootsError;
+      if (!widget.isAdmin && latest.hasFetched) {
+        nextError = nextPersonalStorage == null ? nextRootsError : null;
+      }
+    }
+
     final changed =
         !_overviewJsonEqual(_stats, nextStats) ||
         !_overviewJsonEqual(_personalStorage, nextPersonalStorage) ||
@@ -232,7 +344,7 @@ class _OverviewPageState extends State<OverviewPage>
         _taskError = nextTaskError;
         _appsError = nextAppsError;
         if (statsChanged && nextStats != null) {
-          _recordTelemetrySample(nextStats);
+          _recordTelemetrySample(nextStats!);
         }
       });
     }
@@ -316,6 +428,7 @@ class _OverviewPageState extends State<OverviewPage>
 
   @override
   void dispose() {
+    widget.storageHandle?.removeListener(_onSharedStorageChanged);
     _timer?.cancel();
     _busyNotifier.dispose();
     WidgetsBinding.instance.removeObserver(this);
@@ -386,324 +499,6 @@ class _OverviewPageState extends State<OverviewPage>
     );
   }
 
-  Widget _buildAttentionBanner(BuildContext context) {
-    final offlineRoots = _roots.where((r) => !r.online).toList();
-    final failedTasks = _tasks
-        .where((t) => (t['lastError']?.toString() ?? '').isNotEmpty)
-        .toList();
-    if (offlineRoots.isEmpty && failedTasks.isEmpty) {
-      return const SizedBox.shrink();
-    }
-    final scheme = Theme.of(context).colorScheme;
-    final message = [
-      if (offlineRoots.isNotEmpty)
-        '${offlineRoots.length} 个存储目录离线（${offlineRoots.map((e) => e.name).join('、')}）',
-      if (failedTasks.isNotEmpty) '${failedTasks.length} 项后台任务异常待处理',
-    ].join(' · ');
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 12),
-      child: IsleSurface(
-        margin: EdgeInsets.zero,
-        radius: IsleRadius.md,
-        tint: scheme.error,
-        padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 10),
-        child: LayoutBuilder(
-          builder: (context, constraints) {
-            final compact =
-                constraints.maxWidth < 520 ||
-                MediaQuery.textScalerOf(context).scale(1) > 1.25;
-            final compactTextBtn = TextButton.styleFrom(
-              visualDensity: VisualDensity.compact,
-              minimumSize: const Size(0, 28),
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            );
-            final actions = <Widget>[
-              if (offlineRoots.isNotEmpty)
-                TextButton(
-                  style: compactTextBtn,
-                  onPressed: () => Navigator.of(context).push<void>(
-                    buildIslePageRoute(
-                      builder: (_) =>
-                          StoragePage(api: widget.api, isAdmin: true),
-                    ),
-                  ),
-                  child: const Text('查看存储'),
-                ),
-              ValueListenableBuilder<bool>(
-                valueListenable: _busyNotifier,
-                builder: (_, busy, _) => TextButton(
-                  style: compactTextBtn,
-                  onPressed: busy ? null : _refresh,
-                  child: const Text('重新检查'),
-                ),
-              ),
-            ];
-            final messageWidget = Text(
-              message,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                fontSize: 13,
-                fontWeight: FontWeight.w700,
-                color: scheme.onSurface,
-              ),
-            );
-            if (compact) {
-              return Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Icon(
-                        Icons.warning_amber_rounded,
-                        color: scheme.error,
-                        size: 19,
-                      ),
-                      const SizedBox(width: 9),
-                      Expanded(child: messageWidget),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Wrap(spacing: 4, runSpacing: 4, children: actions),
-                ],
-              );
-            }
-            return Row(
-              children: [
-                Icon(Icons.warning_amber_rounded, color: scheme.error, size: 19),
-                const SizedBox(width: 10),
-                Expanded(child: messageWidget),
-                ...actions,
-              ],
-            );
-          },
-        ),
-      ),
-    );
-  }
-
-  Widget _buildHeaderTrailing({required bool compact}) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    return Row(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        if (widget.onOpenFiles != null)
-          FilledButton.icon(
-            key: const ValueKey('headerOpenFilesButton'),
-            style: FilledButton.styleFrom(
-              visualDensity: VisualDensity.compact,
-              minimumSize: const Size(38, 36),
-              padding: const EdgeInsets.symmetric(horizontal: 13, vertical: 6),
-              textStyle: const TextStyle(
-                fontSize: 12.5,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-            onPressed: widget.onOpenFiles,
-            icon: const Icon(Icons.folder_open_rounded, size: 16),
-            label: const Text('文件管理'),
-          ),
-        const SizedBox(width: 2),
-        PopupMenuButton<String>(
-          tooltip: '更多工具',
-          icon: const Icon(Icons.more_horiz_rounded, size: 20),
-          style: IconButton.styleFrom(visualDensity: VisualDensity.compact),
-          position: PopupMenuPosition.under,
-          shape: IsleShapes.md(
-            side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1),
-          ),
-          onSelected: (value) {
-            switch (value) {
-              case 'refresh':
-                _refresh();
-              case 'storage':
-                Navigator.of(context).push<void>(
-                  buildIslePageRoute(
-                    builder: (_) =>
-                        StoragePage(api: widget.api, isAdmin: widget.isAdmin),
-                  ),
-                );
-              case 'dav':
-                Navigator.of(context).push<void>(
-                  buildIslePageRoute(builder: (_) => DavPage(api: widget.api)),
-                );
-              case 'duplicates':
-                Navigator.of(context).push<void>(
-                  buildIslePageRoute(
-                    builder: (_) => DuplicateFilesPage(api: widget.api),
-                  ),
-                );
-              case 'smb':
-                Navigator.of(context).push<void>(
-                  buildIslePageRoute(
-                    builder: (_) => AdminSmbPage(api: widget.api),
-                  ),
-                );
-              case 'automation':
-                Navigator.of(context).push<void>(
-                  buildIslePageRoute(
-                    builder: (_) => AutomationPage(api: widget.api),
-                  ),
-                );
-            }
-          },
-          itemBuilder: (_) => [
-            isleActionMenuItem(
-              value: 'refresh',
-              icon: Icons.refresh_rounded,
-              label: '刷新状态',
-            ),
-            const PopupMenuDivider(),
-            isleActionMenuItem(
-              value: 'storage',
-              icon: Icons.storage_rounded,
-              label: widget.isAdmin ? '存储与成员配额' : '我的存储空间',
-            ),
-            isleActionMenuItem(
-              value: 'dav',
-              icon: Icons.folder_shared_outlined,
-              label: 'WebDAV 挂载连接',
-            ),
-            isleActionMenuItem(
-              value: 'duplicates',
-              icon: Icons.cleaning_services_outlined,
-              label: '重复大文件清理',
-            ),
-            if (widget.isAdmin) ...[
-              isleActionMenuItem(
-                value: 'smb',
-                icon: Icons.lan_outlined,
-                label: 'Mac 文件共享 (SMB)',
-              ),
-              isleActionMenuItem(
-                value: 'automation',
-                icon: Icons.terminal_rounded,
-                label: '本机脚本自动化',
-              ),
-            ],
-          ],
-        ),
-      ],
-    );
-  }
-
-  Widget _buildAdminStatsGrid(Map<String, dynamic> stats) =>
-      AdminTelemetryBentoGrid(
-        stats: stats,
-        cpuHistory: _cpuHistory,
-        netHistory: _netHistory,
-      );
-
-  List<Widget> _buildAdminTasksSection(BuildContext context) {
-    final palette = IslePalette.of(context);
-    return [
-      IsleSectionHeader(
-        title: '任务中心',
-        accentColor: palette['brandViolet'],
-        action: TextButton(
-          style: TextButton.styleFrom(
-            visualDensity: VisualDensity.compact,
-            minimumSize: const Size(36, 28),
-            padding: const EdgeInsets.symmetric(horizontal: 8),
-          ),
-          onPressed: () => Navigator.of(context).push(
-            buildIslePageRoute<void>(
-              builder: (_) => TaskHistoryPage(api: widget.api),
-            ),
-          ),
-          child: const Text('查看历史', style: TextStyle(fontSize: 12.5)),
-        ),
-      ),
-      if (_taskError != null)
-        Notice('任务状态更新失败：$_taskError', error: true, onRetry: _refresh),
-      if (_tasks.isEmpty && _taskError == null)
-        const Notice('暂无后台任务。可在图库或影视中开始扫描。'),
-      if (_tasks.isNotEmpty)
-        IsleResponsiveGrid(
-          minItemWidth: 260,
-          maxColumns: 3,
-          spacing: 10,
-          runSpacing: 10,
-          children: [
-            for (final task in _tasks)
-              TaskTile(api: widget.api, task: task, onChanged: _refresh),
-          ],
-        ),
-    ];
-  }
-
-  Widget _buildSanctuaryFocalHero(
-    BuildContext context, {
-    required Map<String, dynamic>? stats,
-    required String hostname,
-  }) {
-    final palette = IslePalette.of(context);
-    final onlineRoots = _roots.where((r) => r.online).length;
-    final runningTasks = _tasks.where((t) => t['running'] == true).length;
-    final memberLocations = objectList(_personalStorage?['locations']).length;
-
-    final statusLabel = _error != null
-        ? '待检查'
-        : (widget.isAdmin ? stats != null : _personalStorage != null)
-        ? '在线运行'
-        : '检查中';
-    final statusTone = _error != null
-        ? Theme.of(context).colorScheme.error
-        : (widget.isAdmin ? stats != null : _personalStorage != null)
-        ? palette['brandSage']
-        : palette['brandAmber'];
-
-    final metrics = widget.isAdmin
-        ? <IsleFocalMetric>[
-            if (_roots.isNotEmpty)
-              IsleFocalMetric(
-                label: '在线磁盘',
-                value: '$onlineRoots / ${_roots.length}',
-                icon: Icons.dns_rounded,
-                color: palette['brandSage'],
-              ),
-            if (stats != null && stats['cpuPercent'] is num)
-              IsleFocalMetric(
-                label: 'CPU 负载',
-                value: '${(stats['cpuPercent'] as num).toStringAsFixed(1)}%',
-                icon: Icons.memory_rounded,
-                color: palette['brandBlue'],
-              ),
-            IsleFocalMetric(
-              label: '后台任务',
-              value: runningTasks > 0 ? '$runningTasks 运行中' : '空闲',
-              icon: Icons.auto_mode_rounded,
-              color: palette['brandAmber'],
-            ),
-          ]
-        : <IsleFocalMetric>[
-            IsleFocalMetric(
-              label: '个人目录',
-              value: '$memberLocations 个',
-              icon: Icons.folder_special_rounded,
-              color: palette['brandAmber'],
-            ),
-            IsleFocalMetric(
-              label: '在线磁盘',
-              value: '$onlineRoots 块',
-              icon: Icons.storage_rounded,
-              color: palette['brandSage'],
-            ),
-          ];
-
-    return IsleFocalStage(
-      title: hostname.isNotEmpty
-          ? hostname
-          : (widget.isAdmin ? '家里的 Mac' : '我的家庭空间'),
-      subtitle: _error != null ? '设备状态暂时无法确认，请检查连接' : '',
-      icon: widget.isAdmin ? Icons.desktop_mac_rounded : Icons.cottage_rounded,
-      accent: widget.isAdmin ? palette['brandBlue'] : palette['brandAmber'],
-      statusBadge: IsleStatusBadge(label: statusLabel, color: statusTone),
-      metrics: metrics,
-      margin: EdgeInsets.zero,
-    );
-  }
-
   @override
   Widget build(BuildContext context) {
     final stats = _stats;
@@ -712,7 +507,7 @@ class _OverviewPageState extends State<OverviewPage>
     final palette = IslePalette.of(context);
 
     return RefreshIndicator(
-      onRefresh: _refresh,
+      onRefresh: () => _refresh(forceStorage: true),
       child: LayoutBuilder(
         builder: (context, constraints) {
           final width = constraints.maxWidth;
@@ -728,7 +523,7 @@ class _OverviewPageState extends State<OverviewPage>
             onOpenFiles: widget.onOpenFiles,
             onOpenShares: _openSharesPage,
             onOpenAppsCenter: _openAppsCenterPage,
-            onOpenDownloads: widget.isAdmin ? null : _openDownloadsPage,
+            onOpenDownloads: widget.isAdmin ? _openDownloadsPage : null,
             onOpenComputerFiles: (widget.isAdmin || _computerFilesAvailable)
                 ? () => Navigator.of(context).push<void>(
                     buildIslePageRoute(
@@ -757,7 +552,8 @@ class _OverviewPageState extends State<OverviewPage>
           final statusLoading = ValueListenableBuilder<bool>(
             valueListenable: _busyNotifier,
             builder: (_, busy, _) {
-              if (!busy ||
+              final loadingShared = widget.storageHandle?.value.loading == true;
+              if ((!busy && !loadingShared) ||
                   (widget.isAdmin ? stats != null : _personalStorage != null)) {
                 return const SizedBox.shrink();
               }
@@ -771,7 +567,7 @@ class _OverviewPageState extends State<OverviewPage>
           final errorNotice = _error != null
               ? Notice(
                   '无法更新服务状态：$_error${stats == null ? '' : '\n以下为上一次成功采样。'}',
-                  onRetry: _refresh,
+                  onRetry: () => unawaited(_refresh(forceStorage: true)),
                   error: true,
                 )
               : null;
@@ -803,15 +599,21 @@ class _OverviewPageState extends State<OverviewPage>
                           ].join(' · '),
                           style: Theme.of(context).textTheme.labelSmall
                               ?.copyWith(
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .onSurfaceVariant,
+                                color: Theme.of(
+                                  context,
+                                ).colorScheme.onSurfaceVariant,
                                 fontWeight: FontWeight.w600,
                               ),
                         )
                       : null,
                 ),
-                RepaintBoundary(child: _buildAdminStatsGrid(stats)),
+                RepaintBoundary(
+                  child: AdminTelemetryBentoGrid(
+                    stats: stats,
+                    cpuHistory: _cpuHistory,
+                    netHistory: _netHistory,
+                  ),
+                ),
                 const SizedBox(height: 6),
                 AdminVolumeBrowser(
                   volumes: objectList(stats['volumes']),
@@ -823,6 +625,15 @@ class _OverviewPageState extends State<OverviewPage>
             ],
           );
 
+          final adminTasksSection = widget.isAdmin
+              ? OverviewAdminTasksSection(
+                  api: widget.api,
+                  tasks: _tasks,
+                  taskError: _taskError,
+                  onRefresh: _refresh,
+                )
+              : null;
+
           return ListView(
             physics: const AlwaysScrollableScrollPhysics(),
             padding: EdgeInsets.fromLTRB(inset, topInset, inset, inset + 54),
@@ -832,17 +643,36 @@ class _OverviewPageState extends State<OverviewPage>
                     ? palette['brandBlue']
                     : palette['brandAmber'],
                 title: widget.isAdmin ? '这台 Mac' : '我的家庭空间',
-                trailing: _buildHeaderTrailing(compact: compact),
+                trailing: OverviewHeaderTrailing(
+                  api: widget.api,
+                  isAdmin: widget.isAdmin,
+                  accountId: widget.accountId,
+                  onOpenFiles: widget.onOpenFiles,
+                  onRefresh: () => unawaited(_refresh(forceStorage: true)),
+                ),
               ),
               Padding(
                 padding: EdgeInsets.only(bottom: compact ? 8 : 12),
-                child: _buildSanctuaryFocalHero(
-                  context,
-                  stats: stats,
+                child: OverviewSanctuaryHero(
+                  isAdmin: widget.isAdmin,
                   hostname: hostname,
+                  stats: stats,
+                  personalStorage: _personalStorage,
+                  roots: _roots,
+                  tasks: _tasks,
+                  error: _error,
                 ),
               ),
-              if (widget.isAdmin) _buildAttentionBanner(context),
+              OverviewAttentionBanner(
+                api: widget.api,
+                isAdmin: widget.isAdmin,
+                accountId: widget.accountId,
+                roots: _roots,
+                tasks: _tasks,
+                personalStorage: _personalStorage,
+                busyListenable: _busyNotifier,
+                onRefresh: () => unawaited(_refresh(forceStorage: true)),
+              ),
               if (desktopSplit)
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
@@ -863,10 +693,7 @@ class _OverviewPageState extends State<OverviewPage>
                       flex: 5,
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          homeAppsSection,
-                          if (widget.isAdmin) ..._buildAdminTasksSection(context),
-                        ],
+                        children: [homeAppsSection, ?adminTasksSection],
                       ),
                     ),
                   ],
@@ -877,7 +704,7 @@ class _OverviewPageState extends State<OverviewPage>
                 homeAppsSection,
                 SizedBox(height: compact ? 6 : 10),
                 telemetryAndStorage,
-                if (widget.isAdmin) ..._buildAdminTasksSection(context),
+                ?adminTasksSection,
               ],
             ],
           );

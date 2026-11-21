@@ -345,15 +345,47 @@ extension _StoragePageDialogs on _StoragePageState {
               const SizedBox(height: 10),
               OutlinedButton.icon(
                 onPressed: () async {
-                  final picked = await IsleFolderPickerSheet.pickFolder(
-                    context,
-                    api: widget.api,
+                  final targetRoot = LightIsleRoot(
+                    id: rootID,
+                    generation: generation,
+                    name: rootName,
+                    online: true,
                   );
-                  if (picked != null && picked.path != '.') {
-                    setModalState(() {
-                      subdir = picked.path;
-                      textRevision++;
-                    });
+                  final snap = widget.api.sessionSnapshot;
+                  final prevRoot = widget.api.selectedRoot;
+                  final LightIsleApi pickerApi;
+                  var closePickerApi = false;
+                  if (snap != null) {
+                    pickerApi = LightIsleApi.fromSessionSnapshot(snap)
+                      ..selectRoot(targetRoot);
+                    closePickerApi = true;
+                  } else {
+                    pickerApi = widget.api..selectRoot(targetRoot);
+                  }
+                  final userPrefix = 'Users/u$id/';
+                  try {
+                    final picked = await IsleFolderPickerSheet.pickFolder(
+                      context,
+                      api: pickerApi,
+                      initialSourcePath: '${userPrefix}files/.probe',
+                    );
+                    if (picked != null && picked.path != '.' && picked.path != 'Users/u$id') {
+                      final rel = picked.path.startsWith(userPrefix)
+                          ? picked.path.substring(userPrefix.length)
+                          : picked.path;
+                      if (rel.isNotEmpty) {
+                        setModalState(() {
+                          subdir = rel;
+                          textRevision++;
+                        });
+                      }
+                    }
+                  } finally {
+                    if (closePickerApi) {
+                      pickerApi.close();
+                    } else {
+                      widget.api.selectRoot(prevRoot);
+                    }
                   }
                 },
                 icon: const Icon(Icons.folder_open_rounded, size: 16),

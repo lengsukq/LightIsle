@@ -58,15 +58,19 @@ Future<void> showIsleHelpDialog(
 }) {
   final theme = Theme.of(context);
   final colors = theme.colorScheme;
-  final isDark = theme.brightness == Brightness.dark;
-  final palette = IslePalette(isDark);
+  final style = IsleThemeStyle.of(context);
+  final palette = style.palette;
   final accent = accentColor ?? palette['brandBlue'];
 
   return showIsleDialog<void>(
     context: context,
     builder: (dialogContext) => AlertDialog(
-      shape: IsleShapes.card(
-        side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
+      shape: style.shapeFor(
+        IsleRadius.card,
+        side: BorderSide(
+          color: style.rimBorderColor(),
+          width: style.effectiveBorderWidth(),
+        ),
       ),
       titlePadding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
       contentPadding: const EdgeInsets.fromLTRB(20, 6, 20, 12),
@@ -213,47 +217,6 @@ class IsleHelpButton extends StatelessWidget {
   }
 }
 
-/// Inset Grouped style disclosure card.
-class IsleDisclosureCard extends StatelessWidget {
-  const IsleDisclosureCard({
-    super.key,
-    required this.title,
-    required this.children,
-    this.leading,
-    this.initiallyExpanded = false,
-    this.margin = const EdgeInsets.only(bottom: 10),
-  });
-
-  final Widget title;
-  final List<Widget> children;
-  final Widget? leading;
-  final bool initiallyExpanded;
-  final EdgeInsetsGeometry margin;
-
-  @override
-  Widget build(BuildContext context) {
-    return IsleSurface(
-      margin: margin,
-      padding: EdgeInsets.zero,
-      radius: IsleRadius.item,
-      child: Theme(
-        data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
-        child: ExpansionTile(
-          dense: true,
-          visualDensity: VisualDensity.compact,
-          initiallyExpanded: initiallyExpanded,
-          shape: IsleShapes.item(),
-          collapsedShape: IsleShapes.item(),
-          tilePadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 2),
-          leading: leading,
-          title: title,
-          children: children,
-        ),
-      ),
-    );
-  }
-}
-
 /// A row inside [IsleGroupCard] with curated semantic pigment squircle badge.
 class IsleGroupTile extends StatelessWidget {
   const IsleGroupTile({
@@ -281,7 +244,6 @@ class IsleGroupTile extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
 
     Widget? lead = leading;
     if (lead == null && icon != null) {

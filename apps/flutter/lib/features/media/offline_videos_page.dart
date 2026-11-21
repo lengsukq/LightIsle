@@ -2,7 +2,6 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
-import '../../core/isle_gallery_layout.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/widgets.dart';
@@ -160,9 +159,6 @@ class _OfflineVideosPageState extends State<OfflineVideosPage> {
     }
   }
 
-  String _formatBytes(int bytes) =>
-      '${(bytes / (1024 * 1024)).toStringAsFixed(1)} MB';
-
   Widget _buildVideoTile(OfflineVideo item, Color accent) {
     return ListTile(
       dense: true,
@@ -180,7 +176,7 @@ class _OfflineVideosPageState extends State<OfflineVideosPage> {
         style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600),
       ),
       subtitle: Text(
-        _formatBytes(item.size),
+        formatBytes(item.size),
         style: const TextStyle(fontSize: 12),
       ),
       enabled: _busy == null,
@@ -249,7 +245,7 @@ class _OfflineVideosPageState extends State<OfflineVideosPage> {
                   ),
                   IsleFocalMetric(
                     label: '本机占用',
-                    value: _formatBytes(totalBytes),
+                    value: formatBytes(totalBytes),
                     accent: palette['brandAmber'],
                   ),
                 ],

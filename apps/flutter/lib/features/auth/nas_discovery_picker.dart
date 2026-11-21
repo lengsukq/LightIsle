@@ -161,7 +161,7 @@ class _NasDiscoveryDialogState extends State<_NasDiscoveryDialog> {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Text(
-              '点选同一局域网下的设备即可自动填入连接地址。',
+              '点选同一局域网下的设备即可自动填入连接地址，不会自动登录。',
               style: theme.textTheme.bodySmall?.copyWith(
                 fontSize: 12.5,
                 color: colors.onSurfaceVariant,
@@ -210,72 +210,75 @@ class _NasDiscoveryDialogState extends State<_NasDiscoveryDialog> {
                       : colors.surfaceContainerHighest.withValues(alpha: 0.28),
                 ),
                 clipBehavior: Clip.antiAlias,
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    for (var index = 0; index < _servers.length; index++) ...[
-                      if (index > 0)
-                        Divider(
-                          height: 1,
-                          thickness: 0.7,
-                          indent: 48,
-                          color: borderColor,
-                        ),
-                      Builder(
-                        builder: (context) {
-                          final isHttps = _servers[index].address.startsWith(
-                            'https://',
-                          );
-                          final tintColor = isHttps
-                              ? const Color(0xff10b981)
-                              : const Color(0xfff59e0b);
-                          return ListTile(
-                            key: Key('nasDiscoveryResult_$index'),
-                            dense: true,
-                            visualDensity: VisualDensity.compact,
-                            contentPadding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                              vertical: 2,
-                            ),
-                            leading: Container(
-                              width: 30,
-                              height: 30,
-                              decoration: ShapeDecoration(
-                                color: tintColor.withValues(
-                                  alpha: isDark ? 0.20 : 0.11,
+                child: Material(
+                  type: MaterialType.transparency,
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      for (var index = 0; index < _servers.length; index++) ...[
+                        if (index > 0)
+                          Divider(
+                            height: 1,
+                            thickness: 0.7,
+                            indent: 48,
+                            color: borderColor,
+                          ),
+                        Builder(
+                          builder: (context) {
+                            final isHttps = _servers[index].address.startsWith(
+                              'https://',
+                            );
+                            final tintColor = isHttps
+                                ? const Color(0xff10b981)
+                                : const Color(0xfff59e0b);
+                            return ListTile(
+                              key: Key('nasDiscoveryResult_$index'),
+                              dense: true,
+                              visualDensity: VisualDensity.compact,
+                              contentPadding: const EdgeInsets.symmetric(
+                                horizontal: 10,
+                                vertical: 2,
+                              ),
+                              leading: Container(
+                                width: 30,
+                                height: 30,
+                                decoration: ShapeDecoration(
+                                  color: tintColor.withValues(
+                                    alpha: isDark ? 0.20 : 0.11,
+                                  ),
+                                  shape: IsleShapes.squircle(8),
                                 ),
-                                shape: IsleShapes.squircle(8),
+                                child: Icon(
+                                  Icons.dns_rounded,
+                                  color: tintColor,
+                                  size: 16.5,
+                                ),
                               ),
-                              child: Icon(
-                                Icons.dns_rounded,
-                                color: tintColor,
-                                size: 16.5,
+                              title: Text(
+                                _servers[index].name,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                  fontSize: 13.5,
+                                ),
                               ),
-                            ),
-                            title: Text(
-                              _servers[index].name,
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w600,
-                                fontSize: 13.5,
+                              subtitle: Text(
+                                _servers[index].address,
+                                style: const TextStyle(fontSize: 12),
                               ),
-                            ),
-                            subtitle: Text(
-                              _servers[index].address,
-                              style: const TextStyle(fontSize: 12),
-                            ),
-                            trailing: IsleBadgePill(
-                              label: isHttps ? 'HTTPS' : 'HTTP',
-                              color: isHttps
-                                  ? const Color(0xff10b981)
-                                  : colors.onSurfaceVariant,
-                            ),
-                            onTap: () =>
-                                Navigator.of(context).pop(_servers[index]),
-                          );
-                        },
-                      ),
+                              trailing: IsleBadgePill(
+                                label: isHttps ? 'HTTPS' : '未加密',
+                                color: isHttps
+                                    ? const Color(0xff10b981)
+                                    : colors.onSurfaceVariant,
+                              ),
+                              onTap: () =>
+                                  Navigator.of(context).pop(_servers[index]),
+                            );
+                          },
+                        ),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
             ],

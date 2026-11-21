@@ -168,14 +168,15 @@ extension _PhotoGalleryViewerChrome on _PhotoGalleryViewerState {
         iconSize: iconSize,
         onPressed: _busy ? null : () => _inspectAsset(context),
       ),
-    _toolbarIcon(
-      tooltip: '分享媒体',
-      icon: Icons.ios_share_outlined,
-      width: buttonSize,
-      height: buttonSize,
-      iconSize: iconSize,
-      onPressed: _busy ? null : _shareCurrent,
-    ),
+    if (widget.allowFileShare)
+      _toolbarIcon(
+        tooltip: '分享媒体',
+        icon: Icons.ios_share_outlined,
+        width: buttonSize,
+        height: buttonSize,
+        iconSize: iconSize,
+        onPressed: _busy ? null : _shareCurrent,
+      ),
     PopupMenuButton<String>(
       tooltip: '更多媒体操作',
       enabled: !_busy,
@@ -406,6 +407,7 @@ extension _PhotoGalleryViewerChrome on _PhotoGalleryViewerState {
               items: _items,
               currentIndex: _index,
               fileBrowserMode: widget.fileBrowserMode,
+              fileThumbnailEndpoint: widget.fileThumbnailEndpoint,
               onSelectIndex: (target) {
                 if (target == _index) return;
                 unawaited(_navigate(target - _index));

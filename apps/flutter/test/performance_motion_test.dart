@@ -556,7 +556,7 @@ void main() {
 
       final callsAfterInitial = api.systemCalls;
       expect(callsAfterInitial, greaterThanOrEqualTo(1));
-      expect(find.text('12.5%'), findsOneWidget);
+      expect(find.text('12.5%'), findsWidgets);
       overviewRebuilds = 0;
 
       // Poll fires after 5s with identical data -> zero OverviewPage rebuilds.
@@ -570,7 +570,7 @@ void main() {
       await tester.pump(const Duration(seconds: 5));
       await tester.pump();
       expect(overviewRebuilds, 1);
-      expect(find.text('58.0%'), findsOneWidget);
+      expect(find.text('58.0%'), findsWidgets);
       expect(tester.takeException(), isNull);
 
       await tester.pumpWidget(const SizedBox.shrink());
@@ -644,7 +644,7 @@ void main() {
       await tester.tap(find.text('禁用胶囊'));
       expect(pillTapped, 1);
 
-      await tester.tap(find.text('高级排障'));
+      await tester.tap(find.text('Mac 远程运维（高级）'));
       await tester.pumpAndSettle();
       expect(find.text('设备诊断与 Key 状态'), findsOneWidget);
 

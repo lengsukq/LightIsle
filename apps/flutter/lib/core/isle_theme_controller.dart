@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'isle_style.dart';
-import 'isle_theme_presets.dart';
 
 /// Persists and notifies changes to the active theme preset and brightness mode.
 class IsleThemeController extends ChangeNotifier {

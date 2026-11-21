@@ -95,19 +95,17 @@ class IsleFocalStage extends StatelessWidget {
     final isDark = theme.brightness == Brightness.dark || darkStage;
     final palette = darkStage ? IslePalette(true, preset: style.preset) : style.palette;
     final tone = accent ??
-        (darkStage ? const Color(0xffe07a5f) : theme.colorScheme.primary);
+        (darkStage ? palette['accentSecondary'] : theme.colorScheme.primary);
     final highContrast = MediaQuery.maybeHighContrastOf(context) ?? false;
     final material = style.preset.surfaceMaterial;
     final isFlatOrBrutal =
         material == IsleSurfaceMaterial.flatHairline ||
         material == IsleSurfaceMaterial.neoBrutal;
 
-    final stageTop = darkStage ? const Color(0xff1d1c19) : palette['cardTop'];
-    final stageBottom = darkStage ? const Color(0xff151412) : palette['cardBottom'];
-    final fgPrimary = darkStage ? const Color(0xfff7f4ee) : palette['textPrimary'];
-    final fgSecondary = darkStage
-        ? const Color(0xffb5aea4)
-        : palette['secondaryText'];
+    final stageTop = palette['cardTop'];
+    final stageBottom = palette['cardBottom'];
+    final fgPrimary = palette['textPrimary'];
+    final fgSecondary = palette['secondaryText'];
     final trimmedSubtitle = subtitle.trim();
 
     return Padding(

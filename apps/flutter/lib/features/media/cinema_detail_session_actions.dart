@@ -1,20 +1,70 @@
-part of 'cinema_detail_dialog.dart';
+import 'dart:async';
 
-extension _CinemaDetailSessionActions on _CinemaDetailDialogState {
-  Future<void> _stopDlna() async {
-    final session = _externalActions.castSession;
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+
+import '../../core/lightisle_api.dart';
+import '../../core/widgets.dart';
+import '../files/file_export_service.dart';
+import '../files/file_share_dialog.dart';
+import 'cinema_decode_preference.dart';
+import 'cinema_detail_controller.dart';
+import 'cinema_dlna_cast_service.dart';
+import 'dlna_cast.dart';
+import 'media_models.dart';
+import 'media_ui.dart';
+import 'offline_video_store.dart';
+
+/// Orchestrates [BuildContext]-dependent modal confirmations, route exits,
+/// DLNA casting, offline saving, file sharing, and episode switches for
+/// [CinemaDetailController].
+abstract final class CinemaDetailSessionActions {
+  static Future<void> close(
+    BuildContext context,
+    CinemaDetailController controller, {
+    bool allowUnsaved = false,
+  }) async {
+    if (controller.playback.closing) return;
+    HapticFeedback.lightImpact();
+    if (allowUnsaved && controller.playback.progressSaveMessage != null) {
+      controller.playback.hasQueuedFinalSave = true;
+      unawaited(controller.exitNativeFullscreen());
+      if (context.mounted) Navigator.pop(context);
+      return;
+    }
+    controller.mutate(() => controller.playback.closing = true);
+    try {
+      await controller.playback.controller?.pause();
+    } catch (_) {
+      // Still try to persist the last known position.
+    }
+    final saved = await controller.queueProgressSave(force: true);
+    if (!context.mounted || controller.isDisposed) return;
+    if (!saved) {
+      controller.mutate(() => controller.playback.closing = false);
+      return;
+    }
+    controller.playback.hasQueuedFinalSave = true;
+    unawaited(controller.exitNativeFullscreen());
+    Navigator.pop(context);
+  }
+
+  static Future<void> stopDlna(CinemaDetailController controller) async {
+    final session = controller.externalActions.castSession;
     if (session == null) return;
     try {
       await session.stop();
-      _externalActions.castSession = null;
-      if (mounted) {
-        _updateState(() => _playback.playbackMessage = '已停止投屏并撤销临时链接。');
+      controller.externalActions.castSession = null;
+      if (controller.isActive) {
+        controller.mutate(
+          () => controller.playback.playbackMessage = '已停止投屏并撤销临时链接。',
+        );
       }
     } catch (error) {
-      if (session.revoked) _externalActions.castSession = null;
-      if (mounted) {
-        _updateState(
-          () => _playback.playbackMessage = session.revoked
+      if (session.revoked) controller.externalActions.castSession = null;
+      if (controller.isActive) {
+        controller.mutate(
+          () => controller.playback.playbackMessage = session.revoked
               ? '临时链接已撤销。电视停止指令未得到确认，请在电视上手动停止播放。'
               : '未能撤销公开链接。请保持此页面并重试“停止投屏”；链接最多 1 小时失效：${mediaErrorLabel(error)}',
         );
@@ -22,24 +72,36 @@ extension _CinemaDetailSessionActions on _CinemaDetailDialogState {
     }
   }
 
-  Future<void> _castToDlna() async {
-    if (_externalActions.castSession != null) throw StateError('请先停止当前投屏。');
-    if (!RegExp(r'\.(mp4|m4v)$', caseSensitive: false).hasMatch(_film.path)) {
+  static Future<void> castToDlna(
+    BuildContext context,
+    CinemaDetailController controller,
+  ) async {
+    if (controller.externalActions.castSession != null) {
+      throw StateError('请先停止当前投屏。');
+    }
+    if (!RegExp(
+      r'\.(mp4|m4v)$',
+      caseSensitive: false,
+    ).hasMatch(controller.film.path)) {
       throw StateError('DLNA 目前仅支持 MP4/M4V 原始文件。');
     }
     final cast = DlnaCast();
     var retained = false;
-    final currentFilmId = _film.id;
-    final currentRootIdentity = widget.api.selectedRoot?.identity ?? 'default';
+    final currentFilmId = controller.film.id;
+    final currentRootIdentity =
+        controller.api.selectedRoot?.identity ?? 'default';
     try {
-      if (mounted) {
-        _updateState(() => _playback.playbackMessage = '正在发现局域网 DLNA 电视…');
+      if (controller.isActive) {
+        controller.mutate(
+          () => controller.playback.playbackMessage = '正在发现局域网 DLNA 电视…',
+        );
       }
       final devices = await cast.discover();
-      if (!mounted) return;
+      if (!context.mounted || controller.isDisposed) return;
       if (devices.isEmpty) {
-        _updateState(
-          () => _playback.playbackMessage = '未发现支持 DLNA 的设备，请检查电视与本机是否位于同一局域网。',
+        controller.mutate(
+          () => controller.playback.playbackMessage =
+              '未发现支持 DLNA 的设备，请检查电视与本机是否位于同一局域网。',
         );
         return;
       }
@@ -70,13 +132,13 @@ extension _CinemaDetailSessionActions on _CinemaDetailDialogState {
           ],
         ),
       );
-      if (renderer == null || !mounted) return;
+      if (renderer == null || !context.mounted || controller.isDisposed) return;
       final approved = await showDialog<bool>(
         context: context,
         builder: (dialogContext) => AlertDialog(
           title: const Text('确认通过临时链接投屏？'),
           content: Text(
-            '将为“${_film.title}”创建有效期 1 小时、无需登录的公开下载链接，'
+            '将为“${controller.film.title}”创建有效期 1 小时、无需登录的公开下载链接，'
             '发送给“${renderer.name}”。任何拿到链接的人在有效期内均可下载原文件。'
             '电视需能访问 NAS 地址并支持当前编码。停止投屏会撤销链接。',
           ),
@@ -92,24 +154,25 @@ extension _CinemaDetailSessionActions on _CinemaDetailDialogState {
           ],
         ),
       );
-      if (approved != true || !mounted) return;
-      _externalActions.castSession = await CinemaDlnaCastService(widget.api)
-          .start(
+      if (approved != true || !context.mounted || controller.isDisposed) return;
+      controller.externalActions.castSession =
+          await CinemaDlnaCastService(controller.api).start(
             cast: cast,
             renderer: renderer,
-            filmPath: _film.path,
+            filmPath: controller.film.path,
             stillCurrent: () =>
-                mounted &&
-                !_playback.closing &&
-                _film.id == currentFilmId &&
-                (widget.api.selectedRoot?.identity ?? 'default') ==
+                controller.isActive &&
+                !controller.playback.closing &&
+                controller.film.id == currentFilmId &&
+                (controller.api.selectedRoot?.identity ?? 'default') ==
                     currentRootIdentity,
           );
       retained = true;
-      await _playback.controller?.pause();
-      if (mounted) {
-        _updateState(
-          () => _playback.playbackMessage = '已投屏到 ${renderer.name}。停止投屏将撤销链接。',
+      await controller.playback.controller?.pause();
+      if (controller.isActive) {
+        controller.mutate(
+          () => controller.playback.playbackMessage =
+              '已投屏到 ${renderer.name}。停止投屏将撤销链接。',
         );
       }
     } finally {
@@ -119,97 +182,114 @@ extension _CinemaDetailSessionActions on _CinemaDetailDialogState {
     }
   }
 
-  Future<void> _mediaAction(String action) async {
-    if (_externalActions.mediaActionBusy || _playback.closing) return;
-    _updateState(() => _externalActions.mediaActionBusy = true);
+  static Future<void> handleMediaAction(
+    BuildContext context,
+    CinemaDetailController controller,
+    String action,
+  ) async {
+    if (controller.externalActions.mediaActionBusy ||
+        controller.playback.closing) {
+      return;
+    }
+    controller.mutate(() => controller.externalActions.mediaActionBusy = true);
     try {
-      final fileName = _film.path.split('/').last;
+      final fileName = controller.film.path.split('/').last;
       if (action == 'toggleWatched') {
-        final next = !_film.completed;
-        await _markWatched(completed: next);
-        if (mounted) {
-          _updateState(() {
-            _playback.playbackMessage = next ? '已标记为已看完。' : '已标记为未看完。';
+        final next = !controller.film.completed;
+        await controller.markWatched(completed: next);
+        if (controller.isActive) {
+          controller.mutate(() {
+            controller.playback.playbackMessage = next
+                ? '已标记为已看完。'
+                : '已标记为未看完。';
           });
         }
       } else if (action == 'rename') {
-        await _renameFilm();
+        await controller.renameFilm();
       } else if (action == 'details') {
-        await _playback.controller?.pause();
-        unawaited(_queueProgressSave(force: true));
-        _updateState(() => _chrome.showPlayerDetails = true);
+        await controller.playback.controller?.pause();
+        unawaited(controller.queueProgressSave(force: true));
+        controller.setShowPlayerDetails(true);
       } else if (action == 'cast') {
-        await _castToDlna();
+        await castToDlna(context, controller);
       } else if (action == 'stopCast') {
-        await _stopDlna();
+        await stopDlna(controller);
       } else if (action == 'share') {
         await openMediaFileShare(
           context,
-          api: widget.api,
-          path: _film.path,
+          api: controller.api,
+          path: controller.film.path,
           name: fileName,
         );
       } else if (action == 'externalPlayer') {
         await showCinemaExternalPlayerDialog(
           context,
-          api: widget.api,
-          film: _film,
+          api: controller.api,
+          film: controller.film,
         );
       } else if (action == 'trash') {
-        await _trashCurrentFilm();
+        await trashCurrentFilm(context, controller);
         return;
       } else if (action == 'export') {
         final result = await exportMediaFile(
-          widget.api,
-          path: _film.path,
+          controller.api,
+          path: controller.film.path,
           name: fileName,
         );
-        if (mounted) {
+        if (context.mounted) {
           ScaffoldMessenger.maybeOf(context)
               ?.showSnackBar(SnackBar(content: Text(result)));
         }
       } else if (action == 'offline') {
-        await _saveFilmOffline();
+        await saveFilmOffline(context, controller);
       }
     } catch (error) {
-      if (mounted) {
-        _updateState(() => _playback.playbackMessage = mediaErrorLabel(error));
+      if (controller.isActive) {
+        controller.mutate(
+          () => controller.playback.playbackMessage = mediaErrorLabel(error),
+        );
       }
     } finally {
-      if (mounted) {
-        _updateState(() {
-          _externalActions.mediaActionBusy = false;
-          _externalActions.offlineProgress = null;
+      if (controller.isActive) {
+        controller.mutate(() {
+          controller.externalActions.mediaActionBusy = false;
+          controller.externalActions.offlineProgress = null;
         });
       }
     }
   }
 
-  Future<void> _trashCurrentFilm() async {
-    if (!widget.isAdmin && !_film.canWrite) {
+  static Future<void> trashCurrentFilm(
+    BuildContext context,
+    CinemaDetailController controller,
+  ) async {
+    if (!controller.isAdmin && !controller.film.canWrite) {
       throw StateError('没有该影片原件的写入权限，请联系管理员。');
     }
-    final root = widget.api.selectedRoot?.identity ?? 'default';
+    final root = controller.api.selectedRoot?.identity ?? 'default';
     final approved = await confirmAction(
       context,
       '移入回收站',
-      '将“${_film.title}”的原始视频移入回收站？可在文件管理中恢复。',
+      '将“${controller.film.title}”的原始视频移入回收站？可在文件管理中恢复。',
       action: '移入回收站',
     );
     if (approved != true ||
-        !mounted ||
-        (widget.api.selectedRoot?.identity ?? 'default') != root) {
+        !context.mounted ||
+        controller.isDisposed ||
+        (controller.api.selectedRoot?.identity ?? 'default') != root) {
       return;
     }
-    final result = await widget.api.send(
+    final result = await controller.api.send(
       'POST',
       '/api/v2/files/batch',
       body: {
         'action': 'trash',
-        'paths': [_film.path],
+        'paths': [controller.film.path],
       },
     );
-    if (!mounted || (widget.api.selectedRoot?.identity ?? 'default') != root) {
+    if (!context.mounted ||
+        controller.isDisposed ||
+        (controller.api.selectedRoot?.identity ?? 'default') != root) {
       return;
     }
     final items = result['results'];
@@ -229,17 +309,20 @@ extension _CinemaDetailSessionActions on _CinemaDetailDialogState {
         items.single['success'] != true) {
       throw StateError('移动失败，请检查当前目录权限和原文件状态');
     }
-    _playback.hasQueuedFinalSave = true;
+    controller.playback.hasQueuedFinalSave = true;
     Navigator.of(context).pop();
   }
 
-  Future<void> _saveFilmOffline() async {
+  static Future<void> saveFilmOffline(
+    BuildContext context,
+    CinemaDetailController controller,
+  ) async {
     final approved = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
         title: const Text('保存到离线库？'),
         content: Text(
-          '会将“${_film.title}”的原始视频保存到本设备的应用私有空间，'
+          '会将“${controller.film.title}”的原始视频保存到本设备的应用私有空间，'
           '仅当前服务器、账号和存储根可在应用内查看；离线库最多 5 GiB，'
           '单个影片最多 2 GiB。若文件太大请使用“保存原始视频”。',
         ),
@@ -255,356 +338,145 @@ extension _CinemaDetailSessionActions on _CinemaDetailDialogState {
         ],
       ),
     );
-    if (approved != true || !mounted) return;
+    if (approved != true || !context.mounted || controller.isDisposed) return;
     final store = OfflineVideoStore(
-      api: widget.api,
-      accountName: widget.accountName,
+      api: controller.api,
+      accountName: controller.accountName,
     );
     await store.save(
-      _film,
+      controller.film,
       onProgress: (received, total) {
-        if (mounted && total > 0) {
-          _updateState(
-            () => _externalActions.offlineProgress = received / total,
+        if (controller.isActive && total > 0) {
+          controller.mutate(
+            () => controller.externalActions.offlineProgress = received / total,
           );
         }
       },
     );
-    if (mounted) {
-      _updateState(() => _playback.playbackMessage = '已保存到本设备离线影片库，可在断网时播放。');
+    if (controller.isActive) {
+      controller.mutate(
+        () => controller.playback.playbackMessage = '已保存到本设备离线影片库，可在断网时播放。',
+      );
     }
   }
 
-  Future<void> _enterPiP() async {
-    if (_playback.controller?.value.isInitialized == true) await _pip.enter();
-  }
-
-  Future<void> _restoreAutoplayNext() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      if (mounted) {
-        _updateState(
-          () => _playlistState.autoPlayNext =
-              prefs.getBool('lightisle_cinema_autoplay_next') ?? false,
-        );
-      }
-    } catch (_) {
-      /* Opt-in defaults to off when preferences cannot load. */
-    }
-  }
-
-  Future<void> _setAutoplayNext(bool value) async {
-    _updateState(() => _playlistState.autoPlayNext = value);
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool('lightisle_cinema_autoplay_next', value);
-    } catch (_) {
-      /* Session selection still works. */
-    }
-  }
-
-  List<CinemaFilm> get _sameDirectoryFilms =>
-      CinemaEpisodeNavigator.buildSameDirectoryPlaylist(_film, <CinemaFilm>[
-        ...widget.playlist,
-        ..._playlistState.directoryFilms,
-      ]);
-
-  int get _currentPlaylistIndex {
-    final items = _sameDirectoryFilms;
-    final idx = items.indexWhere((item) => item.id == _film.id);
-    return idx < 0 ? 0 : idx;
-  }
-
-  CinemaFilm? get _previousPlaylistFilm {
-    final items = _sameDirectoryFilms;
-    final idx = _currentPlaylistIndex;
-    return idx > 0 ? items[idx - 1] : null;
-  }
-
-  CinemaFilm? get _nextPlaylistFilm {
-    final items = _sameDirectoryFilms;
-    final idx = _currentPlaylistIndex;
-    return idx >= 0 && idx + 1 < items.length ? items[idx + 1] : null;
-  }
-
-  Future<void> _refreshDirectoryPlaylist({bool force = false}) async {
-    if (_playback.closing ||
-        _playlistState.loading ||
-        (!force && _playlistState.loaded)) {
-      return;
-    }
-    final generation = ++_playlistState.generation;
-    final currentID = _film.id;
-    final currentRoot = widget.api.selectedRoot?.identity ?? 'default';
-    bool stillCurrent() =>
-        mounted &&
-        !_playback.closing &&
-        generation == _playlistState.generation &&
-        _film.id == currentID &&
-        (widget.api.selectedRoot?.identity ?? 'default') == currentRoot;
-    _updateState(() => _playlistState.loading = true);
-    try {
-      final items = await CinemaEpisodeNavigator(widget.api)
-          .loadSameDirectory(_film);
-      if (!stillCurrent()) return;
-      _updateState(() {
-        _playlistState.directoryFilms = items;
-        _playlistState.loaded = true;
-      });
-    } catch (_) {
-      if (stillCurrent()) {
-        _updateState(() => _playlistState.loaded = true);
-      }
-    } finally {
-      if (stillCurrent()) {
-        _updateState(() => _playlistState.loading = false);
-      }
-    }
-  }
-
-  void _togglePlaylistSheet() {
-    final opening = !_chrome.showPlaylistSheet;
-    if (opening) {
-      _revealChrome();
-      if (!_playlistState.loaded) {
-        unawaited(_refreshDirectoryPlaylist());
-      }
-    }
-    _updateState(() {
-      _chrome.showPlaylistSheet = opening;
-      if (opening) _chrome.showPlayerDetails = false;
-    });
-  }
-
-  Future<void> _switchToPlaylistFilm(
+  static Future<void> switchToPlaylistFilm(
+    BuildContext context,
+    CinemaDetailController controller,
     CinemaFilm target, {
     bool alreadySaved = false,
   }) async {
-    if (_playback.closing || _playlistState.nextEpisodeBusy || !mounted) return;
-    if (target.id == _film.id) {
-      _updateState(() => _chrome.showPlaylistSheet = false);
+    if (controller.playback.closing ||
+        controller.playlistState.nextEpisodeBusy ||
+        !context.mounted ||
+        controller.isDisposed) {
       return;
     }
-    final currentID = _film.id;
-    final currentRoot = widget.api.selectedRoot?.identity ?? 'default';
+    if (target.id == controller.film.id) {
+      controller.setShowPlaylistSheet(false);
+      return;
+    }
+    final currentID = controller.film.id;
+    final currentRoot = controller.api.selectedRoot?.identity ?? 'default';
     bool stillCurrent() =>
-        mounted &&
-        !_playback.closing &&
-        _film.id == currentID &&
-        (widget.api.selectedRoot?.identity ?? 'default') == currentRoot;
-    _updateState(() => _playlistState.nextEpisodeBusy = true);
+        context.mounted &&
+        controller.isActive &&
+        !controller.playback.closing &&
+        controller.film.id == currentID &&
+        (controller.api.selectedRoot?.identity ?? 'default') == currentRoot;
+    controller.mutate(() => controller.playlistState.nextEpisodeBusy = true);
     try {
-      await _playback.controller?.pause();
-      if (!alreadySaved && !await _queueProgressSave(force: true)) return;
+      await controller.playback.controller?.pause();
+      if (!alreadySaved && !await controller.queueProgressSave(force: true)) {
+        return;
+      }
       if (!stillCurrent()) return;
-      if (!mounted) return;
-      _playback.hasQueuedFinalSave = true;
-      unawaited(_exitNativeFullscreen());
-      Navigator.pop(context, target);
+      controller.playback.hasQueuedFinalSave = true;
+      unawaited(controller.exitNativeFullscreen());
+      if (context.mounted) Navigator.pop(context, target);
     } finally {
-      if (mounted && !_playback.hasQueuedFinalSave) {
-        _updateState(() => _playlistState.nextEpisodeBusy = false);
+      if (controller.isActive && !controller.playback.hasQueuedFinalSave) {
+        controller.mutate(
+          () => controller.playlistState.nextEpisodeBusy = false,
+        );
       }
     }
   }
 
-  Future<CinemaFilm?> _findNextEpisode() async {
-    return CinemaEpisodeNavigator(widget.api).findNext(_film);
-  }
-
-  Future<void> _goToPreviousEpisode() async {
-    final previous = _previousPlaylistFilm;
+  static Future<void> goToPreviousEpisode(
+    BuildContext context,
+    CinemaDetailController controller,
+  ) async {
+    final previous = controller.previousPlaylistFilm;
     if (previous == null) return;
-    await _switchToPlaylistFilm(previous);
+    await switchToPlaylistFilm(context, controller, previous);
   }
 
-  Future<void> _goToNextEpisode({bool alreadySaved = false}) async {
-    if (_playback.closing || _playlistState.nextEpisodeBusy || !mounted) return;
-    if (!_film.isSeries &&
-        _sameDirectoryFilms.length <= 1 &&
-        _playlistState.loaded) {
+  static Future<void> goToNextEpisode(
+    BuildContext context,
+    CinemaDetailController controller, {
+    bool alreadySaved = false,
+  }) async {
+    if (controller.playback.closing ||
+        controller.playlistState.nextEpisodeBusy ||
+        !context.mounted ||
+        controller.isDisposed) {
       return;
     }
-    final currentID = _film.id;
-    final currentRoot = widget.api.selectedRoot?.identity ?? 'default';
+    if (!controller.film.isSeries &&
+        controller.sameDirectoryFilms.length <= 1 &&
+        controller.playlistState.loaded) {
+      return;
+    }
+    final currentID = controller.film.id;
+    final currentRoot = controller.api.selectedRoot?.identity ?? 'default';
     bool stillCurrent() =>
-        mounted &&
-        !_playback.closing &&
-        _film.id == currentID &&
-        (widget.api.selectedRoot?.identity ?? 'default') == currentRoot;
-    _updateState(() => _playlistState.nextEpisodeBusy = true);
+        context.mounted &&
+        controller.isActive &&
+        !controller.playback.closing &&
+        controller.film.id == currentID &&
+        (controller.api.selectedRoot?.identity ?? 'default') == currentRoot;
+    controller.mutate(() => controller.playlistState.nextEpisodeBusy = true);
     try {
-      CinemaFilm? next = _nextPlaylistFilm;
-      if (next == null && _film.isSeries) {
-        next = await _findNextEpisode();
+      CinemaFilm? next = controller.nextPlaylistFilm;
+      if (next == null && controller.film.isSeries) {
+        next = await controller.findNextEpisode();
         if (!stillCurrent()) return;
       }
-      if (next == null && !_playlistState.loaded) {
-        await _refreshDirectoryPlaylist();
+      if (next == null && !controller.playlistState.loaded) {
+        await controller.refreshDirectoryPlaylist();
         if (!stillCurrent()) return;
-        next = _nextPlaylistFilm;
+        next = controller.nextPlaylistFilm;
       }
       if (next == null) {
-        _updateState(
-          () => _playback.playbackMessage = _film.isSeries
+        controller.mutate(
+          () => controller.playback.playbackMessage = controller.film.isSeries
               ? '本季已播完，或者还没有扫描到下一集。可从剧集库选择。'
               : '已是当前目录最后一个视频。',
         );
         return;
       }
-      await _playback.controller?.pause();
-      if (!alreadySaved && !await _queueProgressSave(force: true)) return;
+      await controller.playback.controller?.pause();
+      if (!alreadySaved && !await controller.queueProgressSave(force: true)) {
+        return;
+      }
       if (!stillCurrent()) return;
-      if (!mounted) return;
-      _playback.hasQueuedFinalSave = true;
-      unawaited(_exitNativeFullscreen());
-      Navigator.pop(context, next);
+      controller.playback.hasQueuedFinalSave = true;
+      unawaited(controller.exitNativeFullscreen());
+      if (context.mounted) Navigator.pop(context, next);
     } catch (error) {
       if (stillCurrent()) {
-        _updateState(
-          () => _playback.playbackMessage = '无法读取下一集：${mediaErrorLabel(error)}',
+        controller.mutate(
+          () => controller.playback.playbackMessage =
+              '无法读取下一集：${mediaErrorLabel(error)}',
         );
       }
     } finally {
-      if (mounted && !_playback.hasQueuedFinalSave) {
-        _updateState(() => _playlistState.nextEpisodeBusy = false);
-      }
-    }
-  }
-
-  Future<void> _restorePlaybackSpeed() async {
-    final cached = _sessionCinemaSpeed;
-    if (cached != null) {
-      _playback.playbackSpeed = cached;
-      await _playback.controller?.setPlaybackSpeed(cached);
-    }
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      final speed = prefs.getDouble('lightisle_cinema_playback_speed');
-      if (!mounted ||
-          speed == null ||
-          !const [0.75, 1.0, 1.25, 1.5, 2.0].contains(speed)) {
-        return;
-      }
-      _sessionCinemaSpeed = speed;
-      _updateState(() => _playback.playbackSpeed = speed);
-      await _playback.controller?.setPlaybackSpeed(speed);
-    } catch (_) {
-      // Disabled preferences or a missing test platform never blocks playback.
-    }
-  }
-
-  Future<void> _markWatched({required bool completed}) async {
-    final filmId = _film.id;
-    try {
-      final updated = CinemaFilm.fromJson(
-        await widget.api.send(
-          'POST',
-          '/api/v2/cinema/$filmId/watched',
-          body: <String, Object>{'completed': completed},
-        ),
-      );
-      if (!mounted || _film.id != filmId) return;
-      _updateState(() => _film = updated);
-      widget.onProgressUpdated(updated);
-    } catch (error) {
-      if (mounted) {
-        _updateState(() => _metaMatch.message = mediaErrorLabel(error));
-      }
-    }
-  }
-
-  Future<void> _restartFromBeginning() async {
-    final controller = _playback.controller;
-    final session = _playback.hlsSession;
-    if (session != null) {
-      await _startTranscode(
-        start: 0,
-        audio: session.audioTrack,
-        quality: session.quality,
-      );
-      return;
-    }
-    if (controller != null) {
-      await controller.seekTo(Duration.zero);
-      await controller.play();
-    }
-  }
-
-  Future<void> _loadSubtitles(String language) async {
-    final generation = ++_subtitles.generation;
-    final filmId = _film.id;
-    final rootIdentity = widget.api.selectedRoot?.identity ?? 'default';
-    _updateState(() {
-      _subtitles.captionLanguage = language;
-      _subtitles.message = null;
-      _subtitles.cues = const [];
-    });
-    if (language == 'off') return;
-    try {
-      final cues = await _subtitleRepository.load(filmId, language);
-      if (!_subtitleRequestCurrent(generation, filmId, rootIdentity)) return;
-      _updateState(() {
-        _subtitles.cues = cues;
-        _subtitles.message = cues.isEmpty ? '字幕文件没有可显示的内容。' : null;
-      });
-    } catch (error) {
-      if (!_subtitleRequestCurrent(generation, filmId, rootIdentity)) return;
-      _updateState(() {
-        _subtitles.message =
-            error is LightIsleApiException && error.code == 'film_not_found'
-            ? '未找到匹配字幕，或此影片已被移除。'
-            : mediaErrorLabel(error);
-      });
-    }
-  }
-
-  bool _subtitleRequestCurrent(
-    int generation,
-    int filmId,
-    String rootIdentity,
-  ) =>
-      mounted &&
-      generation == _subtitles.generation &&
-      _film.id == filmId &&
-      (widget.api.selectedRoot?.identity ?? 'default') == rootIdentity;
-
-  /// An optional, one-session subtitle source from this device.
-  Future<void> _importLocalSubtitles() async {
-    final generation = ++_subtitles.generation;
-    final filmId = _film.id;
-    final rootIdentity = widget.api.selectedRoot?.identity ?? 'default';
-    try {
-      final selected = await _subtitleRepository.importLocal();
-      if (selected == null ||
-          !_subtitleRequestCurrent(generation, filmId, rootIdentity)) {
-        return;
-      }
-      _updateState(() {
-        _subtitles.captionLanguage = 'local';
-        _subtitles.cues = selected.cues;
-        _subtitles.message = '已加载：${selected.name}（仅本次播放）';
-      });
-    } catch (error) {
-      if (_subtitleRequestCurrent(generation, filmId, rootIdentity)) {
-        _updateState(
-          () => _subtitles.message = '无法加载字幕：${mediaErrorLabel(error)}',
+      if (controller.isActive && !controller.playback.hasQueuedFinalSave) {
+        controller.mutate(
+          () => controller.playlistState.nextEpisodeBusy = false,
         );
       }
-    }
-  }
-
-  Future<void> _renameFilm() async {
-    _updateState(() => _playback.busy = true);
-    try {
-      final updated = await widget.onRename(_film);
-      if (mounted) _updateState(() => _film = updated);
-    } catch (error) {
-      if (mounted) {
-        _updateState(() => _playback.playbackMessage = mediaErrorLabel(error));
-      }
-    } finally {
-      if (mounted) _updateState(() => _playback.busy = false);
     }
   }
 }

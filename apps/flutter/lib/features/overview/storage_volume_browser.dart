@@ -388,7 +388,7 @@ class AdminVolumeBrowser extends StatelessWidget {
           const Notice('当前没有可用的存储卷信息。')
         else
           IsleResponsiveGrid(
-            minItemWidth: 320,
+            minItemWidth: 280,
             maxColumns: 2,
             spacing: 12,
             runSpacing: 12,

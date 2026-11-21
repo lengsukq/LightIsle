@@ -189,7 +189,13 @@ void main() {
       await tester.tap(find.byKey(const ValueKey('shellRootPickerSurface')));
       await tester.pumpAndSettle();
       expect(find.text('未分配给当前用户'), findsNothing);
-      expect(find.byType(PopupMenuButton<String>), findsNothing);
+      expect(
+        find.descendant(
+          of: find.byType(AppBar),
+          matching: find.byType(PopupMenuButton<String>),
+        ),
+        findsNothing,
+      );
       final scrollable = find
           .descendant(
             of: find.byType(OverviewPage),

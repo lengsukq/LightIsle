@@ -107,6 +107,7 @@ class _FileDestinationDialogState extends State<FileDestinationDialog> {
   }
 
   Future<void> _load({bool more = false}) async {
+    if (!mounted) return;
     final id = ++_generation;
     final directory = _directory;
     setState(() {

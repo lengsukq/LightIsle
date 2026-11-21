@@ -130,43 +130,23 @@ class _LoginFlowPainter extends CustomPainter {
         ]);
       case IsleCanvasBackdrop.flatRule:
         canvas.drawRect(
-          Rect.fromLTWH(0, 0, size.width, 4),
+          Rect.fromLTWH(0, 0, size.width, 2.5),
           Paint()..color = p['accentPrimary'],
         );
-        final rulePaint = Paint()
-          ..color = p['rim'].withValues(alpha: dark ? 0.25 : 0.35)
-          ..strokeWidth = 0.8;
-        final colStep = math.max(120.0, size.width / 6);
-        for (double x = colStep; x < size.width; x += colStep) {
-          canvas.drawLine(Offset(x, 0), Offset(x, size.height), rulePaint);
-        }
       case IsleCanvasBackdrop.dotMatrix:
         final dotPaint = Paint()
-          ..color = p['rim'].withValues(alpha: dark ? 0.14 : 0.12);
+          ..color = p['rim'].withValues(alpha: dark ? 0.085 : 0.085);
         const step = 24.0;
         for (double y = 12; y < size.height; y += step) {
           for (double x = 12; x < size.width; x += step) {
-            canvas.drawCircle(Offset(x, y), 1.25, dotPaint);
+            canvas.drawCircle(Offset(x, y), 1.1, dotPaint);
           }
         }
-        final accentRect = Rect.fromLTWH(size.width - 72, 28, 44, 44);
-        canvas.drawRect(
-          accentRect.shift(const Offset(4, 4)),
-          Paint()..color = p['shadow'],
-        );
-        canvas.drawRect(accentRect, Paint()..color = p['accentSecondary']);
-        canvas.drawRect(
-          accentRect,
-          Paint()
-            ..color = p['rim']
-            ..style = PaintingStyle.stroke
-            ..strokeWidth = 2.0,
-        );
       case IsleCanvasBackdrop.techGrid:
         final gridPaint = Paint()
-          ..color = p['accentPrimary'].withValues(alpha: dark ? 0.09 : 0.075)
+          ..color = p['accentPrimary'].withValues(alpha: dark ? 0.05 : 0.045)
           ..strokeWidth = 0.8;
-        const step = 32.0;
+        const step = 36.0;
         for (double x = 0; x < size.width; x += step) {
           canvas.drawLine(Offset(x, 0), Offset(x, size.height), gridPaint);
         }
@@ -178,8 +158,8 @@ class _LoginFlowPainter extends CustomPainter {
             p['accentPrimary'],
             .80 + .03 * math.cos(angle),
             .18 + .03 * math.sin(angle),
-            .42,
-            dark ? .15 : .09,
+            .40,
+            dark ? .10 : .06,
           ),
         ]);
     }

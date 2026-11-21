@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:lightisle/core/lightisle_api.dart';
 import 'package:lightisle/features/files/computer_files_page.dart';
+import 'package:lightisle/features/media/photo_gallery_viewer.dart';
 
 class ComputerApi extends LightIsleApi {
   ComputerApi({this.enabled = true, this.mode = 'all'})
@@ -151,4 +152,69 @@ void main() {
       expect(tester.takeException(), isNull);
     },
   );
+
+  testWidgets(
+    'tapping image or video in computer files opens built-in PhotoGalleryViewer',
+    (tester) async {
+      final api = _MediaComputerApi();
+      addTearDown(api.close);
+      await tester.pumpWidget(
+        MaterialApp(home: ComputerFilesPage(api: api, isAdmin: false)),
+      );
+      await tester.pumpAndSettle();
+
+      expect(find.text('sunset.jpg'), findsOneWidget);
+      expect(find.text('vacation.mp4'), findsOneWidget);
+
+      await tester.tap(find.text('sunset.jpg'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+
+      expect(find.byType(PhotoGalleryViewer), findsOneWidget);
+      expect(find.byType(PhotoMediaImage), findsOneWidget);
+      expect(find.text('sunset.jpg'), findsWidgets);
+
+      await tester.tap(find.byTooltip('返回文件'));
+      await tester.pumpAndSettle();
+      expect(find.byType(PhotoGalleryViewer), findsNothing);
+
+      await tester.tap(find.text('vacation.mp4'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 350));
+
+      expect(find.byType(PhotoGalleryViewer), findsOneWidget);
+      expect(find.byType(PhotoMediaVideo), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+}
+
+class _MediaComputerApi extends ComputerApi {
+  @override
+  Future<Map<String, dynamic>> get(
+    String path, {
+    Map<String, String>? query,
+  }) async {
+    if (path == '/api/v2/computer-files') {
+      return {
+        'path': '/Pictures',
+        'entries': [
+          {
+            'name': 'sunset.jpg',
+            'path': '/Pictures/sunset.jpg',
+            'type': 'file',
+            'size': 2048,
+          },
+          {
+            'name': 'vacation.mp4',
+            'path': '/Pictures/vacation.mp4',
+            'type': 'file',
+            'size': 8192,
+          },
+        ],
+        'nextCursor': '',
+      };
+    }
+    return super.get(path, query: query);
+  }
 }

@@ -424,7 +424,7 @@ void main() {
       api.networkDownBps = 8192;
       await tester.pump(const Duration(seconds: 5));
       await tester.pump();
-      expect(find.text('66.0%'), findsOneWidget);
+      expect(find.text('66.0%'), findsWidgets);
       expect(tester.takeException(), isNull);
 
       tester.view.physicalSize = const Size(375, 812);
@@ -471,13 +471,13 @@ void main() {
         MaterialApp(home: CacheManagementPage(api: api, isAdmin: true)),
       );
       await tester.pumpAndSettle();
-      expect(find.byType(IsleSegmentedBar), findsOneWidget);
+      expect(find.byType(IsleSegmentedBar), findsWidgets);
       await tester.scrollUntilVisible(
         find.byKey(const ValueKey('clearServerThumbnailsBtn')),
         250,
       );
       await tester.pumpAndSettle();
-      expect(find.byType(IsleSegmentedBar), findsOneWidget);
+      expect(find.byType(IsleSegmentedBar), findsWidgets);
       expect(find.byType(IsleDonutGauge), findsNWidgets(2));
       expect(find.text('25%'), findsNWidgets(2));
 

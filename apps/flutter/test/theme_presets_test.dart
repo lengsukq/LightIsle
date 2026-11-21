@@ -117,6 +117,8 @@ void main() {
 
     final cyberCard = find.byKey(const Key('themePresetCard_cyber_terminal'));
     await tester.scrollUntilVisible(cyberCard, 200);
+    await tester.ensureVisible(cyberCard);
+    await tester.pumpAndSettle();
     await tester.tap(cyberCard);
     await tester.pumpAndSettle();
 

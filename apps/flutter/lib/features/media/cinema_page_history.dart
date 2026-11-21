@@ -94,12 +94,35 @@ extension _CinemaPageHistory on _CinemaPageState {
   Widget _buildHistoryTile(ThemeData theme, CinemaFilm film) {
     return ListTile(
       dense: true,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 3),
-      leading: IsleSquircleBadge(
-        icon: film.isSeries ? Icons.live_tv_outlined : Icons.movie_outlined,
-        color: const Color(0xFFE07A56),
-        size: 32,
-        iconSize: 17,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 4),
+      leading: ClipRRect(
+        borderRadius: BorderRadius.circular(6),
+        child: SizedBox(
+          width: 36,
+          height: 54,
+          child: CinemaPosterImage.film(
+            api: widget.api,
+            film: film,
+            memoryCache: _posterCache,
+            maxBytes: 2 * 1024 * 1024,
+            loadingBuilder: (_) => ColoredBox(
+              color: theme.colorScheme.surfaceContainerHigh,
+              child: Icon(
+                film.isSeries ? Icons.live_tv_outlined : Icons.movie_outlined,
+                size: 16,
+                color: const Color(0xFFE07A56),
+              ),
+            ),
+            errorBuilder: (_, _, _) => ColoredBox(
+              color: theme.colorScheme.surfaceContainerHigh,
+              child: Icon(
+                film.isSeries ? Icons.live_tv_outlined : Icons.movie_outlined,
+                size: 16,
+                color: const Color(0xFFE07A56),
+              ),
+            ),
+          ),
+        ),
       ),
       title: Text(
         film.displayTitle,

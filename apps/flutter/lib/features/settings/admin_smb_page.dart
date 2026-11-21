@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../core/isle_gallery_layout.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
@@ -22,6 +21,8 @@ class SmbSharePoint {
     required this.rootName,
     required this.exposesPersonalDirs,
     required this.pathExists,
+    this.syncedInMacOS = true,
+    this.needsRestore = false,
   });
 
   final String recordName;
@@ -35,6 +36,8 @@ class SmbSharePoint {
   final String? rootName;
   final bool exposesPersonalDirs;
   final bool pathExists;
+  final bool syncedInMacOS;
+  final bool needsRestore;
 
   factory SmbSharePoint.fromJson(Map<String, dynamic> json) => SmbSharePoint(
     recordName: json['recordName']?.toString() ?? '',
@@ -48,6 +51,8 @@ class SmbSharePoint {
     rootName: json['rootName']?.toString(),
     exposesPersonalDirs: json['exposesPersonalDirs'] == true,
     pathExists: json['pathExists'] != false,
+    syncedInMacOS: json['syncedInMacOS'] != false,
+    needsRestore: json['needsRestore'] == true,
   );
 }
 
@@ -176,6 +181,33 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
       if (mounted) setState(() => _error = userFacingError(e));
     } finally {
       if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _reconcileShares() async {
+    if (_busy || !_remoteManageReady) return;
+    setState(() {
+      _busy = true;
+      _error = null;
+      _notice = null;
+    });
+    try {
+      final res = await widget.api.send('POST', '/api/v2/admin/smb/reconcile', body: const {});
+      if (!mounted) return;
+      final st = res['status'] is Map<String, dynamic>
+          ? res['status'] as Map<String, dynamic>
+          : res;
+      final restored = (res['restored'] is num) ? (res['restored'] as num).toInt() : 0;
+      setState(() {
+        _applyStatus(st);
+        _notice = restored > 0
+            ? '已自动恢复 $restored 个重连磁盘的 SMB 共享与权限。'
+            : '已完成 SMB 共享巡检，所有在线共享权限均已同步。';
+      });
+    } catch (e) {
+      if (mounted) setState(() => _error = userFacingError(e));
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
   }
 
@@ -398,6 +430,12 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
       appBar: IsleAppBar(
         title: const Text('Mac 文件共享 (SMB)'),
         actions: [
+          if (_remoteManageReady &&
+              _shares.any((s) => s.needsRestore || (s.shared && s.pathExists && !s.syncedInMacOS)))
+            TextButton(
+              onPressed: (_loading || _busy) ? null : () => unawaited(_reconcileShares()),
+              child: const Text('恢复共享权限'),
+            ),
           IconButton(
             tooltip: '刷新状态',
             onPressed: (_loading || _busy) ? null : () => unawaited(_refresh()),
@@ -655,6 +693,16 @@ class _AdminSmbPageState extends State<AdminSmbPage> {
                           IsleBadgePill(
                             label: '本机其他共享（仅 Mac 端管理）',
                             color: muted,
+                          ),
+                        if (!share.pathExists)
+                          IsleBadgePill(
+                            label: '磁盘离线 · 重连后自动恢复',
+                            color: amber,
+                          )
+                        else if (share.needsRestore || (share.shared && !share.syncedInMacOS))
+                          IsleBadgePill(
+                            label: '待恢复系统共享权限',
+                            color: amber,
                           ),
                       ],
                     ),

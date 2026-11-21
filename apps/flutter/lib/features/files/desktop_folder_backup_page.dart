@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../core/isle_action_menu.dart';
-import '../../core/isle_gallery_layout.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
@@ -149,13 +148,6 @@ class _DesktopFolderBackupPageState extends State<DesktopFolderBackupPage> {
           ),
       ],
     );
-  }
-
-  String _formatTimestamp(int ms) {
-    if (ms <= 0) return '尚未完成同步';
-    final dt = DateTime.fromMillisecondsSinceEpoch(ms).toLocal();
-    String two(int v) => v.toString().padLeft(2, '0');
-    return '${dt.year}-${two(dt.month)}-${two(dt.day)} ${two(dt.hour)}:${two(dt.minute)}';
   }
 
   Widget _buildOverviewCard(BuildContext context) {
@@ -496,7 +488,7 @@ class _DesktopFolderBackupPageState extends State<DesktopFolderBackupPage> {
           ),
           const SizedBox(height: 6),
           Text(
-            '最近同步：${_formatTimestamp(task.lastCompleteAtMs)}'
+            '最近同步：${formatUnixMillis(task.lastCompleteAtMs, emptyLabel: '尚未完成同步')}'
             '${task.lastSummary != null ? ' · ${task.lastSummary}' : ''}',
             style: theme.textTheme.bodySmall?.copyWith(
               fontSize: 12,
@@ -621,6 +613,10 @@ class _DesktopFolderBackupPageState extends State<DesktopFolderBackupPage> {
         child: IsleListView(
           maxWidth: IsleLayout.workbenchMaxWidth,
           children: [
+            if (_controller.loadError case final loadError?) ...[
+              Notice(loadError, error: true),
+              const SizedBox(height: 10),
+            ],
             _buildOverviewCard(context),
             const SizedBox(height: 12),
             if (_controller.tasks.isEmpty)

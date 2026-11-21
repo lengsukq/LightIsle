@@ -1,43 +1,23 @@
 import 'dart:async';
 import 'dart:ui' as ui;
 
-import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-import 'package:video_player/video_player.dart';
 
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
-import '../../core/widgets.dart';
-import '../files/file_export_service.dart';
-import '../files/file_share_dialog.dart';
-import 'android_pip_session.dart';
-import 'cinema_decode_preference.dart';
+import 'cinema_detail_controller.dart';
 import 'cinema_detail_header.dart';
-import 'cinema_detail_state_models.dart';
-import 'cinema_dlna_cast_service.dart';
-import 'cinema_episode_navigator.dart';
-import 'cinema_hls_session_service.dart';
-import 'cinema_metadata_repository.dart';
-import 'cinema_pip_lifecycle_policy.dart';
-import 'cinema_progress_save_queue.dart';
-import 'cinema_subtitle_repository.dart';
-import 'dlna_cast.dart';
+import 'cinema_detail_inline_player.dart';
+import 'cinema_detail_metadata.dart';
+import 'cinema_detail_player_controls.dart';
+import 'cinema_detail_player_sheets.dart';
+import 'cinema_detail_player_shortcuts.dart';
+import 'cinema_detail_player_view.dart';
+import 'cinema_detail_session_actions.dart';
+import 'cinema_metadata_cards.dart';
 import 'media_models.dart';
 import 'media_ui.dart';
-import 'offline_video_store.dart';
 import 'shared_video_player_controls.dart';
-
-part 'cinema_detail_session_actions.dart';
-part 'cinema_detail_player_state.dart';
-part 'cinema_detail_metadata.dart';
-part 'cinema_detail_player_view.dart';
-part 'cinema_detail_player_controls.dart';
-part 'cinema_detail_player_menus.dart';
-part 'cinema_detail_player_sheets.dart';
-part 'cinema_detail_player_shortcuts.dart';
-part 'cinema_detail_player_progress.dart';
 
 class CinemaDetailDialog extends StatefulWidget {
   const CinemaDetailDialog({
@@ -70,173 +50,102 @@ class CinemaDetailDialog extends StatefulWidget {
 
 class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     with WidgetsBindingObserver {
-  late final AndroidPipSession _pip;
-  late CinemaFilm _film;
-  final CinemaPlaybackSessionState _playback = CinemaPlaybackSessionState();
-  final CinemaSubtitleViewState _subtitles = CinemaSubtitleViewState();
-  final CinemaDirectoryPlaylistState _playlistState =
-      CinemaDirectoryPlaylistState();
-  late final CinemaMetadataMatchState _metaMatch;
-  final CinemaPlayerChromeState _chrome = CinemaPlayerChromeState();
-  final CinemaShortcutHudState _hud = CinemaShortcutHudState();
-  final CinemaExternalActionState _externalActions =
-      CinemaExternalActionState();
-  final CinemaProgressSaveQueue _progressQueue = CinemaProgressSaveQueue();
-
-  CinemaMetadataRepository get _metadataRepository =>
-      CinemaMetadataRepository(widget.api);
-  CinemaSubtitleRepository get _subtitleRepository =>
-      CinemaSubtitleRepository(widget.api);
-
-  void _updateState(VoidCallback fn) => setState(fn);
+  late final CinemaDetailController _controller;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
-    _pip = _createPipSession()..attach();
-    _film = widget.film;
-    _metaMatch = CinemaMetadataMatchState(initialQuery: _film.title);
-    _restorePlaybackSpeed();
-    _restorePlaybackVolume();
-    _restoreAutoplayNext();
-    unawaited(CinemaDecodePreference.load());
-    _loadDetailAndPlayer();
-  }
-
-  AndroidPipSession _createPipSession() {
-    return AndroidPipSession(
-      onChanged: () {
-        if (mounted) setState(() {});
-      },
-      onTimeout: () {
+    _controller = CinemaDetailController(
+      api: widget.api,
+      initialFilm: widget.film,
+      isAdmin: widget.isAdmin,
+      accountName: widget.accountName,
+      playlist: widget.playlist,
+      onRename: widget.onRename,
+      onProgressUpdated: widget.onProgressUpdated,
+      playerOnly: widget.playerOnly,
+      onAutoAdvanceNextEpisode: () async {
         if (!mounted) return;
-        setState(() {
-          _playback.playbackMessage = '未确认进入画中画，请在设备设置中检查权限。';
-        });
-        if (CinemaPipLifecyclePolicy.shouldPauseAfterPipExit(
-          WidgetsBinding.instance.lifecycleState,
-        )) {
-          unawaited(_queueProgressSave(force: true));
-          unawaited(_playback.controller?.pause());
-        }
+        await CinemaDetailSessionActions.goToNextEpisode(
+          context,
+          _controller,
+          alreadySaved: true,
+        );
       },
-      onError: (error) {
-        if (mounted) {
-          setState(
-            () => _playback.playbackMessage = error == null
-                ? '无法进入画中画，请检查系统权限。'
-                : mediaErrorLabel(error),
-          );
-        }
-      },
-      onExit: () {
-        if (mounted &&
-            CinemaPipLifecyclePolicy.shouldPauseAfterPipExit(
-              WidgetsBinding.instance.lifecycleState,
-            )) {
-          unawaited(_queueProgressSave(force: true));
-          unawaited(_playback.controller?.pause());
-        }
-      },
-    );
+    )..initialize();
   }
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (CinemaPipLifecyclePolicy.shouldPauseOnLifecycle(
-      state,
-      pipRequested: _pip.requested,
-      pipActive: _pip.active,
-    )) {
-      unawaited(_queueProgressSave(force: true));
-      final controller = _playback.controller;
-      if (controller?.value.isPlaying == true) unawaited(controller!.pause());
-    }
-  }
-
-  static const _qualityTiers = <(String, String, int)>[
-    ('1080', '1080P', 1080),
-    ('720', '720P', 720),
-    ('480', '480P', 480),
-  ];
-
-  Future<void> _close({bool allowUnsaved = false}) async {
-    if (_playback.closing) return;
-    HapticFeedback.lightImpact();
-    if (allowUnsaved && _playback.progressSaveMessage != null) {
-      _playback.hasQueuedFinalSave = true;
-      unawaited(_exitNativeFullscreen());
-      Navigator.pop(context);
-      return;
-    }
-    setState(() => _playback.closing = true);
-    try {
-      await _playback.controller?.pause();
-    } catch (_) {
-      // Still try to persist the last known position.
-    }
-    final saved = await _queueProgressSave(force: true);
-    if (!mounted) return;
-    if (!saved) {
-      setState(() => _playback.closing = false);
-      return;
-    }
-    _playback.hasQueuedFinalSave = true;
-    unawaited(_exitNativeFullscreen());
-    Navigator.pop(context);
+    _controller.handleAppLifecycleState(state);
   }
 
   @override
   void dispose() {
-    _hud.cancelTimers();
-    _chrome.dispose();
-    if (_chrome.windowFullscreen) {
-      unawaited(_exitNativeFullscreen());
-    }
     WidgetsBinding.instance.removeObserver(this);
-    final castSession = _externalActions.castSession;
-    if (castSession != null) {
-      unawaited(castSession.stop().catchError((Object _) {}));
-      _externalActions.castSession = null;
-    }
-    _pip.dispose();
-    _playlistState.generation++;
-    _metaMatch.dispose();
-    _subtitles.generation++;
-    if (!_playback.hasQueuedFinalSave) {
-      _playback.hasQueuedFinalSave = true;
-      unawaited(_queueProgressSave(force: true));
-    }
-    final controller = _playback.controller;
-    controller?.removeListener(_onVideoChanged);
-    controller?.dispose();
+    _controller.dispose();
     super.dispose();
+  }
+
+  void _close({bool allowUnsaved = false}) {
+    unawaited(
+      CinemaDetailSessionActions.close(
+        context,
+        _controller,
+        allowUnsaved: allowUnsaved,
+      ),
+    );
+  }
+
+  void _goToPreviousEpisode() {
+    unawaited(
+      CinemaDetailSessionActions.goToPreviousEpisode(context, _controller),
+    );
+  }
+
+  void _goToNextEpisode() {
+    unawaited(CinemaDetailSessionActions.goToNextEpisode(context, _controller));
+  }
+
+  void _switchToFilm(CinemaFilm film) {
+    unawaited(
+      CinemaDetailSessionActions.switchToPlaylistFilm(
+        context,
+        _controller,
+        film,
+      ),
+    );
   }
 
   @override
   Widget build(BuildContext context) {
-    if (widget.playerOnly) return _buildPlayerPage(context);
-    final position = _playback.controller?.value.position;
-    final resume = _film.canResume && position == null;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final compact = MediaQuery.sizeOf(context).width < 600;
-    return PopScope<void>(
-      canPop: false,
-      onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) unawaited(_close());
+    return ListenableBuilder(
+      listenable: _controller,
+      builder: (context, _) {
+        if (widget.playerOnly) return _buildPlayerPage(context);
+        final position = _controller.playback.controller?.value.position;
+        final resume = _controller.film.canResume && position == null;
+        final isDark = Theme.of(context).brightness == Brightness.dark;
+        final compact = MediaQuery.sizeOf(context).width < 600;
+        return PopScope<void>(
+          canPop: false,
+          onPopInvokedWithResult: (didPop, _) {
+            if (!didPop) _close();
+          },
+          child: Dialog(
+            backgroundColor: Colors.transparent,
+            elevation: 0,
+            insetPadding: compact ? EdgeInsets.zero : const EdgeInsets.all(14),
+            child: _buildDialogSurface(
+              context,
+              compact: compact,
+              isDark: isDark,
+              resume: resume,
+            ),
+          ),
+        );
       },
-      child: Dialog(
-        backgroundColor: Colors.transparent,
-        elevation: 0,
-        insetPadding: compact ? EdgeInsets.zero : const EdgeInsets.all(14),
-        child: _buildDialogSurface(
-          context,
-          compact: compact,
-          isDark: isDark,
-          resume: resume,
-        ),
-      ),
     );
   }
 
@@ -290,18 +199,25 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
   }) {
     return CinemaDetailHeader(
       api: widget.api,
-      film: _film,
+      film: _controller.film,
       isAdmin: widget.isAdmin,
-      canRename: !_playback.busy,
+      canRename: !_controller.playback.busy,
       mediaActionsEnabled:
-          !_externalActions.mediaActionBusy && !_playback.closing,
+          !_controller.externalActions.mediaActionBusy &&
+          !_controller.playback.closing,
       canSaveOffline: widget.accountName.isNotEmpty,
-      casting: _externalActions.castSession != null,
-      canClose: !_playback.closing,
-      onRename: () => unawaited(_renameFilm()),
-      onMediaAction: (value) => unawaited(_mediaAction(value)),
-      canDelete: widget.isAdmin || _film.canWrite,
-      onClose: () => unawaited(_close()),
+      casting: _controller.externalActions.castSession != null,
+      canClose: !_controller.playback.closing,
+      onRename: () => unawaited(_controller.renameFilm()),
+      onMediaAction: (value) => unawaited(
+        CinemaDetailSessionActions.handleMediaAction(
+          context,
+          _controller,
+          value,
+        ),
+      ),
+      canDelete: widget.isAdmin || _controller.film.canWrite,
+      onClose: _close,
       darkOverlay: darkOverlay,
       reserveMacTrafficLights: reserveMacTrafficLights,
       trailingActions: trailingActions,
@@ -310,8 +226,9 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
 
   Widget _buildDialogScrollBody(BuildContext context, {required bool resume}) {
     final theme = Theme.of(context);
-    final offlineProgress = _externalActions.offlineProgress;
-    final playbackMessage = _playback.playbackMessage;
+    final film = _controller.film;
+    final offlineProgress = _controller.externalActions.offlineProgress;
+    final playbackMessage = _controller.playback.playbackMessage;
     return SingleChildScrollView(
       physics: const AlwaysScrollableScrollPhysics(),
       padding: const EdgeInsets.fromLTRB(18, 8, 18, 18),
@@ -325,11 +242,11 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
             LinearProgressIndicator(value: offlineProgress.clamp(0, 1)),
             const SizedBox(height: 12),
           ],
-          if (resume && _film.position > 5)
+          if (resume && film.position > 5)
             Padding(
               padding: const EdgeInsets.only(top: 6),
               child: Text(
-                '上次观看至 ${_timeLabel(Duration(seconds: _film.position.round()))}。',
+                '上次观看至 ${SharedVideoPlayerStyle.formatClock(Duration(seconds: film.position.round()))}。',
                 style: theme.textTheme.bodyMedium?.copyWith(
                   color: theme.colorScheme.primary,
                   fontWeight: FontWeight.w600,
@@ -339,7 +256,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
           if (playbackMessage != null)
             MediaStatusBanner(
               message: playbackMessage,
-              icon: _film.canAttemptPlayback
+              icon: film.canAttemptPlayback
                   ? Icons.warning_amber_outlined
                   : Icons.info_outline,
             ),
@@ -351,19 +268,19 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
               borderRadius: IsleRadius.brSm,
             ),
             clipBehavior: Clip.antiAlias,
-            child: _player(context),
+            child: CinemaInlinePlayerView(controller: _controller),
           ),
-          if (_playback.progressSaveMessage != null)
+          if (_controller.playback.progressSaveMessage != null)
             _buildProgressFailureBanner(
-              message: _playback.progressSaveMessage!,
+              message: _controller.playback.progressSaveMessage!,
               retryLabel: '重试',
               dismissLabel: '仍然关闭',
             ),
-          if (_subtitles.message != null)
+          if (_controller.subtitles.message != null)
             Padding(
               padding: const EdgeInsets.only(top: 8),
               child: Text(
-                _subtitles.message!,
+                _controller.subtitles.message!,
                 style: theme.textTheme.bodySmall?.copyWith(
                   color: theme.colorScheme.onSurfaceVariant,
                 ),
@@ -371,14 +288,14 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
             ),
           const SizedBox(height: 16),
           Text(
-            _film.canAttemptPlayback ? '播放进度' : '媒体信息',
+            film.canAttemptPlayback ? '播放进度' : '媒体信息',
             style: theme.textTheme.titleSmall?.copyWith(
               fontWeight: FontWeight.w700,
             ),
           ),
           const SizedBox(height: 10),
-          _metadata(context),
-          if (_film.overview.isNotEmpty) ...[
+          CinemaTechnicalMetadataCard(film: film),
+          if (film.overview.isNotEmpty) ...[
             const SizedBox(height: 16),
             Text(
               '简介',
@@ -387,12 +304,12 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
               ),
             ),
             const SizedBox(height: 6),
-            Text(_film.overview),
+            Text(film.overview),
           ],
-          if (_film.metadataSource.isNotEmpty) ...[
+          if (film.metadataSource.isNotEmpty) ...[
             const SizedBox(height: 10),
             Text(
-              '${_film.metadataSource.startsWith('nfo:') ? '资料来源：本地 NFO' : '资料来源：TMDB'}${_film.rating > 0 ? ' · 评分 ${_film.rating.toStringAsFixed(1)} / 10' : ''}',
+              '${film.metadataSource.startsWith('nfo:') ? '资料来源：本地 NFO' : (film.metadataSource.startsWith('douban') ? '资料来源：豆瓣' : '资料来源：TMDB')}${film.rating > 0 ? ' · 评分 ${film.rating.toStringAsFixed(1)} / 10' : ''}',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: theme.colorScheme.onSurfaceVariant,
               ),
@@ -400,7 +317,10 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
           ],
           if (widget.isAdmin) ...[
             const SizedBox(height: 16),
-            _metadataMatchingPanel(context),
+            CinemaMetadataMatchingPanel(
+              controller: _controller,
+              onNextEpisode: _goToNextEpisode,
+            ),
           ],
         ],
       ),
@@ -421,13 +341,13 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
         spacing: 6,
         children: [
           TextButton(
-            onPressed: _playback.closing
+            onPressed: _controller.playback.closing
                 ? null
-                : () => unawaited(_queueProgressSave(force: true)),
+                : () => unawaited(_controller.queueProgressSave(force: true)),
             child: Text(retryLabel),
           ),
           TextButton(
-            onPressed: _playback.closing
+            onPressed: _controller.playback.closing
                 ? null
                 : () => _close(allowUnsaved: true),
             child: Text(dismissLabel),
@@ -437,43 +357,40 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
     );
   }
 
-  bool _shouldShowPlayerChrome(bool videoReady) {
-    final controller = _playback.controller;
-    return !_chrome.dockManuallyCollapsed &&
-        (_chrome.visible ||
-            _playback.loading ||
-            !videoReady ||
-            controller == null ||
-            !controller.value.isPlaying ||
-            _chrome.showPlayerDetails ||
-            _chrome.showPlaylistSheet ||
-            _playback.progressSaveMessage != null ||
-            _externalActions.offlineProgress != null);
-  }
-
   Widget _buildPlayerPage(BuildContext context) {
-    final videoReady = _playback.isVideoReady;
-    final showChrome = _shouldShowPlayerChrome(videoReady);
+    final videoReady = _controller.playback.isVideoReady;
+    final showChrome = _controller.shouldShowPlayerChrome(videoReady);
+    final motionDuration = IsleMotion.reducedMotion(context)
+        ? Duration.zero
+        : IsleMotion.quick;
 
     return Focus(
-      focusNode: _chrome.playerFocusNode,
+      focusNode: _controller.chrome.playerFocusNode,
       autofocus: true,
-      onKeyEvent: _onPlayerKey,
+      onKeyEvent: (node, event) => CinemaPlayerShortcuts.handleKeyEvent(
+        context: context,
+        controller: _controller,
+        node: node,
+        event: event,
+        onClose: _close,
+      ),
       child: PopScope<void>(
         canPop: false,
         onPopInvokedWithResult: (didPop, _) {
-          if (!didPop) unawaited(_close());
+          if (!didPop) _close();
         },
         child: Scaffold(
           key: const ValueKey('cinemaPlayerPage'),
           backgroundColor: Colors.black,
           body: MouseRegion(
-            onHover: (_) => _revealChrome(),
+            onHover: (_) => _controller.revealChrome(),
             child: Stack(
               fit: StackFit.expand,
               children: [
                 Positioned.fill(
-                  child: RepaintBoundary(child: _fullscreenStage(context)),
+                  child: RepaintBoundary(
+                    child: CinemaFullscreenStage(controller: _controller),
+                  ),
                 ),
                 Positioned(
                   top: 0,
@@ -483,6 +400,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                     child: _buildPlayerTopChromeOverlay(
                       showChrome: showChrome,
                       videoReady: videoReady,
+                      duration: motionDuration,
                     ),
                   ),
                 ),
@@ -498,27 +416,34 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                           offset: showChrome
                               ? Offset.zero
                               : const Offset(0, 0.10),
-                          duration: IsleMotion.reducedMotion(context)
-                              ? Duration.zero
-                              : IsleMotion.quick,
+                          duration: motionDuration,
                           curve: IsleMotion.silk,
                           child: AnimatedOpacity(
                             opacity: showChrome ? 1.0 : 0.0,
-                            duration: IsleMotion.reducedMotion(context)
-                                ? Duration.zero
-                                : IsleMotion.quick,
+                            duration: motionDuration,
                             curve: IsleMotion.silk,
-                            child: _buildBottomTransportDeck(context),
+                            child: CinemaBottomTransportDeck(
+                              controller: _controller,
+                              onPreviousEpisode: _goToPreviousEpisode,
+                              onNextEpisode: _goToNextEpisode,
+                            ),
                           ),
                         ),
                       ),
                     ),
                   ),
-                if (videoReady && _chrome.dockManuallyCollapsed)
+                if (videoReady && _controller.chrome.dockManuallyCollapsed)
                   _buildRestoreDockButton(),
-                if (_chrome.showPlaylistSheet) _buildPlaylistSheet(context),
-                if (_chrome.showPlayerDetails)
-                  _buildPlayerDetailsSheet(context),
+                if (_controller.chrome.showPlaylistSheet)
+                  CinemaPlaylistSheet(
+                    controller: _controller,
+                    onSelectFilm: _switchToFilm,
+                  ),
+                if (_controller.chrome.showPlayerDetails)
+                  CinemaPlayerDetailsSheet(
+                    controller: _controller,
+                    onNextEpisode: _goToNextEpisode,
+                  ),
               ],
             ),
           ),
@@ -530,25 +455,23 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
   Widget _buildPlayerTopChromeOverlay({
     required bool showChrome,
     required bool videoReady,
+    required Duration duration,
   }) {
     final hasBanner =
-        _externalActions.offlineProgress != null ||
-        (_playback.playbackMessage != null && videoReady) ||
-        _playback.progressSaveMessage != null ||
-        _subtitles.message != null;
-    final topDuration = IsleMotion.reducedMotion(context)
-        ? Duration.zero
-        : IsleMotion.quick;
+        _controller.externalActions.offlineProgress != null ||
+        (_controller.playback.playbackMessage != null && videoReady) ||
+        _controller.playback.progressSaveMessage != null ||
+        _controller.subtitles.message != null;
 
     return IgnorePointer(
       ignoring: !showChrome,
       child: AnimatedSlide(
         offset: showChrome ? Offset.zero : const Offset(0, -0.08),
-        duration: topDuration,
+        duration: duration,
         curve: IsleMotion.silk,
         child: AnimatedOpacity(
           opacity: showChrome ? 1.0 : 0.0,
-          duration: topDuration,
+          duration: duration,
           curve: IsleMotion.silk,
           child: DecoratedBox(
             decoration: const BoxDecoration(
@@ -571,7 +494,8 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
                 children: [
                   _buildDetailHeader(
                     darkOverlay: true,
-                    reserveMacTrafficLights: !_chrome.windowFullscreen,
+                    reserveMacTrafficLights:
+                        !_controller.chrome.windowFullscreen,
                     trailingActions: _buildPlayerHeaderTrailingActions(),
                   ),
                   if (hasBanner)
@@ -586,8 +510,10 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
   }
 
   List<Widget> _buildPlayerHeaderTrailingActions() {
+    final film = _controller.film;
+    final showDetails = _controller.chrome.showPlayerDetails;
     return [
-      if (_film.isSeries)
+      if (film.isSeries)
         Padding(
           padding: const EdgeInsets.only(right: 6),
           child: FilledButton.tonalIcon(
@@ -598,11 +524,15 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
               visualDensity: VisualDensity.compact,
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             ),
-            onPressed: _playback.closing || _playlistState.nextEpisodeBusy
+            onPressed:
+                _controller.playback.closing ||
+                    _controller.playlistState.nextEpisodeBusy
                 ? null
-                : () => unawaited(_goToNextEpisode()),
+                : _goToNextEpisode,
             icon: const Icon(Icons.skip_next_rounded, size: 18),
-            label: Text(_playlistState.nextEpisodeBusy ? '查找下一集…' : '下一集'),
+            label: Text(
+              _controller.playlistState.nextEpisodeBusy ? '查找下一集…' : '下一集',
+            ),
           ),
         ),
       Padding(
@@ -610,7 +540,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
         child: TextButton.icon(
           key: const ValueKey('cinemaPlayerDetailsToggle'),
           style: TextButton.styleFrom(
-            backgroundColor: _chrome.showPlayerDetails
+            backgroundColor: showDetails
                 ? const Color(0x47FFFFFF)
                 : const Color(0x24FFFFFF),
             foregroundColor: Colors.white,
@@ -620,28 +550,22 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
               borderRadius: BorderRadius.circular(999),
             ),
           ),
-          onPressed: () {
-            final opening = !_chrome.showPlayerDetails;
-            if (opening) {
-              unawaited(_playback.controller?.pause());
-              unawaited(_queueProgressSave(force: true));
-            }
-            setState(() => _chrome.showPlayerDetails = opening);
-          },
+          onPressed: () => _controller.setShowPlayerDetails(
+            !showDetails,
+            pauseWhenOpening: true,
+          ),
           icon: Icon(
-            _chrome.showPlayerDetails
-                ? Icons.keyboard_arrow_up_rounded
-                : Icons.tune_rounded,
+            showDetails ? Icons.keyboard_arrow_up_rounded : Icons.tune_rounded,
             size: 18,
           ),
-          label: Text(_chrome.showPlayerDetails ? '收起播放信息' : '播放信息与设置'),
+          label: Text(showDetails ? '收起播放信息' : '播放信息与设置'),
         ),
       ),
     ];
   }
 
   Widget _buildPlayerOverlayBanners({required bool videoReady}) {
-    final offlineProgress = _externalActions.offlineProgress;
+    final offlineProgress = _controller.externalActions.offlineProgress;
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 0, 20, 10),
       child: Theme(
@@ -659,25 +583,25 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
               LinearProgressIndicator(value: offlineProgress.clamp(0, 1)),
               const SizedBox(height: 8),
             ],
-            if (_playback.playbackMessage != null && videoReady)
+            if (_controller.playback.playbackMessage != null && videoReady)
               MediaStatusBanner(
-                message: _playback.playbackMessage!,
-                isError: _film.canAttemptPlayback,
-                icon: _film.canAttemptPlayback
+                message: _controller.playback.playbackMessage!,
+                isError: _controller.film.canAttemptPlayback,
+                icon: _controller.film.canAttemptPlayback
                     ? Icons.warning_amber_outlined
                     : Icons.info_outline,
               ),
-            if (_playback.progressSaveMessage != null)
+            if (_controller.playback.progressSaveMessage != null)
               _buildProgressFailureBanner(
-                message: _playback.progressSaveMessage!,
+                message: _controller.playback.progressSaveMessage!,
                 retryLabel: '重试保存',
                 dismissLabel: '仍然退出',
               ),
-            if (_subtitles.message != null)
+            if (_controller.subtitles.message != null)
               Padding(
                 padding: const EdgeInsets.only(top: 4),
                 child: Text(
-                  _subtitles.message!,
+                  _controller.subtitles.message!,
                   style: const TextStyle(color: Colors.white70, fontSize: 12),
                 ),
               ),
@@ -701,10 +625,7 @@ class _CinemaDetailDialogState extends State<CinemaDetailDialog>
             visualDensity: VisualDensity.compact,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           ),
-          onPressed: () {
-            _updateState(() => _chrome.dockManuallyCollapsed = false);
-            _revealChrome();
-          },
+          onPressed: _controller.restoreDock,
           icon: const Icon(Icons.keyboard_arrow_up_rounded, size: 18),
           label: const Text('控制栏', style: TextStyle(fontSize: 12)),
         ),

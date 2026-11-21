@@ -10,8 +10,8 @@ import '../../core/login_history_store.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 import 'login_flow_background.dart';
+import 'login_form_sections.dart';
 import 'login_history_section.dart';
-import 'nas_discovery_picker.dart';
 
 class LoginPage extends StatefulWidget {
   const LoginPage({
@@ -505,318 +505,6 @@ class _LoginPageState extends State<LoginPage> {
     ),
   );
 
-  List<Widget> _buildServerAddressFields(ThemeData theme, ColorScheme colors) {
-    final normalized = _normalizeServerAddress(_server.text);
-    final showNormalizedHint =
-        _server.text.trim().isNotEmpty &&
-        !_server.text.trim().startsWith('http://') &&
-        !_server.text.trim().startsWith('https://');
-    return [
-      TextFormField(
-        controller: _server,
-        enabled: !_busy,
-        keyboardType: TextInputType.url,
-        textInputAction: TextInputAction.next,
-        autocorrect: false,
-        onChanged: _addressChanged,
-        decoration: const InputDecoration(
-          isDense: true,
-          labelText: '服务器地址',
-          hintText: '192.168.1.100:16666',
-          prefixIcon: Icon(Icons.dns_outlined, size: 19),
-        ),
-        validator: (v) =>
-            v == null || v.trim().isEmpty ? '请输入 Mac 管理端显示的连接地址' : null,
-      ),
-      if (showNormalizedHint)
-        Padding(
-          padding: const EdgeInsets.only(top: 4, left: 4),
-          child: Text(
-            '将连接：$normalized',
-            style: theme.textTheme.labelSmall?.copyWith(
-              color: colors.primary,
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-      Padding(
-        padding: const EdgeInsets.only(top: 6),
-        child: Wrap(
-          spacing: 8,
-          runSpacing: 4,
-          crossAxisAlignment: WrapCrossAlignment.center,
-          children: [
-            NasDiscoveryPicker(
-              enabled: !_busy,
-              onSelected: (server) async {
-                if (_busy) return;
-                _server.text = server.address;
-                _addressChanged(server.address);
-                setState(() {
-                  _securityExpanded = _httpsOrigin(server.address) != null;
-                  _error = null;
-                });
-                if (_username.text.trim().isEmpty) {
-                  _usernameFocus.requestFocus();
-                }
-              },
-            ),
-            CurrentServerLatencyBar(
-              serverUrl: normalized,
-              result: _currentServerLatency,
-              enabled: !_busy,
-              onProbe: _probeCurrentServer,
-            ),
-          ],
-        ),
-      ),
-    ];
-  }
-
-  Widget _buildUsernameField() => TextFormField(
-    controller: _username,
-    focusNode: _usernameFocus,
-    enabled: !_busy,
-    textInputAction: TextInputAction.next,
-    autocorrect: false,
-    autofillHints: const [AutofillHints.username],
-    onChanged: (_) {
-      if (_selectedHistoryKey != null &&
-          LoginHistoryEntry.buildKey(_server.text, _username.text) !=
-              _selectedHistoryKey) {
-        setState(() => _selectedHistoryKey = null);
-      }
-    },
-    decoration: const InputDecoration(
-      isDense: true,
-      labelText: '用户名',
-      prefixIcon: Icon(Icons.person_outline_rounded, size: 19),
-    ),
-    validator: (v) => v == null || v.trim().isEmpty ? '请输入用户名' : null,
-  );
-
-  Widget _buildPasswordField() => TextFormField(
-    controller: _password,
-    enabled: !_busy,
-    obscureText: _hide,
-    textInputAction: TextInputAction.done,
-    autofillHints: const [AutofillHints.password],
-    decoration: InputDecoration(
-      isDense: true,
-      labelText: '密码',
-      prefixIcon: const Icon(Icons.lock_outline_rounded, size: 19),
-      suffixIcon: IconButton(
-        tooltip: _hide ? '显示密码' : '隐藏密码',
-        visualDensity: VisualDensity.compact,
-        onPressed: () => setState(() => _hide = !_hide),
-        icon: Icon(
-          _hide ? Icons.visibility_outlined : Icons.visibility_off_outlined,
-          size: 19,
-        ),
-      ),
-    ),
-    validator: (v) => v == null || v.isEmpty ? '请输入密码' : null,
-    onFieldSubmitted: (_) => _login(),
-  );
-
-  List<Widget> _buildCredentialFields({required bool sideBySide}) {
-    if (sideBySide) {
-      return [
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(child: _buildUsernameField()),
-            const SizedBox(width: 12),
-            Expanded(child: _buildPasswordField()),
-          ],
-        ),
-      ];
-    }
-    return [
-      _buildUsernameField(),
-      const SizedBox(height: 11),
-      _buildPasswordField(),
-    ];
-  }
-
-  List<Widget> _buildSecurityPinFields(ColorScheme colors) {
-    final normalizedServer = _normalizeServerAddress(_server.text);
-    final publicHttpOrigin =
-        InsecureHttpAllowlist.requiresAllowlist(normalizedServer)
-        ? InsecureHttpAllowlist.normalizeOrigin(normalizedServer)
-        : null;
-    final currentOriginAllowed =
-        publicHttpOrigin != null &&
-        _allowedHttpOrigins.contains(publicHttpOrigin);
-    final sortedAllowlist = _allowedHttpOrigins.toList()..sort();
-    final securityLabel = _fingerprint.text.isNotEmpty
-        ? '连接安全设置 · 已记住证书指纹'
-        : currentOriginAllowed
-        ? '连接安全设置 · 已信任明文 HTTP'
-        : sortedAllowlist.isNotEmpty
-        ? '连接安全设置 · ${sortedAllowlist.length} 条 HTTP 白名单'
-        : '连接安全设置';
-    return [
-      Row(
-        children: [
-          Flexible(
-            child: TextButton.icon(
-              key: const Key('connectionSecurityToggle'),
-              style: TextButton.styleFrom(
-                visualDensity: VisualDensity.compact,
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                minimumSize: const Size(0, 32),
-              ),
-              onPressed: _busy
-                  ? null
-                  : () =>
-                        setState(() => _securityExpanded = !_securityExpanded),
-              icon: Icon(
-                _securityExpanded ? Icons.expand_less : Icons.shield_outlined,
-                size: 16,
-              ),
-              label: Text(
-                securityLabel,
-                style: const TextStyle(fontSize: 12),
-              ),
-            ),
-          ),
-          const Spacer(),
-          IconButton(
-            tooltip: '首次连接指引',
-            visualDensity: VisualDensity.compact,
-            constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-            padding: EdgeInsets.zero,
-            onPressed: _busy ? null : () => showLoginSetupGuideDialog(context),
-            icon: Icon(
-              Icons.help_outline_rounded,
-              size: 17,
-              color: colors.onSurfaceVariant,
-            ),
-          ),
-        ],
-      ),
-      IsleAnimatedExpand(
-        expanded: _securityExpanded,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            const SizedBox(height: 4),
-            TextFormField(
-              key: const Key('certificateFingerprint'),
-              controller: _fingerprint,
-              enabled: !_busy,
-              autocorrect: false,
-              enableSuggestions: false,
-              minLines: 2,
-              maxLines: 3,
-              decoration: const InputDecoration(
-                isDense: true,
-                labelText: 'HTTPS 证书 SHA-256 指纹（可选）',
-                helperText: '仅自签名 HTTPS 首次连接需核对；受信任证书可留空。',
-                helperMaxLines: 3,
-                prefixIcon: Icon(Icons.verified_user_outlined, size: 19),
-              ),
-              validator: (value) {
-                final pin = (value ?? '').replaceAll(RegExp(r'[:\s]'), '');
-                if (pin.isEmpty) return null;
-                if (_httpsOrigin(_normalizeServerAddress(_server.text)) ==
-                    null) {
-                  return '证书指纹仅用于 HTTPS 地址';
-                }
-                return RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(pin)
-                    ? null
-                    : '请输入完整的 64 位 SHA-256 指纹';
-              },
-            ),
-            const SizedBox(height: 8),
-            if (publicHttpOrigin != null)
-              SwitchListTile.adaptive(
-                key: const Key('allowInsecureHttpOriginSwitch'),
-                dense: true,
-                contentPadding: const EdgeInsets.symmetric(horizontal: 2),
-                value: currentOriginAllowed,
-                onChanged: _busy
-                    ? null
-                    : (v) => _toggleCurrentHttpAllowlist(v, publicHttpOrigin),
-                title: const Text(
-                  '允许此地址使用明文 HTTP',
-                  style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600),
-                ),
-                subtitle: Text(
-                  '$publicHttpOrigin（风险自担：密码与会话不加密）',
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    color: colors.onSurfaceVariant,
-                  ),
-                ),
-              ),
-            if (sortedAllowlist.isNotEmpty) ...[
-              const SizedBox(height: 4),
-              Text(
-                '本机明文 HTTP 白名单（精确 Origin）',
-                style: TextStyle(
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w600,
-                  color: colors.onSurfaceVariant,
-                ),
-              ),
-              const SizedBox(height: 4),
-              for (final origin in sortedAllowlist)
-                Row(
-                  children: [
-                    Icon(
-                      Icons.warning_amber_rounded,
-                      size: 14,
-                      color: colors.tertiary,
-                    ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        origin,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(fontSize: 12),
-                      ),
-                    ),
-                    IconButton(
-                      key: Key('removeHttpAllowlist_$origin'),
-                      tooltip: '移出白名单',
-                      visualDensity: VisualDensity.compact,
-                      constraints: const BoxConstraints(
-                        minWidth: 28,
-                        minHeight: 28,
-                      ),
-                      padding: EdgeInsets.zero,
-                      onPressed: _busy
-                          ? null
-                          : () => _removeAllowedHttpOrigin(origin),
-                      icon: Icon(
-                        Icons.close_rounded,
-                        size: 15,
-                        color: colors.onSurfaceVariant,
-                      ),
-                    ),
-                  ],
-                ),
-            ] else if (publicHttpOrigin == null)
-              Padding(
-                padding: const EdgeInsets.only(left: 4, bottom: 2),
-                child: Text(
-                  '公网地址默认要求 HTTPS；输入公网 http:// 地址时，可在此按精确 Origin 加入本机白名单。',
-                  style: TextStyle(
-                    fontSize: 11.5,
-                    color: colors.onSurfaceVariant,
-                  ),
-                ),
-              ),
-            const SizedBox(height: 8),
-          ],
-        ),
-      ),
-    ];
-  }
-
   Widget _buildForm(
     BuildContext context, {
     required bool wide,
@@ -832,6 +520,7 @@ class _LoginPageState extends State<LoginPage> {
         : medium
         ? 22.0
         : 20.0;
+    final normalizedServer = _normalizeServerAddress(_server.text);
     return AutofillGroup(
       child: Form(
         key: _form,
@@ -873,11 +562,61 @@ class _LoginPageState extends State<LoginPage> {
                   if (widget.expired) const Notice('登录已过期或失效，请重新登录。'),
                   if (widget.notice != null)
                     Notice(widget.notice!, error: true),
-                  ..._buildServerAddressFields(theme, colors),
+                  LoginServerAddressSection(
+                    controller: _server,
+                    normalizedServer: normalizedServer,
+                    busy: _busy,
+                    latency: _currentServerLatency,
+                    onChanged: _addressChanged,
+                    onDiscoveredSelected: (server) {
+                      if (_busy) return;
+                      _server.text = server.address;
+                      _addressChanged(server.address);
+                      setState(() {
+                        _securityExpanded =
+                            _httpsOrigin(server.address) != null;
+                        _error = null;
+                      });
+                      if (_username.text.trim().isEmpty) {
+                        _usernameFocus.requestFocus();
+                      }
+                    },
+                    onProbe: _probeCurrentServer,
+                  ),
                   const SizedBox(height: 11),
-                  ..._buildCredentialFields(sideBySide: medium),
+                  LoginCredentialFields(
+                    usernameController: _username,
+                    passwordController: _password,
+                    usernameFocus: _usernameFocus,
+                    busy: _busy,
+                    obscurePassword: _hide,
+                    sideBySide: medium,
+                    onUsernameChanged: (_) {
+                      if (_selectedHistoryKey != null &&
+                          LoginHistoryEntry.buildKey(
+                                _server.text,
+                                _username.text,
+                              ) !=
+                              _selectedHistoryKey) {
+                        setState(() => _selectedHistoryKey = null);
+                      }
+                    },
+                    onToggleObscure: () => setState(() => _hide = !_hide),
+                    onSubmit: _login,
+                  ),
                   const SizedBox(height: 4),
-                  ..._buildSecurityPinFields(colors),
+                  LoginConnectionSecuritySection(
+                    normalizedServer: normalizedServer,
+                    fingerprintController: _fingerprint,
+                    allowedHttpOrigins: _allowedHttpOrigins,
+                    expanded: _securityExpanded,
+                    busy: _busy,
+                    isHttpsServer: _httpsOrigin(normalizedServer) != null,
+                    onToggleExpanded: () =>
+                        setState(() => _securityExpanded = !_securityExpanded),
+                    onToggleCurrentHttpAllowlist: _toggleCurrentHttpAllowlist,
+                    onRemoveAllowedHttpOrigin: _removeAllowedHttpOrigin,
+                  ),
                   if (_error != null) Notice(_error!, error: true),
                   const SizedBox(height: 8),
                   FilledButton.icon(

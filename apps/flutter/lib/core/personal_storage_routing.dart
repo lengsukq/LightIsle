@@ -43,10 +43,13 @@ PersonalStorageRoute resolvePersonalRoute(
   final generation = location['rootGeneration'];
   final path = location['relativePath'];
   final userID = policy?['userId'];
-  final expected = userID is int && userID > 0
-      ? 'Users/u$userID/$category'
-      : null;
-  if (rootID is! String || generation is! num || path != expected) {
+  if (userID is! int ||
+      userID <= 0 ||
+      rootID is! String ||
+      rootID.isEmpty ||
+      generation is! num ||
+      path is! String ||
+      !_isValidAssignedRelativePath(path, userID)) {
     return const PersonalStorageRoute(PersonalRouteKind.offline);
   }
   for (final root in roots) {
@@ -54,9 +57,34 @@ PersonalStorageRoute resolvePersonalRoute(
       return PersonalStorageRoute(
         PersonalRouteKind.personal,
         root: root,
-        path: path as String,
+        path: path,
       );
     }
   }
   return const PersonalStorageRoute(PersonalRouteKind.offline);
+}
+
+final RegExp _canonicalUserNamespace = RegExp(r'^Users/u(\d+)(?:/|$)');
+
+/// Trusts the server-supplied relativePath (including custom directory layouts)
+/// while failing closed on empty, traversal, or cross-user `Users/uN` paths.
+bool _isValidAssignedRelativePath(String rawPath, int userID) {
+  final trimmed = rawPath.trim();
+  if (trimmed.isEmpty ||
+      trimmed != rawPath ||
+      trimmed.startsWith('/') ||
+      trimmed.endsWith('/') ||
+      trimmed.contains('\\') ||
+      trimmed.runes.any((r) => r < 32)) {
+    return false;
+  }
+  final segments = trimmed.split('/');
+  if (segments.any((s) => s.isEmpty || s == '.' || s == '..')) {
+    return false;
+  }
+  final match = _canonicalUserNamespace.firstMatch(trimmed);
+  if (match != null && int.tryParse(match.group(1) ?? '') != userID) {
+    return false;
+  }
+  return true;
 }

@@ -5,11 +5,9 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../core/authenticated_media_image.dart';
 import '../../core/isle_action_menu.dart';
 import '../../core/isle_cache_manager.dart';
 import '../../core/isle_data_cache.dart';
-import '../../core/isle_gallery_layout.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/media_image_memory_cache.dart';
@@ -24,6 +22,7 @@ import 'cinema_film_overview.dart';
 import 'cinema_film_tile.dart';
 import 'cinema_metadata_repository.dart';
 import 'cinema_page_state_models.dart';
+import 'cinema_poster_image.dart';
 import 'cinema_series_overview.dart';
 import 'local_video_page.dart';
 import 'media_batch_operations.dart';
@@ -240,6 +239,9 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
           isAdmin: widget.isAdmin,
           directory: widget.uploadDirectory,
           title: '视频文件',
+          taskCenter: widget.taskCenter,
+          accountName: widget.accountName,
+          accountId: widget.accountName.isEmpty ? null : widget.accountName,
         );
       default:
         setState(_subpages.exitSecondaryViews);
@@ -250,7 +252,10 @@ class _CinemaPageState extends State<CinemaPage> with WidgetsBindingObserver {
   void _openDavPage() {
     Navigator.of(context).push<void>(
       buildIslePageRoute(
-        builder: (_) => DavPage(api: widget.api, accountId: widget.accountName),
+        builder: (_) => DavPage(
+          api: widget.api,
+          accountId: widget.accountName.isEmpty ? null : widget.accountName,
+        ),
       ),
     );
   }

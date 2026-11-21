@@ -1,11 +1,36 @@
-part of 'cinema_detail_dialog.dart';
+import 'dart:async';
 
-extension _CinemaDetailPlayerSheets on _CinemaDetailDialogState {
-  Widget _buildPlaylistSheet(BuildContext context) {
+import 'package:flutter/material.dart';
+
+import '../../core/isle_theme.dart';
+import '../../core/widgets.dart';
+import 'cinema_decode_preference.dart';
+import 'cinema_detail_controller.dart';
+import 'cinema_detail_metadata.dart';
+import 'cinema_episode_navigator.dart';
+import 'cinema_metadata_cards.dart';
+import 'media_models.dart';
+import 'shared_video_player_controls.dart';
+
+/// Overlay sheet listing same-directory films/episodes with autoplay toggle.
+class CinemaPlaylistSheet extends StatelessWidget {
+  const CinemaPlaylistSheet({
+    super.key,
+    required this.controller,
+    required this.onSelectFilm,
+  });
+
+  final CinemaDetailController controller;
+  final ValueChanged<CinemaFilm> onSelectFilm;
+
+  @override
+  Widget build(BuildContext context) {
     final screenSize = MediaQuery.sizeOf(context);
     final isWide = screenSize.width >= 680;
-    final items = _sameDirectoryFilms;
-    final dirLabel = CinemaEpisodeNavigator.directoryLabel(_film.path);
+    final items = controller.sameDirectoryFilms;
+    final dirLabel = CinemaEpisodeNavigator.directoryLabel(
+      controller.film.path,
+    );
 
     return Positioned.fill(
       key: const ValueKey('cinemaPlaylistSheet'),
@@ -14,7 +39,7 @@ extension _CinemaDetailPlayerSheets on _CinemaDetailDialogState {
         children: [
           GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTap: () => _updateState(() => _chrome.showPlaylistSheet = false),
+            onTap: () => controller.setShowPlaylistSheet(false),
             child: const ColoredBox(color: Color(0x73000000)),
           ),
           SafeArea(
@@ -53,7 +78,7 @@ extension _CinemaDetailPlayerSheets on _CinemaDetailDialogState {
                             mainAxisSize: MainAxisSize.min,
                             crossAxisAlignment: CrossAxisAlignment.stretch,
                             children: [
-                              _buildPlaylistSheetHeader(
+                              _buildHeader(
                                 dirLabel: dirLabel,
                                 itemCount: items.length,
                               ),
@@ -72,10 +97,7 @@ extension _CinemaDetailPlayerSheets on _CinemaDetailDialogState {
                                   separatorBuilder: (_, _) =>
                                       const SizedBox(height: 6),
                                   itemBuilder: (context, index) =>
-                                      _buildPlaylistItemTile(
-                                        items[index],
-                                        index,
-                                      ),
+                                      _buildItemTile(items[index], index),
                                 ),
                               ),
                             ],
@@ -93,11 +115,8 @@ extension _CinemaDetailPlayerSheets on _CinemaDetailDialogState {
     );
   }
 
-  Widget _buildPlaylistSheetHeader({
-    required String dirLabel,
-    required int itemCount,
-  }) {
-    final autoPlay = _playlistState.autoPlayNext;
+  Widget _buildHeader({required String dirLabel, required int itemCount}) {
+    final autoPlay = controller.playlistState.autoPlayNext;
     return Padding(
       padding: const EdgeInsets.fromLTRB(18, 14, 10, 10),
       child: Row(
@@ -122,7 +141,7 @@ extension _CinemaDetailPlayerSheets on _CinemaDetailDialogState {
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  '$dirLabel · 共 $itemCount 个视频${_playlistState.loading ? ' · 同步中…' : ''}',
+                  '$dirLabel · 共 $itemCount 个视频${controller.playlistState.loading ? ' · 同步中…' : ''}',
                   maxLines: 1,
                   overflow: TextOverflow.ellipsis,
                   style: const TextStyle(color: Colors.white60, fontSize: 12),
@@ -133,7 +152,7 @@ extension _CinemaDetailPlayerSheets on _CinemaDetailDialogState {
           InkWell(
             key: const ValueKey('cinemaPlaylistAutoplayToggle'),
             borderRadius: BorderRadius.circular(999),
-            onTap: () => unawaited(_setAutoplayNext(!autoPlay)),
+            onTap: () => unawaited(controller.setAutoplayNext(!autoPlay)),
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
               decoration: BoxDecoration(
@@ -175,8 +194,7 @@ extension _CinemaDetailPlayerSheets on _CinemaDetailDialogState {
           IconButton(
             tooltip: '收起播放列表',
             color: Colors.white70,
-            onPressed: () =>
-                _updateState(() => _chrome.showPlaylistSheet = false),
+            onPressed: () => controller.setShowPlaylistSheet(false),
             icon: const Icon(Icons.close_rounded, size: 20),
           ),
         ],
@@ -184,14 +202,16 @@ extension _CinemaDetailPlayerSheets on _CinemaDetailDialogState {
     );
   }
 
-  Widget _buildPlaylistItemTile(CinemaFilm item, int index) {
-    final isCurrent = item.id == _film.id;
+  Widget _buildItemTile(CinemaFilm item, int index) {
+    final isCurrent = item.id == controller.film.id;
     final fileName = item.path.split('/').last;
     final durationSec = item.durationSeconds > 0
         ? item.durationSeconds
         : item.duration;
     final durationText = durationSec > 0
-        ? _timeLabel(Duration(milliseconds: (durationSec * 1000).round()))
+        ? SharedVideoPlayerStyle.formatClock(
+            Duration(milliseconds: (durationSec * 1000).round()),
+          )
         : '';
     final badgeText = item.isSeries
         ? 'S${item.season}E${item.episode}'
@@ -201,9 +221,9 @@ extension _CinemaDetailPlayerSheets on _CinemaDetailDialogState {
       child: InkWell(
         key: ValueKey('cinemaPlaylistItem_${item.id}'),
         borderRadius: BorderRadius.circular(14),
-        onTap: _playlistState.nextEpisodeBusy
+        onTap: controller.playlistState.nextEpisodeBusy
             ? null
-            : () => unawaited(_switchToPlaylistFilm(item)),
+            : () => onSelectFilm(item),
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           decoration: BoxDecoration(
@@ -322,16 +342,31 @@ extension _CinemaDetailPlayerSheets on _CinemaDetailDialogState {
       ),
     );
   }
+}
 
-  Widget _buildPlayerDetailsSheet(BuildContext context) {
+/// Overlay sheet presenting playback decode preferences, technical metadata,
+/// synopsis, and admin NFO/TMDB/Douban matching tools.
+class CinemaPlayerDetailsSheet extends StatelessWidget {
+  const CinemaPlayerDetailsSheet({
+    super.key,
+    required this.controller,
+    required this.onNextEpisode,
+  });
+
+  final CinemaDetailController controller;
+  final VoidCallback onNextEpisode;
+
+  @override
+  Widget build(BuildContext context) {
     final screenHeight = MediaQuery.sizeOf(context).height;
+    final film = controller.film;
     return Positioned.fill(
       child: Stack(
         fit: StackFit.expand,
         children: [
           GestureDetector(
             behavior: HitTestBehavior.opaque,
-            onTap: () => _updateState(() => _chrome.showPlayerDetails = false),
+            onTap: () => controller.setShowPlayerDetails(false),
             child: const ColoredBox(color: Color(0x8A000000)),
           ),
           SafeArea(
@@ -403,10 +438,8 @@ extension _CinemaDetailPlayerSheets on _CinemaDetailDialogState {
                                       IconButton(
                                         tooltip: '收起播放信息',
                                         color: Colors.white70,
-                                        onPressed: () => _updateState(
-                                          () =>
-                                              _chrome.showPlayerDetails = false,
-                                        ),
+                                        onPressed: () => controller
+                                            .setShowPlayerDetails(false),
                                         icon: const Icon(Icons.close_rounded),
                                       ),
                                     ],
@@ -428,9 +461,11 @@ extension _CinemaDetailPlayerSheets on _CinemaDetailDialogState {
                                       crossAxisAlignment:
                                           CrossAxisAlignment.stretch,
                                       children: [
-                                        _buildDecodePreferenceCard(),
-                                        _metadata(darkContext),
-                                        if (_film.overview.isNotEmpty) ...[
+                                        CinemaDecodePreferenceCard(
+                                          controller: controller,
+                                        ),
+                                        CinemaTechnicalMetadataCard(film: film),
+                                        if (film.overview.isNotEmpty) ...[
                                           const SizedBox(height: 18),
                                           Text(
                                             '简介',
@@ -439,14 +474,12 @@ extension _CinemaDetailPlayerSheets on _CinemaDetailDialogState {
                                                 .titleMedium,
                                           ),
                                           const SizedBox(height: 6),
-                                          Text(_film.overview),
+                                          Text(film.overview),
                                         ],
-                                        if (_film
-                                            .metadataSource
-                                            .isNotEmpty) ...[
+                                        if (film.metadataSource.isNotEmpty) ...[
                                           const SizedBox(height: 10),
                                           Text(
-                                            '${_film.metadataSource.startsWith('nfo:') ? '资料来源：本地 NFO' : '资料来源：TMDB'}${_film.rating > 0 ? ' · 评分 ${_film.rating.toStringAsFixed(1)} / 10' : ''}',
+                                            '${film.metadataSource.startsWith('nfo:') ? '资料来源：本地 NFO' : (film.metadataSource.startsWith('douban') ? '资料来源：豆瓣' : '资料来源：TMDB')}${film.rating > 0 ? ' · 评分 ${film.rating.toStringAsFixed(1)} / 10' : ''}',
                                             style: Theme.of(darkContext)
                                                 .textTheme
                                                 .bodySmall
@@ -455,9 +488,12 @@ extension _CinemaDetailPlayerSheets on _CinemaDetailDialogState {
                                                 ),
                                           ),
                                         ],
-                                        if (widget.isAdmin) ...[
+                                        if (controller.isAdmin) ...[
                                           const SizedBox(height: 20),
-                                          _metadataMatchingPanel(darkContext),
+                                          CinemaMetadataMatchingPanel(
+                                            controller: controller,
+                                            onNextEpisode: onNextEpisode,
+                                          ),
                                         ],
                                       ],
                                     ),
@@ -478,8 +514,16 @@ extension _CinemaDetailPlayerSheets on _CinemaDetailDialogState {
       ),
     );
   }
+}
 
-  Widget _buildDecodePreferenceCard() {
+/// Toggle card for local-first decoding preference and external player launch.
+class CinemaDecodePreferenceCard extends StatelessWidget {
+  const CinemaDecodePreferenceCard({super.key, required this.controller});
+
+  final CinemaDetailController controller;
+
+  @override
+  Widget build(BuildContext context) {
     return ValueListenableBuilder<bool>(
       valueListenable: CinemaDecodePreference.preferLocalDecode,
       builder: (context, preferLocal, _) => Container(
@@ -513,8 +557,10 @@ extension _CinemaDetailPlayerSheets on _CinemaDetailDialogState {
                 value: preferLocal,
                 onChanged: (next) async {
                   await CinemaDecodePreference.setPreferLocalDecode(next);
-                  if (!mounted) return;
-                  unawaited(_switchQuality(next ? 'local' : 'source'));
+                  if (!controller.isActive) return;
+                  unawaited(
+                    controller.switchQuality(next ? 'local' : 'source'),
+                  );
                 },
               ),
               const SizedBox(height: 6),
@@ -527,8 +573,8 @@ extension _CinemaDetailPlayerSheets on _CinemaDetailDialogState {
                     onPressed: () => unawaited(
                       showCinemaExternalPlayerDialog(
                         context,
-                        api: widget.api,
-                        film: _film,
+                        api: controller.api,
+                        film: controller.film,
                       ),
                     ),
                     icon: const Icon(Icons.open_in_new_rounded, size: 16),

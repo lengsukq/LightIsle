@@ -58,7 +58,7 @@ void _registerMediaDetailTests() {
 
     final fields = find.byType(TextField);
     await tester.ensureVisible(fields.at(0));
-    await tester.enterText(fields.at(0), 'user-provided-token');
+    await tester.enterText(fields.at(0), 'user-provided-tmdb-token');
     await tester.enterText(fields.at(1), 'Suggested film');
     final searchButton = find.widgetWithText(FilledButton, '搜索 TMDB');
     await tester.ensureVisible(searchButton);
@@ -71,7 +71,7 @@ void _registerMediaDetailTests() {
       '/api/v2/cinema/201/metadata/tmdb/search',
     );
     expect(api.sendRequests.last['body'], <String, String>{
-      'accessToken': 'user-provided-token',
+      'accessToken': 'user-provided-tmdb-token',
       'query': 'Suggested film',
     });
     expect(find.text('Suggested film (2025)'), findsOneWidget);
@@ -89,7 +89,7 @@ void _registerMediaDetailTests() {
       '/api/v2/cinema/201/metadata/tmdb/match',
     );
     expect(api.sendRequests.last['body'], <String, Object>{
-      'accessToken': 'user-provided-token',
+      'accessToken': 'user-provided-tmdb-token',
       'tmdbId': 908,
     });
     expect(tester.takeException(), isNull);
@@ -393,7 +393,7 @@ void _registerMediaDetailTests() {
 
       expect(find.byType(PhotoMediaVideo), findsOneWidget);
       expect(find.byType(VideoPlayer), findsOneWidget);
-      await tester.tap(find.byTooltip('播放视频'));
+      await tester.tap(find.byTooltip('播放'));
       await tester.pump();
       expect(platform.calls, contains('play'));
 

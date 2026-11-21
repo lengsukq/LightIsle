@@ -106,11 +106,27 @@ internal object BackgroundPhotoBackup {
         .digest(value.toByteArray(Charsets.UTF_8))
         .joinToString("") { "%02x".format(it) }
 
-    private fun privateHTTPHost(host: String): Boolean {
+    private fun privateHTTPHost(rawHost: String): Boolean {
+        val host = rawHost.removeSurrounding("[", "]")
         if (!host.matches(Regex("^[0-9.]+$")) && !host.contains(':')) return false
         return try {
             val address = InetAddress.getByName(host)
-            address.isLoopbackAddress || address.isSiteLocalAddress || address.isLinkLocalAddress
+            if (address.isLoopbackAddress || address.isSiteLocalAddress || address.isLinkLocalAddress) {
+                return true
+            }
+            val raw = address.address
+            when (raw.size) {
+                4 -> {
+                    val b0 = raw[0].toInt() and 0xff
+                    val b1 = raw[1].toInt() and 0xff
+                    b0 == 100 && b1 in 64..127
+                }
+                16 -> {
+                    val b0 = raw[0].toInt() and 0xff
+                    (b0 and 0xfe) == 0xfc
+                }
+                else -> false
+            }
         } catch (_: Exception) {
             false
         }

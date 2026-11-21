@@ -341,8 +341,29 @@ extension _CinemaFilmOverviewMetadata on _CinemaFilmOverviewState {
                     dense: true,
                     contentPadding: const EdgeInsets.symmetric(
                       horizontal: 12,
-                      vertical: 2,
+                      vertical: 4,
                     ),
+                    leading: candidate.posterURL.isNotEmpty
+                        ? ClipRRect(
+                            borderRadius: BorderRadius.circular(6),
+                            child: SizedBox(
+                              width: 38,
+                              height: 56,
+                              child: CinemaPosterImage.tmdbCandidate(
+                                api: widget.api,
+                                posterURL: candidate.posterURL,
+                                memoryCache: widget.memoryCache,
+                                loadingBuilder: (_) => ColoredBox(
+                                  color: theme.colorScheme.surfaceContainerHigh,
+                                ),
+                                errorBuilder: (_, _, _) => ColoredBox(
+                                  color: theme.colorScheme.surfaceContainerHigh,
+                                  child: const Icon(Icons.movie_outlined, size: 18),
+                                ),
+                              ),
+                            ),
+                          )
+                        : null,
                     title: Text(
                       '${candidate.title}${candidate.year.isEmpty ? '' : ' (${candidate.year})'}',
                       style: theme.textTheme.bodyMedium?.copyWith(

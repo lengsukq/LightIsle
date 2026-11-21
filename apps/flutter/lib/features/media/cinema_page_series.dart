@@ -105,6 +105,8 @@ extension _CinemaPageSeries on _CinemaPageState {
     await Navigator.of(context).push<void>(
       buildIslePageRoute(
         builder: (_) => CinemaSeriesOverview(
+          api: widget.api,
+          memoryCache: _posterCache,
           series: currentSeries,
           episodes: films,
           error: error,
@@ -239,28 +241,49 @@ extension _CinemaPageSeries on _CinemaPageState {
                 physics: const NeverScrollableScrollPhysics(),
                 mainAxisSpacing: 8,
                 crossAxisSpacing: 8,
-                childAspectRatio: textScale > 1.35 ? 2.8 : 3.7,
+                childAspectRatio: textScale > 1.35 ? 2.5 : 3.2,
                 children: <Widget>[
                   for (final series in filteredSeries)
                     IsleSurface(
                       margin: EdgeInsets.zero,
                       padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
+                        horizontal: 10,
                         vertical: 8,
                       ),
                       radius: IsleRadius.md,
                       onTap: () => unawaited(_openSeries(series)),
                       child: Row(
                         children: <Widget>[
-                          IsleSquircleBadge(
-                            icon: series.hasContinue && series.inProgress
-                                ? Icons.play_arrow_rounded
-                                : Icons.live_tv_rounded,
-                            color: series.hasContinue && series.inProgress
-                                ? const Color(0xFFE50914)
-                                : theme.colorScheme.primary,
-                            size: 34,
-                            iconSize: 18,
+                          ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: SizedBox(
+                              width: 44,
+                              height: 66,
+                              child: CinemaPosterImage.series(
+                                api: widget.api,
+                                series: series,
+                                memoryCache: _posterCache,
+                                maxBytes: 3 * 1024 * 1024,
+                                loadingBuilder: (_) => ColoredBox(
+                                  color: theme.colorScheme.surfaceContainerHigh,
+                                  child: const Center(
+                                    child: Icon(Icons.live_tv_rounded, size: 20),
+                                  ),
+                                ),
+                                errorBuilder: (_, _, _) => ColoredBox(
+                                  color: theme.colorScheme.surfaceContainerHigh,
+                                  child: Icon(
+                                    series.hasContinue && series.inProgress
+                                        ? Icons.play_arrow_rounded
+                                        : Icons.live_tv_rounded,
+                                    size: 20,
+                                    color: series.hasContinue && series.inProgress
+                                        ? const Color(0xFFE50914)
+                                        : theme.colorScheme.primary,
+                                  ),
+                                ),
+                              ),
+                            ),
                           ),
                           const SizedBox(width: 10),
                           Expanded(
@@ -473,7 +496,7 @@ extension _CinemaPageSeries on _CinemaPageState {
         final mainSpacing = width < 600 ? 10.0 : 14.0;
         final posterWidth =
             (width - _pageInset * 2 - (columns - 1) * crossSpacing) / columns;
-        final footerHeight = 88 * textScale + 12;
+        final footerHeight = 98 * textScale + 14;
         final duplicateKeys = duplicateCinemaTitleKeys(_catalog.films);
         return SliverPadding(
           padding: EdgeInsets.fromLTRB(_pageInset, 2, _pageInset, 0),

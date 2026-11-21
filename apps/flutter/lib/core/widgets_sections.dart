@@ -4,32 +4,32 @@ enum IsleSectionTheme {
   overview(
     label: '仪表盘',
     icon: Icons.space_dashboard_rounded,
-    color: Color(0xff1f5162), // Deep Mineral Teal
-    gradient: [Color(0xff2c6c80), Color(0xff18414f)],
+    color: Color(0xff0e6b74), // Modern Deep Aegean Teal
+    gradient: [Color(0xff14818b), Color(0xff0a5259)],
   ),
   files(
     label: '文件',
     icon: Icons.folder_rounded,
-    color: Color(0xffb86b19), // Warm Ochre Amber
-    gradient: [Color(0xffd4822a), Color(0xff9c5711)],
+    color: Color(0xffc7781a), // Refined Ochre Amber
+    gradient: [Color(0xffdf8c28), Color(0xffa66111)],
   ),
   photos(
     label: '图库',
     icon: Icons.photo_library_rounded,
-    color: Color(0xffb53858), // Terracotta Rose
-    gradient: [Color(0xffcf4c6d), Color(0xff942945)],
+    color: Color(0xffc23b62), // Gallery Rose
+    gradient: [Color(0xffdb4f77), Color(0xff9c2b4c)],
   ),
   cinema(
     label: '影视',
     icon: Icons.movie_rounded,
-    color: Color(0xffc9472c), // Cinema Vermilion
-    gradient: [Color(0xffe05d40), Color(0xffa6341d)],
+    color: Color(0xffd4653e), // Coral Clay
+    gradient: [Color(0xffe67953), Color(0xffb54f2b)],
   ),
   settings(
     label: '设置',
     icon: Icons.settings_rounded,
-    color: Color(0xff5e4b7a), // Muted Plum Slate
-    gradient: [Color(0xff796399), Color(0xff493961)],
+    color: Color(0xff6b5799), // Modern Iris Slate
+    gradient: [Color(0xff826db3), Color(0xff53427a)],
   );
 
   const IsleSectionTheme({

@@ -1,9 +1,9 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
-import '../../core/authenticated_media_image.dart';
 import '../../core/isle_style.dart';
 import '../../core/lightisle_api.dart';
+import 'cinema_poster_image.dart';
 import 'media_models.dart';
 
 /// The film header is only a view. Playback, casting and metadata mutations
@@ -99,9 +99,9 @@ class CinemaDetailHeader extends StatelessWidget {
                 ),
               ),
               clipBehavior: Clip.antiAlias,
-              child: AuthenticatedMediaImage(
+              child: CinemaPosterImage.film(
                 api: api,
-                path: '/api/v2/cinema/${film.id}/poster',
+                film: film,
                 maxBytes: 2 * 1024 * 1024,
                 fit: BoxFit.cover,
               ),

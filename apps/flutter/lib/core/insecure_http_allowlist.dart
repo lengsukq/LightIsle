@@ -10,8 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 /// Entries are matched strictly by canonical origin (`scheme + host + port`):
 /// wildcards, paths, queries, credentials, and `https://` URLs are rejected.
 class InsecureHttpAllowlist {
-  InsecureHttpAllowlist({String preferencesKey = _defaultPreferencesKey})
-    : _preferencesKey = preferencesKey;
+  InsecureHttpAllowlist({this._preferencesKey = _defaultPreferencesKey});
 
   static const String _defaultPreferencesKey = 'lightisle.insecureHttpAllowlist';
   static const int maxEntries = 24;
@@ -63,9 +62,12 @@ class InsecureHttpAllowlist {
     return address?.isLoopback ?? false;
   }
 
-  /// Returns whether [host] is a literal RFC1918 / link-local / ULA private IP.
+  /// Returns whether [host] is a literal RFC1918 / Tailscale CGNAT / link-local / ULA private IP.
   static bool isPrivateHost(String host) {
-    final address = InternetAddress.tryParse(host);
+    final normalized = host.startsWith('[') && host.endsWith(']')
+        ? host.substring(1, host.length - 1)
+        : host;
+    final address = InternetAddress.tryParse(normalized);
     if (address == null) return false;
     final bytes = address.rawAddress;
     if (address.type == InternetAddressType.IPv4) {
@@ -74,7 +76,8 @@ class InsecureHttpAllowlist {
       return first == 10 ||
           (first == 172 && second >= 16 && second <= 31) ||
           (first == 192 && second == 168) ||
-          (first == 169 && second == 254);
+          (first == 169 && second == 254) ||
+          (first == 100 && second >= 64 && second <= 127);
     }
     if (address.type == InternetAddressType.IPv6) {
       final first = bytes[0];

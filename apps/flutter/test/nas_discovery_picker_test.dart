@@ -148,7 +148,7 @@ void main() {
     await tester.tap(find.byKey(const Key('nasDiscoveryButton')));
     await tester.pumpAndSettle();
 
-    expect(find.textContaining('没有找到 LightIsle'), findsOneWidget);
+    expect(find.textContaining('未发现设备'), findsOneWidget);
     expect(find.text('重新搜索'), findsOneWidget);
   });
 
@@ -297,7 +297,7 @@ void main() {
 
     expect(
       tester
-          .widget<OutlinedButton>(find.byKey(const Key('nasDiscoveryButton')))
+          .widget<ButtonStyleButton>(find.byKey(const Key('nasDiscoveryButton')))
           .onPressed,
       isNull,
     );

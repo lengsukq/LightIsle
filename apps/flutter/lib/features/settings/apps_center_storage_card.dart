@@ -200,7 +200,7 @@ extension _AppsCenterStorageCard on _AppsCenterPageState {
           ),
           const SizedBox(height: 4),
           Text(
-            '已装 $appCount 个应用${freeBytes > 0 ? ' · 剩余 ${_formatStorageBytes(freeBytes)}' : ''}',
+            '已装 $appCount 个应用${freeBytes > 0 ? ' · 剩余 ${formatBytes(freeBytes)}' : ''}',
             style: theme.textTheme.bodySmall?.copyWith(
               color: colors.onSurfaceVariant,
             ),
@@ -300,18 +300,6 @@ extension _AppsCenterStorageCard on _AppsCenterPageState {
       if (result.name.isNotEmpty) 'name': result.name,
       'setDefault': result.setDefault,
     });
-  }
-
-  String _formatStorageBytes(int bytes) {
-    if (bytes <= 0) return '0 B';
-    const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-    var val = bytes.toDouble();
-    var idx = 0;
-    while (val >= 1024 && idx < units.length - 1) {
-      val /= 1024;
-      idx++;
-    }
-    return '${idx <= 1 || val >= 100 ? val.round() : val.toStringAsFixed(1)} ${units[idx]}';
   }
 }
 

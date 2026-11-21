@@ -152,7 +152,7 @@ extension _ClientShellChrome on _ClientShellState {
     ),
   );
 
-  Widget _buildDashboardFilesContainer() {
+  Widget _buildDashboardFilesContainer({required bool compactMobileChrome}) {
     if (_personalRouteError != null && _manualRootSection != 0) {
       return _buildRouteErrorView();
     }
@@ -164,7 +164,7 @@ extension _ClientShellChrome on _ClientShellState {
             ? filesRoute.path!
             : '.');
     final expectedKey = ValueKey<String>(
-      'root:${widget.api.selectedRoot?.identity ?? 'default'}:files:$resolvedInitialPath',
+      'root:${widget.api.selectedRoot?.identity ?? 'default'}:files:$resolvedInitialPath:$compactMobileChrome',
     );
     if (_dashboardFilesWidget?.key != expectedKey) {
       _dashboardFilesWidget = KeyedSubtree(
@@ -174,9 +174,14 @@ extension _ClientShellChrome on _ClientShellState {
           taskCenter: _uploadCenter,
           isAdmin: _admin,
           accountName: widget.identity['username']?.toString() ?? '',
+          accountId: _canonicalAccountId,
           initialPath: resolvedInitialPath,
+          compactEmbeddedHeader: compactMobileChrome,
         ),
       );
+    }
+    if (compactMobileChrome) {
+      return _dashboardFilesWidget!;
     }
     final scheme = Theme.of(context).colorScheme;
     final style = IsleThemeStyle.of(context);
@@ -425,16 +430,8 @@ extension _ClientShellChrome on _ClientShellState {
                 Expanded(
                   child: GestureDetector(
                     behavior: HitTestBehavior.opaque,
-                    onPanStart: (_) => unawaited(
-                      const MethodChannel('lightisle/native-video')
-                          .invokeMethod<void>('startWindowDrag')
-                          .catchError((_) {}),
-                    ),
-                    onDoubleTap: () => unawaited(
-                      const MethodChannel('lightisle/native-video')
-                          .invokeMethod<void>('doubleClickTitlebar')
-                          .catchError((_) {}),
-                    ),
+                    onPanStart: (_) => NativeVideoBridge.startWindowDrag(),
+                    onDoubleTap: NativeVideoBridge.doubleClickTitlebar,
                     child: SizedBox(
                       height: 52,
                       child: Row(
@@ -527,240 +524,36 @@ extension _ClientShellChrome on _ClientShellState {
     );
   }
 
-  Widget _wrapMacPlatformMenus(Widget content) => PlatformMenuBar(
-    menus: [
-      PlatformMenu(
-        label: '轻屿',
-        menus: [
-          const PlatformProvidedMenuItem(
-            type: PlatformProvidedMenuItemType.about,
-          ),
-          PlatformMenuItem(
-            label: '设置…',
-            shortcut: const SingleActivator(
-              LogicalKeyboardKey.comma,
-              meta: true,
-            ),
-            onSelected: () => _select(3),
-          ),
-          const PlatformProvidedMenuItem(
-            type: PlatformProvidedMenuItemType.quit,
-          ),
-        ],
-      ),
-      PlatformMenu(
-        label: '前往',
-        menus: [
-          ...List.generate(
-            _ClientShellState._labels.length,
-            (i) => PlatformMenuItem(
-              label: _ClientShellState._labels[i],
-              onSelected: () => _select(i),
-            ),
-          ),
-          PlatformMenuItem(label: '文件管理', onSelected: _openDashboardFiles),
-        ],
-      ),
-      PlatformMenu(
-        label: '编辑',
-        menus: [
-          for (final command in <(String, Intent, LogicalKeyboardKey)>[
-            (
-              '剪切',
-              const CopySelectionTextIntent.cut(SelectionChangedCause.toolbar),
-              LogicalKeyboardKey.keyX,
-            ),
-            ('复制', CopySelectionTextIntent.copy, LogicalKeyboardKey.keyC),
-            (
-              '粘贴',
-              const PasteTextIntent(SelectionChangedCause.toolbar),
-              LogicalKeyboardKey.keyV,
-            ),
-            (
-              '全选',
-              const SelectAllTextIntent(SelectionChangedCause.toolbar),
-              LogicalKeyboardKey.keyA,
-            ),
-          ])
-            PlatformMenuItem(
-              label: command.$1,
-              shortcut: SingleActivator(command.$3, meta: true),
-              onSelected: () {
-                final focusContext =
-                    FocusManager.instance.primaryFocus?.context;
-                if (focusContext != null) {
-                  Actions.maybeInvoke(focusContext, command.$2);
-                }
-              },
-            ),
-        ],
-      ),
-    ],
+  Widget _wrapMacPlatformMenus(Widget content) => ClientShellMacPlatformMenuBar(
+    labels: _ClientShellState._labels,
+    onSelect: _select,
+    onOpenFiles: _openDashboardFiles,
     child: content,
   );
 
-  Widget _buildRailDock(BuildContext context, {required bool extendedRail}) {
-    final activeTone = _activeSectionColor(context);
-    final palette = IslePalette.of(context);
-    final showCompanionFilesOrb =
-        MediaQuery.sizeOf(context).height >= 540 && !extendedRail;
-
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      children: [
-        IsleFloatingRailDock(
-          child: NavigationRailTheme(
-            data: NavigationRailThemeData(
-              backgroundColor: Colors.transparent,
-              indicatorColor: activeTone.withValues(alpha: 0.15),
-              indicatorShape: IsleShapes.sm(),
-              selectedIconTheme: IconThemeData(
-                size: 20.5,
-                color: activeTone,
-              ),
-              unselectedIconTheme: IconThemeData(
-                size: 19.5,
-                color: Theme.of(context).colorScheme.onSurfaceVariant,
-              ),
-              selectedLabelTextStyle: Theme.of(context).textTheme.labelMedium
-                  ?.copyWith(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w700,
-                    color: activeTone,
-                  ),
-              unselectedLabelTextStyle: Theme.of(context).textTheme.labelMedium
-                  ?.copyWith(
-                    fontSize: 12.5,
-                    fontWeight: FontWeight.w500,
-                    color: Theme.of(context).colorScheme.onSurfaceVariant,
-                  ),
-            ),
-            child: AnimatedSize(
-              duration: IsleMotion.reducedMotion(context)
-                  ? Duration.zero
-                  : IsleMotion.normal,
-              curve: IsleMotion.curve,
-              alignment: Alignment.centerLeft,
-              child: NavigationRail(
-                selectedIndex: _index,
-                extended: extendedRail,
-                minWidth: 64,
-                minExtendedWidth: 184,
-                labelType: NavigationRailLabelType.none,
-                onDestinationSelected: _select,
-                destinations: List.generate(
-                  _ClientShellState._labels.length,
-                  (i) => NavigationRailDestination(
-                    icon: Icon(_ClientShellState._sectionThemes[i].icon),
-                    label: Text(_ClientShellState._labels[i]),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-        if (showCompanionFilesOrb)
-          Padding(
-            padding: const EdgeInsets.only(left: 4),
-            child: Tooltip(
-              message: '直达文件工作台',
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  borderRadius: IsleRadius.brPill,
-                  onTap: _openDashboardFiles,
-                  child: Container(
-                    width: 44,
-                    height: 44,
-                    decoration: IsleDecorations.capsuleControl(
-                      context,
-                      selected: _showingDashboardFiles && _index == 0,
-                      accent: palette['brandAmber'],
-                    ),
-                    child: Icon(
-                      Icons.folder_rounded,
-                      size: 19,
-                      color: _showingDashboardFiles && _index == 0
-                          ? palette['brandAmber']
-                          : Theme.of(context).colorScheme.onSurfaceVariant,
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-      ],
-    );
-  }
+  Widget _buildRailDock(BuildContext context, {required bool extendedRail}) =>
+      ClientShellRailDock(
+        selectedIndex: _index,
+        extendedRail: extendedRail,
+        filesActive: _showingDashboardFiles && _index == 0,
+        activeTone: _activeSectionColor(context),
+        labels: _ClientShellState._labels,
+        sectionThemes: _ClientShellState._sectionThemes,
+        onSelect: _select,
+        onOpenFiles: _openDashboardFiles,
+      );
 
   Widget _buildBottomNavDock(
     BuildContext context, {
     required double maxWidth,
     required double textScale,
-  }) {
-    final style = IsleThemeStyle.of(context);
-    final activeTone = _activeSectionColor(context);
-    final indicatorShape = style.preset.cornerStyle == IsleCornerStyle.sharp
-        ? style.shapeFor(IsleRadius.sm)
-        : style.preset.surfaceMaterial == IsleSurfaceMaterial.neoBrutal
-        ? StadiumBorder(
-            side: BorderSide(color: style.rimBorderColor(), width: 1.5),
-          )
-        : const StadiumBorder();
-    return IsleFloatingBottomNavDock(
-      child: NavigationBarTheme(
-        data: NavigationBarThemeData(
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          indicatorColor: activeTone.withValues(alpha: 0.15),
-          indicatorShape: indicatorShape,
-          iconTheme: WidgetStateProperty.resolveWith((states) {
-            if (states.contains(WidgetState.selected)) {
-              return IconThemeData(size: 20.5, color: activeTone);
-            }
-            return IconThemeData(
-              size: 19.5,
-              color: Theme.of(context).colorScheme.onSurfaceVariant
-                  .withValues(alpha: 0.78),
-            );
-          }),
-          labelTextStyle: WidgetStateProperty.resolveWith((states) {
-            if (states.contains(WidgetState.selected)) {
-              return Theme.of(context).textTheme.labelSmall?.copyWith(
-                fontSize: 11,
-                fontWeight: FontWeight.w700,
-                color: activeTone,
-              );
-            }
-            return Theme.of(context).textTheme.labelSmall?.copyWith(
-              fontSize: 10.5,
-              fontWeight: FontWeight.w500,
-              color: Theme.of(context).colorScheme.onSurfaceVariant
-                  .withValues(alpha: 0.78),
-            );
-          }),
-        ),
-        child: NavigationBar(
-          height: 50,
-          labelBehavior: maxWidth < 360 && textScale > 1.4
-              ? NavigationDestinationLabelBehavior.alwaysHide
-              : NavigationDestinationLabelBehavior.alwaysShow,
-          selectedIndex: _index,
-          onDestinationSelected: _select,
-          destinations: List.generate(
-            _ClientShellState._labels.length,
-            (i) => NavigationDestination(
-              tooltip: _ClientShellState._labels[i],
-              icon: Icon(_ClientShellState._sectionThemes[i].icon),
-              selectedIcon: Icon(
-                _ClientShellState._sectionThemes[i].icon,
-                color: activeTone,
-              ),
-              label: _ClientShellState._labels[i],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
+  }) => ClientShellBottomNavDock(
+    selectedIndex: _index,
+    maxWidth: maxWidth,
+    textScale: textScale,
+    activeTone: _activeSectionColor(context),
+    labels: _ClientShellState._labels,
+    sectionThemes: _ClientShellState._sectionThemes,
+    onSelect: _select,
+  );
 }

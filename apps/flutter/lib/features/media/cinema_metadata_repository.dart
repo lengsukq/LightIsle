@@ -1,3 +1,5 @@
+import 'package:flutter/foundation.dart';
+
 import '../../core/lightisle_api.dart';
 import 'media_models.dart';
 
@@ -125,7 +127,9 @@ class CinemaMetadataRepository {
       if (response.containsKey('id')) {
         return CinemaFilm.fromJson(response);
       }
-    } catch (_) {}
+    } catch (error) {
+      debugPrint('CinemaMetadataRepository.fetchFilm($filmId) failed: $error');
+    }
     return null;
   }
 

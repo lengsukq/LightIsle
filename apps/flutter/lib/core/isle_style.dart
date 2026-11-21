@@ -10,15 +10,15 @@ export 'isle_theme_presets.dart';
 
 /// Unified corner-radius scale for the LightIsle Flutter client.
 abstract final class IsleRadius {
-  static const double xs = IsleTokens.radiusXs; // 8.0
-  static const double sm = IsleTokens.radiusSm; // 12.0
-  static const double control = 13.0;
-  static const double md = IsleTokens.radiusMd; // 16.0
-  static const double item = 18.0;
-  static const double lg = IsleTokens.radiusLg; // 22.0
-  static const double card = 20.0;
-  static const double hero = 26.0;
-  static const double xl = IsleTokens.radiusXl; // 30.0
+  static const double xs = IsleTokens.radiusXs; // 7.0
+  static const double sm = IsleTokens.radiusSm; // 10.0
+  static const double control = IsleTokens.controlRadius; // 12.0
+  static const double md = IsleTokens.radiusMd; // 14.0
+  static const double item = IsleTokens.itemRadius; // 18.0
+  static const double lg = IsleTokens.radiusLg; // 18.0
+  static const double card = IsleTokens.cardRadius; // 20.0
+  static const double hero = IsleTokens.heroRadius; // 24.0
+  static const double xl = IsleTokens.radiusXl; // 22.0
   static const double sheet = 28.0;
   static const double pill = IsleTokens.radiusPill; // 9999.0
 
@@ -107,7 +107,7 @@ abstract final class IsleSpace {
   static const double xl = IsleTokens.space6; // 24.0
   static const double xxl = IsleTokens.space8; // 32.0
   static const double xxxl = IsleTokens.space10; // 40.0
-  static const double section = 24.0;
+  static const double section = IsleTokens.space6; // 24.0
 
   static const EdgeInsets cardPadding = EdgeInsets.all(16);
   static const EdgeInsets cardPaddingCompact = EdgeInsets.symmetric(
@@ -135,12 +135,14 @@ abstract final class IsleSpace {
 abstract final class IsleMotion {
   static const Duration pressDown = Duration(milliseconds: 95);
   static const Duration micro = Duration(milliseconds: 120);
-  static const Duration fast = Duration(milliseconds: 165);
+  static const Duration fast = Duration(milliseconds: IsleTokens.motionFastMs);
   static const Duration modalExit = Duration(milliseconds: 185);
   static const Duration quick = Duration(milliseconds: 220);
   static const Duration routeExit = Duration(milliseconds: 220);
   static const Duration pressRelease = Duration(milliseconds: 250);
-  static const Duration normal = Duration(milliseconds: 260);
+  static const Duration normal = Duration(
+    milliseconds: IsleTokens.motionNormalMs,
+  );
   static const Duration modalEnter = Duration(milliseconds: 270);
   static const Duration tabSwitch = Duration(milliseconds: 280);
   static const Duration navigation = Duration(milliseconds: 300);
@@ -434,79 +436,77 @@ abstract final class IsleLayout {
       IsleMotion.reducedMotion(context);
 }
 
-/// Curated Warm Editorial Gallery palette ("温润画廊质感") exclusive to Flutter.
-/// Replaces the cold blue-on-white SaaS palette with warm parchment linen,
-/// pure gallery paper cards, deep mineral teal-ink, terracotta, ochre, and sage.
+/// Curated Modern Warm Gallery palette ("现代温润画廊") aligned 1-to-1 with Web.
 abstract final class IsleGalleryColors {
   static const Map<String, Color> light = <String, Color>{
-    'canvasTop': Color(0xfff7f5f0),
-    'canvasBottom': Color(0xffefece4),
+    'canvasTop': Color(0xfff7f6f3),
+    'canvasBottom': Color(0xfff1efea),
     'cardTop': Color(0xffffffff),
-    'cardBottom': Color(0xfffcfbf8),
-    'cardHover': Color(0xfff4f0e8),
-    'cardItemTop': Color(0xfffaf8f3),
-    'cardItemBottom': Color(0xfff2efe7),
-    'chrome': Color(0xfff6f4ee),
-    'rim': Color(0xffe3ded4),
-    'shadow': Color(0xff1c1917),
-    'surfaceBase': Color(0xfff6f4ee),
+    'cardBottom': Color(0xfffdfdfc),
+    'cardHover': Color(0xfff5f4f0),
+    'cardItemTop': Color(0xfff8f7f4),
+    'cardItemBottom': Color(0xfff3f1ec),
+    'chrome': Color(0xfffaf9f6),
+    'rim': Color(0xffe7e4dd),
+    'shadow': Color(0xff141311),
+    'surfaceBase': Color(0xfff7f6f3),
     'surfaceElevated': Color(0xffffffff),
-    'surfaceGlassFallback': Color(0xfff5f3ed),
-    'textPrimary': Color(0xff181715),
-    'textSecondary': Color(0xff635e57),
-    'secondaryText': Color(0xff635e57),
-    'textTertiary': Color(0xff948d84),
-    'textDisabled': Color(0xffc7c1b8),
-    'accentPrimary': Color(0xff1f5162), // Deep Mineral Teal-Ink (黛青墨色)
-    'accentSecondary': Color(0xffb85d3b), // Warm Terracotta (陶土暖橘)
-    'brandBlue': Color(0xff1f5162),
-    'brandCyan': Color(0xff1d6f72),
-    'brandViolet': Color(0xff6d4c7d),
-    'brandIndigo': Color(0xff3c4f76),
-    'brandAmber': Color(0xffb86b19),
-    'brandTerracotta': Color(0xffc25934),
-    'brandSage': Color(0xff216e53),
-    'brandRose': Color(0xffb53858),
-    'success': Color(0xff1f7a56),
-    'warning': Color(0xffc27816),
+    'surfaceGlassFallback': Color(0xfffcfbf9),
+    'textPrimary': Color(0xff141413),
+    'textSecondary': Color(0xff5c5a55),
+    'secondaryText': Color(0xff5c5a55),
+    'textTertiary': Color(0xff8f8c85),
+    'textDisabled': Color(0xffc7c4bc),
+    'accentPrimary': Color(0xff0e6b74), // Modern Deep Aegean Teal
+    'accentSecondary': Color(0xffd4653e), // Refined Warm Coral-Clay
+    'brandBlue': Color(0xff0e6b74),
+    'brandCyan': Color(0xff0d7c86),
+    'brandViolet': Color(0xff6b5799),
+    'brandIndigo': Color(0xff3f5485),
+    'brandAmber': Color(0xffc7781a),
+    'brandTerracotta': Color(0xffd4653e),
+    'brandSage': Color(0xff18835b),
+    'brandRose': Color(0xffc23b62),
+    'success': Color(0xff18835b),
+    'warning': Color(0xffc7781a),
     'error': Color(0xffc93b3b),
-    'warningText': Color(0xff8c4f00),
+    'warningText': Color(0xff8f5206),
     'errorText': Color(0xffa62932),
-    'successText': Color(0xff166644),
+    'successText': Color(0xff126b49),
   };
 
   static const Map<String, Color> dark = <String, Color>{
-    'canvasTop': Color(0xff111110),
-    'canvasBottom': Color(0xff171614),
-    'cardTop': Color(0xff1f1e1b),
-    'cardBottom': Color(0xff191816),
-    'cardHover': Color(0xff292723),
-    'cardItemTop': Color(0xff24231f),
-    'cardItemBottom': Color(0xff1b1a17),
-    'chrome': Color(0xff181715),
-    'rim': Color(0xff36332d),
+    'canvasTop': Color(0xff0e0e0d),
+    'canvasBottom': Color(0xff131311),
+    'cardTop': Color(0xff191917),
+    'cardBottom': Color(0xff161614),
+    'cardHover': Color(0xff22221f),
+    'cardItemTop': Color(0xff20201d),
+    'cardItemBottom': Color(0xff1b1b18),
+    'chrome': Color(0xff151513),
+    'rim': Color(0xff2e2e2a),
     'shadow': Color(0xff000000),
-    'surfaceBase': Color(0xff121210),
-    'surfaceElevated': Color(0xff1f1e1b),
-    'surfaceGlassFallback': Color(0xff181715),
-    'textPrimary': Color(0xfff5f2ec),
-    'textSecondary': Color(0xffa8a198),
-    'secondaryText': Color(0xffa8a198),
-    'textTertiary': Color(0xff78726a),
-    'textDisabled': Color(0xff524d47),
-    'accentPrimary': Color(0xff72bccb), // Luminous Celadon
-    'accentSecondary': Color(0xffe08a67), // Soft Terracotta
-    'brandBlue': Color(0xff72bccb),
-    'brandCyan': Color(0xff64c7be),
-    'brandViolet': Color(0xffc39ce0),
+    'surfaceBase': Color(0xff0e0e0d),
+    'surfaceElevated': Color(0xff1c1c1a),
+    'surfaceGlassFallback': Color(0xff171715),
+    'textPrimary': Color(0xfff5f4f0),
+    'textSecondary': Color(0xffa4a199),
+    'secondaryText': Color(0xffa4a199),
+    'textTertiary': Color(0xff737069),
+    'textDisabled': Color(0xff4d4b46),
+    'accentPrimary': Color(0xff5cc8d4), // Luminous Aqua-Jade
+    'accentSecondary': Color(0xffe88864), // Warm Apricot-Coral
+    'brandBlue': Color(0xff5cc8d4),
+    'brandCyan': Color(0xff52c7ba),
+    'brandViolet': Color(0xffb8a1e3),
     'brandIndigo': Color(0xff9ab0e6),
-    'brandAmber': Color(0xffeab057),
-    'brandTerracotta': Color(0xffe58b68),
-    'brandSage': Color(0xff67c99e),
-    'brandRose': Color(0xffeb829c),
-    'success': Color(0xff4ac28e),
-    'warning': Color(0xfff0b44c),
-    'error': Color(0xfff07575),
+    'brandAmber': Color(0xffe8a64d),
+    'brandTerracotta': Color(0xffe88864),
+    'brandSage': Color(0xff47c28d),
+    'brandRose': Color(0xffec84a0),
+    'success': Color(0xff47c28d),
+    'warning': Color(0xffe8a64d),
+    'error': Color(0xffec6e66),
     'warningText': Color(0xfff4c675),
     'errorText': Color(0xffffaba8),
     'successText': Color(0xff77d6ab),

@@ -3,8 +3,11 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 
 import '../../core/isle_theme.dart';
+import '../../core/lightisle_api.dart';
+import '../../core/media_image_memory_cache.dart';
 import '../../core/widgets.dart';
 import 'cinema_catalog_display.dart';
+import 'cinema_poster_image.dart';
 import 'media_models.dart';
 import 'media_ui.dart';
 
@@ -16,6 +19,8 @@ typedef CinemaSeriesSnapshot = ({
 class CinemaSeriesOverview extends StatefulWidget {
   const CinemaSeriesOverview({
     super.key,
+    this.api,
+    this.memoryCache,
     required this.series,
     required this.episodes,
     required this.onEpisode,
@@ -23,6 +28,8 @@ class CinemaSeriesOverview extends StatefulWidget {
     this.error,
   });
 
+  final LightIsleApi? api;
+  final MediaImageMemoryCache? memoryCache;
   final CinemaSeriesInfo series;
   final List<CinemaFilm> episodes;
   final Future<void> Function(CinemaFilm film) onEpisode;
@@ -134,79 +141,113 @@ class _CinemaSeriesOverviewState extends State<CinemaSeriesOverview> {
                         radius: IsleRadius.hero,
                         tint: accent,
                         padding: const EdgeInsets.all(20),
-                        child: Column(
+                        child: Row(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Row(
-                              children: [
-                                IsleBadgePill(
-                                  label: 'LIGHTISLE 剧集',
-                                  color: accent,
-                                ),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: Text(
-                                    '共 ${_episodes.length} 集 · 已看 ${_series.watchedCount} 集',
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: theme.textTheme.bodySmall?.copyWith(
-                                      color: scheme.onSurfaceVariant,
-                                      fontWeight: FontWeight.w600,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 10),
-                            Text(
-                              _series.name,
-                              style: theme.textTheme.headlineSmall?.copyWith(
-                                fontWeight: FontWeight.w800,
-                              ),
-                            ),
-                            if (_series.overview.isNotEmpty) ...[
-                              const SizedBox(height: 8),
-                              Text(
-                                _series.overview,
-                                style: theme.textTheme.bodyMedium?.copyWith(
-                                  color: scheme.onSurfaceVariant,
-                                  height: 1.5,
-                                ),
-                              ),
-                            ],
-                            if (ctaTarget != null) ...[
-                              const SizedBox(height: 14),
-                              Wrap(
-                                spacing: 10,
-                                runSpacing: 8,
-                                children: [
-                                  FilledButton.icon(
-                                    key: const ValueKey('cinemaSeriesPlayCta'),
-                                    style: FilledButton.styleFrom(
-                                      padding: const EdgeInsets.symmetric(
-                                        horizontal: 18,
-                                        vertical: 10,
+                            if (widget.api != null) ...[
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(12),
+                                child: SizedBox(
+                                  width: MediaQuery.sizeOf(cinemaContext).width >= 600 ? 128 : 92,
+                                  height: MediaQuery.sizeOf(cinemaContext).width >= 600 ? 192 : 138,
+                                  child: CinemaPosterImage.series(
+                                    api: widget.api!,
+                                    series: _series,
+                                    memoryCache: widget.memoryCache,
+                                    loadingBuilder: (_) => ColoredBox(
+                                      color: scheme.surfaceContainerHigh,
+                                      child: const Center(
+                                        child: Icon(Icons.live_tv_outlined, size: 32),
                                       ),
                                     ),
-                                    onPressed: () =>
-                                        unawaited(_playEpisode(ctaTarget)),
-                                    icon: Icon(
-                                      ctaTarget.canResume
-                                          ? Icons.play_circle_filled_rounded
-                                          : Icons.play_arrow_rounded,
-                                      size: 18,
-                                    ),
-                                    label: Text(
-                                      ctaTarget.canResume
-                                          ? formatCinemaResumeCtaLabel(
-                                              ctaTarget,
-                                            )
-                                          : '播放 ${formatCinemaSeasonEpisodeCode(ctaTarget).isEmpty ? '第 ${ctaTarget.episode} 集' : formatCinemaSeasonEpisodeCode(ctaTarget)}',
+                                    errorBuilder: (_, _, _) => ColoredBox(
+                                      color: scheme.surfaceContainerHigh,
+                                      child: const Center(
+                                        child: Icon(Icons.live_tv_outlined, size: 32),
+                                      ),
                                     ),
                                   ),
+                                ),
+                              ),
+                              const SizedBox(width: 16),
+                            ],
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Row(
+                                    children: [
+                                      IsleBadgePill(
+                                        label: 'LIGHTISLE 剧集',
+                                        color: accent,
+                                      ),
+                                      const SizedBox(width: 10),
+                                      Expanded(
+                                        child: Text(
+                                          '共 ${_episodes.length} 集 · 已看 ${_series.watchedCount} 集',
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: theme.textTheme.bodySmall?.copyWith(
+                                            color: scheme.onSurfaceVariant,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Text(
+                                    _series.name,
+                                    style: theme.textTheme.headlineSmall?.copyWith(
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                  if (_series.overview.isNotEmpty) ...[
+                                    const SizedBox(height: 8),
+                                    Text(
+                                      _series.overview,
+                                      style: theme.textTheme.bodyMedium?.copyWith(
+                                        color: scheme.onSurfaceVariant,
+                                        height: 1.5,
+                                      ),
+                                    ),
+                                  ],
+                                  if (ctaTarget != null) ...[
+                                    const SizedBox(height: 14),
+                                    Wrap(
+                                      spacing: 10,
+                                      runSpacing: 8,
+                                      children: [
+                                        FilledButton.icon(
+                                          key: const ValueKey('cinemaSeriesPlayCta'),
+                                          style: FilledButton.styleFrom(
+                                            padding: const EdgeInsets.symmetric(
+                                              horizontal: 18,
+                                              vertical: 10,
+                                            ),
+                                          ),
+                                          onPressed: () =>
+                                              unawaited(_playEpisode(ctaTarget)),
+                                          icon: Icon(
+                                            ctaTarget.canResume
+                                                ? Icons.play_circle_filled_rounded
+                                                : Icons.play_arrow_rounded,
+                                            size: 18,
+                                          ),
+                                          label: Text(
+                                            ctaTarget.canResume
+                                                ? formatCinemaResumeCtaLabel(
+                                                    ctaTarget,
+                                                  )
+                                                : '播放 ${formatCinemaSeasonEpisodeCode(ctaTarget).isEmpty ? '第 ${ctaTarget.episode} 集' : formatCinemaSeasonEpisodeCode(ctaTarget)}',
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
                                 ],
                               ),
-                            ],
+                            ),
                           ],
                         ),
                       ),

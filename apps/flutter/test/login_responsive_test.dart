@@ -44,7 +44,7 @@ void main() {
       await tester.pumpWidget(app(scale: scale));
       await tester.pumpAndSettle();
       expect(find.byType(LoginFlowBackground), findsOneWidget);
-      expect(find.byType(IsleSurface), findsNothing);
+      expect(find.byType(IsleSurface), findsOneWidget);
       expect(find.byType(Form), findsOneWidget);
       expect(find.byType(IsleBrandMark), findsOneWidget);
       expect(find.byKey(const Key('loginScrollView')), findsOneWidget);

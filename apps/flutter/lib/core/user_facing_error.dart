@@ -46,7 +46,6 @@ const Map<String, String> _kErrorLabels = <String, String>{
   'archive_busy': '当前打包下载较多，请稍后重试。',
   'archive_source_changed': '文件夹内容在下载前发生变化，请刷新目录后重试。',
   'storage_durability_failure': '文件写入后未能确认持久保存，请检查目标文件状态，不要立即重复执行。',
-  'storage_quota_is_per_disk_upgrade_client': '存储配额已改为按物理硬盘计算，请升级客户端后重新设置。',
   'upload_busy': '目标路径正在上传，请继续原任务或先取消，不要重复上传。',
   'upload_timed_out': '上传连接超时，请检查网络后从原任务继续。',
   'upload_server_busy': '上传服务达到并发上限，请稍后继续原任务。',
@@ -83,7 +82,14 @@ const Map<String, String> _kErrorLabels = <String, String>{
   'audit_unavailable': '审计记录服务未就绪，请管理员检查 Mac 服务状态后刷新。',
   'alert_center_unavailable': '异常通知服务未就绪，请检查 Mac 服务状态后刷新。',
   'shared_directory_transition_busy': 'Mac 正在切换共享存储目录，请稍后刷新。为避免误操作，旧目录的请求已暂停。',
-  'volume_offline': '原图库硬盘已离线或尚未确认重连，请在 Mac 的「数据与存储」重新连接原卷。',
+  'volume_offline': '原图库硬盘已离线或尚未确认重连，请在 Mac 管理端重新连接原卷。',
+  'cinema_volume_offline': '原影视硬盘已离线或尚未确认重连，原视频文件不受影响；请检查硬盘连接或在 Mac 管理端重新确认挂载。',
+  'drive_discovery_unavailable': '暂时无法读取 Mac 磁盘列表，请稍后重试或直接在 Mac 管理端检查磁盘状态。',
+  'drive_identity_changed_refresh_required': '磁盘连接或身份已发生变化，请刷新存储列表后再操作，避免误操作其他硬盘。',
+  'drive_in_use_or_protected': '该磁盘正在使用或受系统保护，无法执行当前操作，原有数据未受影响。',
+  'drive_operation_busy': '当前已有磁盘操作正在进行，请稍候完成后再试。',
+  'drive_operation_not_supported': '当前磁盘类型不支持该操作，请在 Mac 端检查或使用系统「磁盘工具」。',
+  'diskutil_operation_failed': 'macOS 磁盘操作未能完成，原数据状态请先在 Mac 管理端或系统「磁盘工具」核对后再重试。',
   'shared_volume_offline': '原存储磁盘暂时不可用，请检查硬盘连接及 Mac 端目录绑定。',
   'share_offline': '共享磁盘暂不可用，请检查原磁盘连接并重新连接。',
   'root_unavailable': '共享目录暂时离线，请在 Mac 管理端检查原磁盘。',
@@ -241,7 +247,6 @@ const Map<String, String> _kErrorLabels = <String, String>{
   'app_busy': '轻应用正在执行其他操作，请稍后再试。',
   'app_operation_failed': '轻应用操作未能完成，请查看运行日志或检查 Mac 服务状态。',
   'app_unavailable': '应用中心服务暂不可用，请检查 Mac 上的 LightIsle 服务状态后重试。',
-  'apps_unavailable': '应用中心服务暂不可用，请检查 Mac 上的 LightIsle 服务状态后重试。',
 };
 
 /// Looks up a known server error code from the unified client dictionary.

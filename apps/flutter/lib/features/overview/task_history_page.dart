@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import '../../core/isle_gallery_layout.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
@@ -259,7 +258,7 @@ class _TaskHistoryPageState extends State<TaskHistoryPage> {
       '已处理 ${task['processed'] ?? task['progress'] ?? 0} 项',
       '第 ${task['attempts'] ?? 1} 次尝试',
       if (task['startedAt'] is num)
-        _formatTime((task['startedAt'] as num).toInt()),
+        formatUnixSeconds(task['startedAt']),
     ];
     return IsleGroupTile(
       icon: icon,
@@ -270,12 +269,5 @@ class _TaskHistoryPageState extends State<TaskHistoryPage> {
           : subParts.join(' · '),
       trailing: IsleStatusBadge(label: statusLabel, color: badgeColor),
     );
-  }
-
-  String _formatTime(int seconds) {
-    final t = DateTime.fromMillisecondsSinceEpoch(seconds * 1000).toLocal();
-    String p(int v) => v.toString().padLeft(2, '0');
-    return '${t.year.toString().padLeft(4, '0')}-${p(t.month)}-${p(t.day)} '
-        '${p(t.hour)}:${p(t.minute)}';
   }
 }

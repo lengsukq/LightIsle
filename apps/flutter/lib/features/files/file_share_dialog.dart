@@ -131,7 +131,7 @@ class _FileShareDialogState extends State<FileShareDialog> {
               ),
             ),
             const SizedBox(height: 12),
-            if (!created)
+            if (!created) ...[
               DropdownButtonFormField<int>(
                 initialValue: _hours,
                 decoration: const InputDecoration(
@@ -150,7 +150,33 @@ class _FileShareDialogState extends State<FileShareDialog> {
                     : (value) {
                         if (value != null) setState(() => _hours = value);
                       },
-              )
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _passwordController,
+                enabled: !_creating,
+                obscureText: true,
+                maxLength: 128,
+                decoration: const InputDecoration(
+                  isDense: true,
+                  counterText: '',
+                  labelText: '提取密码（选填，4–128 位）',
+                  hintText: '留空则无需密码即可下载',
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: _downloadsController,
+                enabled: !_creating,
+                keyboardType: TextInputType.number,
+                inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                decoration: const InputDecoration(
+                  isDense: true,
+                  labelText: '最大下载次数（选填）',
+                  hintText: '留空则有效期内不限次数',
+                ),
+              ),
+            ]
             else ...[
               TextField(
                 controller: _linkController,

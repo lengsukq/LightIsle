@@ -168,7 +168,7 @@ void main() {
     await tester.pumpAndSettle();
     final slow = Completer<Map<String, dynamic>>();
     api.pendingPhotos = slow;
-    await tester.tap(find.text('刷新').first);
+    await tester.tap(find.byTooltip('刷新列表'));
     await tester.pump();
     await tester.tap(find.byTooltip('处理缺失媒体'));
     await tester.pump();

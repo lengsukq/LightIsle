@@ -1,57 +1,70 @@
-part of 'cinema_detail_dialog.dart';
+import 'dart:async';
 
-extension _CinemaDetailPlayerProgress on _CinemaDetailDialogState {
-  void _handlePlayerProgressTick(VideoPlayerController controller) {
+import 'package:video_player/video_player.dart';
+
+import 'cinema_detail_controller.dart';
+import 'cinema_progress_save_queue.dart';
+import 'media_models.dart';
+import 'media_ui.dart';
+
+/// Coordinates periodic progress persistence, completion detection, and
+/// watched-state toggles for [CinemaDetailController].
+class CinemaProgressCoordinator {
+  const CinemaProgressCoordinator(this.controller);
+
+  final CinemaDetailController controller;
+
+  void handlePlayerProgressTick(VideoPlayerController videoController) {
     final now = DateTime.now();
-    final ended = controller.value.isCompleted;
-    if (ended && !_playback.completionSaved) {
-      _playback.completionSaved = true;
-      final value = controller.value;
-      final sessionStart = _playback.hlsSession?.start ?? 0;
+    final ended = videoController.value.isCompleted;
+    if (ended && !controller.playback.completionSaved) {
+      controller.playback.completionSaved = true;
+      final value = videoController.value;
+      final sessionStart = controller.playback.hlsSession?.start ?? 0;
       final clock = cinemaPlaybackClock(
         value.position.inMilliseconds / 1000.0,
         value.duration.inMilliseconds / 1000.0,
         sessionStart: sessionStart,
-        originalDuration: _film.durationSeconds,
+        originalDuration: controller.film.durationSeconds,
       );
       // A still-growing HLS playlist can reach its temporary end well before
       // the real film. Do not mark watched or play the next episode then.
-      unawaited(_onPlaybackCompleted(nearRealEnd: clock.nearEnd));
-    } else if (now.difference(_progressQueue.lastQueuedAt) >=
+      unawaited(onPlaybackCompleted(nearRealEnd: clock.nearEnd));
+    } else if (now.difference(controller.progressQueue.lastQueuedAt) >=
         CinemaProgressSaveQueue.minimumInterval) {
-      unawaited(_queueProgressSave(force: true));
+      unawaited(queueProgressSave(force: true));
     }
   }
 
-  Future<void> _onPlaybackCompleted({required bool nearRealEnd}) async {
-    final completedID = _film.id;
-    final saved = await _queueProgressSave(force: true, completed: nearRealEnd);
-    if (!nearRealEnd && mounted && !_playback.closing) {
-      _updateState(
-        () => _playback.playbackMessage =
+  Future<void> onPlaybackCompleted({required bool nearRealEnd}) async {
+    final completedID = controller.film.id;
+    final saved = await queueProgressSave(force: true, completed: nearRealEnd);
+    if (!nearRealEnd && controller.isActive && !controller.playback.closing) {
+      controller.mutate(
+        () => controller.playback.playbackMessage =
             '当前转码片段已播放至末尾，但整部影片尚未结束。可等待转码继续，或调整播放进度。',
       );
     }
     if (nearRealEnd &&
         saved &&
-        mounted &&
-        !_playback.closing &&
-        _playlistState.autoPlayNext &&
-        _film.id == completedID) {
-      await _goToNextEpisode(alreadySaved: true);
+        controller.isActive &&
+        !controller.playback.closing &&
+        controller.playlistState.autoPlayNext &&
+        controller.film.id == completedID) {
+      final advance = controller.onAutoAdvanceNextEpisode;
+      if (advance != null) {
+        await advance();
+      }
     }
   }
 
-  Future<bool> _queueProgressSave({
-    bool force = false,
-    bool completed = false,
-  }) {
-    final controller = _playback.controller;
-    if (controller == null || !controller.value.isInitialized) {
+  Future<bool> queueProgressSave({bool force = false, bool completed = false}) {
+    final video = controller.playback.controller;
+    if (video == null || !video.value.isInitialized) {
       return Future<bool>.value(true);
     }
-    final value = controller.value;
-    final offset = _playback.hlsSession?.start ?? 0;
+    final value = video.value;
+    final offset = controller.playback.hlsSession?.start ?? 0;
     final localSeconds = value.position.inMilliseconds / 1000.0;
     final playlistSeconds = value.duration.inMilliseconds / 1000.0;
     if (offset + playlistSeconds <= 0 ||
@@ -63,14 +76,14 @@ extension _CinemaDetailPlayerProgress on _CinemaDetailDialogState {
       localSeconds,
       playlistSeconds,
       sessionStart: offset,
-      originalDuration: _knownFilmDuration,
-      ongoingHls: _playback.hlsSession != null,
+      originalDuration: controller.knownFilmDuration,
+      ongoingHls: controller.playback.hlsSession != null,
     );
     final isCompleted = completed || clock.nearEnd;
-    final filmId = _film.id;
-    return _progressQueue.save(() async {
+    final filmId = controller.film.id;
+    return controller.progressQueue.save(() async {
       try {
-        await widget.api.send(
+        await controller.api.send(
           'PUT',
           '/api/v2/cinema/$filmId/progress',
           body: <String, Object>{
@@ -79,26 +92,48 @@ extension _CinemaDetailPlayerProgress on _CinemaDetailDialogState {
             'completed': isCompleted,
           },
         );
-        if (mounted && _film.id == filmId) {
-          final updated = _film.withProgress(
+        if (controller.isActive && controller.film.id == filmId) {
+          final updated = controller.film.withProgress(
             newPosition: clock.position,
             newDuration: clock.duration,
             isCompleted: isCompleted,
           );
-          _updateState(() {
-            _film = updated;
-            _playback.progressSaveMessage = null;
+          controller.mutate(() {
+            controller.film = updated;
+            controller.playback.progressSaveMessage = null;
           });
-          widget.onProgressUpdated(updated);
+          controller.onProgressUpdated(updated);
         }
       } catch (_) {
-        if (mounted && _film.id == filmId) {
-          _updateState(() {
-            _playback.progressSaveMessage = '播放进度暂时未能保存，请检查连接后重试。';
+        if (controller.isActive && controller.film.id == filmId) {
+          controller.mutate(() {
+            controller.playback.progressSaveMessage = '播放进度暂时未能保存，请检查连接后重试。';
           });
         }
         rethrow;
       }
     }, force: force);
+  }
+
+  Future<void> markWatched({required bool completed}) async {
+    final filmId = controller.film.id;
+    try {
+      final updated = CinemaFilm.fromJson(
+        await controller.api.send(
+          'POST',
+          '/api/v2/cinema/$filmId/watched',
+          body: <String, Object>{'completed': completed},
+        ),
+      );
+      if (!controller.isActive || controller.film.id != filmId) return;
+      controller.mutate(() => controller.film = updated);
+      controller.onProgressUpdated(updated);
+    } catch (error) {
+      if (controller.isActive) {
+        controller.mutate(
+          () => controller.metaMatch.message = mediaErrorLabel(error),
+        );
+      }
+    }
   }
 }

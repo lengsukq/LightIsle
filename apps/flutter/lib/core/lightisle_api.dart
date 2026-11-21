@@ -191,6 +191,7 @@ class LightIsleApi {
   final Duration _requestTimeout;
   _SessionCookie? _sessionCookie;
   HttpServer? _mediaRelay;
+  StreamSubscription<HttpRequest>? _mediaRelaySubscription;
   Future<HttpServer>? _mediaRelayStarting;
   final Map<String, Uri> _mediaTargets = <String, Uri>{};
   final Map<String, Uri> _mediaPrefixTargets = <String, Uri>{};
@@ -573,6 +574,11 @@ class LightIsleApi {
     _mediaTargets.clear();
     _mediaPrefixTargets.clear();
     _client.close(force: true);
+    final cancelRelay = _mediaRelaySubscription?.cancel();
+    _mediaRelaySubscription = null;
+    if (cancelRelay != null) {
+      unawaited(cancelRelay.catchError((Object _) {}));
+    }
     final relay = _mediaRelay;
     _mediaRelay = null;
     if (relay != null) {

@@ -197,7 +197,14 @@ class _PhotoSimilarCleanupPageState extends State<PhotoSimilarCleanupPage> {
       (s, g) => s + (_trashByGroup[g.groupId]?.length ?? 0),
     );
     final keepCount = (totalPhotos - trashCount).clamp(0, totalPhotos);
-    final reclaimBytes = _groups.fold<int>(0, (s, g) => s + g.reclaimableBytes);
+    final reclaimBytes = _groups.fold<int>(0, (sum, g) {
+      final selected = _trashByGroup[g.groupId];
+      if (selected == null || selected.isEmpty) return sum;
+      return sum +
+          g.items
+              .where((item) => selected.contains(item.assetId))
+              .fold<int>(0, (s, item) => s + item.size);
+    });
     final trashRatio = totalPhotos > 0
         ? (trashCount / totalPhotos).clamp(0.0, 1.0)
         : 0.0;

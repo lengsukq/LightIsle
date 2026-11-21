@@ -25,6 +25,9 @@ class MainFlutterWindow: NSWindow, NSWindowDelegate {
     // never swallowed by an overlapping AppKit subview.
     self.isMovableByWindowBackground = false
     self.title = "轻屿 LightIsle"
+    if self.delegate == nil {
+      self.delegate = self
+    }
 
     RegisterGeneratedPlugins(registry: flutterViewController)
     sessionVault = SessionVault(messenger: flutterViewController.engine.binaryMessenger)

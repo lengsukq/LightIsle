@@ -17,6 +17,7 @@ class PhotoGalleryViewerFilmstrip extends StatefulWidget {
     required this.currentIndex,
     required this.onSelectIndex,
     this.fileBrowserMode = false,
+    this.fileThumbnailEndpoint = '/api/v2/files/thumbnail',
   });
 
   final LightIsleApi api;
@@ -25,6 +26,7 @@ class PhotoGalleryViewerFilmstrip extends StatefulWidget {
   final int currentIndex;
   final ValueChanged<int> onSelectIndex;
   final bool fileBrowserMode;
+  final String fileThumbnailEndpoint;
 
   @override
   State<PhotoGalleryViewerFilmstrip> createState() =>
@@ -196,7 +198,7 @@ class _PhotoGalleryViewerFilmstripState
       memoryCache: widget.memoryCache,
       path: useGalleryThumb
           ? '/api/v2/photos/${item.id}/thumbnail'
-          : '/api/v2/files/thumbnail',
+          : widget.fileThumbnailEndpoint,
       query: useGalleryThumb ? null : {'path': item.path, 'size': '512'},
       maxBytes: 2 * 1024 * 1024,
       fit: BoxFit.cover,

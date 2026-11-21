@@ -5,15 +5,12 @@ import 'package:flutter/material.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/login_history_store.dart';
-import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 import '../auth/login_history_section.dart';
 import '../files/desktop_backup_engine.dart';
 import '../files/downloads_page.dart';
 import '../files/file_shares_page.dart';
 import '../media/cinema_decode_preference.dart';
-import '../media/offline_photo_store.dart';
-import '../media/offline_video_store.dart';
 import 'about_page.dart';
 import 'account_security_page.dart';
 import 'accounts_page.dart';
@@ -29,6 +26,7 @@ import 'dav_page.dart';
 import 'missing_media_page.dart';
 import 'network_diagnostics_page.dart';
 import 'settings_backup_entries.dart';
+import 'settings_identity_card.dart';
 import 'settings_troubleshooting_section.dart';
 import 'storage_page.dart';
 import 'upload_maintenance_page.dart';
@@ -116,266 +114,31 @@ class SettingsPage extends StatelessWidget {
     ),
   );
 
-  void _showConnection(BuildContext context) {
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    showDialog<void>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        shape: IsleShapes.card(
-          side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
-        ),
-        title: const Text('连接详情'),
-        content: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
-          child: SingleChildScrollView(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  '当前服务器',
-                  style: Theme.of(dialogContext).textTheme.labelMedium,
-                ),
-                const SizedBox(height: 6),
-                SelectableText(api.uri('/').origin),
-                const SizedBox(height: 12),
-                const Text('退出登录仅清除本机会话，不会停止 Mac 端服务。'),
-              ],
-            ),
-          ),
-        ),
-        actions: [
-          TextButton.icon(
-            key: const Key('connectionMultiAddressButton'),
-            onPressed: () {
-              Navigator.pop(dialogContext);
-              unawaited(_openAccountSwitcher(context));
-            },
-            icon: const Icon(Icons.alt_route_rounded),
-            label: const Text('多地址与选线'),
-          ),
-          TextButton.icon(
-            onPressed: () {
-              Navigator.pop(dialogContext);
-              _go(context, NetworkDiagnosticsPage(api: api));
-            },
-            icon: const Icon(Icons.speed_rounded),
-            label: const Text('测试当前连接'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('关闭'),
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _identityCard(
     BuildContext context,
     bool isAdmin, {
     bool verticalCard = false,
-  }) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-    final palette = IslePalette.of(context);
-    final badgeColor = isAdmin
-        ? palette['brandViolet']
-        : palette['brandBlue'];
-
-    final avatar = IsleSquircleBadge(
-      icon: isAdmin
-          ? Icons.admin_panel_settings_rounded
-          : Icons.person_rounded,
-      color: badgeColor,
-      size: verticalCard ? 46 : 40,
-      iconSize: verticalCard ? 22 : 19,
-    );
-
-    final connectionPill = IslePillButton(
-      label: '连接详情',
-      icon: Icons.lan_outlined,
-      variant: IslePillVariant.tonal,
-      compact: true,
-      onPressed: () => _showConnection(context),
-    );
-
-    final switchAccountPill = IslePillButton(
-      key: const Key('settingsSwitchAccountButton'),
-      label: '切换账号',
-      icon: Icons.swap_horiz_rounded,
-      variant: IslePillVariant.tonal,
-      compact: true,
-      onPressed: () => _openAccountSwitcher(context),
-    );
-
-    final logoutPill = IslePillButton(
-      label: '退出登录 / 切换服务器',
-      icon: Icons.logout_rounded,
-      variant: IslePillVariant.danger,
-      compact: true,
-      onPressed: () => _confirmLogout(context),
-    );
-
-    if (verticalCard) {
-      return IsleSurface(
-        radius: IsleRadius.hero,
-        tint: badgeColor,
-        margin: EdgeInsets.zero,
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                avatar,
-                const SizedBox(width: 12),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        identity['username']?.toString() ?? '当前账号',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.titleMedium?.copyWith(
-                          fontWeight: FontWeight.w800,
-                          fontSize: 17,
-                          letterSpacing: -0.3,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      IsleStatusBadge(
-                        label: isAdmin ? '家庭管理员' : '家庭成员',
-                        color: badgeColor,
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-              decoration: IsleDecorations.recessedWell(context, radius: 10),
-              child: Row(
-                children: [
-                  Icon(
-                    Icons.dns_outlined,
-                    size: 15,
-                    color: palette['brandSage'],
-                  ),
-                  const SizedBox(width: 7),
-                  Expanded(
-                    child: Text(
-                      api.uri('/').origin,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        fontFamily: 'monospace',
-                        color: colors.onSurfaceVariant,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-            const SizedBox(height: 14),
-            Wrap(
-              spacing: 8,
-              runSpacing: 8,
-              children: [connectionPill, switchAccountPill, logoutPill],
-            ),
-          ],
-        ),
-      );
-    }
-
-    return IsleSurface(
-      radius: IsleRadius.hero,
-      tint: badgeColor,
-      margin: EdgeInsets.zero,
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
-      child: LayoutBuilder(
-        builder: (context, constraints) {
-          final narrow =
-              constraints.maxWidth < 560 ||
-              MediaQuery.textScalerOf(context).scale(14) > 17;
-
-          final profileInfo = Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Wrap(
-                  crossAxisAlignment: WrapCrossAlignment.center,
-                  spacing: 8,
-                  runSpacing: 4,
-                  children: [
-                    Text(
-                      identity['username']?.toString() ?? '当前账号',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: theme.textTheme.titleMedium?.copyWith(
-                        fontWeight: FontWeight.w800,
-                        fontSize: 16,
-                        letterSpacing: -0.25,
-                      ),
-                    ),
-                    IsleStatusBadge(
-                      label: isAdmin ? '家庭管理员' : '家庭成员',
-                      color: badgeColor,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  api.uri('/').origin,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.bodySmall?.copyWith(
-                    fontFamily: 'monospace',
-                    color: colors.onSurfaceVariant,
-                    fontSize: 11.5,
-                  ),
-                ),
-              ],
-            ),
-          );
-
-          if (narrow) {
-            return Column(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Row(children: [avatar, const SizedBox(width: 12), profileInfo]),
-                const SizedBox(height: 10),
-                Wrap(
-                  alignment: WrapAlignment.end,
-                  spacing: 8,
-                  runSpacing: 6,
-                  children: [connectionPill, switchAccountPill, logoutPill],
-                ),
-              ],
-            );
-          }
-
-          return Row(
-            children: [
-              avatar,
-              const SizedBox(width: 12),
-              profileInfo,
-              const SizedBox(width: 12),
-              connectionPill,
-              const SizedBox(width: 8),
-              switchAccountPill,
-              const SizedBox(width: 8),
-              logoutPill,
-            ],
-          );
-        },
+  }) => SettingsIdentityCard(
+    api: api,
+    identity: identity,
+    isAdmin: isAdmin,
+    verticalCard: verticalCard,
+    onShowConnection: () => showSettingsConnectionDialog(
+      context,
+      api: api,
+      onOpenAccountSwitcher: () => _openAccountSwitcher(context),
+    ),
+    onSwitchAccount: () => unawaited(_openAccountSwitcher(context)),
+    onLogout: () => unawaited(
+      confirmSettingsLogout(
+        context,
+        api: api,
+        identity: identity,
+        onLogout: onLogout,
+        pendingUploads: pendingUploads,
       ),
-    );
-  }
+    ),
+  );
 
   Future<void> _openAccountSwitcher(BuildContext context) async {
     await showAccountSwitcherDialog(
@@ -384,65 +147,17 @@ class SettingsPage extends StatelessWidget {
       currentUsername: identity['username']?.toString() ?? '',
       historyStore: historyStore ?? LoginHistoryStore(),
       onSwitchAccount: onSwitchAccount ?? (_, _) => onLogout(),
-      onUseNewAccount: () => _confirmLogout(context),
+      onUseNewAccount: () => confirmSettingsLogout(
+        context,
+        api: api,
+        identity: identity,
+        onLogout: onLogout,
+        pendingUploads: pendingUploads,
+      ),
       pendingUploads: pendingUploads,
       latencyProber: latencyProber,
       apiFactory: switchApiFactory,
     );
-  }
-
-  Future<void> _confirmLogout(BuildContext context) async {
-    final userId = identity['id'];
-    final canClear = userId is int && userId > 0;
-    final isDark = Theme.of(context).brightness == Brightness.dark;
-    final choice = await showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        shape: IsleShapes.card(
-          side: BorderSide(color: IsleGlass.rimBorderColor(isDark), width: 1.0),
-        ),
-        title: const Text('退出登录'),
-        content: Text(
-          '下次连接需要重新输入密码。'
-          '${(pendingUploads?.call() ?? 0) > 0 ? '当前仍有 ${pendingUploads!()} 个上传任务未结束；退出后传输将暂停，重新登录时可尝试断点续传。' : ''}'
-          '${canClear ? '你可以保留离线照片和影片，或清理当前服务器、账号和存储位置的两种本地副本；其他硬盘位置的副本需分别清理。NAS 原始文件不会删除。' : '本客户端无法确认稳定账号 ID，已保存的本地文件不会自动删除。'}',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('取消'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext, 'keep'),
-            child: const Text('保留离线文件并退出'),
-          ),
-          if (canClear)
-            FilledButton(
-              onPressed: () => Navigator.pop(dialogContext, 'clear'),
-              child: const Text('清理当前离线库并退出'),
-            ),
-        ],
-      ),
-    );
-    if (choice == null || !context.mounted) return;
-    if (choice == 'clear') {
-      try {
-        await OfflineVideoStore(api: api, accountName: 'uid:$userId').clear();
-        await OfflinePhotoStore(api: api, accountId: 'uid:$userId').clear();
-      } catch (error) {
-        if (context.mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(
-              content: Text(
-                '本机离线副本尚未全部清理，已完成部分可能不再存在；未退出，请重新尝试：${userFacingError(error)}',
-              ),
-            ),
-          );
-        }
-        return;
-      }
-    }
-    await onLogout();
   }
 
   @override
@@ -502,26 +217,32 @@ class SettingsPage extends StatelessWidget {
     );
   }
 
+  String get _canonicalAccountId =>
+      identity['id'] is int && (identity['id'] as int) > 0
+      ? 'uid:${identity['id']}'
+      : '';
+
   Widget _buildResponsiveSectionsLayout(
     BuildContext context, {
     required bool isAdmin,
     required bool isWide,
   }) {
     final primarySpaceSection = isAdmin
-        ? _buildFamilyAndStorageSection(context)
+        ? _buildFamilyAndStorageSection(context, foldSmbIntoRemoteOps: !isWide)
         : _buildMySpaceSection(context);
     final appearanceSection = _buildAppearanceSection(context);
     final filesSection = _buildFilesAndConnectionSection(
       context,
       isAdmin: isAdmin,
     );
-    final securitySection = _buildAccountSecuritySection(
-      context,
-      isAdmin: isAdmin,
-    );
+    final securitySection = _buildAccountSecuritySection(context);
     final aboutSection = _buildAboutAndDataSection(context);
     final troubleshootingSection = isAdmin
         ? AdminTroubleshootingSection(
+            onOpenSmb: !isWide
+                ? () => _go(context, AdminSmbPage(api: api))
+                : null,
+            onOpenAutomation: () => _go(context, AutomationPage(api: api)),
             onOpenDiagnostics: () =>
                 _go(context, AdminDiagnosticsPage(api: api)),
             onOpenAudit: () => _go(
@@ -626,7 +347,10 @@ class SettingsPage extends StatelessWidget {
     );
   }
 
-  Widget _buildFamilyAndStorageSection(BuildContext context) {
+  Widget _buildFamilyAndStorageSection(
+    BuildContext context, {
+    required bool foldSmbIntoRemoteOps,
+  }) {
     final palette = IslePalette.of(context);
     final amber = palette['brandAmber'];
     return _section(
@@ -645,6 +369,8 @@ class SettingsPage extends StatelessWidget {
             AccountsPage(
               api: api,
               currentUsername: identity['username']?.toString(),
+              currentAccountId:
+                  _canonicalAccountId.isEmpty ? null : _canonicalAccountId,
             ),
           ),
         ),
@@ -653,14 +379,30 @@ class SettingsPage extends StatelessWidget {
           icon: Icons.storage_rounded,
           color: amber,
           title: '存储与成员配额',
-          onTap: () => _go(context, StoragePage(api: api, isAdmin: true)),
+          onTap: () => _go(
+            context,
+            StoragePage(
+              api: api,
+              isAdmin: true,
+              accountId:
+                  _canonicalAccountId.isEmpty ? null : _canonicalAccountId,
+            ),
+          ),
         ),
+        if (!foldSmbIntoRemoteOps)
+          _entry(
+            context,
+            icon: Icons.folder_shared_rounded,
+            color: palette['brandSage'],
+            title: 'Mac 文件共享 (SMB)',
+            onTap: () => _go(context, AdminSmbPage(api: api)),
+          ),
         _entry(
           context,
-          icon: Icons.folder_shared_rounded,
-          color: palette['brandSage'],
-          title: 'Mac 文件共享 (SMB)',
-          onTap: () => _go(context, AdminSmbPage(api: api)),
+          icon: Icons.folder_off_outlined,
+          color: palette['brandRose'],
+          title: '缺失媒体与资料',
+          onTap: () => _go(context, MissingMediaPage(api: api, isAdmin: true)),
         ),
         _entry(
           context,
@@ -690,7 +432,22 @@ class SettingsPage extends StatelessWidget {
           icon: Icons.storage_rounded,
           color: amber,
           title: '我的存储空间',
-          onTap: () => _go(context, StoragePage(api: api, isAdmin: false)),
+          onTap: () => _go(
+            context,
+            StoragePage(
+              api: api,
+              isAdmin: false,
+              accountId:
+                  _canonicalAccountId.isEmpty ? null : _canonicalAccountId,
+            ),
+          ),
+        ),
+        _entry(
+          context,
+          icon: Icons.folder_off_outlined,
+          color: palette['brandRose'],
+          title: '我的缺失媒体',
+          onTap: () => _go(context, MissingMediaPage(api: api, isAdmin: false)),
         ),
       ],
     );
@@ -760,9 +517,7 @@ class SettingsPage extends StatelessWidget {
             CacheManagementPage(
               api: api,
               isAdmin: isAdmin,
-              accountId: identity['id'] is int && (identity['id'] as int) > 0
-                  ? 'uid:${identity['id']}'
-                  : '',
+              accountId: _canonicalAccountId,
             ),
           ),
         ),
@@ -773,17 +528,18 @@ class SettingsPage extends StatelessWidget {
           title: 'WebDAV 访问',
           onTap: () => _go(
             context,
-            DavPage(api: api, accountId: identity['id']?.toString()),
+            DavPage(
+              api: api,
+              accountId:
+                  _canonicalAccountId.isEmpty ? null : _canonicalAccountId,
+            ),
           ),
         ),
       ],
     );
   }
 
-  Widget _buildAccountSecuritySection(
-    BuildContext context, {
-    required bool isAdmin,
-  }) {
+  Widget _buildAccountSecuritySection(BuildContext context) {
     final palette = IslePalette.of(context);
     final sage = palette['brandSage'];
     return _section(
@@ -792,14 +548,6 @@ class SettingsPage extends StatelessWidget {
       accentColor: sage,
       index: 2,
       entries: [
-        _entry(
-          context,
-          icon: Icons.folder_off_outlined,
-          color: palette['brandRose'],
-          title: isAdmin ? '缺失媒体与资料' : '我的缺失媒体',
-          onTap: () =>
-              _go(context, MissingMediaPage(api: api, isAdmin: isAdmin)),
-        ),
         _entry(
           context,
           icon: Icons.security_rounded,
@@ -815,14 +563,6 @@ class SettingsPage extends StatelessWidget {
             ),
           ),
         ),
-        if (isAdmin)
-          _entry(
-            context,
-            icon: Icons.terminal_rounded,
-            color: palette['brandTerracotta'],
-            title: '本机脚本自动化',
-            onTap: () => _go(context, AutomationPage(api: api)),
-          ),
       ],
     );
   }
@@ -848,7 +588,7 @@ class SettingsPage extends StatelessWidget {
                 iconBgColor: plum,
                 title: '关于轻屿 LightIsle',
                 trailing: _buildGithubBadgeTrailing(palette),
-                onTap: () => _go(context, const AboutPage()),
+                onTap: () => _go(context, AboutPage(api: api)),
               ),
               IsleGroupTile(
                 icon: Icons.bug_report_outlined,

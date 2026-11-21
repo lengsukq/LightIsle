@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
-import '../../core/isle_gallery_layout.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
@@ -75,7 +74,7 @@ class _DavPageState extends State<DavPage> {
       '协议：${isHttps ? 'WebDAV (HTTPS)' : 'WebDAV (HTTP)'}',
       '地址：${parsed.host}',
       '端口：$port',
-      '路径：$parsed.path',
+      '路径：${parsed.path}',
       '完整 URL：$parsed',
       '用户名：（当前轻屿登录用户名）',
       '密码：（使用下方生成的 WebDAV 独立访问密码）',
@@ -88,21 +87,42 @@ class _DavPageState extends State<DavPage> {
     unawaited(_load());
   }
 
+  String? _legacyAccountScope;
+
   Future<String?> _scope() async {
     if (_accountScope != null) return _accountScope;
-    var account = widget.accountId?.trim() ?? '';
-    if (account.isEmpty) {
+    final rawPassed = widget.accountId?.trim() ?? '';
+    final origin = widget.api.uri('/').origin;
+    var canonical = rawPassed.startsWith('uid:')
+        ? rawPassed.substring(4).trim()
+        : rawPassed;
+    if (canonical.isEmpty || int.tryParse(canonical) == null) {
       try {
-        final response = await widget.api.get('/api/v2/auth/status');
-        account = response['id']?.toString() ?? '';
-      } catch (_) {
-        return null;
+        final me = await widget.api.get('/api/v2/auth/me');
+        final meId = me['id']?.toString() ?? '';
+        if (meId.isNotEmpty && meId != '0') {
+          if (rawPassed.isNotEmpty && rawPassed != 'uid:$meId') {
+            _legacyAccountScope = DavLocalPasswordVault.scope(origin, rawPassed);
+          }
+          canonical = meId;
+        }
+      } catch (error) {
+        debugPrint('DavPage._scope auth/me failed: $error');
+        if (mounted && canonical.isEmpty) {
+          setState(
+            () => _localVaultNotice =
+                '无法确认当前账号身份（${userFacingError(error)}），本机密码库暂不可用。',
+          );
+        }
       }
     }
-    if (account.isEmpty || account == '0') return null;
+    if (canonical.isEmpty || canonical == '0') return null;
+    if (rawPassed == canonical) {
+      _legacyAccountScope = DavLocalPasswordVault.scope(origin, canonical);
+    }
     return _accountScope = DavLocalPasswordVault.scope(
-      widget.api.uri('/').origin,
-      account,
+      origin,
+      'uid:$canonical',
     );
   }
 
@@ -140,12 +160,19 @@ class _DavPageState extends State<DavPage> {
       setState(() {
         _credentials = credentials;
       });
-      if (_accountScope != null) {
+      final scope = await _scope();
+      if (scope != null) {
         try {
           await _vault.prune(
-            _accountScope!,
+            scope,
             credentials.map((c) => c.id).toSet(),
           );
+          if (_legacyAccountScope != null) {
+            await _vault.prune(
+              _legacyAccountScope!,
+              credentials.map((c) => c.id).toSet(),
+            );
+          }
         } catch (_) {
           if (mounted) {
             setState(() => _localVaultNotice = '本机安全存储暂不可用，请手动保存连接密码。');
@@ -238,6 +265,12 @@ class _DavPageState extends State<DavPage> {
     if (scope != null) {
       try {
         password = await _vault.read(scope, credential.id);
+        if (password == null && _legacyAccountScope != null) {
+          password = await _vault.read(_legacyAccountScope!, credential.id);
+          if (password != null) {
+            await _vault.write(scope, credential.id, password);
+          }
+        }
       } catch (_) {
         if (mounted) setState(() => _localVaultNotice = '无法解锁本机安全存储。');
       }
@@ -250,7 +283,15 @@ class _DavPageState extends State<DavPage> {
       if (scope != null) {
         try {
           await _vault.remove(scope, credential.id);
-        } catch (_) {}
+        } catch (error) {
+          debugPrint('DavPage._manage prune stale password failed: $error');
+          if (mounted) {
+            setState(
+              () => _localVaultNotice =
+                  '已忽略本机过期密码缓存，但清理本地记录失败，请检查设备安全存储状态。',
+            );
+          }
+        }
       }
     }
     if (!mounted) return;
@@ -374,12 +415,6 @@ class _DavPageState extends State<DavPage> {
     );
   }
 
-  String _formatDate(int unix) => unix > 0
-      ? DateTime.fromMillisecondsSinceEpoch(
-          unix * 1000,
-        ).toLocal().toString().split(' ').first
-      : '未使用';
-
   @override
   Widget build(BuildContext context) {
     final palette = IslePalette.of(context);
@@ -468,7 +503,8 @@ class _DavPageState extends State<DavPage> {
                   icon: Icons.key_rounded,
                   iconBgColor: violet,
                   title: credential.label,
-                  subtitle: '最近使用：${_formatDate(credential.lastUsedAt)}',
+                  subtitle:
+                      '最近使用：${formatUnixSeconds(credential.lastUsedAt, emptyLabel: '未使用', dateOnly: true)}',
                   onTap: _busy ? null : () => unawaited(_manage(credential)),
                 ),
             ],

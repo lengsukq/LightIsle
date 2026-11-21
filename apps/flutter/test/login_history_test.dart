@@ -342,6 +342,12 @@ void main() {
         ),
         isFalse,
       );
+      expect(
+        InsecureHttpAllowlist.requiresAllowlist(
+          Uri(scheme: 'http', host: '100.101.102.103', port: 16666).origin,
+        ),
+        isFalse,
+      );
       expect(InsecureHttpAllowlist.requiresAllowlist(origin8080), isTrue);
 
       final allowedApi = LightIsleApi(

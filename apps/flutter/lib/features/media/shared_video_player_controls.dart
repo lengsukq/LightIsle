@@ -163,37 +163,6 @@ class SharedPlayerMenuPill<T> extends StatelessWidget {
   }
 }
 
-class SharedPlayerSpeedMenuPill extends StatelessWidget {
-  const SharedPlayerSpeedMenuPill({
-    super.key,
-    required this.value,
-    required this.onSelected,
-    this.speeds = const <double>[0.5, 0.75, 1.0, 1.25, 1.5, 2.0],
-  });
-
-  final double value;
-  final ValueChanged<double> onSelected;
-  final List<double> speeds;
-
-  @override
-  Widget build(BuildContext context) {
-    return SharedPlayerMenuPill<double>(
-      label: SharedVideoPlayerStyle.formatSpeedLabel(value),
-      tooltip: '播放倍速',
-      active: (value - 1.0).abs() > 0.01,
-      onSelected: onSelected,
-      items: [
-        for (final speed in speeds)
-          buildSharedPlayerPopupChoice<double>(
-            value: speed,
-            label: '${SharedVideoPlayerStyle.formatSpeedLabel(speed)}${speed == 1.0 ? ' (正常)' : ''}',
-            selected: (value - speed).abs() < 0.01,
-          ),
-      ],
-    );
-  }
-}
-
 class SharedVideoProgressBar extends StatelessWidget {
   const SharedVideoProgressBar({super.key, required this.controller});
 

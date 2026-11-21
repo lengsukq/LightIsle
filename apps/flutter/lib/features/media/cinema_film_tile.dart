@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 
-import '../../core/authenticated_media_image.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/media_image_memory_cache.dart';
 import 'cinema_catalog_display.dart';
+import 'cinema_poster_image.dart';
 import 'cinema_tv_focus.dart';
 import 'media_models.dart';
 import 'media_ui.dart';
@@ -172,10 +172,10 @@ class _CinemaFilmTileState extends State<CinemaFilmTile> {
   }
 
   Widget _buildPosterImage() {
-    return AuthenticatedMediaImage(
+    return CinemaPosterImage.film(
       api: widget.api,
+      film: widget.film,
       memoryCache: widget.memoryCache,
-      path: '/api/v2/cinema/${widget.film.id}/poster',
       maxBytes: 4 * 1024 * 1024,
       fit: BoxFit.cover,
       loadingBuilder: _posterPlaceholder,
