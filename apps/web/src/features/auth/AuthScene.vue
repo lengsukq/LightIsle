@@ -105,9 +105,8 @@ const authHelpItems = [
             :value="authPassword"
             required
             :type="showAuthPassword ? 'text' : 'password'"
-            minlength="12"
             autocomplete="current-password"
-            placeholder="输入密码（至少 12 位）"
+            placeholder="输入登录密码"
             @input="emit('update:authPassword', ($event.target as HTMLInputElement).value)"
           />
           <button

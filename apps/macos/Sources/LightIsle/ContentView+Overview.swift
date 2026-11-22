@@ -309,8 +309,16 @@ extension ContentView {
             let memTotal = m?.memoryTotal ?? 0
             let memUsed = min(m?.memoryUsed ?? 0, memTotal)
             VStack(alignment: .leading, spacing: 12) {
-                HStack {
+                HStack(spacing: 8) {
                     Text("Mac 运行状态").font(.system(size: 15, weight: .semibold))
+                    if let pwr = telemetry.powerSnapshot, pwr.available, (pwr.upsPresent || pwr.onBattery) {
+                        IsleStatusPill(
+                            text: pwr.statusLabel,
+                            tone: pwr.onBattery ? .warning : .success,
+                            icon: pwr.onBattery ? "bolt.batteryblock.fill" : "powerplug"
+                        )
+                        .help(pwr.detailLabel)
+                    }
                     Spacer()
                     Text(telemetry.lastMetricsAt.map { "采样于 " + IsleFormatters.timeHMS($0) } ?? "读取中…")
                         .font(.system(size: 12)).foregroundStyle(IsleTheme.secondaryText)
@@ -369,6 +377,7 @@ extension ContentView {
                     overviewVolumeDistributionCard(volumeSnapshot)
                 }
             }
+            .onAppear { model.refreshPowerSnapshotIfNeeded() }
         }
     }
 

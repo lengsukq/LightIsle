@@ -109,6 +109,7 @@ private struct NativeFirstRunSetupContent: View {
     let homeVisiblePath: String
 
     @FocusState private var focusedField: SetupField?
+    @State private var didAutoSelectRecommended = false
     @Environment(\.isleReduceMotion) private var reduceMotion
 
     private var activePath: String { model.sharedFolderPath ?? defaultPath }
@@ -128,6 +129,27 @@ private struct NativeFirstRunSetupContent: View {
 
     private var canSubmitNow: Bool {
         !model.isPresentationPreview && isFormValid && !model.initializing && model.state == .online
+    }
+
+    private var submitBlockedReason: String? {
+        if !probe.isWritable {
+            return "请先在上方完成存储目录读写授权后再创建管理员"
+        }
+        guard !firstUsername.isEmpty || !firstPassword.isEmpty || !confirmPassword.isEmpty else {
+            return nil
+        }
+        let usernameStatus = AccountInputValidator.validateUsername(firstUsername)
+        if !firstUsername.isEmpty && !usernameStatus.isValid {
+            return usernameStatus.message ?? "请填写有效的管理员账号（3–32 位字母/数字）"
+        }
+        let passwordStatus = AccountInputValidator.validatePassword(firstPassword)
+        if !firstPassword.isEmpty && !passwordStatus.isValid {
+            return passwordStatus.message ?? "登录密码至少需要 \(AccountInputValidator.minPasswordLength) 位字符（当前 \(firstPassword.count) 位）"
+        }
+        if !confirmPassword.isEmpty && firstPassword != confirmPassword {
+            return "两次输入的密码尚未一致，请核对后提交"
+        }
+        return nil
     }
 
     var body: some View {
@@ -177,11 +199,18 @@ private struct NativeFirstRunSetupContent: View {
             .scrollIndicators(.never)
         }
         .onAppear {
+            autoSelectRecommendedHomeFolderIfNeeded()
             if focusedField == nil {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
                     focusedField = .username
                 }
             }
+        }
+        .onChange(of: model.state) { _, _ in
+            autoSelectRecommendedHomeFolderIfNeeded()
+        }
+        .onChange(of: model.rootManagement.connected) { _, _ in
+            autoSelectRecommendedHomeFolderIfNeeded()
         }
         .task(id: activePath) {
             await refreshStorageProbe(for: activePath)
@@ -345,9 +374,14 @@ private struct NativeFirstRunSetupContent: View {
                     if !firstPassword.isEmpty {
                         let validLen = firstPassword.count >= AccountInputValidator.minPasswordLength
                         let status = AccountInputValidator.validatePassword(firstPassword)
-                        Text(status.isValid ? "✓ 长度达标（\(firstPassword.count) 位）" : (validLen ? (status.message ?? "") : "已输入 \(firstPassword.count) / 12 位"))
+                        let warnIncomplete = !status.isValid && (focusedField != .password || !confirmPassword.isEmpty)
+                        Text(
+                            status.isValid
+                                ? "✓ 长度达标（\(firstPassword.count) 位）"
+                                : (validLen ? (status.message ?? "") : "已输入 \(firstPassword.count) / 12 位（还差 \(AccountInputValidator.minPasswordLength - firstPassword.count) 位）")
+                        )
                             .font(.system(size: 10.5, weight: .medium))
-                            .foregroundStyle(status.isValid ? IsleTheme.successText : IsleTheme.secondaryText)
+                            .foregroundStyle(status.isValid ? IsleTheme.successText : (warnIncomplete ? IsleTheme.warningText : IsleTheme.secondaryText))
                     }
                 }
                 LiquidSecureField(prompt: "至少 12 位密码（点击右侧眼睛可核对）", text: $firstPassword) {
@@ -399,13 +433,29 @@ private struct NativeFirstRunSetupContent: View {
             .keyboardShortcut(.defaultAction)
             .disabled(!canSubmitNow)
 
-            if !probe.isWritable {
-                Text("请先在上方完成存储目录读写授权后再创建管理员")
+            if let blockedReason = submitBlockedReason, !model.initializing {
+                Text(blockedReason)
                     .font(.caption2)
                     .foregroundStyle(IsleTheme.warningText)
                     .frame(maxWidth: .infinity, alignment: .center)
             }
         }
+    }
+
+    private func autoSelectRecommendedHomeFolderIfNeeded() {
+        guard !didAutoSelectRecommended,
+              !model.isPresentationPreview,
+              model.state == .online,
+              model.rootManagement.connected,
+              !model.rootManagement.busy else { return }
+        guard activePath == defaultPath,
+              model.rootManagement.roots.count <= 1,
+              !FileManager.default.fileExists(atPath: defaultPath + "/Users") else {
+            didAutoSelectRecommended = true
+            return
+        }
+        didAutoSelectRecommended = true
+        model.selectPresetSharedFolder(path: homeVisiblePath, name: "LightIsle")
     }
 
     private func refreshStorageProbe(for targetPath: String) async {

@@ -32,12 +32,30 @@ struct MCPClientWizardSheet: View {
         return trimmed.isEmpty ? GeminiCopy.localCommand : trimmed
     }
 
-    private var effectiveBinaryPath: String {
+    private var rawBinaryPath: String {
         let trimmed = effectiveCommand.trimmingCharacters(in: .whitespacesAndNewlines)
-        let raw = trimmed.hasSuffix(" mcp")
-            ? String(trimmed.dropLast(4)).trimmingCharacters(in: .whitespacesAndNewlines)
-            : trimmed
-        return raw.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+        if let range = trimmed.range(of: " mcp") {
+            return String(trimmed[..<range.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        return trimmed
+    }
+
+    private var rawCommandArgs: String {
+        let trimmed = effectiveCommand.trimmingCharacters(in: .whitespacesAndNewlines)
+        if let range = trimmed.range(of: " mcp") {
+            let suffix = String(trimmed[range.lowerBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            return suffix.isEmpty ? "mcp" : suffix
+        }
+        return "mcp"
+    }
+
+    private var effectiveBinaryPath: String {
+        rawBinaryPath.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
+    }
+
+    private var localLoopbackHttpUrl: String {
+        if !snap.localHttpUrl.isEmpty { return snap.localHttpUrl }
+        return "http://127.0.0.1:16666/api/v2/mcp"
     }
 
     private var effectiveHttpUrl: String {
@@ -251,8 +269,8 @@ struct MCPClientWizardSheet: View {
             VStack(spacing: 10) {
                 wizardCopyRow(
                     label: "选择设置方法",
-                    value: "同机选「本地 MCP」，跨设备或远程选「Cloud MCP」",
-                    copyValue: "本地 MCP",
+                    value: "推荐选「Streamable HTTP / Cloud MCP」（免进程沙盒拦截），或选「本地 MCP」",
+                    copyValue: "Cloud MCP",
                     key: "gemini-method",
                     notice: "已复制设置方法建议"
                 )
@@ -271,11 +289,36 @@ struct MCPClientWizardSheet: View {
                     notice: "已复制服务器说明"
                 )
                 wizardCopyRow(
-                    label: "命令",
-                    value: effectiveCommand,
-                    copyValue: effectiveCommand,
-                    key: "gemini-cmd",
-                    notice: "已复制本地 MCP 启动命令",
+                    label: "方式 A（推荐 · 零沙盒阻断）：本机 Streamable HTTP URL",
+                    value: localLoopbackHttpUrl,
+                    copyValue: localLoopbackHttpUrl,
+                    key: "gemini-local-http",
+                    notice: "已复制本机回环 MCP URL（无需开启局域网开关）",
+                    monospaced: true
+                )
+                wizardCopyRow(
+                    label: "方式 A 鉴权：Bearer Token",
+                    value: tokenPlaceholder,
+                    copyValue: snap.mcpToken ?? "",
+                    key: "gemini-token",
+                    notice: "已复制 MCP Bearer Token",
+                    monospaced: true,
+                    copyDisabled: (snap.mcpToken ?? "").isEmpty
+                )
+                wizardCopyRow(
+                    label: "方式 B（本地 stdio）：可执行文件路径（勿含空格参数）",
+                    value: rawBinaryPath,
+                    copyValue: rawBinaryPath,
+                    key: "gemini-bin",
+                    notice: "已复制可执行文件路径",
+                    monospaced: true
+                )
+                wizardCopyRow(
+                    label: "方式 B（本地 stdio）：启动参数（Args）",
+                    value: rawCommandArgs,
+                    copyValue: rawCommandArgs,
+                    key: "gemini-args",
+                    notice: "已复制本地 MCP 启动参数",
                     monospaced: true
                 )
             }
@@ -289,9 +332,9 @@ struct MCPClientWizardSheet: View {
                         .foregroundStyle(.orange)
                 }
                 Text("""
-                1. Gemini 桌面端默认开启沙盒，仅放行关联目录、~/.cache 与 /tmp，可能拦截子进程直接读取 ~/Library/Application Support/LightIsle。
-                2. 轻屿 Core 已内置 ~/.cache 与 /tmp 本机回环桥接通道：请保持轻屿桌面端/Core 处于运行状态，即可自动绕开目录权限拦截。
-                3. 若仍提示无权读取数据目录，可在 Gemini 自定义关联应用的「沙盒设置」中改选受限更少模式，或改用下方的 Cloud MCP（/api/v2/mcp）。
+                1. 若选择「本地 MCP (stdio)」启动时报 exited with status 126，说明宿主沙盒拦截了对应用包或外置盘二进制的执行权限，或将带空格参数填入了可执行文件栏。
+                2. 最稳妥方案：直接使用上方「方式 A（本机 Streamable HTTP：`127.0.0.1:16666/api/v2/mcp` + Bearer Token）」，无需派生子进程，也不必开启局域网暴露。
+                3. 若使用「方式 B（本地 stdio）」，请分别粘贴「可执行文件路径」与「启动参数」，并保持轻屿运行以启用 ~/.cache 与 /tmp 回环桥接。
                 """)
                 .font(.caption)
                 .foregroundStyle(.primary.opacity(0.9))

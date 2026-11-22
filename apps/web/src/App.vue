@@ -21,22 +21,14 @@ import AuthScene from "./features/auth/AuthScene.vue";
 import MobileNavDrawer from "./components/ui/MobileNavDrawer.vue";
 import ThemePickerPopover from "./components/ui/ThemePickerPopover.vue";
 import { requestAlert, requestConfirm } from "./composables/useConfirmDialog.ts";
-import FileOperationDialog from "./features/files/FileOperationDialog.vue";
-import DuplicateFilesPanel from "./features/files/DuplicateFilesPanel.vue";
 import IsleModal from "./components/ui/IsleModal.vue";
 import IsleButton from "./components/ui/IsleButton.vue";
 import IsleBanner from "./components/ui/IsleBanner.vue";
 import IsleEmpty from "./components/ui/IsleEmpty.vue";
-import PhotoViewerModal from "./features/photos/PhotoViewerModal.vue";
-import AppWorkbenchStage from "./features/apps/AppWorkbenchStage.vue";
-import FilesView from "./features/files/FilesView.vue";
-import SettingsView from "./features/settings/SettingsView.vue";
 import { useFileMediaLightbox } from "./composables/useFileMediaLightbox.ts";
 import type { Movie } from "./features/cinema/cinemaTypes.ts";
 import AppleSelect from "./components/ui/AppleSelect.vue";
-import OverviewPage from "./features/overview/OverviewPage.vue";
 import { clearRuntimeMemoryCache } from "./features/settings/useIsleCache.ts";
-import ComputerFilesView from "./features/files/ComputerFilesView.vue";
 import { describeUserFacingError } from "./api/userFacingError.ts";
 import { readApiFailure } from "./api/apiFailure.ts";
 import { useFileTrash } from "./features/files/useFileTrash.ts";
@@ -56,6 +48,29 @@ import {
 const asyncPageState = (message: string, role: string) => ({
   render: () => h("p", { role, class: "page-status" }, message),
 });
+const OverviewPage = defineAsyncComponent(() => import("./features/overview/OverviewPage.vue"));
+const FilesView = defineAsyncComponent({
+  loader: () => import("./features/files/FilesView.vue"),
+  loadingComponent: asyncPageState("正在加载文件空间…", "status"),
+  errorComponent: asyncPageState("文件页面加载失败，请刷新页面。", "alert"),
+  delay: 150,
+});
+const ComputerFilesView = defineAsyncComponent({
+  loader: () => import("./features/files/ComputerFilesView.vue"),
+  loadingComponent: asyncPageState("正在加载电脑文件…", "status"),
+  errorComponent: asyncPageState("电脑文件页面加载失败，请刷新页面。", "alert"),
+  delay: 150,
+});
+const SettingsView = defineAsyncComponent({
+  loader: () => import("./features/settings/SettingsView.vue"),
+  loadingComponent: asyncPageState("正在加载偏好设置…", "status"),
+  errorComponent: asyncPageState("设置页面加载失败，请刷新页面。", "alert"),
+  delay: 150,
+});
+const AppWorkbenchStage = defineAsyncComponent(() => import("./features/apps/AppWorkbenchStage.vue"));
+const DuplicateFilesPanel = defineAsyncComponent(() => import("./features/files/DuplicateFilesPanel.vue"));
+const FileOperationDialog = defineAsyncComponent(() => import("./features/files/FileOperationDialog.vue"));
+const PhotoViewerModal = defineAsyncComponent(() => import("./features/photos/PhotoViewerModal.vue"));
 const AppsCenterView = defineAsyncComponent(() => import("./features/apps/AppsCenterView.vue"));
 const PhotosView = defineAsyncComponent({
   loader: () => import("./features/photos/PhotosView.vue"),
@@ -446,10 +461,6 @@ watch([active, settingsGroup, () => user.value, rootFeatureContextReady], () => 
     return;
   }
   if (active.value !== "settings") return;
-  if (user.value.role === "admin" && settingsGroup.value === "cache") {
-    settingsGroup.value = "account";
-    return;
-  }
   if (settingsGroup.value === "account" && !sessionsLoaded.value && !sessionsLoading.value) {
     void loadLoginSessions();
   } else if (settingsGroup.value === "files" && rootFeatureContextReady.value && !sharesLoaded.value && !sharesLoading.value) {

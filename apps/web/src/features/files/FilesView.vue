@@ -80,7 +80,11 @@ const trashPresentation = computed(() =>
 
 function toggleSelectAllFiles() {
   const slice = fileEntries.value.slice(0, 50).map((item) => item.path);
-  checkedFiles.value = allVisibleFilesChecked.value ? [] : slice;
+  const deselecting = allVisibleFilesChecked.value;
+  checkedFiles.value = deselecting ? [] : slice;
+  if (!deselecting && fileEntries.value.length > 50) {
+    fileOperationNotice.value = `单次批量操作最多勾选前 50 项，当前目录剩余 ${fileEntries.value.length - 50} 项未包含在内。`;
+  }
 }
 
 function toggleColumnSort(key: "name" | "mtime" | "size") {
@@ -132,16 +136,21 @@ function onFileCheckboxClick(entry: SharedFileEntry, index: number, event: Mouse
     const end = Math.max(lastCheckedFileIndex.value, index);
     const targetChecked = !checkedFiles.value.includes(entry.path);
     const next = new Set(checkedFiles.value);
+    let capped = false;
     for (let i = start; i <= end; i += 1) {
       const candidate = fileEntries.value[i];
       if (!candidate) continue;
       if (targetChecked) {
         if (next.size < 50) next.add(candidate.path);
+        else capped = true;
       } else {
         next.delete(candidate.path);
       }
     }
     checkedFiles.value = Array.from(next);
+    if (capped) {
+      fileOperationNotice.value = "单次批量操作最多勾选 50 项，超出部分未自动勾选。";
+    }
     event.preventDefault();
   }
   lastCheckedFileIndex.value = index;
@@ -352,7 +361,7 @@ onUnmounted(() => {
       />
       <Transition name="isle-batch-bar">
         <div v-if="checkedFiles.length && !showingTrash" class="file-batch-bar">
-          <span>已选 {{ checkedFiles.length }} 项（上限 50 项）</span>
+          <span>已选 {{ checkedFiles.length }} 项<template v-if="checkedFiles.length >= 50 && fileEntries.length > 50">（已达 50 项上限，余 {{ fileEntries.length - 50 }} 项未选）</template><template v-else>（上限 50 项）</template></span>
           <div class="file-batch-actions">
             <button type="button" @click="toggleSelectAllFiles">{{ allVisibleFilesChecked ? "取消全选" : "全选前 50 项" }}</button>
             <button type="button" @click="batchDownloadSelected">批量下载</button>

@@ -207,7 +207,7 @@ onUnmounted(() => window.removeEventListener("pointerdown", handleOutsideSearchP
           <span>全文搜索</span>
         </label>
         <button type="button" :disabled="search.filesLoading || search.query.trim().length < 1" @click="searchFocused = false; emit('search')">
-          {{ search.filesLoading&&search.searchingFiles ? "搜索中…" : "搜索共享目录" }}
+          {{ search.filesLoading&&search.searchingFiles ? "搜索中…" : (identity.isAdmin ? "搜索共享目录" : "搜索我的空间") }}
         </button>
         <button v-if="search.searchingFiles" type="button" class="back-pill" @click="emit('return-to-files')">返回目录</button>
         <RecentSearchPopover

@@ -51,6 +51,7 @@ extension AppModel {
         }
         sendCoreCommandLine(diagnosticsVisible ? "stats\n" : "stats summary\n", context: "metrics.stats")
         sendCoreCommandLine("backup status\nbackup schedule status\n", context: "metrics.backup")
+        refreshPowerSnapshotIfNeeded()
         if Date().timeIntervalSince(lastAlertPollAt) >= 60 {
             lastAlertPollAt = Date()
             sendCoreCommandLine("alerts status\n", context: "metrics.alerts")

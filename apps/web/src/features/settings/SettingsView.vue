@@ -60,7 +60,8 @@ const settingsGroups = computed<Array<{ key: ShellSettingsGroup; label: string }
       { key: "storage", label: "成员与空间" },
       { key: "files", label: "文件与连接" },
       { key: "ops", label: "状态与维护" },
-      { key: "account", label: "账号与缓存" },
+      { key: "cache", label: "缓存管理" },
+      { key: "account", label: "账号与安全" },
     ];
   }
   return [
@@ -103,7 +104,7 @@ function triggerAllocForMember(userId: number) {
 
       <Transition name="ios-fade" mode="out-in">
         <div :key="settingsGroup" class="settings-stack">
-          <CacheManagementPanel v-if="settingsGroup === 'cache' && user.role !== 'admin'" :is-admin="false" :active="active === 'settings'" />
+          <CacheManagementPanel v-if="settingsGroup === 'cache'" :is-admin="user.role === 'admin'" :active="active === 'settings'" />
 
           <template v-if="settingsGroup === 'files'">
             <DavAccess />
@@ -314,7 +315,6 @@ function triggerAllocForMember(userId: number) {
               <IsleBanner v-if="sessionsError" type="error" compact role="alert" :message="sessionsError" />
               <IsleBanner v-if="sessionsMessage" type="info" compact role="status" :message="sessionsMessage" />
             </IsleCard>
-            <CacheManagementPanel v-if="user.role === 'admin'" :is-admin="true" :active="active === 'settings'" />
             <IsleCard v-if="user.role !== 'admin'" title="缺失媒体记录核对" subtitle="移动或重命名媒体文件后，重新关联收藏与观看进度。">
               <template #icon><Images :size="18" /></template>
               <details v-if="rootFeatureContextReady" class="apple-disclosure-card settings-disclosure-tight" @toggle="togglePendingMedia(false, $event)">
