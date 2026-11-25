@@ -285,6 +285,7 @@ func registerSingleRootCompatRoutes(mux *http.ServeMux, a *API) {
 	mux.HandleFunc("GET /api/v2/photos/{id}/thumbnail", a.requireMedia(a.galleryThumbnail))
 	mux.HandleFunc("POST /api/v2/photos/{id}/favorite", a.requireMedia(a.galleryFavorite))
 	mux.HandleFunc("POST /api/v2/photos/{id}/personal-favorite", a.requireMedia(a.galleryPersonalFavorite))
+	mux.HandleFunc("PATCH /api/v2/photos/metadata", a.requireMedia(a.galleryUpdateMetadata))
 	mux.HandleFunc("GET /api/v2/photos/albums", a.requireMedia(a.galleryAlbums))
 	mux.HandleFunc("GET /api/v2/photos/private-albums", a.requireMedia(a.galleryPrivateAlbums))
 	mux.HandleFunc("POST /api/v2/photos/private-albums", a.requireMedia(a.galleryCreatePrivateAlbum))

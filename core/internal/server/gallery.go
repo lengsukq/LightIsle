@@ -120,6 +120,9 @@ func galleryError(w http.ResponseWriter, err error) {
 	case errors.Is(err, gallery.ErrInvalidPersonShare):
 		code = "invalid_person_share"
 		status = 400
+	case errors.Is(err, gallery.ErrInvalidMetadataOverride):
+		code = "invalid_metadata_override"
+		status = 400
 	case errors.Is(err, sql.ErrNoRows):
 		code = "not_found"
 		status = 404

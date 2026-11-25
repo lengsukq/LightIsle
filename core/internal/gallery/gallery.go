@@ -219,6 +219,10 @@ func openWithOptions(dir string, store *files.Manager, options Options, database
 		db.Close()
 		return nil, err
 	}
+	if err := ensureMetadataOverrideTable(db); err != nil {
+		db.Close()
+		return nil, err
+	}
 	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS assets_missing ON assets(share,missing_path,file_identity) WHERE missing_path<>''`); err != nil {
 		db.Close()
 		return nil, err

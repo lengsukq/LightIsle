@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { inject } from "vue";
-import { ArrowUp, Check, ChevronDown, Film, FolderPlus, Grid2x2, Grid3x3, Heart, Images, Lock, Plus, SlidersHorizontal, Sparkles, Star, Users, X } from "lucide-vue-next";
+import { ArrowUp, Check, ChevronDown, Film, FolderPlus, Grid2x2, Grid3x3, Heart, Images, Lock, Monitor, Plus, SlidersHorizontal, Sparkles, Star, Users, X } from "lucide-vue-next";
 import AppleSelect from "../../components/ui/AppleSelect.vue";
 import IsleChip from "../../components/ui/IsleChip.vue";
 import IsleSearchInput from "../../components/ui/IsleSearchInput.vue";
@@ -22,7 +22,7 @@ const {
   openSharedAlbum, openPrivateAlbum, goCreateFolderAlbum, setTypeFilter, selectSmartMemory,
   toggleExifFilter, onJumpYearChange, jumpToTimeline, scrollToTop, onSearchSubmit,
   onSearchClear, toggleCompactGrid, toggleTrashSelecting, selectSearchMode, clearPerson,
-  onExifFilterChange, resetExifFiltersAndReload, clearAllFilters,
+  onExifFilterChange, resetExifFiltersAndReload, clearAllFilters, openPhotoFrame,
 } = ctx;
 
 function closeAlbumMenu(event: Event) {
@@ -132,6 +132,16 @@ function closeAlbumMenu(event: Event) {
         >
           <Grid3x3 v-if="compactGrid" :size="14" /><Grid2x2 v-else :size="14" />
           <span>{{ compactGrid ? "紧凑" : "舒适" }}</span>
+        </button>
+        <button
+          v-if="hasAssets"
+          type="button"
+          class="photo-tool-btn"
+          title="全屏电子相框轮播当前照片"
+          aria-label="开启电子相框"
+          @click="openPhotoFrame()"
+        >
+          <Monitor :size="14" /> 相框
         </button>
         <button
           type="button"

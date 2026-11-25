@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { inject, ref } from "vue";
-import { Trash2, Share2, Download, FolderPlus, CheckSquare, X } from "lucide-vue-next";
+import { Trash2, Share2, Download, FolderPlus, CheckSquare, X, Calendar } from "lucide-vue-next";
 import AppleSelect from "../../components/ui/AppleSelect.vue";
 import IsleButton from "../../components/ui/IsleButton.vue";
 import { PHOTO_BATCH_CTX } from "../../contexts/photosContext.ts";
@@ -14,7 +14,7 @@ const {
   privateAlbumOptions, hasPrivateAlbums, shareLinks, shareNotice,
   selectTop50, clearSelection, exitSelecting, trashSelected, batchShare,
   batchDownload, batchFolder, loadMoreFolders, retryFolders, batchPrivateAlbum,
-  copyShareLinks, closeShareLinks,
+  copyShareLinks, closeShareLinks, editSelectedMetadata,
 } = ctx;
 
 const albumPickerOpen = ref(false);
@@ -61,6 +61,10 @@ const albumPickerOpen = ref(false);
         <IsleButton variant="glass" size="sm" :disabled="busy || !selectedCount" @click="batchShare()">
           <template #icon><Share2 :size="14" /></template>
           分享
+        </IsleButton>
+        <IsleButton variant="glass" size="sm" :disabled="busy || !selectedCount" @click="editSelectedMetadata()">
+          <template #icon><Calendar :size="14" /></template>
+          改时间/地点
         </IsleButton>
         <IsleButton variant="glass" size="sm" :disabled="busy || !selectedCount" @click="batchDownload()">
           <template #icon><Download :size="14" /></template>

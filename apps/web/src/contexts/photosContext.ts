@@ -72,6 +72,7 @@ export interface PhotoTimelineContext {
   onExifFilterChange: () => void;
   resetExifFiltersAndReload: () => void;
   clearAllFilters: () => void;
+  openPhotoFrame: () => void;
 }
 
 export interface PhotoAlbumsOverviewContext {
@@ -135,6 +136,7 @@ export interface PhotoBatchContext {
   batchPrivateAlbum: () => void;
   copyShareLinks: () => void;
   closeShareLinks: () => void;
+  editSelectedMetadata: () => void;
 }
 
 export interface PhotoViewerContext {
@@ -208,6 +210,8 @@ export interface PhotoViewerContext {
   addPrivate: () => void;
   removePrivate: () => void;
   retryPrivate: () => void;
+  openPhotoFrame: () => void;
+  editMetadata: () => void;
 }
 
 export const PHOTO_TIMELINE_CTX: InjectionKey<PhotoTimelineContext> = Symbol("lightisle-photo-timeline");

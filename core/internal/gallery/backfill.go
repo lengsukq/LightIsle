@@ -100,7 +100,13 @@ func (l *Library) backfillRow(share string, id int64, assetPath, name, kind stri
 	ctx, cancel := l.operationContext(nil)
 	defer cancel()
 	probe, taken := l.captureForAsset(ctx, assetPath, name, kind, size, modified)
-	result, err := l.db.Exec(`UPDATE assets SET taken_at=?,probe_status=?,browser_playback=?,mime=?,container=?,video_codec=?,audio_codec=?,duration_seconds=?,width=?,height=?,orientation=?,captured_at=?,gps_lat=?,gps_lon=?,camera_make=?,camera_model=?,exif_json=?,exif_version=?
+	result, err := l.db.Exec(`UPDATE assets SET
+ taken_at=COALESCE((SELECT o.taken_at FROM asset_metadata_overrides o WHERE o.asset_id=assets.id), ?),
+ probe_status=?,browser_playback=?,mime=?,container=?,video_codec=?,audio_codec=?,duration_seconds=?,width=?,height=?,orientation=?,
+ captured_at=COALESCE((SELECT NULLIF(o.captured_at,'') FROM asset_metadata_overrides o WHERE o.asset_id=assets.id), ?),
+ gps_lat=CASE WHEN EXISTS(SELECT 1 FROM asset_metadata_overrides o WHERE o.asset_id=assets.id AND (o.clear_location=1 OR o.gps_lat IS NOT NULL)) THEN (SELECT CASE WHEN o.clear_location=1 THEN NULL ELSE o.gps_lat END FROM asset_metadata_overrides o WHERE o.asset_id=assets.id) ELSE ? END,
+ gps_lon=CASE WHEN EXISTS(SELECT 1 FROM asset_metadata_overrides o WHERE o.asset_id=assets.id AND (o.clear_location=1 OR o.gps_lon IS NOT NULL)) THEN (SELECT CASE WHEN o.clear_location=1 THEN NULL ELSE o.gps_lon END FROM asset_metadata_overrides o WHERE o.asset_id=assets.id) ELSE ? END,
+ camera_make=?,camera_model=?,exif_json=?,exif_version=?
  WHERE share=? AND id=? AND modified=? AND size=?`,
 		taken, probe.ProbeStatus, probe.BrowserPlayback, probe.MIME, probe.Container, probe.VideoCodec, probe.AudioCodec,
 		probe.DurationSeconds, probe.Width, probe.Height, probe.Orientation, probe.CapturedAt,

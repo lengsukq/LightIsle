@@ -184,6 +184,10 @@ extension _PhotoGalleryViewerChrome on _PhotoGalleryViewerState {
       onSelected: (value) => unawaited(_mediaAction(value)),
       itemBuilder: (_) => [
         const PopupMenuItem(value: 'export', child: Text('保存原文件')),
+        if (!widget.fileBrowserMode && !asset.isVideo)
+          const PopupMenuItem(value: 'photo_frame', child: Text('全屏电子相框模式')),
+        if (!widget.fileBrowserMode && widget.canEditSharedFavorite(asset))
+          const PopupMenuItem(value: 'edit_metadata', child: Text('修正拍摄时间/地点')),
         if (!widget.fileBrowserMode && widget.onFolderAlbum != null)
           const PopupMenuItem(value: 'folder', child: Text('复制或移动到相册')),
         if (!widget.fileBrowserMode && widget.canEditSharedFavorite(asset))

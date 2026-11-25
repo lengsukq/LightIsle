@@ -52,6 +52,33 @@ extension _PhotoGalleryViewerActions on _PhotoGalleryViewerState {
         if (callback == null) return;
         final moved = await callback(asset);
         if (moved && mounted) _removeCurrentItem();
+      case 'edit_metadata':
+        if (!widget.canEditSharedFavorite(asset)) return;
+        _stopSlideshow();
+        final updated = await showPhotoMetadataEditDialog(
+          context,
+          api: widget.api,
+          assets: [asset],
+        );
+        if (updated && mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('已更新拍摄时间或地点（原片文件未改动）。')),
+          );
+        }
+      case 'photo_frame':
+        if (asset.isVideo) return;
+        _stopSlideshow();
+        await Navigator.of(context).push<void>(
+          buildIslePageRoute<void>(
+            builder: (_) => PhotoFramePage(
+              api: widget.api,
+              assets: _items,
+              title: widget.currentAlbumName.isNotEmpty
+                  ? widget.currentAlbumName
+                  : '时光相册',
+            ),
+          ),
+        );
     }
   }
 

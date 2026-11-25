@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../core/isle_cache_manager.dart';
+import '../../core/isle_route.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/media_image_memory_cache.dart';
 import '../../core/widgets.dart';
@@ -15,8 +16,10 @@ import 'media_models.dart';
 import 'media_ui.dart';
 import 'offline_photo_store.dart';
 import 'photo_exif_panel.dart';
+import 'photo_frame_page.dart';
 import 'photo_gallery_viewer_filmstrip.dart';
 import 'photo_media_view.dart';
+import 'photo_metadata_edit_dialog.dart';
 
 export 'photo_media_view.dart'
     show

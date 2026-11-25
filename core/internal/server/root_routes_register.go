@@ -107,6 +107,7 @@ func registerRootGalleryRoutes(mux *http.ServeMux, base string, media, admin gua
 	mux.HandleFunc("GET "+base+"/photos/{id}/thumbnail", media(func(a *API) http.HandlerFunc { return a.galleryThumbnail }))
 	mux.HandleFunc("POST "+base+"/photos/{id}/favorite", media(func(a *API) http.HandlerFunc { return a.galleryFavorite }))
 	mux.HandleFunc("POST "+base+"/photos/{id}/personal-favorite", media(func(a *API) http.HandlerFunc { return a.galleryPersonalFavorite }))
+	mux.HandleFunc("PATCH "+base+"/photos/metadata", media(func(a *API) http.HandlerFunc { return a.galleryUpdateMetadata }))
 	mux.HandleFunc("GET "+base+"/photos/albums", media(func(a *API) http.HandlerFunc { return a.galleryAlbums }))
 	mux.HandleFunc("GET "+base+"/photos/private-albums", media(func(a *API) http.HandlerFunc { return a.galleryPrivateAlbums }))
 	mux.HandleFunc("GET "+base+"/photos/folder-albums", media(func(a *API) http.HandlerFunc { return a.folderAlbumList }))

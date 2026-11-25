@@ -211,6 +211,9 @@ watch(
                   <button v-if="selected.type === 'photo' && modalAssets.length > 1" type="button" class="viewer-pill-btn" :title="slideshow ? '暂停幻灯片' : '开始幻灯片，每4秒一张'" @click="ctx?.toggleSlideshow()">
                     {{ slideshow ? "暂停轮播" : "幻灯片" }}
                   </button>
+                  <button v-if="selected.type === 'photo'" type="button" class="viewer-pill-btn" title="全屏电子相框轮播" @click="ctx?.openPhotoFrame()">
+                    电子相框
+                  </button>
                   <button type="button" :class="{ chosen: viewerInfo }" :aria-expanded="viewerInfo" aria-controls="photo-viewer-info" aria-label="拍摄信息与相册（I）" title="拍摄信息（快捷键 I）" @click="ctx?.toggleInfo()">
                     <Info :size="17" />
                   </button>
@@ -243,11 +246,13 @@ watch(
               :asset="selected"
               :ai-detail="viewerAIDetail"
               :ai-loading="viewerAILoading"
+              :can-write="canWrite"
               :media-path="mediaPath"
               @close="ctx?.toggleInfo()"
               @show-on-map="(lat, lon) => ctx?.showOnMap(lat, lon)"
               @select-person="ctx?.selectPerson($event)"
               @search-tag="ctx?.searchTag($event)"
+              @edit-metadata="ctx?.editMetadata()"
             />
             <div class="gallery-stage">
               <button v-if="selected.type !== 'video' && selectedIndex > 0" type="button" class="viewer-nav prev" title="上一张（←）" aria-label="上一张" @click="onShowAt(selectedIndex - 1)">

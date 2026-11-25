@@ -26,6 +26,9 @@ import PhotoAlbumOverviewSection from "./PhotoAlbumOverviewSection.vue";
 import PhotosBatchBar from "./PhotosBatchBar.vue";
 import PhotosTimelineToolbar from "./PhotosTimelineToolbar.vue";
 import PhotoViewerModal from "./PhotoViewerModal.vue";
+import PhotoFrameOverlay from "./PhotoFrameOverlay.vue";
+import PhotoMetadataEditModal from "./PhotoMetadataEditModal.vue";
+import { usePhotoMetadataEditor } from "./usePhotoMetadataEditor.ts";
 import IsleButton from "../../components/ui/IsleButton.vue";
 import IsleHelpButton from "../../components/ui/IsleHelpButton.vue";
 import IsleEmpty from "../../components/ui/IsleEmpty.vue";
@@ -349,6 +352,22 @@ const togglePersonalFavorite = usePhotoPersonalFavorite({
   reload: () => load(true), showAssetAt: (index) => showAssetAt(index), closeModal, focusTile,
 });
 
+const photoFrameOpen = ref(false);
+const metadataEditor = usePhotoMetadataEditor({
+  api,
+  rootPath: apiPath,
+  onUpdated: async () => {
+    message.value = "已更新拍摄时间或地点（原片文件未改动）。";
+    await load(true);
+    void refreshTimelineIndex();
+    void refreshFacets();
+  },
+});
+function openPhotoFrame() {
+  if (selected.value) closeModal(false);
+  photoFrameOpen.value = true;
+}
+
 provide(PHOTO_TIMELINE_CTX, {
   activeAlbum, activePrivateAlbum, activeFolderAlbum, currentPrivateAlbum, currentAlbum,
   favoritesOnly, personalOnly, isOnThisDay: onThisDayOnly, albums, privateAlbums, folderAlbums,
@@ -383,6 +402,7 @@ provide(PHOTO_TIMELINE_CTX, {
   onExifFilterChange,
   resetExifFiltersAndReload: () => { resetExifFilters(); onExifFilterChange(); },
   clearAllFilters,
+  openPhotoFrame,
 });
 
 provide(PHOTO_ALBUMS_OVERVIEW_CTX, {
@@ -431,6 +451,7 @@ provide(PHOTO_BATCH_CTX, {
   batchPrivateAlbum: () => void batchToPrivateAlbum(),
   copyShareLinks: () => void copyBatchShareLinks(),
   closeShareLinks: () => { batchShareLinks.value = []; batchShareNotice.value = ""; },
+  editSelectedMetadata: () => metadataEditor.openForAssets(assets.value.filter((a) => trashIDs.value.has(a.id))),
 });
 
 provide(PHOTO_VIEWER_CTX, {
@@ -478,6 +499,8 @@ provide(PHOTO_VIEWER_CTX, {
   addPrivate: () => void addSelectedPrivate(),
   removePrivate: () => void removeSelectedPrivate(),
   retryPrivate: () => void refreshPrivateAlbums(),
+  openPhotoFrame,
+  editMetadata: () => { if (selected.value) metadataEditor.openForAssets([selected.value]); },
 });
 
 const setScanPolling = createVisibleMediaPolling(status, 4500);
@@ -716,5 +739,7 @@ onUnmounted(() => {
     <PhotosBatchBar />
 
     <PhotoViewerModal />
+    <PhotoFrameOverlay :open="photoFrameOpen" :assets="assets" :title="activePerson?.name || activeFolderAlbum?.name || currentAlbum?.name || '时光相册'" :media-path="mediaPath" @close="photoFrameOpen = false" />
+    <PhotoMetadataEditModal :open="metadataEditor.open.value" :asset-ids="metadataEditor.targetIds.value" :initial-taken-at="metadataEditor.initialTakenAt.value" :initial-latitude="metadataEditor.initialLatitude.value" :initial-longitude="metadataEditor.initialLongitude.value" :busy="metadataEditor.busy.value" :error="metadataEditor.error.value" @close="metadataEditor.close()" @submit="metadataEditor.submit($event)" />
   </div>
 </template>

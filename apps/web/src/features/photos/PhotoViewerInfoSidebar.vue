@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { X, MapPin, Copy, Check, Sparkles, User } from "lucide-vue-next";
+import { X, MapPin, Copy, Check, Sparkles, User, Pencil } from "lucide-vue-next";
 import { copyTextToClipboard } from "../../utils/clipboard.ts";
 import { TIMINGS_MS } from "../../constants/timings.ts";
 import type { BatchAsset } from "./usePhotoBatchActions.ts";
@@ -14,6 +14,7 @@ const props = defineProps<{
   asset: BatchAsset;
   aiDetail: AssetAIDetail | null;
   aiLoading: boolean;
+  canWrite?: boolean;
   mediaPath: (path: string) => string;
 }>();
 
@@ -22,6 +23,7 @@ const emit = defineEmits<{
   (e: "show-on-map", latitude: number, longitude: number): void;
   (e: "select-person", person: { id: number; name: string }): void;
   (e: "search-tag", tag: string): void;
+  (e: "edit-metadata"): void;
 }>();
 
 const copied = ref(false);
@@ -42,7 +44,10 @@ async function copyOcrText() {
   <div id="photo-viewer-info" class="viewer-info" role="region" aria-label="当前媒体信息">
     <div class="viewer-info-heading">
       <strong>媒体与拍摄参数</strong>
-      <button type="button" aria-label="关闭媒体信息" @click="emit('close')"><X :size="16" /></button>
+      <div style="display:inline-flex;gap:6px;align-items:center">
+        <button v-if="canWrite" type="button" title="修正拍摄时间或地点" aria-label="修正拍摄时间或地点" @click="emit('edit-metadata')"><Pencil :size="14" /></button>
+        <button type="button" aria-label="关闭媒体信息" @click="emit('close')"><X :size="16" /></button>
+      </div>
     </div>
 
     <div

@@ -158,10 +158,15 @@ func upsertChangedAssetsTx(ctx context.Context, tx *sql.Tx, share string, genera
 const scanAssetUpsert = `INSERT INTO assets(share,path,type,size,modified,taken_at,seen,file_identity,probe_status,browser_playback,mime,container,video_codec,audio_codec,duration_seconds,width,height,orientation,captured_at,gps_lat,gps_lon,camera_make,camera_model,exif_json,exif_version)
       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
       ON CONFLICT(share,path) DO UPDATE SET type=excluded.type,size=excluded.size,
-      modified=excluded.modified,taken_at=excluded.taken_at,seen=excluded.seen,file_identity=excluded.file_identity,
+      modified=excluded.modified,
+      taken_at=COALESCE((SELECT o.taken_at FROM asset_metadata_overrides o WHERE o.asset_id=assets.id), excluded.taken_at),
+      seen=excluded.seen,file_identity=excluded.file_identity,
       probe_status=excluded.probe_status,browser_playback=excluded.browser_playback,mime=excluded.mime,
       container=excluded.container,video_codec=excluded.video_codec,audio_codec=excluded.audio_codec,
       duration_seconds=excluded.duration_seconds,width=excluded.width,height=excluded.height,
-      orientation=excluded.orientation,captured_at=excluded.captured_at,
-      gps_lat=excluded.gps_lat,gps_lon=excluded.gps_lon,camera_make=excluded.camera_make,
+      orientation=excluded.orientation,
+      captured_at=COALESCE((SELECT NULLIF(o.captured_at,'') FROM asset_metadata_overrides o WHERE o.asset_id=assets.id), excluded.captured_at),
+      gps_lat=CASE WHEN EXISTS(SELECT 1 FROM asset_metadata_overrides o WHERE o.asset_id=assets.id AND (o.clear_location=1 OR o.gps_lat IS NOT NULL)) THEN (SELECT CASE WHEN o.clear_location=1 THEN NULL ELSE o.gps_lat END FROM asset_metadata_overrides o WHERE o.asset_id=assets.id) ELSE excluded.gps_lat END,
+      gps_lon=CASE WHEN EXISTS(SELECT 1 FROM asset_metadata_overrides o WHERE o.asset_id=assets.id AND (o.clear_location=1 OR o.gps_lon IS NOT NULL)) THEN (SELECT CASE WHEN o.clear_location=1 THEN NULL ELSE o.gps_lon END FROM asset_metadata_overrides o WHERE o.asset_id=assets.id) ELSE excluded.gps_lon END,
+      camera_make=excluded.camera_make,
       camera_model=excluded.camera_model,exif_json=excluded.exif_json,exif_version=excluded.exif_version`
