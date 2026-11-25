@@ -8,6 +8,7 @@ import IsleActionMenu from "../../components/ui/IsleActionMenu.vue";
 import { duration, metadataSourceName } from "./useCinemaMetadata.ts";
 import { formatCinemaResumeLabel } from "./cinemaSubtitles.ts";
 import { resolveTmdbCandidatePosterUrl } from "./cinemaCatalogDisplay.ts";
+import CinemaOnlineSubtitlesAndCollections from "./CinemaOnlineSubtitlesAndCollections.vue";
 import { CINEMA_DETAIL_CTX } from "../../contexts/cinemaContext.ts";
 import type { TMDBCandidate } from "./cinemaTypes.ts";
 
@@ -16,7 +17,7 @@ if (!ctx) throw new Error("CinemaDetailMetadataPanels requires CINEMA_DETAIL_CTX
 
 const {
   selected, admin, canTrashSelected, deleting, leavingPlayer, posterFailed, posterReady,
-  posterUrl, mediaPath, playbackMode, playbackLabelText, sameDirectoryFilms, playlistDirLabel,
+  posterUrl, mediaPath, api, apiPath, playbackMode, playbackLabelText, sameDirectoryFilms, playlistDirLabel,
   scrapeMessage, scraping, doubanQuery, doubanMatches, doubanBusy, doubanError,
   tmdbToken, tmdbQuery, tmdbMatches, tmdbBusy, tmdbError, candidatePosterFailed,
   playSelected, posterError, candidatePosterError, switchPlaylistFilm,
@@ -194,6 +195,8 @@ function onCandidateError(c: TMDBCandidate) {
         </div>
       </template>
     </div>
+
+    <CinemaOnlineSubtitlesAndCollections :film="selected" :admin="admin" :api="api" :api-path="apiPath" />
 
     <footer class="cinema-detail-footer">
       <div class="cinema-detail-footer-left">

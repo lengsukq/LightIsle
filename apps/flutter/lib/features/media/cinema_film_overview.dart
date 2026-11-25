@@ -9,6 +9,7 @@ import '../../core/widgets.dart';
 import '../files/file_share_dialog.dart';
 import 'cinema_catalog_display.dart';
 import 'cinema_metadata_repository.dart';
+import 'cinema_online_subtitles_and_collections.dart';
 import 'cinema_poster_image.dart';
 import 'media_models.dart';
 import 'media_ui.dart';
@@ -507,7 +508,12 @@ class _CinemaFilmOverviewState extends State<CinemaFilmOverview> {
                             content,
                           ],
                           if (widget.isAdmin) ...[
-                            const SizedBox(height: 24),
+                            const SizedBox(height: 20),
+                            CinemaOnlineSubtitlesAndCollectionsCard(
+                              api: widget.api,
+                              film: _film,
+                            ),
+                            const SizedBox(height: 20),
                             _buildAdminMetadataPanel(context),
                           ],
                         ],

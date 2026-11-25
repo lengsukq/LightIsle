@@ -73,6 +73,13 @@ export type SubtitleTrackInfo = {
   title?: string;
   extractable: boolean;
 };
+export type ChapterInfo = {
+  id: number;
+  title?: string;
+  startSeconds: number;
+  endSeconds: number;
+  kind?: "intro" | "credits" | "chapter" | string;
+};
 export type TrackInfo = {
   videoCodec?: string;
   width?: number;
@@ -80,6 +87,22 @@ export type TrackInfo = {
   durationSeconds?: number;
   audio: AudioTrackInfo[];
   subtitles: SubtitleTrackInfo[];
+  chapters?: ChapterInfo[];
+};
+export type CinemaCollection = {
+  id: number;
+  name: string;
+  description?: string;
+  count: number;
+  coverFilmId?: number;
+  createdAt: number;
+};
+export type OnlineSubtitleCandidate = {
+  id: string;
+  name: string;
+  language: string;
+  ext: string;
+  url: string;
 };
 export type SeriesInfo = {
   id: number;

@@ -46,7 +46,7 @@ func (t *Transcoder) ProbeTracks(source *os.File, share string, film Film) (Trac
 		return TrackInfo{}, err
 	}
 	cmd := exec.CommandContext(ctx, probePath,
-		"-v", "quiet", "-print_format", "json", "-show_streams", "-show_format",
+		"-v", "quiet", "-print_format", "json", "-show_streams", "-show_format", "-show_chapters",
 		"-protocol_whitelist", "file", "-format_whitelist", videoInputFormats, "-i", "/dev/fd/3")
 	cmd.ExtraFiles = []*os.File{source}
 	buf := &limitedBuffer{limit: 1 << 20}
@@ -103,6 +103,14 @@ type ffprobeOutput struct {
 	Format struct {
 		Duration string `json:"duration"`
 	} `json:"format"`
+	Chapters []struct {
+		ID        int    `json:"id"`
+		StartTime string `json:"start_time"`
+		EndTime   string `json:"end_time"`
+		Tags      struct {
+			Title string `json:"title"`
+		} `json:"tags"`
+	} `json:"chapters"`
 }
 
 func parseFFprobeDuration(raw string) float64 {
@@ -173,7 +181,41 @@ func parseTrackInfo(data []byte) (TrackInfo, error) {
 	} else if streamDuration > 0 {
 		info.DurationSeconds = streamDuration
 	}
+	for idx, ch := range out.Chapters {
+		start := parseFFprobeDuration(ch.StartTime)
+		end := parseFFprobeDuration(ch.EndTime)
+		if end <= start {
+			continue
+		}
+		title := strings.TrimSpace(ch.Tags.Title)
+		if title == "" {
+			title = fmt.Sprintf("章节 %d", idx+1)
+		}
+		info.Chapters = append(info.Chapters, Chapter{
+			ID:           ch.ID,
+			Title:        title,
+			StartSeconds: start,
+			EndSeconds:   end,
+			Kind:         classifyChapterKind(title, start, end, info.DurationSeconds),
+		})
+	}
 	return info, nil
+}
+
+func classifyChapterKind(title string, start, end, total float64) string {
+	lower := strings.ToLower(strings.TrimSpace(title))
+	dur := end - start
+	switch {
+	case strings.Contains(lower, "intro") || strings.Contains(lower, "opening") || strings.Contains(lower, "片头") || strings.Contains(lower, "主题曲") || lower == "op" || strings.HasPrefix(lower, "op ") || strings.Contains(lower, "recap"):
+		if dur <= 300 {
+			return "intro"
+		}
+	case strings.Contains(lower, "credit") || strings.Contains(lower, "ending") || strings.Contains(lower, "outro") || strings.Contains(lower, "片尾") || lower == "ed" || strings.HasPrefix(lower, "ed "):
+		if total <= 0 || start >= total*0.6 {
+			return "credits"
+		}
+	}
+	return "chapter"
 }
 
 // CancelSession stops and removes one session owned by the given film identity.

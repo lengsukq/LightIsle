@@ -5,6 +5,7 @@ import 'package:video_player/video_player.dart';
 
 import 'cinema_detail_controller.dart';
 import 'cinema_detail_player_menus.dart';
+import 'media_models.dart';
 import 'shared_video_player_controls.dart';
 
 /// Draggable bottom transport deck for the media-first cinema player route.
@@ -85,6 +86,7 @@ class CinemaBottomTransportDeck extends StatelessWidget {
       rightClusterItems: _buildRightClusterItems(buttonStyle),
     );
 
+    final chapters = controller.playback.tracks?.chapters ?? const <CinemaChapter>[];
     return SafeArea(
       top: false,
       child: Padding(
@@ -94,14 +96,56 @@ class CinemaBottomTransportDeck extends StatelessWidget {
           compactControls ? 12 : 24,
           compactControls ? 10 : 16,
         ),
-        child: Transform.translate(
-          offset: controller.chrome.dockDragOffset,
-          child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onPanUpdate: (details) =>
-                controller.updateDockDragOffset(details.delta, screenSize),
-            child: deck,
-          ),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.end,
+          children: [
+            if (chapters.isNotEmpty)
+              AnimatedBuilder(
+                animation: video,
+                builder: (context, _) {
+                  final pos = controller.originalPlaybackSeconds;
+                  CinemaChapter? skipTarget;
+                  for (final ch in chapters) {
+                    if ((ch.kind == 'intro' || ch.kind == 'credits') &&
+                        pos >= ch.startSeconds &&
+                        pos < ch.endSeconds - 1) {
+                      skipTarget = ch;
+                      break;
+                    }
+                  }
+                  if (skipTarget == null) return const SizedBox.shrink();
+                  final target = skipTarget;
+                  return Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xD9141418),
+                        foregroundColor: Colors.white,
+                        side: const BorderSide(color: Color(0x47FFFFFF)),
+                      ),
+                      onPressed: () {
+                        controller.revealChrome();
+                        unawaited(controller.seekAbsolute(target.endSeconds));
+                      },
+                      icon: const Icon(Icons.skip_next_rounded, size: 18),
+                      label: Text(
+                        target.kind == 'credits' ? '跳过片尾' : '跳过片头',
+                      ),
+                    ),
+                  );
+                },
+              ),
+            Transform.translate(
+              offset: controller.chrome.dockDragOffset,
+              child: GestureDetector(
+                behavior: HitTestBehavior.translucent,
+                onPanUpdate: (details) =>
+                    controller.updateDockDragOffset(details.delta, screenSize),
+                child: deck,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -297,12 +341,56 @@ class CinemaBottomTransportDeck extends StatelessWidget {
     );
   }
 
+  Widget _buildChaptersMenuPill(List<CinemaChapter> chapters) {
+    return PopupMenuButton<double>(
+      tooltip: '章节快速跳转',
+      onSelected: (seconds) {
+        controller.revealChrome();
+        unawaited(controller.seekAbsolute(seconds));
+      },
+      itemBuilder: (_) => [
+        for (final ch in chapters)
+          PopupMenuItem<double>(
+            value: ch.startSeconds,
+            child: Text(
+              '${SharedVideoPlayerStyle.formatClock(Duration(milliseconds: (ch.startSeconds * 1000).round()))} · '
+              '${ch.title.isNotEmpty ? ch.title : '章节'}',
+            ),
+          ),
+      ],
+      child: Container(
+        height: 30,
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        decoration: BoxDecoration(
+          color: const Color(0x1FFFFFFF),
+          borderRadius: BorderRadius.circular(999),
+          border: Border.all(color: const Color(0x24FFFFFF), width: 0.75),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              '章节 (${chapters.length})',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 12,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   List<Widget> _buildRightClusterItems(ButtonStyle buttonStyle) {
+    final chapters = controller.playback.tracks?.chapters ?? const <CinemaChapter>[];
     final hasMultiAudio =
         (controller.playback.tracks?.audio.length ?? 0) > 1 &&
         controller.playback.hlsSession != null;
     return [
       _buildPlaylistTogglePill(),
+      if (chapters.isNotEmpty) _buildChaptersMenuPill(chapters),
       CinemaCaptionMenuPill(controller: controller),
       CinemaQualityMenuPill(controller: controller),
       CinemaSpeedMenuPill(controller: controller),

@@ -111,6 +111,14 @@ type SubtitleTrack struct {
 	Extractable bool   `json:"extractable"`
 }
 
+type Chapter struct {
+	ID           int     `json:"id"`
+	Title        string  `json:"title,omitempty"`
+	StartSeconds float64 `json:"startSeconds"`
+	EndSeconds   float64 `json:"endSeconds"`
+	Kind         string  `json:"kind,omitempty"` // intro | credits | chapter
+}
+
 type TrackInfo struct {
 	VideoCodec      string          `json:"videoCodec,omitempty"`
 	Width           int             `json:"width,omitempty"`
@@ -118,6 +126,7 @@ type TrackInfo struct {
 	DurationSeconds float64         `json:"durationSeconds,omitempty"`
 	Audio           []AudioTrack    `json:"audio"`
 	Subtitles       []SubtitleTrack `json:"subtitles"`
+	Chapters        []Chapter       `json:"chapters,omitempty"`
 }
 
 type SessionInfo struct {

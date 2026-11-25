@@ -313,23 +313,51 @@ class CinemaSubtitleTrack {
   );
 }
 
-/// Audio and text-subtitle listing for one film.
+/// One chapter marker extracted by ffprobe from MKV/MP4 containers.
+class CinemaChapter {
+  const CinemaChapter({
+    required this.id,
+    this.title = '',
+    required this.startSeconds,
+    required this.endSeconds,
+    this.kind = 'chapter',
+  });
+
+  final int id;
+  final String title;
+  final double startSeconds;
+  final double endSeconds;
+  final String kind;
+
+  factory CinemaChapter.fromJson(MediaJson json) => CinemaChapter(
+    id: _asInt(json['id']),
+    title: _asString(json['title']),
+    startSeconds: _asDouble(json['startSeconds']),
+    endSeconds: _asDouble(json['endSeconds']),
+    kind: _asString(json['kind']).isEmpty ? 'chapter' : _asString(json['kind']),
+  );
+}
+
+/// Audio, text-subtitle, and chapter listing for one film.
 class CinemaTrackInfo {
   const CinemaTrackInfo({
     required this.audio,
     required this.subtitles,
+    this.chapters = const [],
     this.durationSeconds = 0,
     this.height = 0,
   });
 
   final List<CinemaAudioTrack> audio;
   final List<CinemaSubtitleTrack> subtitles;
+  final List<CinemaChapter> chapters;
   final double durationSeconds;
   final int height;
 
   factory CinemaTrackInfo.fromJson(MediaJson json) {
     final audio = <CinemaAudioTrack>[];
     final subtitles = <CinemaSubtitleTrack>[];
+    final chapters = <CinemaChapter>[];
     final rawAudio = json['audio'];
     if (rawAudio is List) {
       for (final item in rawAudio) {
@@ -348,9 +376,20 @@ class CinemaTrackInfo {
         }
       }
     }
+    final rawChapters = json['chapters'];
+    if (rawChapters is List) {
+      for (final item in rawChapters) {
+        if (item is Map) {
+          chapters.add(
+            CinemaChapter.fromJson(Map<String, dynamic>.from(item)),
+          );
+        }
+      }
+    }
     return CinemaTrackInfo(
       audio: audio,
       subtitles: subtitles,
+      chapters: chapters,
       durationSeconds: _asDouble(json['durationSeconds']),
       height: _asInt(json['height']),
     );

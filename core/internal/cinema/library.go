@@ -187,6 +187,10 @@ func open(dataDir string, store *files.Manager, databaseName, shareScope string,
 		db.Close()
 		return nil, fmt.Errorf("cinema series migration: %w", err)
 	}
+	if err := ensureCollectionTables(db); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("cinema collection migration: %w", err)
+	}
 	if _, err := db.Exec(`DELETE FROM films WHERE missing_path='' AND (path LIKE '._%' OR path LIKE '%/._%' OR path='.DS_Store' OR path LIKE '%/.DS_Store')`); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("cinema metadata sidecar cleanup: %w", err)

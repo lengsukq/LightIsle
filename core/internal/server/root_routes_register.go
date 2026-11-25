@@ -165,6 +165,15 @@ func registerRootCinemaRoutes(mux *http.ServeMux, base string, media, admin guar
 	mux.HandleFunc("GET "+base+"/cinema/history", media(func(a *API) http.HandlerFunc { return a.cinemaHistory }))
 	mux.HandleFunc("DELETE "+base+"/cinema/history", media(func(a *API) http.HandlerFunc { return a.cinemaClearHistory }))
 	mux.HandleFunc("POST "+base+"/cinema/{id}/watched", media(func(a *API) http.HandlerFunc { return a.cinemaMarkWatched }))
+	mux.HandleFunc("GET "+base+"/cinema-collections", media(func(a *API) http.HandlerFunc { return a.cinemaCollectionsList }))
+	mux.HandleFunc("POST "+base+"/cinema-collections", admin(func(a *API) http.HandlerFunc { return a.cinemaCollectionCreate }))
+	mux.HandleFunc("PATCH "+base+"/cinema-collections/{id}", admin(func(a *API) http.HandlerFunc { return a.cinemaCollectionUpdate }))
+	mux.HandleFunc("DELETE "+base+"/cinema-collections/{id}", admin(func(a *API) http.HandlerFunc { return a.cinemaCollectionDelete }))
+	mux.HandleFunc("GET "+base+"/cinema-collections/{id}/films", media(func(a *API) http.HandlerFunc { return a.cinemaCollectionFilms }))
+	mux.HandleFunc("POST "+base+"/cinema-collections/{id}/items", admin(func(a *API) http.HandlerFunc { return a.cinemaCollectionAddFilm }))
+	mux.HandleFunc("DELETE "+base+"/cinema-collections/{id}/items/{filmID}", admin(func(a *API) http.HandlerFunc { return a.cinemaCollectionRemoveFilm }))
+	mux.HandleFunc("POST "+base+"/cinema/{id}/subtitles/search", admin(func(a *API) http.HandlerFunc { return a.cinemaSearchOnlineSubtitles }))
+	mux.HandleFunc("POST "+base+"/cinema/{id}/subtitles/download", admin(func(a *API) http.HandlerFunc { return a.cinemaDownloadOnlineSubtitle }))
 }
 
 func registerRootAdministrationRoutes(mux *http.ServeMux, base string, admin guardedRootEndpoint) {

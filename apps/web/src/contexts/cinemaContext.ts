@@ -2,6 +2,7 @@ import type { ComputedRef, InjectionKey, Ref } from "vue";
 import type { SubtitleSizePreset } from "../features/cinema/cinemaSubtitles.ts";
 import type {
   BrowserPlayback,
+  ChapterInfo,
   DoubanCandidate,
   Movie,
   Scan,
@@ -84,6 +85,8 @@ export interface CinemaDetailContext {
   posterReady: (movie: Movie) => boolean;
   posterUrl: (movie: Movie) => string;
   mediaPath: (path: string) => string;
+  api: <T = Record<string, unknown>>(url: string, method?: string, body?: object, signal?: AbortSignal) => Promise<T>;
+  apiPath: (path: string) => string;
   playbackMode: ComputedRef<BrowserPlayback>;
   playbackLabelText: ComputedRef<string>;
   sameDirectoryFilms: ComputedRef<Movie[]>;
@@ -126,6 +129,7 @@ export interface CinemaPlayerContext {
   captionSrclang: ComputedRef<string>;
   captionOptions: ComputedRef<CinemaSelectChoice[]>;
   audioTrackOptions: ComputedRef<CinemaSelectChoice[]>;
+  chapters: ComputedRef<ChapterInfo[]>;
   qualityOptions: ComputedRef<CinemaSelectChoice[]>;
   currentQuality: ComputedRef<string>;
   playbackRate: Ref<number>;

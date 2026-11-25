@@ -128,7 +128,7 @@ const {
 });
 
 const {
-  player, hlsPlayer, caption, playError, hlsSession, hlsStarting,
+  player, hlsPlayer, caption, playError, hlsSession, hlsStarting, hlsTracks,
   playbackRate, isSpeedBoosting, autoplayNext, preferLocalDecode, directLocalOverride,
   subtitleSize, subtitleOffset, localSubtitleName, localSubtitleError,
   playbackPosition, playbackDuration, playbackBuffered, canPictureInPicture,
@@ -570,7 +570,7 @@ provide(CINEMA_DETAIL_CTX, {
   canTrashSelected: computed(() =>
     Boolean(selected.value && (props.admin || selected.value.canWrite === true) && selected.value.path && movies.value.some((m) => m.id === selected.value!.id)),
   ),
-  deleting, leavingPlayer, posterFailed, posterReady, posterUrl: poster, mediaPath,
+  deleting, leavingPlayer, posterFailed, posterReady, posterUrl: poster, mediaPath, api, apiPath,
   playbackMode: computed(() => (selected.value ? playback(selected.value) : "download-only")),
   playbackLabelText: computed(() => (selected.value ? playbackLabel(selected.value) : "")),
   sameDirectoryFilms,
@@ -601,7 +601,7 @@ provide(CINEMA_PLAYER_CTX, {
   trackUrl: computed(() => (selected.value ? track(selected.value) : "")),
   caption,
   captionSrclang: computed(() => captionSrclang()),
-  captionOptions, audioTrackOptions, qualityOptions: cinemaQualityOptions,
+  captionOptions, audioTrackOptions, chapters: computed(() => hlsTracks.value?.chapters ?? []), qualityOptions: cinemaQualityOptions,
   currentQuality, playbackRate, isSpeedBoosting, osdMessage, playbackRateOptions,
   subtitleSize, subtitleOffset, localSubtitleName, localSubtitleError,
   hlsSession, hlsStarting, playError, isPlaying, volume, isMuted, fillScreen,

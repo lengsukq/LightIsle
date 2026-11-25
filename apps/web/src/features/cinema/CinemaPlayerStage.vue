@@ -17,7 +17,7 @@ if (!ctx) throw new Error("CinemaPlayerStage requires CINEMA_PLAYER_CTX");
 
 const {
   selected, canDirect, streamUrl, trackUrl, caption, captionSrclang, captionOptions,
-  audioTrackOptions, qualityOptions, currentQuality, playbackRate, isSpeedBoosting,
+  audioTrackOptions, chapters, qualityOptions, currentQuality, playbackRate, isSpeedBoosting,
   osdMessage, playbackRateOptions, subtitleSize, subtitleOffset, localSubtitleName,
   localSubtitleError, hlsSession, hlsStarting, playError, isPlaying, volume, isMuted,
   fillScreen, isFullscreen, canPictureInPicture, playbackPosition, playbackDuration,
@@ -33,7 +33,7 @@ const {
   startTranscode, download, switchPlaylistFilm, prevPlaylist, nextPlaylist, reloadPlaylist,
 } = ctx;
 
-type MenuKind = "caption" | "audio" | "quality" | "rate" | null;
+type MenuKind = "caption" | "audio" | "quality" | "rate" | "chapters" | null;
 const openMenu = ref<MenuKind>(null);
 const scrubbing = ref(false);
 const localScrub = ref<number | null>(null);
@@ -108,6 +108,13 @@ const audioPillLabel = computed(() => {
 });
 
 const ratePillLabel = computed(() => (playbackRate.value === 1 ? "1.0x" : `${playbackRate.value}x`));
+
+const activeSkipChapter = computed(() => {
+  const pos = displayPosition.value;
+  return chapters.value.find(
+    (ch) => (ch.kind === "intro" || ch.kind === "credits") && pos >= ch.startSeconds && pos < ch.endSeconds - 1,
+  ) ?? null;
+});
 
 function clearHideTimer() {
   if (hideTimer !== undefined) {
@@ -379,6 +386,16 @@ onUnmounted(() => {
       </div>
 
       <button
+        v-if="activeSkipChapter && (canDirect || hlsSession)"
+        type="button"
+        class="cinema-skip-intro-btn"
+        @click.stop="seek(activeSkipChapter.endSeconds)"
+      >
+        <SkipForward :size="15" />
+        <span>{{ activeSkipChapter.kind === 'credits' ? '跳过片尾' : '跳过片头' }}</span>
+      </button>
+
+      <button
         v-if="!isPlaying && !hlsStarting && (canDirect || hlsSession) && !showPlayerPlaylist && !manuallyCollapsed"
         type="button"
         class="cinema-center-play"
@@ -595,6 +612,19 @@ onUnmounted(() => {
             @adjust-offset="(d) => adjustSubtitleOffset(d)"
             @reset-offset="resetSubtitleOffset()"
           />
+
+          <div v-if="chapters.length > 0" class="cinema-menu-anchor">
+            <button type="button" class="cinema-pill-btn" :class="{ active: openMenu === 'chapters' }" title="章节快速跳转" :aria-expanded="openMenu === 'chapters'" @click="toggleMenu('chapters')">
+              <span>章节 ({{ chapters.length }})</span>
+              <ChevronDown :size="13" class="cinema-pill-chevron" />
+            </button>
+            <div v-if="openMenu === 'chapters'" class="cinema-popover-menu" role="menu">
+              <button v-for="ch in chapters" :key="ch.id" type="button" class="cinema-popover-item" :class="{ selected: displayPosition >= ch.startSeconds && displayPosition < ch.endSeconds }" role="menuitem" @click="openMenu = null; seek(ch.startSeconds)">
+                <Check :size="14" class="cinema-popover-check" />
+                <span>{{ formatCinemaClock(ch.startSeconds) }} · {{ ch.title || '章节' }}</span>
+              </button>
+            </div>
+          </div>
 
           <div v-if="(hlsSession || hlsStarting) && audioTrackOptions.length > 1" class="cinema-menu-anchor">
             <button type="button" class="cinema-pill-btn" :class="{ active: openMenu === 'audio' }" title="音轨切换" :aria-expanded="openMenu === 'audio'" @click="toggleMenu('audio')">
