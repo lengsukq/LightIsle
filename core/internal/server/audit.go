@@ -93,6 +93,8 @@ func auditedAction(r *http.Request) string {
 		return "cinema_write"
 	case strings.HasPrefix(p, "/api/v2/alerts"):
 		return "alert_acknowledge"
+	case strings.HasPrefix(p, "/api/v2/apps"):
+		return "apps_write"
 	default:
 		return ""
 	}

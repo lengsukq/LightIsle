@@ -679,17 +679,26 @@ class AppDetailManagementSection extends StatelessWidget {
     required this.busy,
     required this.onDelete,
     this.onExportData,
+    this.onExportPackage,
   });
 
   final bool busy;
   final VoidCallback onDelete;
   final VoidCallback? onExportData;
+  final VoidCallback? onExportPackage;
 
   @override
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     return IsleGroupCard(
       children: [
+        if (onExportPackage != null)
+          IsleGroupTile(
+            key: const ValueKey('detailExportPackageTile'),
+            icon: Icons.inventory_2_outlined,
+            title: '导出分享包 (.liapp.zip)',
+            onTap: busy ? null : onExportPackage,
+          ),
         if (onExportData != null)
           IsleGroupTile(
             key: const ValueKey('detailExportDataTile'),

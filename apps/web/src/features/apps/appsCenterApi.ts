@@ -117,6 +117,10 @@ export function getAppDataBackupUrl(id: string): string {
   return `/api/v2/apps/${encodeURIComponent(id)}/data-backup`;
 }
 
+export function getAppPackageExportUrl(id: string): string {
+  return `/api/v2/apps/${encodeURIComponent(id)}/package-export`;
+}
+
 export function createAppsCenterClient(fetchImpl: typeof fetch = globalThis.fetch) {
   async function request<T = Record<string, unknown>>(
     url: string,
@@ -211,6 +215,14 @@ export function createAppsCenterClient(fetchImpl: typeof fetch = globalThis.fetc
       return request<AppMutationResult>(`/api/v2/apps/${encodeURIComponent(id)}/data-restore`, {
         method: "POST",
         headers: { "Content-Type": "application/gzip" },
+        body: archiveBody,
+      });
+    },
+    importAppPackage(archiveBody: BodyInit, locationId?: string): Promise<AppMutationResult> {
+      const qs = locationId ? `?locationId=${encodeURIComponent(locationId)}` : "";
+      return request<AppMutationResult>(`/api/v2/apps/package-import${qs}`, {
+        method: "POST",
+        headers: { "Content-Type": "application/zip" },
         body: archiveBody,
       });
     },

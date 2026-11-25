@@ -92,6 +92,7 @@ const emit = defineEmits<{
   reset: [];
   "reload-logs": [];
   "export-data": [];
+  "export-package": [];
   "restore-data": [];
   delete: [];
 }>();
@@ -387,6 +388,7 @@ async function copyWebLogs() {
         <div><h3>数据备份与卸载</h3><p>支持导出或恢复 plugin-data 业务数据归档；卸载插件仅移除代码目录</p></div>
       </header>
       <div class="app-detail-hero-actions">
+        <IsleButton variant="glass" :disabled="busy" @click="emit('export-package')"><Download :size="14" /> 导出分享包 (.liapp.zip)</IsleButton>
         <IsleButton variant="glass" :disabled="busy" @click="emit('export-data')"><Download :size="14" /> 导出数据 (.tar.gz)</IsleButton>
         <IsleButton variant="glass" :disabled="busy" @click="emit('restore-data')"><Upload :size="14" /> 恢复备份</IsleButton>
         <IsleButton variant="danger" :disabled="busy || appStatus(app) === 'running'" @click="emit('delete')"><Trash2 :size="14" /> 删除插件</IsleButton>

@@ -499,6 +499,33 @@ class LightIsleApi {
     Map<String, String>? query,
   }) => send(method, path, body: body, query: query);
 
+  /// Sends a raw binary payload (such as a .liapp.zip package import) and
+  /// decodes the JSON object response using the same session/TLS guardrails.
+  Future<Map<String, dynamic>> sendBytes(
+    String method,
+    String path,
+    Uint8List bodyBytes, {
+    required String contentType,
+    Map<String, String>? query,
+  }) async {
+    final normalizedMethod = method.toUpperCase();
+    if (!RegExp(r'^[A-Z]{3,12}$').hasMatch(normalizedMethod)) {
+      throw ArgumentError('HTTP 方法无效。');
+    }
+    final context = await _openRequest(
+      normalizedMethod,
+      uri(path, query),
+      contentType: contentType,
+      bodyLength: bodyBytes.length,
+      writeBody: (request) {
+        request.add(bodyBytes);
+      },
+    );
+    final bytes = await _readWithCookieCapture(context, _maxJsonBytes);
+    _throwForBadStatus(context, bytes);
+    return _decodeJsonObject(bytes);
+  }
+
   /// Creates an expiring public file-share link on the active physical root
   /// and returns its directly streamable/downloadable public URI.
   Future<Uri> createPublicFileShare({

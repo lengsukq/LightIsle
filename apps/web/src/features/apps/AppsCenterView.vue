@@ -2,7 +2,7 @@
 import { computed, ref, watch } from "vue";
 import {
   RefreshCcw, ScrollText, Settings2,
-  Play, Sparkles, Cpu, ChevronDown, ChevronUp, HardDrive,
+  Play, Sparkles, Cpu, ChevronDown, ChevronUp, HardDrive, Upload,
 } from "lucide-vue-next";
 import { describeUserFacingError } from "../../api/userFacingError.ts";
 import AppDetailPanel from "./AppDetailPanel.vue";
@@ -70,6 +70,7 @@ const {
   webOutput,
   cronRuns,
   restoreInputRef,
+  packageInputRef,
   hasCron,
   reload,
   openApp,
@@ -84,6 +85,9 @@ const {
   activateApp,
   loadLogs,
   exportAppData,
+  exportAppPackage,
+  triggerImportAppPackage,
+  onImportPackageFileChange,
   triggerRestoreAppData,
   onRestoreFileChange,
   removeApp,
@@ -188,6 +192,7 @@ const filteredApps = computed(() => {
       @reset="resetAppDetailDraft"
       @reload-logs="loadLogs(detailApp)"
       @export-data="exportAppData(detailApp)"
+      @export-package="exportAppPackage(detailApp)"
       @restore-data="triggerRestoreAppData(detailApp)"
       @delete="removeApp(detailApp)"
     />
@@ -205,6 +210,10 @@ const filteredApps = computed(() => {
         </template>
         <template #actions>
           <IsleBadge v-if="apps.length > 0" variant="neutral" size="sm">已安装 {{ apps.length }}</IsleBadge>
+          <IsleButton v-if="isAdmin" variant="glass" size="sm" :disabled="busy" @click="triggerImportAppPackage">
+            <template #icon><Upload :size="15" /></template>
+            导入插件包
+          </IsleButton>
           <IsleButton variant="glass" size="sm" :disabled="busy" @click="reload(isAdmin)">
             <template #icon><RefreshCcw :size="15" :class="{ spinning: busy }" /></template>
             {{ busy ? "正在刷新…" : isAdmin ? "刷新应用列表" : "刷新" }}
@@ -381,6 +390,7 @@ const filteredApps = computed(() => {
         </article>
       </div>
       <input ref="restoreInputRef" type="file" accept=".tar.gz,.tgz,application/gzip" style="display:none" @change="onRestoreFileChange" />
+      <input ref="packageInputRef" type="file" accept=".zip,.liapp.zip,application/zip" style="display:none" @change="onImportPackageFileChange" />
     </template>
 
     <IsleModal

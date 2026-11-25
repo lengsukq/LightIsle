@@ -21,6 +21,7 @@ class AppDetailPage extends StatefulWidget {
     this.configuredChannels = const {},
     this.onLaunch,
     this.onExportData,
+    this.onExportPackage,
     this.onSnapshotUpdated,
     this.onDeleted,
   });
@@ -31,6 +32,7 @@ class AppDetailPage extends StatefulWidget {
   final Set<String> configuredChannels;
   final Future<void> Function(Map<String, dynamic> app)? onLaunch;
   final Future<void> Function(Map<String, dynamic> app)? onExportData;
+  final Future<void> Function(Map<String, dynamic> app)? onExportPackage;
   final ValueChanged<Map<String, dynamic>>? onSnapshotUpdated;
   final ValueChanged<String>? onDeleted;
 
@@ -430,6 +432,9 @@ class _AppDetailPageState extends State<AppDetailPage> {
           onDelete: _handleDelete,
           onExportData: widget.onExportData != null
               ? () => unawaited(widget.onExportData!(_app))
+              : null,
+          onExportPackage: widget.onExportPackage != null
+              ? () => unawaited(widget.onExportPackage!(_app))
               : null,
         ),
       ],

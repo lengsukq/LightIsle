@@ -68,6 +68,8 @@ func (h *appsManagementHandler) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v2/apps/{id}/icon", h.api.requireLogin(h.handleServeIcon))
 	mux.HandleFunc("GET /api/v2/apps/{id}/data-backup", h.api.requireAdmin(h.handleExportDataBackup))
 	mux.HandleFunc("POST /api/v2/apps/{id}/data-restore", h.api.requireAdmin(h.handleRestoreDataBackup))
+	mux.HandleFunc("GET /api/v2/apps/{id}/package-export", h.api.requireAdmin(h.handleExportAppPackage))
+	mux.HandleFunc("POST /api/v2/apps/package-import", h.api.requireAdmin(h.handleImportAppPackage))
 }
 
 func (h *appsManagementHandler) handleListApps(w http.ResponseWriter, r *http.Request) {
@@ -425,4 +427,62 @@ func (h *appsManagementHandler) handleRestoreDataBackup(w http.ResponseWriter, r
 		return
 	}
 	replyAppsList(w, h.appsMgr, h.store, user)
+}
+
+func (h *appsManagementHandler) handleExportAppPackage(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if _, err := h.appsMgr.GetForUser(id, 0, auth.RoleAdmin); err != nil {
+		appsErrorReply(w, err)
+		return
+	}
+	tmpFile, err := os.CreateTemp("", "lightisle-liapp-*.zip")
+	if err != nil {
+		appsErrorReply(w, err)
+		return
+	}
+	tmpPath := tmpFile.Name()
+	defer func() {
+		_ = tmpFile.Close()
+		_ = os.Remove(tmpPath)
+	}()
+	if err := h.appsMgr.ExportAppPackage(r.Context(), id, tmpFile); err != nil {
+		appsErrorReply(w, err)
+		return
+	}
+	if err := tmpFile.Sync(); err != nil {
+		appsErrorReply(w, err)
+		return
+	}
+	st, err := tmpFile.Stat()
+	if err != nil || st.Size() <= 0 {
+		appsErrorReply(w, errors.New("生成轻应用分享包为空或失败"))
+		return
+	}
+	if _, err := tmpFile.Seek(0, io.SeekStart); err != nil {
+		appsErrorReply(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/zip")
+	w.Header().Set("Content-Length", strconv.FormatInt(st.Size(), 10))
+	w.Header().Set("Content-Disposition", "attachment; filename=\""+id+".liapp.zip\"")
+	w.WriteHeader(http.StatusOK)
+	_, _ = io.Copy(w, tmpFile)
+}
+
+func (h *appsManagementHandler) handleImportAppPackage(w http.ResponseWriter, r *http.Request) {
+	user, _ := h.resolveSession(r)
+	locationID := strings.TrimSpace(r.URL.Query().Get("locationId"))
+	r.Body = http.MaxBytesReader(w, r.Body, (64<<20)+(1<<20))
+	defer r.Body.Close()
+	app, err := h.appsMgr.ImportAppPackage(r.Context(), r.Body, locationID)
+	if err != nil {
+		appsErrorReply(w, err)
+		return
+	}
+	jsonReply(w, http.StatusCreated, map[string]any{
+		"app":        app,
+		"apps":       h.appsMgr.ListForUser(user.ID, user.Role),
+		"templates":  h.appsMgr.ListTemplates(),
+		"appStorage": h.appsMgr.GetStorageSnapshot(),
+	})
 }

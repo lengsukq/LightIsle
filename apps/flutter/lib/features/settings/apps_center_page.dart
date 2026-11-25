@@ -306,6 +306,7 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
               await _reload(refresh: false);
             },
             onExportData: _exportAppData,
+            onExportPackage: _exportAppPackage,
             onSnapshotUpdated: (res) {
               if (!mounted) return;
               if (res['apps'] is List) {
@@ -359,6 +360,56 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
     });
   }
 
+  Future<void> _exportAppPackage(Map<String, dynamic> app) async {
+    final id = app['id']?.toString() ?? '';
+    if (id.isEmpty || _busy) return;
+    final fileName = '$id.liapp.zip';
+    await _runBusy('导出分享包失败', () async {
+      final savePath = await _chooseBackupSavePath(fileName);
+      if (!mounted || savePath == null || savePath.isEmpty) return;
+      await widget.api.download(
+        '/api/v2/apps/${Uri.encodeComponent(id)}/package-export',
+        savePath,
+      );
+      if (mounted) {
+        setState(() {
+          _notice = '已导出「${app['name'] ?? id}」的轻应用分享包至：$savePath';
+        });
+      }
+    });
+  }
+
+  Future<void> _importAppPackage() async {
+    if (!_isAdmin || _busy) return;
+    final selected = await FilePicker.pickFile(
+      dialogTitle: '选择要导入的轻应用分享包 (.liapp.zip)',
+      type: FileType.custom,
+      allowedExtensions: const ['zip'],
+    );
+    if (!mounted || selected == null) return;
+    await _runBusy('导入插件包失败', () async {
+      final rawBytes = await selected.readAsBytes();
+      if (rawBytes.isEmpty) return;
+      final res = await widget.api.sendBytes(
+        'POST',
+        '/api/v2/apps/package-import',
+        rawBytes,
+        contentType: 'application/zip',
+        query: _selectedInstallLocationId.isEmpty
+            ? null
+            : <String, String>{'locationId': _selectedInstallLocationId},
+      );
+      if (!mounted) return;
+      _applySnapshot(res);
+      final importedName =
+          (res['app'] is Map ? (res['app'] as Map)['name']?.toString() : null) ??
+          selected.name;
+      setState(() {
+        _notice = '已导入轻应用「$importedName」（待管理员确认激活后即可使用）。';
+      });
+    });
+  }
+
   Map<String, dynamic>? get _activeWorkbenchApp {
     final id = _activeWorkbenchAppId;
     if (id == null || id.isEmpty) return null;
@@ -392,6 +443,13 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
                 : '应用中心',
           ),
           actions: [
+            if (_isAdmin)
+              IconButton(
+                key: const ValueKey('importAppPackageIconButton'),
+                tooltip: '导入插件包 (.liapp.zip)',
+                onPressed: _busy ? null : _importAppPackage,
+                icon: const Icon(Icons.upload_file_rounded),
+              ),
             IconButton(
               key: const ValueKey('refreshAppsIconButton'),
               tooltip: '刷新应用列表',

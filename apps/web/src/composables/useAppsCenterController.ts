@@ -5,6 +5,7 @@ import { requestConfirm } from "./useConfirmDialog.ts";
 import {
   createAppsCenterClient,
   getAppDataBackupUrl,
+  getAppPackageExportUrl,
   hasCronModule,
   hasWebModule,
   normalizeAccessPolicy,
@@ -55,6 +56,8 @@ export const DELIVERY_LABELS: Record<string, string> = {
 };
 
 const CATEGORY_LABELS: Record<string, string> = {
+  family: "家庭生活",
+  lifestyle: "生活记录",
   network: "网络与通信",
   media: "影音工具",
   finance: "家庭账本",
@@ -199,6 +202,7 @@ export function useAppsCenterController(
   const cronRuns = ref<AppCronRunEntry[]>([]);
   const restoringApp = ref<PublicAppItem | null>(null);
   const restoreInputRef = ref<HTMLInputElement | null>(null);
+  const packageInputRef = ref<HTMLInputElement | null>(null);
 
   const activeWorkbenchApp = computed(() => apps.value.find((a) => a.id === activeWorkbenchAppId.value) ?? null);
   const detailApp = computed(() => apps.value.find((a) => a.id === detailAppId.value) ?? null);
@@ -504,6 +508,37 @@ export function useAppsCenterController(
     window.open(getAppDataBackupUrl(app.id), "_blank", "noopener");
   }
 
+  function exportAppPackage(app: PublicAppItem) {
+    window.open(getAppPackageExportUrl(app.id), "_blank", "noopener");
+  }
+
+  function triggerImportAppPackage() {
+    if (packageInputRef.value) {
+      packageInputRef.value.value = "";
+      packageInputRef.value.click();
+    }
+  }
+
+  async function onImportPackageFileChange(ev: Event) {
+    const input = ev.target as HTMLInputElement;
+    const file = input?.files?.[0];
+    if (!file || busy.value) return;
+    busy.value = true;
+    error.value = "";
+    notice.value = "";
+    try {
+      const res = await apiClient.importAppPackage(file, selectedInstallLocationId.value || undefined);
+      applyAppsPayload(res);
+      const importedName = res.app?.name || file.name;
+      notice.value = `已导入轻应用「${importedName}」（待管理员确认激活后即可使用）。`;
+    } catch (e) {
+      error.value = "导入轻应用插件包失败：" + describeUserFacingError(e);
+    } finally {
+      busy.value = false;
+      if (input) input.value = "";
+    }
+  }
+
   function triggerRestoreAppData(app: PublicAppItem) {
     restoringApp.value = app;
     if (restoreInputRef.value) {
@@ -673,6 +708,7 @@ export function useAppsCenterController(
     webOutput,
     cronRuns,
     restoreInputRef,
+    packageInputRef,
     hasWeb: hasWebModule,
     hasCron: hasCronModule,
     reload,
@@ -689,6 +725,9 @@ export function useAppsCenterController(
     loadLogs,
     openLogsModal,
     exportAppData,
+    exportAppPackage,
+    triggerImportAppPackage,
+    onImportPackageFileChange,
     triggerRestoreAppData,
     onRestoreFileChange,
     removeApp,

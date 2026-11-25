@@ -409,7 +409,8 @@ func isStreamingUploadPath(p string) bool {
 		strings.Contains(p, "/files/content") ||
 		strings.Contains(p, "/uploads") ||
 		strings.HasPrefix(p, "/api/v2/network-test/upload") ||
-		strings.HasSuffix(p, "/data-restore")
+		strings.HasSuffix(p, "/data-restore") ||
+		strings.HasSuffix(p, "/package-import")
 }
 
 func jsonReply(w http.ResponseWriter, status int, v any) {

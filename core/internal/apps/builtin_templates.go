@@ -80,6 +80,36 @@ func builtinTemplateCatalog() []builtinTemplateSpec {
 			IconSVG:      templateFamilyBoardIconSVG,
 			IndexHTML:    templateFamilyBoardHTML,
 		},
+		{
+			ID:           "medicine-expiry",
+			Name:         "家庭药箱与证件有效期",
+			Version:      "1.0.0",
+			Category:     "family",
+			Description:  "登记家庭常备药、护照、身份证与驾照到期日，30 天内临期与已过期项目自动高亮提醒。",
+			AccessPolicy: AccessAllMembers,
+			IconSVG:      templateMedicineExpiryIconSVG,
+			IndexHTML:    templateMedicineExpiryHTML,
+		},
+		{
+			ID:           "utility-ledger",
+			Name:         "水电燃气与月度账本",
+			Version:      "1.0.0",
+			Category:     "family",
+			Description:  "按月记录电费、水费、燃气与物业支出及用量，自动生成近 6 个月消费柱状趋势图。",
+			AccessPolicy: AccessAllMembers,
+			IconSVG:      templateUtilityLedgerIconSVG,
+			IndexHTML:    templateUtilityLedgerHTML,
+		},
+		{
+			ID:           "baby-growth",
+			Name:         "宝宝成长身高体重记录",
+			Version:      "1.0.0",
+			Category:     "lifestyle",
+			Description:  "记录宝宝每次体检的身高、体重与成长里程碑，自动绘制身高成长曲线并支持 JSON 导出。",
+			AccessPolicy: AccessAllMembers,
+			IconSVG:      templateBabyGrowthIconSVG,
+			IndexHTML:    templateBabyGrowthHTML,
+		},
 	}
 }
 

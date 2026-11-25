@@ -537,8 +537,9 @@ func resolvePluginInstance(name, pluginDir, dataDir string, manifest PluginManif
 
 func resolvePluginActivation(name string, prevApps map[string]appRecord, sysCfg *AppsSystemConfig, fromMCP bool) (bool, bool) {
 	prevRec, existedBefore := prevApps[name]
-	isActivated := isOfficialTemplateID(name) || slices.Contains(sysCfg.ActivatedApps, name)
-	isPending := slices.Contains(sysCfg.PendingApps, name) || (existedBefore && prevRec.pendingActivation)
+	explicitPending := slices.Contains(sysCfg.PendingApps, name)
+	isActivated := (!explicitPending && isOfficialTemplateID(name)) || slices.Contains(sysCfg.ActivatedApps, name)
+	isPending := explicitPending || (existedBefore && prevRec.pendingActivation)
 	if fromMCP && !isActivated && (!existedBefore || isPending) {
 		isPending = true
 	}

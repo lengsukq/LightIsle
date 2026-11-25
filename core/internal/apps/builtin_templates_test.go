@@ -14,8 +14,8 @@ func TestBuiltInOfficialTemplates(t *testing.T) {
 	}
 
 	templates := mgr.ListTemplates()
-	if len(templates) != 4 {
-		t.Fatalf("expected 4 official templates, got %d", len(templates))
+	if len(templates) != 7 {
+		t.Fatalf("expected 7 official templates, got %d", len(templates))
 	}
 
 	installed, err := mgr.InstallTemplateAt("family-subscriptions", "")
@@ -28,5 +28,15 @@ func TestBuiltInOfficialTemplates(t *testing.T) {
 
 	if _, err := mgr.InstallTemplateAt("family-subscriptions", ""); !errors.Is(err, ErrAlreadyInstalled) {
 		t.Fatalf("expected ErrAlreadyInstalled on duplicate install, got %v", err)
+	}
+
+	for _, id := range []string{"medicine-expiry", "utility-ledger", "baby-growth"} {
+		app, installErr := mgr.InstallTemplateAt(id, "")
+		if installErr != nil {
+			t.Fatalf("InstallTemplateAt(%s) failed: %v", id, installErr)
+		}
+		if app.ID != id || app.PendingActivation || !app.Valid {
+			t.Fatalf("unexpected installed template %s: %+v", id, app)
+		}
 	}
 }
