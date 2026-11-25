@@ -91,12 +91,14 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
     );
 
     Map<String, dynamic>? serverStatus;
-    try {
-      serverStatus = await widget.api.get('/api/v2/cache/status');
-    } catch (error) {
-      debugPrint(
-        'CacheManagementPage: server cache status unavailable: $error',
-      );
+    if (widget.isAdmin) {
+      try {
+        serverStatus = await widget.api.get('/api/v2/cache/status');
+      } catch (error) {
+        debugPrint(
+          'CacheManagementPage: server cache status unavailable: $error',
+        );
+      }
     }
 
     if (!mounted) return;

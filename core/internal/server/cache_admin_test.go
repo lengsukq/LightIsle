@@ -129,10 +129,14 @@ func TestCacheStatusAndAdminClearAndPosterETag(t *testing.T) {
 		t.Fatalf("tile GET = %d", tileRes.Code)
 	}
 
-	// Both member and admin can read /api/v2/cache/status.
-	statusRes := request(http.MethodGet, "/api/v2/cache/status", "", memberToken, nil)
+	// Member cannot read host-wide cache statistics; only admin can read /api/v2/cache/status.
+	memberStatusRes := request(http.MethodGet, "/api/v2/cache/status", "", memberToken, nil)
+	if memberStatusRes.Code != http.StatusForbidden {
+		t.Fatalf("member cache status = %d, want 403", memberStatusRes.Code)
+	}
+	statusRes := request(http.MethodGet, "/api/v2/cache/status", "", adminToken, nil)
 	if statusRes.Code != http.StatusOK {
-		t.Fatalf("member cache status = %d %s", statusRes.Code, statusRes.Body.String())
+		t.Fatalf("admin cache status = %d %s", statusRes.Code, statusRes.Body.String())
 	}
 	var statusPayload struct {
 		Thumbnails     gallery.ThumbnailCacheStats `json:"thumbnails"`

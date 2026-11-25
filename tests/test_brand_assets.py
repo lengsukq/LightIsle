@@ -48,7 +48,7 @@ drafts = (native / "ContentView+Drafts.swift").read_text(encoding="utf-8")
 assert "重置管理员密码" not in setup_area, "Administrator recovery must not be in first-run setup"
 assert 'AppleSettingsRow(title: "重置管理员密码")' in settings_area, "Native settings page is missing the reset entry"
 assert "model.resettingAdmin" in settings_area, "Reset action must expose its in-progress state"
-assert "savePasswordDraft()" in settings_area and "model.resetAdministratorPassword(newPassword: resetAdminPassword)" in drafts
+assert "savePasswordDraft()" in settings_area and "model.resetAdministratorPassword(newPassword: drafts.resetAdminPassword)" in drafts
 assert "model.firstAdminUsername" in settings_area, "Native settings must show the actual administrator login"
 assert "model.openUserWeb()" in settings_area, "Native settings must offer the current Web entry point"
 print("PASS: brand assets and native setup/settings credential boundaries")

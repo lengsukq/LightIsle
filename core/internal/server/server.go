@@ -149,7 +149,7 @@ func registerGlobalRoutes(mux *http.ServeMux, a *API) {
 	mux.HandleFunc("GET /api/v2/map/tiles/tianditu/{layer}/{z}/{x}/{y}", a.requireLogin(func(w http.ResponseWriter, r *http.Request) {
 		maptiles.Default.ServeTile(w, r, r.PathValue("layer"), r.PathValue("z"), r.PathValue("x"), r.PathValue("y"))
 	}))
-	mux.HandleFunc("GET /api/v2/cache/status", a.requireLogin(a.cacheStatus))
+	mux.HandleFunc("GET /api/v2/cache/status", a.requireAdmin(a.cacheStatus))
 	mux.HandleFunc("POST /api/v2/admin/cache/clear", a.requireAdmin(a.adminCacheClear))
 	mux.HandleFunc("GET /api/v2/tasks", a.requireAdmin(a.taskList))
 	mux.HandleFunc("GET /api/v2/tasks/history", a.requireAdmin(a.taskHistory))

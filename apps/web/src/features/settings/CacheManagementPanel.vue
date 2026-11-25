@@ -67,6 +67,11 @@ async function refreshStats() {
     // Ignore local inspection error
   }
   serverStatusError.value = ''
+  if (!props.isAdmin) {
+    serverStatus.value = null
+    loading.value = false
+    return
+  }
   try {
     const data = await apiRequest<{
       thumbnails?: Partial<IsleServerCacheBucket>
