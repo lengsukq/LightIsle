@@ -9,6 +9,7 @@ import IsleCharts from "../../components/ui/IsleCharts.vue";
 import IsleBadge from "../../components/ui/IsleBadge.vue";
 import IsleButton from "../../components/ui/IsleButton.vue";
 import IslePageHeader from "../../components/ui/IslePageHeader.vue";
+import FamilyBoardCarousel from "./FamilyBoardCarousel.vue";
 import { ISLE_CHART_COLORS } from "../../components/ui/isleChartsMath.ts";
 import {
   buildHostDiskSegments,
@@ -291,6 +292,9 @@ onUnmounted(() => window.removeEventListener("pointerdown", handleOutsideSearchP
       </div>
     </button>
   </div>
+
+  <!-- 2.4 Family Message Board (Swipeable Carousel) -->
+  <FamilyBoardCarousel :is-admin="identity.isAdmin" :username="identity.username" />
 
   <!-- 2.5 Home Light-Apps Tile Launcher -->
   <section v-if="showHomeAppsSection" class="home-apps-section" aria-label="家庭轻应用">

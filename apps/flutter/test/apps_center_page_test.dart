@@ -768,7 +768,11 @@ void main() {
       );
       await tester.pumpAndSettle();
 
-      await tester.ensureVisible(find.text('轻屿网络脉搏'));
+      await tester.scrollUntilVisible(
+        find.text('轻屿网络脉搏'),
+        150,
+        scrollable: find.byType(Scrollable).first,
+      );
       await tester.pumpAndSettle();
       await tester.tap(find.text('轻屿网络脉搏'));
       await tester.pumpAndSettle();

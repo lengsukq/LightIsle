@@ -400,6 +400,13 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 400));
 
+      await tester.scrollUntilVisible(
+        find.byType(AdminTelemetryBentoGrid),
+        150,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
+
       expect(find.byType(AdminTelemetryBentoGrid), findsOneWidget);
       expect(find.textContaining('核心服务'), findsOneWidget);
       expect(find.byType(IsleSparkline), findsNWidgets(2));

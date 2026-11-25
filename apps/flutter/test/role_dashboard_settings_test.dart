@@ -419,7 +419,12 @@ void addHomeAppTileTests() {
       expect(find.text('纯静态 0 MB'), findsNothing);
       expect(find.text('网络监控'), findsOneWidget);
 
-      await tester.ensureVisible(tile);
+      await tester.scrollUntilVisible(
+        tile,
+        150,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
       await tester.tap(tile);
       await tester.pumpAndSettle();
       expect(memberApi.launchedIds, ['network-pulse']);
@@ -453,9 +458,14 @@ void addHomeAppTileTests() {
       );
       await tester.pump(const Duration(milliseconds: 300));
       final pendingTile = find.byKey(const ValueKey('homeAppTile_pending-app'));
+      await tester.scrollUntilVisible(
+        pendingTile,
+        150,
+        scrollable: find.byType(Scrollable).first,
+      );
+      await tester.pumpAndSettle();
       expect(pendingTile, findsOneWidget);
       expect(find.text('待首次激活'), findsOneWidget);
-      await tester.ensureVisible(pendingTile);
       await tester.tap(pendingTile);
       await tester.pumpAndSettle();
       expect(adminApi.launchedIds, isEmpty);

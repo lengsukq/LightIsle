@@ -20,7 +20,7 @@ const source = readFileSync(new URL("../src/features/overview/OverviewPage.vue",
 const template = parse(source, { filename: "OverviewPage.vue" }).descriptor.template.content;
 const render = new Function("Vue", compile(template, { mode: "function" }).code)(Vue);
 const iconNames = [
-  "Activity", "ArrowDownToLine", "ArrowUpRight", "Clapperboard", "CopyCheck", "Cpu", "Folder", "HardDrive", "Images",
+  "Activity", "ArrowDownToLine", "ArrowUpRight", "Clapperboard", "CopyCheck", "Cpu", "FamilyBoardCarousel", "Folder", "HardDrive", "Images",
   "IsleCharts", "LayoutDashboard", "Monitor", "RecentSearchPopover", "RefreshCcw", "Router", "Search", "Server",
   "ShieldCheck", "Sparkles", "Trash2", "Wallet", "WifiOff", "Wrench",
 ];

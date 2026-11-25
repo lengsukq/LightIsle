@@ -14,6 +14,7 @@ import '../files/file_shares_page.dart';
 import '../settings/apps_center_helpers.dart';
 import '../settings/apps_center_page.dart';
 import 'dashboard_role_widgets.dart';
+import 'family_board_card.dart';
 import 'overview_apps_tiles.dart';
 import 'overview_header_and_banners.dart';
 import 'overview_telemetry_grid.dart';
@@ -536,6 +537,11 @@ class _OverviewPageState extends State<OverviewPage>
                 : null,
           );
 
+          final familyBoardSection = FamilyBoardSection(
+            api: widget.api,
+            isAdmin: widget.isAdmin,
+          );
+
           final homeAppsSection = HomeAppsTileSection(
             apps: _apps,
             isAdmin: widget.isAdmin,
@@ -693,13 +699,20 @@ class _OverviewPageState extends State<OverviewPage>
                       flex: 5,
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [homeAppsSection, ?adminTasksSection],
+                        children: [
+                          familyBoardSection,
+                          const SizedBox(height: 10),
+                          homeAppsSection,
+                          ?adminTasksSection,
+                        ],
                       ),
                     ),
                   ],
                 )
               else ...[
                 quickLinksSection,
+                const SizedBox(height: 8),
+                familyBoardSection,
                 const SizedBox(height: 8),
                 homeAppsSection,
                 SizedBox(height: compact ? 6 : 10),

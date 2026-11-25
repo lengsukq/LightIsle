@@ -174,6 +174,19 @@ func Open(path string) (*Store, error) {
 		UNIQUE(root_id,root_generation,owner_user_id,album_name,member_user_id),
 		UNIQUE(root_id,root_generation,member_user_id,link_name))`,
 		`CREATE INDEX IF NOT EXISTS shared_folder_albums_member ON shared_folder_albums(root_id,member_user_id)`,
+		`CREATE TABLE IF NOT EXISTS family_board_messages(
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		author_user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+		author_username TEXT NOT NULL,
+		author_role TEXT NOT NULL CHECK(author_role IN ('admin','member')),
+		content TEXT NOT NULL,
+		tag TEXT NOT NULL DEFAULT '留言',
+		color TEXT NOT NULL DEFAULT 'amber',
+		pinned INTEGER NOT NULL DEFAULT 0 CHECK(pinned IN (0,1)),
+		pinned_at INTEGER NOT NULL DEFAULT 0,
+		pinned_by TEXT NOT NULL DEFAULT '',
+		created_at INTEGER NOT NULL)`,
+		`CREATE INDEX IF NOT EXISTS family_board_order ON family_board_messages(pinned DESC, pinned_at DESC, created_at DESC, id DESC)`,
 	}
 	for _, q := range stmts {
 		if _, err := db.Exec(q); err != nil {

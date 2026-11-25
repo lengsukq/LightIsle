@@ -206,6 +206,10 @@ func registerGlobalRoutes(mux *http.ServeMux, a *API) {
 	mux.HandleFunc("POST /api/v2/dav/credentials", a.requireLogin(a.davCredentials))
 	mux.HandleFunc("POST /api/v2/dav/credentials/{id}/rotate", a.requireLogin(a.davCredentialRotate))
 	mux.HandleFunc("DELETE /api/v2/dav/credentials/{id}", a.requireLogin(a.davCredentialDelete))
+	mux.HandleFunc("GET /api/v2/board/messages", a.requireLogin(a.familyBoardList))
+	mux.HandleFunc("POST /api/v2/board/messages", a.requireLogin(a.familyBoardCreate))
+	mux.HandleFunc("PATCH /api/v2/board/messages/{id}/pin", a.requireAdmin(a.familyBoardPin))
+	mux.HandleFunc("DELETE /api/v2/board/messages/{id}", a.requireLogin(a.familyBoardDelete))
 }
 
 // registerSingleRootCompatRoutes mounts unscoped file/media/DAV routes used
