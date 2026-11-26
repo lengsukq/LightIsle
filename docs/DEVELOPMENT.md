@@ -7,13 +7,13 @@
 - **主机**：Apple Silicon Mac；后端目标固定 `GOOS=darwin GOARCH=arm64`，不提供 Linux/Windows/x86_64 服务端构建。
 - **Go**：以 `go.mod` 中的 Go 版本为准（当前 1.26），使用 SQLite WAL 和 macOS 系统 API。
 - **Swift**：Xcode/Swift 6（`Package.swift` 中 `LightIsle` 与 `LightIsleMediaWorker` 均启用原生 Swift 6 严格并发模式）、SwiftUI + AppKit；部署目标以 `Package.swift` 为准。`LightIsle.app` 负责 Go Core 进程与 Mac 本地管理员/磁盘操作，不能用公开 HTTP 代替 Mac 本机授权。
-- **Web**：Node.js 与 npm、Vue 3、TypeScript、Vite，锁文件 `apps/web/package-lock.json`。
+- **Web**：Node.js 与 pnpm、Vue 3、TypeScript、Vite，锁文件 `apps/web/pnpm-lock.yaml`。
 - **Flutter**：`apps/flutter` 已支持 Android/macOS/iOS 用户客户端；构建与权限流程见 [FLUTTER_CLIENT](FLUTTER_CLIENT.md)。
 - **可选依赖**：FFmpeg、Docker Desktop/Colima、smartctl、cloudflared 不是启动 NAS 的必要条件；代码必须提供可理解的缺失/无权限提示。
 
 ## 快速从源码构建与运行
 
-确保已安装 **Go 1.26+、Xcode/Swift 6、Node.js 与 npm**。可选安装 Flutter（若需构建移动/多端客户端）。
+确保已安装 **Go 1.26+、Xcode/Swift 6、Node.js 与 pnpm**。可选安装 Flutter（若需构建移动/多端客户端）。
 
 ```bash
 # 1. 克隆代码仓库
@@ -41,10 +41,9 @@ go vet ./...
 bash scripts/verify-macos.sh
 
 # Web 端构建与测试
-cd apps/web
-npm test
-npm run build
-cd ../..
+pnpm --dir apps/web install --frozen-lockfile
+pnpm --dir apps/web test
+pnpm --dir apps/web build
 
 # Flutter 客户端检查与测试
 cd apps/flutter
@@ -83,7 +82,7 @@ cd ../..
 
 - **Go**：`gofmt`、`go vet ./...`、`go test -race ./...`，涉及文件路径、权限、TOCTOU、离线卷必须有针对性的模拟盘单测。
 - **Swift**：原生 UI 响应式布局，阻塞磁盘/媒体工作不放在主线程；Mac UI 使用系统权限确认、可取消的本机任务。
-- **Web**：`npm test`、`npm run build`、TypeScript 检查，移动端触控、焦点与减少动态效果真实验收。
+- **Web**：`pnpm --dir apps/web test`、`pnpm --dir apps/web build`、TypeScript 检查，移动端触控、焦点与减少动态效果真实验收。
 - **Flutter**：`flutter analyze`、`flutter test`、Android/iOS/macOS 逐平台编译；设备证书、后台调度、文件权限与系统分享须真机复核。
 - **集成/打包**：`bash scripts/verify-macos.sh`、核心服务 HTTP/IPC 冒烟；真实可丢弃外接盘和公网配置单独留证，绝不触碰开发机重要原盘。
 - **提交**：按功能拆分，不提交数据库、私钥、媒体、缓存和构建产物；报告实际执行测试与退出码，保留其他开发任务的工作树修改。

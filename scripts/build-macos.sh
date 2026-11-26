@@ -13,9 +13,9 @@ echo "[1/6] Build Vue 3 frontend"
 echo "Validate native Docker mirror configuration without touching local Docker"
 bash scripts/test-docker-support.sh
 swift scripts/generate-brand-assets.swift
-npm ci --prefix apps/web
-(cd apps/web && node --test)
-npm run build --prefix apps/web
+pnpm --dir apps/web install --frozen-lockfile
+pnpm --dir apps/web test
+pnpm --dir apps/web build
 
 echo "[2/6] Test and build Go Core"
 go test ./...

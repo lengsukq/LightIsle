@@ -35,8 +35,8 @@ Core 的 API 和 WebDAV 响应包含 `X-Request-ID`，用于匹配本机结构�
 ## 回归命令
 
 ```text
-npm test --prefix apps/web
-npm run build --prefix apps/web
+pnpm --dir apps/web test
+pnpm --dir apps/web build
 cd apps/flutter && flutter test --no-pub
 cd apps/flutter && flutter analyze --no-pub
 go test ./core/...

@@ -7,7 +7,7 @@ LightIsle 项目自有代码的许可见 [LICENSE](LICENSE)；**第三方依赖�
 | 所属组件 | 依赖或资源示例 | 核对来源 |
 | --- | --- | --- |
 | Go Core | `go-sqlite3`、`goexif`、`golang.org/x/crypto`、`golang.org/x/net`、`robfig/cron` | `go.mod`、`go.sum` |
-| Web / PWA | Vue、Leaflet、hls.js、lucide-vue-next、Vite、TypeScript | `apps/web/package.json`、`apps/web/package-lock.json` |
+| Web / PWA | Vue、Leaflet、hls.js、lucide-vue-next、Vite、TypeScript | `apps/web/package.json`、`apps/web/pnpm-lock.yaml` |
 | Flutter 客户端 | Flutter SDK、video_player、photo_view、pdfx、flutter_map、file_picker 等 | `apps/flutter/pubspec.yaml`、`apps/flutter/pubspec.lock` |
 | 可选外部工具 | FFmpeg、aria2、cloudflared、frp、Docker Desktop / Colima 等 | 实际构建、安装和部署清单 |
 

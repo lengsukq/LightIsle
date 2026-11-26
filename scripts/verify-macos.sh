@@ -126,9 +126,9 @@ swiftc -swift-version 6 -parse-as-library apps/macos/Sources/LightIsle/{CoreSupe
 "$ROOT/.build/lightisle-core-supervisor-check" "$ROOT/.build/lightisled-ipc-check"
 
 echo "Vue TypeScript + build:"
-npm ci --prefix apps/web
-(cd apps/web && node --test)
-npm run build --prefix apps/web
+pnpm --dir apps/web install --frozen-lockfile
+pnpm --dir apps/web test
+pnpm --dir apps/web build
 
 echo "Release QA validator tests:"
 python3 -B -m unittest discover -s tests -p 'test_release_qa.py' -v

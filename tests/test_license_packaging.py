@@ -29,9 +29,9 @@ def main() -> None:
         assert (ROOT / name).is_file(), name
 
     package = json.loads((ROOT / "apps/web/package.json").read_text(encoding="utf-8"))
-    lock = json.loads((ROOT / "apps/web/package-lock.json").read_text(encoding="utf-8"))
     assert package["license"] == IDENTIFIER
-    assert lock["packages"][""]["license"] == IDENTIFIER
+    assert (ROOT / "apps/web/pnpm-lock.yaml").is_file()
+    assert not (ROOT / "apps/web/package-lock.json").exists()
 
     script = BUILD.read_text(encoding="utf-8")
     for name in ("LICENSE", "COMMERCIAL.md", "THIRD_PARTY_NOTICES.md"):
