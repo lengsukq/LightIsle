@@ -1,12 +1,13 @@
 <script setup lang="ts">
 import { computed, inject, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import {
-  ArrowDown, ArrowUp, Check, CheckSquare, ChevronLeft, ChevronRight, Copy, CopyCheck,
+  ArrowDown, ArrowUp, BookOpen, Check, CheckSquare, ChevronLeft, ChevronRight, Clock, Copy, CopyCheck,
   Download, Eye, File, FileArchive, FileAudio, FileCode2, FileImage, FileText, FileVideo,
-  Folder, FolderInput, FolderOpen, FolderPlus, Images, LayoutGrid, List, Monitor,
-  RefreshCcw, Trash2, UploadCloud, X,
+  Folder, FolderInput, FolderOpen, FolderPlus, FolderUp, HardDrive, Images, Inbox, LayoutGrid, List, Monitor,
+  RefreshCcw, Star, Trash2, UploadCloud, X,
 } from "lucide-vue-next";
 import { FILES_VIEW_CTX } from "../../contexts/shellContexts.ts";
+import { FILE_EXTRAS_CTX } from "./fileExtrasContext.ts";
 import {
   FILE_SEARCH_KIND_OPTIONS,
   folderLabelOfPath,
@@ -18,6 +19,7 @@ import { trashPresentationState } from "./filePageState.ts";
 import { hasActiveModalLayer } from "../../utils/modalStack.ts";
 import { formatDateTime } from "../../utils/dateTimeFormat.ts";
 import type { SharedFileEntry } from "./useFileShares.ts";
+import FilePinsBar from "./FilePinsBar.vue";
 import FileSearchControls from "./FileSearchControls.vue";
 import FileSearchStatusBar from "./FileSearchStatusBar.vue";
 import AppleSelect from "../../components/ui/AppleSelect.vue";
@@ -51,6 +53,7 @@ const FILE_ICON_MAP = {
 
 const ctx = inject(FILES_VIEW_CTX);
 if (!ctx) throw new Error("FilesView requires FILES_VIEW_CTX");
+const extras = inject(FILE_EXTRAS_CTX, null);
 
 const {
   active, user, filesPath, currentFolderCanWrite, fileDirectoryLoaded, sharedRootName,
@@ -236,6 +239,30 @@ function handleKeydown(event: KeyboardEvent) {
   }
 }
 
+function openEntryPreview(entry: SharedFileEntry) {
+  if (extras) {
+    void extras.openFileWithReaders(entry);
+  } else {
+    void previewFile(entry);
+  }
+}
+
+function togglePinCurrentFolder() {
+  if (!extras || !filesPath.value || filesPath.value === ".") return;
+  const label = filesPath.value.split("/").pop() || filesPath.value;
+  void extras.togglePin({ path: filesPath.value, name: label });
+}
+
+watch(
+  () => [active.value, fileDirectoryLoaded.value] as const,
+  ([page, loaded]) => {
+    if (page === "files" && loaded && extras && !extras.pinsLoaded.value && !extras.pinsLoading.value) {
+      void extras.loadPins();
+    }
+  },
+  { immediate: true },
+);
+
 watch(createFolderOpen, (openState) => {
   if (openState) void nextTick(() => newFolderInputRef.value?.focus());
 });
@@ -321,6 +348,9 @@ onUnmounted(() => {
           <button v-if="!showingTrash" type="button" role="menuitem" class="files-menu-mobile-only" @click="showDuplicatesModal = true">
             <CopyCheck :size="15" /> 空间整理
           </button>
+          <button v-if="extras" type="button" role="menuitem" @click="extras.openCollectManageModal()">
+            <Inbox :size="15" /> 文件收集管理
+          </button>
           <button type="button" role="menuitem" @click="jumpToSettingsGroup('files')">
             <Monitor :size="15" /> WebDAV 挂载向导
           </button>
@@ -378,6 +408,24 @@ onUnmounted(() => {
               @clear-history="clearRecentSearches"
             />
             <div class="files-toolbar-controls">
+              <button
+                v-if="extras"
+                type="button"
+                class="files-insight-btn"
+                title="快速筛选大文件"
+                @click="extras.openInsightsModal('large')"
+              >
+                <HardDrive :size="14" /><span>大文件</span>
+              </button>
+              <button
+                v-if="extras"
+                type="button"
+                class="files-insight-btn"
+                title="查看近期新增和修改的文件"
+                @click="extras.openInsightsModal('recent')"
+              >
+                <Clock :size="14" /><span>近期新增</span>
+              </button>
               <div v-if="!searchingFiles" class="file-sort-control">
                 <AppleSelect v-model="fileSortValue" :options="FILE_SORT_OPTIONS" :disabled="filesLoading" size="sm" aria-label="排序方式" />
               </div>
@@ -389,6 +437,19 @@ onUnmounted(() => {
           </div>
         </div>
       </Transition>
+
+      <FilePinsBar
+        v-if="!showingTrash && extras"
+        :pins="extras.pins.value"
+        :loading="extras.pinsLoading.value"
+        :error="extras.pinsError.value"
+        :current-path="filesPath"
+        :toggling-path="extras.togglingPinPath.value"
+        :is-current-pinned="extras.isPinned(filesPath)"
+        @open="extras.openPinItem($event)"
+        @remove="extras.removePin($event)"
+        @pin-current="togglePinCurrentFolder"
+      />
 
       <Transition name="files-collapse">
         <div v-if="!showingTrash && currentFolderCanWrite && createFolderOpen" class="files-collapse-shell">
@@ -548,7 +609,7 @@ onUnmounted(() => {
           @contextmenu.prevent="openFileContextMenu($event)"
         >
           <input type="checkbox" :value="entry.path" v-model="checkedFiles" :disabled="checkedFiles.length >= 50 && !checkedFiles.includes(entry.path)" :aria-label="'选择 ' + entry.name + (canWriteEntry(entry) ? '' : '（只读，可选择）')" class="file-checkbox" @click="onFileCheckboxClick(entry, idx, $event)" />
-          <button type="button" class="file-open" @click="entry.type === 'folder' ? loadFiles(entry.path) : previewFile(entry)" :title="entry.name">
+          <button type="button" class="file-open" @click="entry.type === 'folder' ? loadFiles(entry.path) : openEntryPreview(entry)" :title="entry.name">
             <span class="file-icon" :class="[entry.type, 'kind-' + classifyFileKind(entry)]">
               <img
                 v-if="entry.type !== 'folder' && thumbnailEligible(entry) && !failedThumbnails.has(thumbnailKey(entry))"
@@ -576,16 +637,31 @@ onUnmounted(() => {
           </button>
           <div class="file-entry-actions">
             <button v-if="searchingFiles" type="button" class="file-reveal-btn" :disabled="revealingFilePath === entry.path" title="打开所在目录并定位" :aria-label="'打开所在目录：' + entry.name" @click.stop="revealFileFolder(entry)"><FolderOpen :size="15" /><span>打开目录</span></button>
-            <button v-if="fileViewMode === 'list' && entry.type === 'file'" type="button" @click="previewFile(entry)" title="预览" :aria-label="'预览 ' + entry.name"><Images :size="16" /></button>
+            <button
+              v-if="fileViewMode === 'list' && extras"
+              type="button"
+              class="file-pin-btn"
+              :class="{ 'is-pinned': extras.isPinned(entry.path) }"
+              :disabled="extras.togglingPinPath.value === entry.path"
+              :title="extras.isPinned(entry.path) ? '取消置顶' : '置顶到常用'"
+              :aria-label="(extras.isPinned(entry.path) ? '取消置顶 ' : '置顶 ') + entry.name"
+              @click.stop="extras.togglePin(entry)"
+            >
+              <Star :size="15" :fill="extras.isPinned(entry.path) ? 'currentColor' : 'none'" />
+            </button>
+            <button v-if="fileViewMode === 'list' && entry.type === 'file'" type="button" @click="openEntryPreview(entry)" title="预览" :aria-label="'预览 ' + entry.name"><Images :size="16" /></button>
             <button v-if="fileViewMode === 'list'" type="button" @click="downloadFile(entry)" :title="entry.type === 'folder' ? '下载文件夹 ZIP（最多 2 GiB / 2000 项）' : '下载'" :aria-label="'下载 ' + entry.name"><Download :size="16" /></button>
             <IsleActionMenu size="md" :aria-label="'更多文件操作：' + entry.name">
-              <button v-if="fileViewMode === 'grid' && entry.type === 'file'" type="button" role="menuitem" @click="previewFile(entry)"><Eye :size="14" /> 预览</button>
+              <button v-if="fileViewMode === 'grid' && entry.type === 'file'" type="button" role="menuitem" @click="openEntryPreview(entry)"><Eye :size="14" /> 预览</button>
               <button v-if="fileViewMode === 'grid'" type="button" role="menuitem" @click="downloadFile(entry)"><Download :size="14" /> {{ entry.type === "folder" ? "下载 ZIP" : "下载" }}</button>
+              <button v-if="extras" type="button" role="menuitem" @click="extras.togglePin(entry)"><Star :size="14" :fill="extras.isPinned(entry.path) ? 'currentColor' : 'none'" /> {{ extras.isPinned(entry.path) ? "取消常用置顶" : "置顶到常用" }}</button>
               <button v-if="searchingFiles" type="button" role="menuitem" @click="revealFileFolder(entry)">打开所在目录</button>
+              <button v-if="extras && entry.type === 'file' && /\.(cbz|epub|zip)$/i.test(entry.name)" type="button" role="menuitem" @click="extras.openAsArchiveReader(entry)"><BookOpen :size="14" /> 漫画 / 电子书阅读</button>
               <button v-if="canWriteEntry(entry) && entry.type === 'file' && /\.zip$/i.test(entry.name)" type="button" role="menuitem" :disabled="extracting" @click="extractZip(entry)">{{ extracting ? "正在解压…" : "解压到同名文件夹" }}</button>
               <button v-if="canWriteEntry(entry)" type="button" role="menuitem" @click="operateFile(entry, 'rename')">重命名</button>
               <button v-if="canWriteEntry(entry)" type="button" role="menuitem" @click="operateFile(entry, 'move')">移动到…</button>
               <button type="button" role="menuitem" @click="operateFile(entry, 'copy')">复制到…</button>
+              <button v-if="extras && canWriteEntry(entry) && entry.type === 'folder'" type="button" role="menuitem" @click="extras.openCollectCreateModal(entry)"><FolderUp :size="14" /> 创建收集链接（亲友投递）</button>
               <button type="button" role="menuitem" @click="openShareDialog(entry)">创建分享链接</button>
               <button v-if="canWriteEntry(entry)" type="button" role="menuitem" class="danger" @click="trashTarget = entry">移到回收站</button>
             </IsleActionMenu>
@@ -628,6 +704,13 @@ onUnmounted(() => {
   margin-left: auto; font-size: 11px; font-weight: 600; padding: 1px 6px;
   border-radius: 999px; background: color-mix(in srgb, var(--text-primary) 7%, transparent); color: var(--text-secondary);
 }
+.files-insight-btn {
+  display: inline-flex; align-items: center; gap: 5px; min-height: 32px; padding: 5px 10px;
+  border-radius: 9px; border: 1px solid var(--fluid-card-border); background: var(--fluid-card-item-fill);
+  color: var(--text-secondary); font-size: 12px; font-weight: 600; cursor: pointer; white-space: nowrap;
+}
+.files-insight-btn:hover { background: var(--fluid-card-hover); border-color: var(--fluid-card-border-strong); color: var(--text-primary); }
+.file-pin-btn.is-pinned { color: var(--accent-primary); }
 
 /* Colored File Type Icon Tokens */
 .file-entry .file-icon { position: relative; overflow: hidden; transition: transform 200ms var(--motion-spring, cubic-bezier(0.22, 1, 0.36, 1)); }

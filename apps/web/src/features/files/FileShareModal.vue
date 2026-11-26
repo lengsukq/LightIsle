@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { Check, CheckCircle2, Clock, Copy, Eye, EyeOff, Folder, FileText, Lock, Share2, Shield } from "lucide-vue-next";
+import { Check, CheckCircle2, Clock, Copy, Eye, EyeOff, Folder, FolderUp, FileText, Inbox, Lock, Share2, Shield } from "lucide-vue-next";
 import IsleBanner from "../../components/ui/IsleBanner.vue";
 import IsleButton from "../../components/ui/IsleButton.vue";
 import IsleDisclosure from "../../components/ui/IsleDisclosure.vue";
@@ -33,9 +33,11 @@ const props = withDefaults(
     error: string;
     copied: string;
     hourOptions?: Array<{ value: number; label: string }>;
+    canCollect?: boolean;
   }>(),
   {
     hourOptions: undefined,
+    canCollect: false,
   },
 );
 
@@ -44,6 +46,8 @@ const emit = defineEmits<{
   "update:password": [value: string];
   "update:maxDownloads": [value: number];
   "link-input": [el: HTMLInputElement | null];
+  "open-collect-create": [folder: SharedFileEntry];
+  "open-collect-manage": [];
   submit: [];
   copy: [];
   close: [];
@@ -120,6 +124,31 @@ watch(
     @close="onClose"
   >
     <template #icon><Share2 :size="17" /></template>
+
+    <div v-if="file" class="share-mode-tabs" role="tablist" aria-label="分享与文件收集模式">
+      <button type="button" role="tab" aria-selected="true" class="share-mode-tab is-active">
+        <Share2 :size="13" /> 临时下载分享
+      </button>
+      <button
+        v-if="canCollect && file.type === 'folder'"
+        type="button"
+        role="tab"
+        aria-selected="false"
+        class="share-mode-tab"
+        @click="emit('open-collect-create', file)"
+      >
+        <FolderUp :size="13" /> 创建收集链接（亲友投递）
+      </button>
+      <button
+        type="button"
+        role="tab"
+        aria-selected="false"
+        class="share-mode-tab"
+        @click="emit('open-collect-manage')"
+      >
+        <Inbox :size="13" /> 文件收集
+      </button>
+    </div>
 
     <div v-if="file" class="share-target-card">
       <span class="share-target-icon" :class="file.type === 'folder' ? 'is-folder' : 'is-file'" aria-hidden="true">
@@ -275,6 +304,38 @@ watch(
 </template>
 
 <style scoped>
+.share-mode-tabs {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px;
+  margin-bottom: 12px;
+  border-radius: 11px;
+  border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-item-fill);
+}
+.share-mode-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.share-mode-tab:hover {
+  color: var(--text-primary);
+}
+.share-mode-tab.is-active {
+  background: var(--fluid-card-top);
+  color: var(--text-primary);
+  box-shadow: var(--fluid-item-card-shadow);
+}
 .share-target-card {
   display: flex;
   align-items: center;

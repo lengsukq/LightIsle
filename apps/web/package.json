@@ -11,9 +11,12 @@
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
+    "dompurify": "^3.5.0",
     "hls.js": "^1.7.3",
     "leaflet": "^1.9.4",
     "lucide-vue-next": "^0.468.0",
+    "mammoth": "^1.13.0",
+    "read-excel-file": "^9.3.20",
     "vue": "^3.5.18"
   },
   "devDependencies": {
