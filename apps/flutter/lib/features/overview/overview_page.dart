@@ -11,10 +11,12 @@ import '../../core/widgets.dart';
 import '../files/computer_files_page.dart';
 import '../files/downloads_page.dart';
 import '../files/file_shares_page.dart';
+import '../media/document_scan_archive_page.dart';
 import '../settings/apps_center_helpers.dart';
 import '../settings/apps_center_page.dart';
 import 'dashboard_role_widgets.dart';
 import 'family_board_card.dart';
+import 'family_reminders_card.dart';
 import 'overview_apps_tiles.dart';
 import 'overview_header_and_banners.dart';
 import 'overview_telemetry_grid.dart';
@@ -500,6 +502,17 @@ class _OverviewPageState extends State<OverviewPage>
     );
   }
 
+  void _openDocumentScanArchive() {
+    Navigator.of(context).push<void>(
+      buildIslePageRoute(
+        builder: (_) => DocumentScanArchivePage(
+          api: widget.api,
+          personalStorage: _personalStorage,
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final stats = _stats;
@@ -540,6 +553,15 @@ class _OverviewPageState extends State<OverviewPage>
           final familyBoardSection = FamilyBoardSection(
             api: widget.api,
             isAdmin: widget.isAdmin,
+          );
+
+          final familyRemindersSection = FamilyRemindersSection(
+            api: widget.api,
+            isAdmin: widget.isAdmin,
+          );
+
+          final documentScanShortcut = OverviewDocumentScanShortcut(
+            onTap: _openDocumentScanArchive,
           );
 
           final homeAppsSection = HomeAppsTileSection(
@@ -703,6 +725,10 @@ class _OverviewPageState extends State<OverviewPage>
                           familyBoardSection,
                           const SizedBox(height: 10),
                           homeAppsSection,
+                          const SizedBox(height: 10),
+                          familyRemindersSection,
+                          const SizedBox(height: 10),
+                          documentScanShortcut,
                           ?adminTasksSection,
                         ],
                       ),
@@ -717,6 +743,10 @@ class _OverviewPageState extends State<OverviewPage>
                 homeAppsSection,
                 SizedBox(height: compact ? 6 : 10),
                 telemetryAndStorage,
+                const SizedBox(height: 8),
+                familyRemindersSection,
+                const SizedBox(height: 8),
+                documentScanShortcut,
                 ?adminTasksSection,
               ],
             ],

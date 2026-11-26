@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.DocumentsContract
+import android.view.WindowManager
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
@@ -56,7 +57,10 @@ class MainActivity : FlutterActivity() {
     private var sessionVaultChannel: MethodChannel? = null
     private var discoveryChannel: MethodChannel? = null
     private var exportChannel: MethodChannel? = null
+    private var deviceDisplayChannel: MethodChannel? = null
     private var photoChannelHandler: AndroidPhotoChannelHandler? = null
+    private var folderBackupPlugin: AndroidFolderBackupPlugin? = null
+    private var documentCapturePlugin: AndroidDocumentCapturePlugin? = null
 
     private fun ensureIoExecutor(): ExecutorService {
         if (ioExecutor.isShutdown) {
@@ -224,6 +228,48 @@ class MainActivity : FlutterActivity() {
             requestPhotoDelete = ::launchPhotoDeleteRequest,
         ).also { it.attach(flutterEngine) }
 
+        folderBackupPlugin?.detach()
+        folderBackupPlugin = AndroidFolderBackupPlugin(
+            appContext = appContext,
+            activityRef = activityRef,
+            mainHandler = mainHandler,
+            ioExecutorProvider = ::ensureIoExecutor,
+        ).also { it.attach(flutterEngine) }
+
+        documentCapturePlugin?.detach()
+        documentCapturePlugin = AndroidDocumentCapturePlugin(
+            appContext = appContext,
+            activityRef = activityRef,
+            mainHandler = mainHandler,
+            ioExecutorProvider = ::ensureIoExecutor,
+        ).also { it.attach(flutterEngine) }
+
+        deviceDisplayChannel?.setMethodCallHandler(null)
+        deviceDisplayChannel = MethodChannel(
+            flutterEngine.dartExecutor.binaryMessenger,
+            "lightisle/device-display",
+        ).also { channel ->
+            channel.setMethodCallHandler { call, result ->
+                when (call.method) {
+                    "setKeepScreenOn" -> {
+                        val enabled = call.argument<Boolean>("enabled") == true
+                        mainHandler.post {
+                            val act = activityRef.get()
+                            if (act != null && !act.isFinishing && !act.isDestroyed) {
+                                if (enabled) {
+                                    act.window?.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                                } else {
+                                    act.window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                                }
+                            }
+                            try { result.success(true) } catch (_: Exception) { }
+                        }
+                    }
+                    else -> result.notImplemented()
+                }
+            }
+        }
+
         nasDiscovery?.destroy()
         nasDiscovery = AndroidNasDiscovery(appContext)
         discoveryChannel = MethodChannel(
@@ -346,6 +392,13 @@ class MainActivity : FlutterActivity() {
         sessionVaultChannel = null
         photoChannelHandler?.detach()
         photoChannelHandler = null
+        folderBackupPlugin?.detach()
+        folderBackupPlugin = null
+        documentCapturePlugin?.detach()
+        documentCapturePlugin = null
+        deviceDisplayChannel?.setMethodCallHandler(null)
+        deviceDisplayChannel = null
+        window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         discoveryChannel?.setMethodCallHandler(null)
         discoveryChannel = null
         exportChannel?.setMethodCallHandler(null)
@@ -441,6 +494,8 @@ class MainActivity : FlutterActivity() {
     @Deprecated("Used by the Flutter activity plugin dispatch contract")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (folderBackupPlugin?.handleActivityResult(requestCode, resultCode, data) == true) return
+        if (documentCapturePlugin?.handleActivityResult(requestCode, resultCode, data) == true) return
         if (requestCode == photoDeleteRequest) {
             handlePhotoDeleteResult(resultCode)
             return

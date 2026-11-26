@@ -10,12 +10,19 @@ import AVKit
   private var discoveryChannel: FlutterMethodChannel?
   private var discoveryHandler: IOSBonjourDiscovery?
   private var photoBackupHandler: IOSPhotoBackup?
+  private var documentScannerHandler: IOSDocumentScannerPlugin?
+  private var deviceDisplayChannel: FlutterMethodChannel?
   private var nativeVideoChannel: FlutterMethodChannel?
   private var nativeVideoController: AVPlayerViewController?
 
   deinit {
     discoveryHandler?.cancelActive()
     photoBackupHandler?.stop()
+    documentScannerHandler?.stop()
+    deviceDisplayChannel?.setMethodCallHandler(nil)
+    DispatchQueue.main.async {
+      UIApplication.shared.isIdleTimerDisabled = false
+    }
   }
 
   override func application(
@@ -34,6 +41,28 @@ import AVKit
     discoveryChannel = nil
     photoBackupHandler?.stop()
     photoBackupHandler = IOSPhotoBackup(messenger: engineBridge.applicationRegistrar.messenger())
+
+    documentScannerHandler?.stop()
+    documentScannerHandler = IOSDocumentScannerPlugin(messenger: engineBridge.applicationRegistrar.messenger())
+
+    deviceDisplayChannel?.setMethodCallHandler(nil)
+    let displayChannel = FlutterMethodChannel(
+      name: "lightisle/device-display",
+      binaryMessenger: engineBridge.applicationRegistrar.messenger()
+    )
+    deviceDisplayChannel = displayChannel
+    displayChannel.setMethodCallHandler { call, result in
+      guard call.method == "setKeepScreenOn" else {
+        result(FlutterMethodNotImplemented)
+        return
+      }
+      let args = call.arguments as? [String: Any]
+      let enabled = (args?["enabled"] as? Bool) == true
+      DispatchQueue.main.async {
+        UIApplication.shared.isIdleTimerDisabled = enabled
+        result(true)
+      }
+    }
 
     let videoChannel = FlutterMethodChannel(
       name: "lightisle/native-video",
