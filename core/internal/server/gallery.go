@@ -7,10 +7,12 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"path"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/gallery"
 	"github.com/lengsukq/lightisle/core/internal/mediaworker"
 )
@@ -225,6 +227,24 @@ func (a *API) galleryList(w http.ResponseWriter, r *http.Request) {
 	filter, ok := galleryListFilter(w, q)
 	if !ok {
 		return
+	}
+	if rawPrefix := strings.TrimSpace(q.Get("pathPrefix")); rawPrefix != "" && rawPrefix != "." {
+		prefix := strings.Trim(rawPrefix, "/")
+		if prefix == "" || strings.HasPrefix(rawPrefix, "/") || strings.ContainsAny(prefix, "\\\x00") || path.Clean(prefix) != prefix {
+			writeAPIErrorCode(w, http.StatusBadRequest, "invalid_path_prefix")
+			return
+		}
+		for _, part := range strings.Split(prefix, "/") {
+			if part == "" || part == "." || part == ".." || files.IsInternalName(part) {
+				writeAPIErrorCode(w, http.StatusBadRequest, "invalid_path_prefix")
+				return
+			}
+		}
+		if !a.canAccess(token(r), prefix, false, false) {
+			writeAPIErrorCode(w, http.StatusForbidden, "file_permission_denied")
+			return
+		}
+		filter.PathPrefix = prefix
 	}
 	viewer, authenticated := a.auth.Identity(token(r))
 	if !authenticated {
@@ -481,4 +501,76 @@ func (a *API) galleryAddToAlbum(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	jsonReply(w, 200, map[string]bool{"added": true})
+}
+
+// galleryOCRPriority fast-tracks a newly uploaded document/receipt photo ahead
+// of the background AI indexing backlog so Vision OCR finishes within seconds.
+func (a *API) galleryOCRPriority(w http.ResponseWriter, r *http.Request) {
+	if !a.galleryReady(w) {
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 2048)
+	defer r.Body.Close()
+	var body struct {
+		Path    string `json:"path"`
+		AssetID int64  `json:"assetId"`
+	}
+	dec := json.NewDecoder(r.Body)
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		writeAPIErrorCode(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	var targetPath string
+	var assetID int64
+	if body.AssetID > 0 {
+		asset, err := a.gallery.Asset(body.AssetID)
+		if err != nil {
+			galleryError(w, err)
+			return
+		}
+		if !a.allowMediaAsset(w, r, asset.Path, true) {
+			return
+		}
+		if asset.Type != "photo" {
+			writeAPIErrorCode(w, http.StatusBadRequest, "ocr_priority_unsupported")
+			return
+		}
+		targetPath = asset.Path
+		assetID = asset.ID
+	} else {
+		cleanPath := cleanClientRelativePath(body.Path)
+		if cleanPath == "" {
+			writeAPIErrorCode(w, http.StatusBadRequest, "path_not_allowed")
+			return
+		}
+		if !a.allowFile(w, r, cleanPath, true) {
+			return
+		}
+		indexed, err := a.gallery.IndexSinglePhotoNow(r.Context(), cleanPath)
+		if err != nil {
+			if err.Error() == "invalid_photo_path" {
+				writeAPIErrorCode(w, http.StatusBadRequest, "ocr_priority_unsupported")
+				return
+			}
+			if errors.Is(err, gallery.ErrUnavailable) {
+				galleryError(w, err)
+				return
+			}
+			fileError(w, err)
+			return
+		}
+		targetPath = cleanPath
+		assetID = indexed.ID
+	}
+	queued := a.gallery.EnqueuePriorityAI(targetPath)
+	if !queued {
+		writeAPIErrorCode(w, http.StatusBadRequest, "ocr_priority_unsupported")
+		return
+	}
+	jsonReply(w, http.StatusAccepted, map[string]any{
+		"queued":  true,
+		"assetId": assetID,
+		"path":    targetPath,
+	})
 }

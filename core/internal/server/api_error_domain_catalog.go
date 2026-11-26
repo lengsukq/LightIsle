@@ -437,4 +437,182 @@ var apiErrorDomainCatalog = map[string]apiErrorGuidance{
 		dataSafe:   true,
 		nextAction: "请检查网络连接后重新尝试继续上传。",
 	},
+
+	// Family reminders
+	"invalid_reminder_request": {
+		message:    "家庭提醒的参数格式或日期无效，未保存更改。",
+		dataSafe:   true,
+		nextAction: "请核对标题、公历/农历日期、重复周期及提前提醒天数后重试。",
+	},
+	"invalid_reminder_id": {
+		message:    "提醒条目标识无效。",
+		dataSafe:   true,
+		nextAction: "请刷新家庭提醒列表后重新选择。",
+	},
+	"reminder_limit_reached": {
+		message:    "家庭提醒条目数量已达上限（200 条）。",
+		dataSafe:   true,
+		nextAction: "请删除不再需要的旧提醒后再新建。",
+	},
+	"reminder_permission_denied": {
+		message:    "当前账号无权修改或删除该条家庭提醒。",
+		dataSafe:   true,
+		nextAction: "普通成员仅可修改或删除自己创建的提醒，或请联系管理员处理。",
+	},
+	"reminder_not_found": {
+		message:    "未找到对应的家庭提醒，可能已被删除。",
+		dataSafe:   true,
+		nextAction: "请刷新家庭提醒列表确认最新状态。",
+	},
+	"family_reminder_error": {
+		message:    "读取或保存家庭提醒失败，原有记录未受影响。",
+		dataSafe:   true,
+		nextAction: "请稍后重试，若持续失败请检查 Mac 服务状态。",
+	},
+
+	// Write-only collect links
+	"invalid_collect_link_request": {
+		message:    "文件收集链接参数无效，未创建链接。",
+		dataSafe:   true,
+		nextAction: "请核对目标文件夹、有效期、口令（至少 4 位）及数量/容量限制后重试。",
+	},
+	"collect_target_must_be_folder": {
+		message:    "文件收集链接的目标必须是一个已存在的文件夹。",
+		dataSafe:   true,
+		nextAction: "请选择一个可写文件夹后再创建收集链接。",
+	},
+	"too_many_collect_links": {
+		message:    "当前账号有效的文件收集链接数量已达上限。",
+		dataSafe:   true,
+		nextAction: "请先撤销不再使用的旧收集链接后再创建新链接。",
+	},
+	"collect_link_creation_failed": {
+		message:    "创建文件收集链接失败，原有文件未受影响。",
+		dataSafe:   true,
+		nextAction: "请稍后重试。",
+	},
+	"collect_link_list_failed": {
+		message:    "读取文件收集链接列表失败。",
+		dataSafe:   true,
+		nextAction: "请刷新页面后重试。",
+	},
+	"invalid_collect_link_id": {
+		message:    "收集链接标识无效。",
+		dataSafe:   true,
+		nextAction: "请刷新收集链接列表后重试。",
+	},
+	"collect_link_revoke_failed": {
+		message:    "撤销文件收集链接失败。",
+		dataSafe:   true,
+		nextAction: "请稍后重试。",
+	},
+	"collect_password_invalid": {
+		message:    "投递口令不正确。",
+		dataSafe:   true,
+		nextAction: "请向链接分享者确认访问口令后重新输入。",
+	},
+	"collect_grant_unavailable": {
+		message:    "暂时无法签发投递会话凭证。",
+		dataSafe:   true,
+		nextAction: "请稍等片刻后重新验证口令。",
+	},
+	"collect_auth_required": {
+		message:    "此文件收集箱受口令保护，请先完成口令验证。",
+		dataSafe:   true,
+		nextAction: "请在页面输入访问口令后再上传文件。",
+	},
+	"invalid_collect_upload": {
+		message:    "上传的文件名或体积参数不合法，未写入任何文件。",
+		dataSafe:   true,
+		nextAction: "请勿上传空文件名、系统隐藏文件或超大文件。",
+	},
+	"collect_extension_not_allowed": {
+		message:    "该文件格式不在本次收集链接允许的后缀范围内。",
+		dataSafe:   true,
+		nextAction: "请按页面提示的允许格式重新选择文件。",
+	},
+	"collect_file_too_large": {
+		message:    "单个文件体积超出本次收集链接的上限。",
+		dataSafe:   true,
+		nextAction: "请压缩文件或联系链接创建者调高单文件大小限制。",
+	},
+	"collect_limit_reached": {
+		message:    "此收集链接已达到允许接收的文件数或总容量上限。",
+		dataSafe:   true,
+		nextAction: "请联系链接创建者确认已收到的文件或创建新收集链接。",
+	},
+
+	// File pins, insights, text editor & archive reader
+	"invalid_pin_request": {
+		message:    "置顶路径或名称参数无效。",
+		dataSafe:   true,
+		nextAction: "请重新选择有效的文件或文件夹后置顶。",
+	},
+	"pin_limit_reached": {
+		message:    "当前磁盘的置顶收藏数量已达上限（100 项）。",
+		dataSafe:   true,
+		nextAction: "请先取消部分不再常用的置顶项后再添加。",
+	},
+	"file_pin_error": {
+		message:    "读取或更新置顶列表失败，您的文件未受影响。",
+		dataSafe:   true,
+		nextAction: "请稍后重试。",
+	},
+	"invalid_insights_mode": {
+		message:    "文件快筛模式无效，仅支持 large（大文件）或 recent（近期新增）。",
+		dataSafe:   true,
+		nextAction: "请切换有效筛选模式后重试。",
+	},
+	"text_edit_unsupported_type": {
+		message:    "该文件格式不支持在线纯文本编辑保存。",
+		dataSafe:   true,
+		nextAction: "仅支持常见 Markdown、文本及配置文件；其他文件请下载后使用本地应用编辑。",
+	},
+	"text_file_too_large": {
+		message:    "文本文件超出在线编辑上限（2 MiB），未修改原文件。",
+		dataSafe:   true,
+		nextAction: "请下载文件到本地编辑器中修改后再上传。",
+	},
+	"text_file_invalid_utf8": {
+		message:    "文件内容不是有效的 UTF-8 纯文本或包含二进制空字节，已拒绝保存以防损坏文件。",
+		dataSafe:   true,
+		nextAction: "请确认文件编码为 UTF-8 纯文本后再试。",
+	},
+	"file_modified_conflict": {
+		message:    "文件在磁盘上已被其他设备或 Finder 修改，本次保存已中止以防覆盖他人更改。",
+		dataSafe:   true,
+		nextAction: "请先保留当前草稿，刷新查看最新版本后再合并保存。",
+	},
+	"archive_reader_unsupported": {
+		message:    "当前文件格式不支持免解压在线阅读（仅支持 .cbz、.zip、.epub）。",
+		dataSafe:   true,
+		nextAction: "请下载原件使用本地阅读器查看。",
+	},
+	"archive_entry_type_forbidden": {
+		message:    "压缩包内的该资源类型不在安全阅读白名单内，已拒绝输出。",
+		dataSafe:   true,
+		nextAction: "仅支持安全读取图片、章节文档、样式与字体资源。",
+	},
+	"invalid_reading_progress": {
+		message:    "阅读进度参数无效，未保存此次进度。",
+		dataSafe:   true,
+		nextAction: "请刷新阅读器后重试。",
+	},
+	"reading_progress_error": {
+		message:    "读取或保存阅读进度失败，您的文件未受影响。",
+		dataSafe:   true,
+		nextAction: "请稍后重试。",
+	},
+
+	// Gallery pathPrefix & priority OCR
+	"invalid_path_prefix": {
+		message:    "相册目录筛选前缀不合法。",
+		dataSafe:   true,
+		nextAction: "请选择有效的相对目录路径后重试。",
+	},
+	"ocr_priority_unsupported": {
+		message:    "仅支持对有效的图片文件触发高优 Vision OCR 识别。",
+		dataSafe:   true,
+		nextAction: "请确认目标文件为普通照片或扫描图片后重试。",
+	},
 }

@@ -10,15 +10,24 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/mediaworker"
 )
 
 const (
-	aiIndexBatchSize     = mediaworker.MaxAIBatchItems
-	aiIndexIdleInterval  = 2 * time.Minute
-	aiIndexActiveDelay   = 1500 * time.Millisecond
-	aiIndexThrottleDelay = 30 * time.Second
+	aiIndexBatchSize      = mediaworker.MaxAIBatchItems
+	aiIndexIdleInterval   = 2 * time.Minute
+	aiIndexActiveDelay    = 1500 * time.Millisecond
+	aiIndexPriorityDelay  = 100 * time.Millisecond
+	aiIndexThrottleDelay  = 30 * time.Second
+	maxPriorityAIQueueLen = 128
+	priorityAIHoldTTL     = 2 * time.Minute
 )
+
+type aiPriorityItem struct {
+	relPath    string
+	enqueuedAt time.Time
+}
 
 type AIIndexStatus struct {
 	Running   bool `json:"running"`
@@ -62,6 +71,103 @@ func (l *Library) TriggerAIIndex() {
 	case l.aiWake <- struct{}{}:
 	default:
 	}
+}
+
+// EnqueuePriorityAI pushes a newly uploaded document/receipt photo ahead of
+// the background AI backlog so Apple Vision OCR completes within seconds.
+func (l *Library) EnqueuePriorityAI(relPath string) bool {
+	clean := cleanPriorityRelPath(relPath)
+	if clean == "" || mediaType(path.Base(clean)) != "photo" {
+		return false
+	}
+	now := l.currentTime()
+	l.mu.Lock()
+	if l.aiPrioritySet == nil {
+		l.aiPrioritySet = make(map[string]struct{})
+	}
+	if _, exists := l.aiPrioritySet[clean]; !exists {
+		if len(l.aiPriority) >= maxPriorityAIQueueLen {
+			oldest := l.aiPriority[0]
+			l.aiPriority = l.aiPriority[1:]
+			delete(l.aiPrioritySet, oldest.relPath)
+		}
+		l.aiPriority = append(l.aiPriority, aiPriorityItem{relPath: clean, enqueuedAt: now})
+		l.aiPrioritySet[clean] = struct{}{}
+	}
+	l.mu.Unlock()
+	l.TriggerAIIndex()
+	return true
+}
+
+// PriorityAIQueueLen returns the number of paths currently queued for
+// high-priority OCR/AI indexing.
+func (l *Library) PriorityAIQueueLen() int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return len(l.aiPriority)
+}
+
+// IndexSinglePhotoNow immediately indexes a single photo file into the gallery
+// database (without waiting for the debounced directory refresh) so priority
+// OCR and asset AI polling can start right away.
+func (l *Library) IndexSinglePhotoNow(ctx context.Context, relPath string) (Asset, error) {
+	clean := cleanPriorityRelPath(relPath)
+	if clean == "" || mediaType(path.Base(clean)) != "photo" {
+		return Asset{}, errors.New("invalid_photo_path")
+	}
+	share, physicalShare, err := l.shareState()
+	if err != nil {
+		return Asset{}, err
+	}
+	info, err := l.storage.Stat(clean)
+	if err != nil {
+		return Asset{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return Asset{}, files.ErrType
+	}
+	if !l.Status().Running {
+		entry := files.Entry{
+			Name:       path.Base(clean),
+			Path:       clean,
+			Type:       "file",
+			Size:       info.Size(),
+			Modified:   info.ModTime(),
+			Identity:   files.MediaFileIdentity(info),
+			SingleLink: files.MediaFileHasSingleLink(info),
+		}
+		if err := l.indexScanBatch(ctx, share, physicalShare, l.currentTime().UnixNano(), []files.Entry{entry}); err != nil {
+			return Asset{}, err
+		}
+	}
+	var id int64
+	err = l.db.QueryRowContext(ctx,
+		`SELECT id FROM assets WHERE share=? AND path=? AND missing_path=''`,
+		share, clean).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Asset{}, nil
+	}
+	if err != nil {
+		return Asset{}, err
+	}
+	return l.Asset(id)
+}
+
+func cleanPriorityRelPath(raw string) string {
+	trimmed := strings.Trim(strings.TrimSpace(raw), "/")
+	if trimmed == "" || trimmed == "." || strings.ContainsAny(trimmed, "\\\x00") {
+		return ""
+	}
+	clean := path.Clean(trimmed)
+	if clean == "." || clean != trimmed {
+		return ""
+	}
+	for _, part := range strings.Split(clean, "/") {
+		if part == "" || part == "." || part == ".." || files.IsInternalName(part) {
+			return ""
+		}
+	}
+	return clean
 }
 
 func (l *Library) aiIndexLoop() {
@@ -110,6 +216,9 @@ func (l *Library) aiIndexStep() time.Duration {
 	if throttled {
 		return aiIndexThrottleDelay
 	}
+	if l.PriorityAIQueueLen() > 0 {
+		return aiIndexPriorityDelay
+	}
 	return aiIndexActiveDelay
 }
 
@@ -120,7 +229,75 @@ type aiCandidate struct {
 	modified int64
 }
 
+func (l *Library) popPriorityAICandidates(share string, limit int) []aiCandidate {
+	l.mu.Lock()
+	if len(l.aiPriority) == 0 {
+		l.mu.Unlock()
+		return nil
+	}
+	snapshot := append([]aiPriorityItem(nil), l.aiPriority...)
+	l.mu.Unlock()
+
+	now := l.currentTime()
+	selected := make([]aiCandidate, 0, min(len(snapshot), limit))
+	removePaths := make(map[string]struct{})
+
+	for _, item := range snapshot {
+		if len(selected) >= limit {
+			break
+		}
+		var c aiCandidate
+		var aiVer, srcSize, srcMod sql.NullInt64
+		err := l.db.QueryRow(`
+			SELECT a.id, a.path, a.size, a.modified,
+			       s.ai_version, s.source_size, s.source_modified
+			FROM assets a
+			LEFT JOIN ai_index_state s ON s.asset_id = a.id
+			WHERE a.share = ? AND a.path = ? AND a.missing_path = '' AND a.type = 'photo'`,
+			share, item.relPath).Scan(&c.id, &c.relPath, &c.size, &c.modified, &aiVer, &srcSize, &srcMod)
+		if errors.Is(err, sql.ErrNoRows) {
+			if now.Sub(item.enqueuedAt) >= priorityAIHoldTTL {
+				removePaths[item.relPath] = struct{}{}
+			}
+			continue
+		}
+		if err != nil {
+			continue
+		}
+		removePaths[item.relPath] = struct{}{}
+		needsIndex := !aiVer.Valid || aiVer.Int64 < aiSchemaVersion || srcSize.Int64 != c.size || srcMod.Int64 != c.modified
+		if needsIndex {
+			selected = append(selected, c)
+		}
+	}
+
+	if len(removePaths) > 0 {
+		l.mu.Lock()
+		kept := l.aiPriority[:0]
+		for _, item := range l.aiPriority {
+			if _, drop := removePaths[item.relPath]; drop {
+				delete(l.aiPrioritySet, item.relPath)
+				continue
+			}
+			kept = append(kept, item)
+		}
+		l.aiPriority = kept
+		l.mu.Unlock()
+	}
+	return selected
+}
+
 func (l *Library) nextAIBatch(share string, limit int) ([]aiCandidate, error) {
+	batch := l.popPriorityAICandidates(share, limit)
+	remaining := limit - len(batch)
+	if remaining <= 0 {
+		return batch, nil
+	}
+	seenIDs := make(map[int64]struct{}, len(batch))
+	for _, c := range batch {
+		seenIDs[c.id] = struct{}{}
+	}
+	queryLimit := remaining + len(batch)
 	rows, err := l.db.Query(`
 		SELECT a.id, a.path, a.size, a.modified
 		FROM assets a
@@ -128,17 +305,23 @@ func (l *Library) nextAIBatch(share string, limit int) ([]aiCandidate, error) {
 		WHERE a.share = ? AND a.missing_path = '' AND a.type = 'photo'
 		  AND (s.asset_id IS NULL OR s.ai_version < ? OR s.source_size <> a.size OR s.source_modified <> a.modified)
 		ORDER BY a.taken_at DESC, a.id DESC
-		LIMIT ?`, share, aiSchemaVersion, limit)
+		LIMIT ?`, share, aiSchemaVersion, queryLimit)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var batch []aiCandidate
 	for rows.Next() {
+		if len(batch) >= limit {
+			break
+		}
 		var c aiCandidate
 		if err := rows.Scan(&c.id, &c.relPath, &c.size, &c.modified); err != nil {
 			return nil, err
 		}
+		if _, dup := seenIDs[c.id]; dup {
+			continue
+		}
+		seenIDs[c.id] = struct{}{}
 		batch = append(batch, c)
 	}
 	return batch, rows.Err()
