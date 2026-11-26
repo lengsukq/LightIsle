@@ -24,42 +24,66 @@ Widget? buildPlatformBackupSettingsEntry(
       ? rawId.toInt()
       : int.tryParse(rawId?.toString() ?? '') ?? 0;
   final palette = IslePalette.of(context);
+  final style = IsleThemeStyle.of(context);
+  final isBrutal = style.preset.surfaceMaterial == IsleSurfaceMaterial.neoBrutal;
+
+  Widget buildPhotoBackupTile({String? subtitle}) => IsleGroupTile(
+    key: const ValueKey('settingsMobilePhotoBackupTile'),
+    icon: Icons.cloud_upload_rounded,
+    iconBgColor: palette['brandRose'],
+    title: '手机相册备份',
+    subtitle: subtitle,
+    onTap: () => _openMobilePhotoBackupFromSettings(
+      context,
+      api: api,
+      userId: userId,
+      accountName: accountName,
+      isAdmin: isAdmin,
+    ),
+  );
+
+  Widget buildFolderBackupTile({String? subtitle}) => IsleGroupTile(
+    key: const ValueKey('settingsDesktopFolderBackupTile'),
+    icon: Icons.drive_folder_upload_rounded,
+    iconBgColor: palette['brandTerracotta'],
+    title: '本机文件夹备份',
+    subtitle: subtitle,
+    onTap: () {
+      Navigator.of(context).push(
+        buildIslePageRoute<void>(
+          builder: (_) => DesktopFolderBackupPage(
+            api: api,
+            userId: userId,
+            accountName: accountName,
+            isAdmin: isAdmin,
+            controller: desktopBackupController,
+          ),
+        ),
+      );
+    },
+  );
 
   return switch (defaultTargetPlatform) {
-    TargetPlatform.android || TargetPlatform.iOS => IsleGroupTile(
-      key: const ValueKey('settingsMobilePhotoBackupTile'),
-      icon: Icons.cloud_upload_rounded,
-      iconBgColor: palette['brandRose'],
-      title: '手机相册备份',
-      onTap: () => _openMobilePhotoBackupFromSettings(
-        context,
-        api: api,
-        userId: userId,
-        accountName: accountName,
-        isAdmin: isAdmin,
-      ),
+    TargetPlatform.android => Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        buildPhotoBackupTile(),
+        Divider(
+          height: 1,
+          thickness: isBrutal ? 1.4 : 0.65,
+          indent: isBrutal ? 0 : 54,
+          endIndent: isBrutal ? 0 : 14,
+          color: style.rimBorderColor(),
+        ),
+        buildFolderBackupTile(subtitle: '通过系统文件夹授权单向增量备份本机目录'),
+      ],
+    ),
+    TargetPlatform.iOS => buildPhotoBackupTile(
+      subtitle: 'iOS 系统限制不支持常驻任意本机目录备份',
     ),
     TargetPlatform.macOS ||
     TargetPlatform.windows ||
-    TargetPlatform.linux => IsleGroupTile(
-      key: const ValueKey('settingsDesktopFolderBackupTile'),
-      icon: Icons.drive_folder_upload_rounded,
-      iconBgColor: palette['brandTerracotta'],
-      title: '本机文件夹备份',
-      onTap: () {
-        Navigator.of(context).push(
-          buildIslePageRoute<void>(
-            builder: (_) => DesktopFolderBackupPage(
-              api: api,
-              userId: userId,
-              accountName: accountName,
-              isAdmin: isAdmin,
-              controller: desktopBackupController,
-            ),
-          ),
-        );
-      },
-    ),
+    TargetPlatform.linux => buildFolderBackupTile(),
     _ => null,
   };
 }

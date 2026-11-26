@@ -139,6 +139,7 @@ class DesktopBackupTask {
     required this.id,
     required this.label,
     required this.localPath,
+    this.localDisplayPath,
     this.bookmarkBase64,
     required this.rootId,
     required this.rootGeneration,
@@ -146,6 +147,10 @@ class DesktopBackupTask {
     required this.remoteBasePath,
     this.conflictPolicy = DesktopConflictPolicy.trashAndReplace,
     this.ignoreHidden = true,
+    this.ignorePresets = const <String>[],
+    this.customIgnorePatterns = const <String>[],
+    this.maxFileSizeMiB = 0,
+    this.watchOnChange = false,
     this.enabled = true,
     this.lastRunAtMs = 0,
     this.lastCompleteAtMs = 0,
@@ -157,6 +162,7 @@ class DesktopBackupTask {
   final String id;
   final String label;
   final String localPath;
+  final String? localDisplayPath;
   final String? bookmarkBase64;
   final String rootId;
   final int rootGeneration;
@@ -164,6 +170,10 @@ class DesktopBackupTask {
   final String remoteBasePath;
   final DesktopConflictPolicy conflictPolicy;
   final bool ignoreHidden;
+  final List<String> ignorePresets;
+  final List<String> customIgnorePatterns;
+  final int maxFileSizeMiB;
+  final bool watchOnChange;
   final bool enabled;
   final int lastRunAtMs;
   final int lastCompleteAtMs;
@@ -173,9 +183,18 @@ class DesktopBackupTask {
 
   String get rootIdentity => '$rootId@$rootGeneration';
 
+  bool get isAndroidSafSource => localPath.startsWith('content://');
+
+  String get displayLocalPath =>
+      localDisplayPath != null && localDisplayPath!.isNotEmpty
+      ? localDisplayPath!
+      : localPath;
+
   DesktopBackupTask copyWith({
     String? label,
     String? localPath,
+    String? localDisplayPath,
+    bool clearLocalDisplayPath = false,
     String? bookmarkBase64,
     bool clearBookmark = false,
     String? rootId,
@@ -184,6 +203,10 @@ class DesktopBackupTask {
     String? remoteBasePath,
     DesktopConflictPolicy? conflictPolicy,
     bool? ignoreHidden,
+    List<String>? ignorePresets,
+    List<String>? customIgnorePatterns,
+    int? maxFileSizeMiB,
+    bool? watchOnChange,
     bool? enabled,
     int? lastRunAtMs,
     int? lastCompleteAtMs,
@@ -196,6 +219,9 @@ class DesktopBackupTask {
     id: id,
     label: label ?? this.label,
     localPath: localPath ?? this.localPath,
+    localDisplayPath: clearLocalDisplayPath
+        ? null
+        : (localDisplayPath ?? this.localDisplayPath),
     bookmarkBase64: clearBookmark
         ? null
         : (bookmarkBase64 ?? this.bookmarkBase64),
@@ -205,6 +231,14 @@ class DesktopBackupTask {
     remoteBasePath: remoteBasePath ?? this.remoteBasePath,
     conflictPolicy: conflictPolicy ?? this.conflictPolicy,
     ignoreHidden: ignoreHidden ?? this.ignoreHidden,
+    ignorePresets: ignorePresets != null
+        ? List<String>.unmodifiable(ignorePresets)
+        : this.ignorePresets,
+    customIgnorePatterns: customIgnorePatterns != null
+        ? List<String>.unmodifiable(customIgnorePatterns)
+        : this.customIgnorePatterns,
+    maxFileSizeMiB: maxFileSizeMiB ?? this.maxFileSizeMiB,
+    watchOnChange: watchOnChange ?? this.watchOnChange,
     enabled: enabled ?? this.enabled,
     lastRunAtMs: lastRunAtMs ?? this.lastRunAtMs,
     lastCompleteAtMs: lastCompleteAtMs ?? this.lastCompleteAtMs,
@@ -217,6 +251,8 @@ class DesktopBackupTask {
     'id': id,
     'label': label,
     'localPath': localPath,
+    if (localDisplayPath != null && localDisplayPath!.isNotEmpty)
+      'localDisplayPath': localDisplayPath,
     if (bookmarkBase64 != null && bookmarkBase64!.isNotEmpty)
       'bookmarkBase64': bookmarkBase64,
     'rootId': rootId,
@@ -225,6 +261,11 @@ class DesktopBackupTask {
     'remoteBasePath': remoteBasePath,
     'conflictPolicy': conflictPolicy.wireValue,
     'ignoreHidden': ignoreHidden,
+    if (ignorePresets.isNotEmpty) 'ignorePresets': ignorePresets,
+    if (customIgnorePatterns.isNotEmpty)
+      'customIgnorePatterns': customIgnorePatterns,
+    if (maxFileSizeMiB > 0) 'maxFileSizeMiB': maxFileSizeMiB,
+    if (watchOnChange) 'watchOnChange': watchOnChange,
     'enabled': enabled,
     'lastRunAtMs': lastRunAtMs,
     'lastCompleteAtMs': lastCompleteAtMs,
@@ -232,6 +273,18 @@ class DesktopBackupTask {
     if (lastError != null) 'lastError': lastError,
     'lastSkippedSymlinks': lastSkippedSymlinks,
   };
+
+  static List<String> _decodeStringList(Object? raw) {
+    if (raw is! List) return const <String>[];
+    final out = <String>[];
+    for (final entry in raw) {
+      if (entry is String) {
+        final trimmed = entry.trim();
+        if (trimmed.isNotEmpty) out.add(trimmed);
+      }
+    }
+    return List<String>.unmodifiable(out);
+  }
 
   static DesktopBackupTask? tryFromJson(Object? raw) {
     if (raw is! Map) return null;
@@ -256,10 +309,16 @@ class DesktopBackupTask {
         remoteBasePath.isEmpty) {
       return null;
     }
+    final rawMaxSize = raw['maxFileSizeMiB'];
+    final maxFileSizeMiB = rawMaxSize is int && rawMaxSize > 0 ? rawMaxSize : 0;
+    final rawDisplay = raw['localDisplayPath'];
     return DesktopBackupTask(
       id: id,
       label: label,
       localPath: localPath,
+      localDisplayPath: rawDisplay is String && rawDisplay.isNotEmpty
+          ? rawDisplay
+          : null,
       bookmarkBase64: raw['bookmarkBase64'] as String?,
       rootId: rootId,
       rootGeneration: rootGeneration,
@@ -269,6 +328,10 @@ class DesktopBackupTask {
         raw['conflictPolicy'] as String?,
       ),
       ignoreHidden: raw['ignoreHidden'] != false,
+      ignorePresets: _decodeStringList(raw['ignorePresets']),
+      customIgnorePatterns: _decodeStringList(raw['customIgnorePatterns']),
+      maxFileSizeMiB: maxFileSizeMiB,
+      watchOnChange: raw['watchOnChange'] == true,
       enabled: raw['enabled'] != false,
       lastRunAtMs: raw['lastRunAtMs'] is int ? raw['lastRunAtMs'] as int : 0,
       lastCompleteAtMs: raw['lastCompleteAtMs'] is int

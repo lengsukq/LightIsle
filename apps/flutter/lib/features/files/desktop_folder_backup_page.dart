@@ -8,7 +8,9 @@ import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 import 'desktop_backup_engine.dart';
+import 'desktop_backup_ignore.dart';
 import 'desktop_backup_models.dart';
+import 'desktop_backup_restore.dart';
 import 'desktop_folder_backup_task_sheet.dart';
 
 class DesktopFolderBackupPage extends StatefulWidget {
@@ -102,6 +104,32 @@ class _DesktopFolderBackupPageState extends State<DesktopFolderBackupPage> {
     if (saved == null || !mounted) return;
     await _controller.upsertTask(saved);
     await _refreshFailures();
+  }
+
+  Future<void> _openRestoreDialog(DesktopBackupTask task) async {
+    final result = await showDesktopBackupRestoreDialog(
+      context,
+      api: widget.api,
+      directoryAccess: _controller.directoryAccess,
+      store: _controller.store,
+      task: task,
+    );
+    if (result != null && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('还原完成：${result.formatSummary()}')),
+      );
+    }
+  }
+
+  String _formatFilterSummary(DesktopBackupTask task) {
+    final parts = <String>[
+      for (final presetId in task.ignorePresets)
+        if (findIgnorePreset(presetId) case final preset?) preset.label,
+      if (task.customIgnorePatterns.isNotEmpty)
+        '自定义 ${task.customIgnorePatterns.length} 条',
+      if (task.maxFileSizeMiB > 0) '单文件 ≤ ${task.maxFileSizeMiB} MiB',
+    ];
+    return parts.join(' · ');
   }
 
   Future<void> _confirmDeleteTask(DesktopBackupTask task) async {
@@ -440,6 +468,17 @@ class _DesktopFolderBackupPageState extends State<DesktopFolderBackupPage> {
                         label: '已核验',
                         color: palette['brandSage'],
                       ),
+                    if (task.watchOnChange && !task.isAndroidSafSource)
+                      IsleStatusBadge(
+                        label: _controller.isWatchingTask(task.id)
+                            ? '监听中'
+                            : (_controller.watcherErrorFor(task.id) != null
+                                  ? '监听已暂停'
+                                  : '变更防抖'),
+                        color: _controller.watcherErrorFor(task.id) != null
+                            ? palette['brandAmber']
+                            : palette['brandBlue'],
+                      ),
                     if (failures.isNotEmpty)
                       ActionChip(
                         visualDensity: VisualDensity.compact,
@@ -477,7 +516,7 @@ class _DesktopFolderBackupPageState extends State<DesktopFolderBackupPage> {
             padding: const EdgeInsets.all(10),
             decoration: IsleDecorations.recessedWell(context, radius: 10),
             child: SelectableText(
-              '本机：${task.localPath}\n'
+              '本机：${task.displayLocalPath}\n'
               'NAS：${task.rootName} → /${task.remoteBasePath == '.' ? '' : task.remoteBasePath}',
               style: theme.textTheme.bodySmall?.copyWith(
                 fontSize: 12,
@@ -486,6 +525,17 @@ class _DesktopFolderBackupPageState extends State<DesktopFolderBackupPage> {
               ),
             ),
           ),
+          if (_formatFilterSummary(task) case final filterText
+              when filterText.isNotEmpty) ...[
+            const SizedBox(height: 5),
+            Text(
+              '过滤规则：$filterText',
+              style: theme.textTheme.bodySmall?.copyWith(
+                fontSize: 11.5,
+                color: colors.onSurfaceVariant,
+              ),
+            ),
+          ],
           const SizedBox(height: 6),
           Text(
             '最近同步：${formatUnixMillis(task.lastCompleteAtMs, emptyLabel: '尚未完成同步')}'
@@ -495,6 +545,17 @@ class _DesktopFolderBackupPageState extends State<DesktopFolderBackupPage> {
               color: colors.onSurfaceVariant,
             ),
           ),
+          if (_controller.watcherErrorFor(task.id) case final watcherWarn?) ...[
+            const SizedBox(height: 5),
+            Text(
+              watcherWarn,
+              style: theme.textTheme.bodySmall?.copyWith(
+                fontSize: 12,
+                color: palette['brandAmber'],
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ],
           if (task.lastError != null) ...[
             const SizedBox(height: 6),
             Text(
@@ -524,6 +585,19 @@ class _DesktopFolderBackupPageState extends State<DesktopFolderBackupPage> {
                 icon: const Icon(Icons.play_arrow_rounded, size: 17),
                 label: const Text('立即备份'),
               ),
+              if (_controller.directoryAccess.supportsRestore &&
+                  !task.isAndroidSafSource) ...[
+                const SizedBox(width: 8),
+                OutlinedButton.icon(
+                  key: ValueKey('restoreDesktopBackupTask:${task.id}'),
+                  style: OutlinedButton.styleFrom(
+                    visualDensity: VisualDensity.compact,
+                  ),
+                  onPressed: running ? null : () => _openRestoreDialog(task),
+                  icon: const Icon(Icons.download_rounded, size: 16),
+                  label: const Text('从 NAS 还原'),
+                ),
+              ],
               if (totalFailures > 0) ...[
                 const SizedBox(width: 8),
                 OutlinedButton.icon(
@@ -558,13 +632,22 @@ class _DesktopFolderBackupPageState extends State<DesktopFolderBackupPage> {
                   side: BorderSide(color: borderColor, width: 1.0),
                 ),
                 onSelected: (action) {
-                  if (action == 'edit') {
+                  if (action == 'restore') {
+                    _openRestoreDialog(task);
+                  } else if (action == 'edit') {
                     _addOrEditTask(task);
                   } else if (action == 'delete') {
                     _confirmDeleteTask(task);
                   }
                 },
                 itemBuilder: (_) => [
+                  if (_controller.directoryAccess.supportsRestore &&
+                      !task.isAndroidSafSource)
+                    isleActionMenuItem(
+                      value: 'restore',
+                      icon: Icons.download_rounded,
+                      label: '从 NAS 还原到本机',
+                    ),
                   isleActionMenuItem(
                     value: 'edit',
                     icon: Icons.edit_outlined,
@@ -601,9 +684,14 @@ class _DesktopFolderBackupPageState extends State<DesktopFolderBackupPage> {
                 body: '仅单向读取本机源文件夹并增量上传至 NAS，不会修改或删除本机目录，也不会自动清理 NAS 上已有文件。',
               ),
               IsleHelpItem(
-                title: '快检缓存与安全过滤',
+                title: '忽略规则与变更防抖',
                 body:
-                    '结合修改时间、体积与 SHA-256 摘要实现秒级跳过未变动文件，并自动忽略 .DS_Store 等系统隐藏文件与指向目录外的软链接。',
+                    '可勾选开发目录/临时文件预设、添加通配符规则及单文件体积上限。桌面端支持客户端运行期间 30 秒变更防抖自动同步，失权或满盘时自动暂停监听。',
+              ),
+              IsleHelpItem(
+                title: '安全还原到本机',
+                body:
+                    '桌面端可手动对比 NAS 与本机差异并还原：支持仅补齐本地缺失文件，或覆盖前先保留 .lightisle-bak 本地备份，绝不删除任何本地多余文件。',
               ),
             ],
           ),
