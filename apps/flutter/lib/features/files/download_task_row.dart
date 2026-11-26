@@ -40,6 +40,14 @@ class DownloadTaskRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final status = task['status'] as String;
+    final engine = task['engine']?.toString() ?? '';
+    final engineLabel = switch (engine) {
+      'ytdlp' => 'yt-dlp',
+      'webarchive' => '网页归档',
+      'aria2' => 'aria2',
+      _ => '',
+    };
+    final supportsPause = engine.isEmpty || engine == 'aria2';
     final total = _downloadNonNegInt(task['totalBytes']);
     final done = _downloadNonNegInt(task['completedBytes']);
     final published = objectList(task['publishedFiles']);
@@ -94,7 +102,7 @@ class DownloadTaskRow extends StatelessWidget {
                     ),
                     const SizedBox(height: 2),
                     Text(
-                      '${status == 'running' && task['phase'] == 'publishing' ? '正在保存' : downloadStatusLabel(status)} · 保存到 ${task['destination'] == '.' ? '共享根目录' : task['destination']}',
+                      '${engineLabel.isNotEmpty ? '$engineLabel · ' : ''}${status == 'running' && task['phase'] == 'publishing' ? '正在保存' : downloadStatusLabel(status)} · 保存到 ${task['destination'] == '.' ? '共享根目录' : task['destination']}',
                       style: TextStyle(
                         fontSize: 12,
                         color: colors.onSurfaceVariant,
@@ -172,7 +180,8 @@ class DownloadTaskRow extends StatelessWidget {
             padding: const EdgeInsets.only(left: 36),
             child: Row(
               children: [
-                if (task['phase'] != 'publishing' &&
+                if (supportsPause &&
+                    task['phase'] != 'publishing' &&
                     (status == 'queued' || status == 'running'))
                   TextButton(
                     style: TextButton.styleFrom(

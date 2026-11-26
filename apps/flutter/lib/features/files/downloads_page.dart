@@ -28,14 +28,18 @@ class _DownloadsPageState extends State<DownloadsPage>
   List<Map<String, dynamic>> _tasks = const [];
   bool _loading = false,
       _loaded = false,
-      _available = false,
       _networkAllowed = true,
       _foreground = true;
+  DownloadEngineCapabilities _capabilities = const DownloadEngineCapabilities(
+    aria2Available: false,
+  );
   String? _error;
-  String _reason = '', _busy = '';
+  String _busy = '';
   late String _destination = widget.initialDestination;
   int _generation = 0;
   Timer? _timer;
+
+  bool get _anyAvailable => _capabilities.anyAvailable;
 
   @override
   void initState() {
@@ -53,7 +57,7 @@ class _DownloadsPageState extends State<DownloadsPage>
       _loaded = false;
       _busy = '';
       _tasks = const [];
-      _available = false;
+      _capabilities = const DownloadEngineCapabilities(aria2Available: false);
       _networkAllowed = true;
       _destination = widget.initialDestination;
       unawaited(_load());
@@ -88,6 +92,7 @@ class _DownloadsPageState extends State<DownloadsPage>
     try {
       final status = await api.get('/api/v2/downloads/status');
       if (status['available'] is! bool) throw const FormatException('下载服务状态无效');
+      final caps = DownloadEngineCapabilities.fromStatusJson(status);
       List<Map<String, dynamic>> tasks = const [];
       try {
         final result = await api.get('/api/v2/downloads');
@@ -101,17 +106,15 @@ class _DownloadsPageState extends State<DownloadsPage>
           throw const FormatException('下载任务内容无效');
         }
       } on LightIsleApiException catch (error) {
-        if (status['available'] == true ||
-            error.code != 'download_unavailable') {
+        if (caps.anyAvailable || error.code != 'download_unavailable') {
           rethrow;
         }
       }
       if (!mounted || generation != _generation) return;
       setState(() {
         _tasks = tasks;
-        _available = status['available'] != false;
+        _capabilities = caps;
         _networkAllowed = status['networkAllowed'] != false;
-        _reason = status['reason']?.toString() ?? '';
         _loaded = true;
         _error = null;
       });
@@ -156,12 +159,13 @@ class _DownloadsPageState extends State<DownloadsPage>
   }
 
   Future<void> _create() async {
-    if (!_available || !_networkAllowed || _busy.isNotEmpty) return;
+    if (!_anyAvailable || !_networkAllowed || _busy.isNotEmpty) return;
     final api = widget.api;
     final request = await showNewDownloadDialog(
       context,
       api: widget.api,
       initialDestination: _destination,
+      capabilities: _capabilities,
     );
     if (request == null || !mounted || !identical(api, widget.api)) return;
     _destination = request['destination'] as String;
@@ -206,13 +210,96 @@ class _DownloadsPageState extends State<DownloadsPage>
     super.dispose();
   }
 
-  Widget _buildTaskRow(Map<String, dynamic> task) => DownloadTaskRow(
-    task: task,
-    canAct: _busy.isEmpty,
-    available: _available,
-    networkAllowed: _networkAllowed,
-    onAction: _action,
-  );
+  Widget _buildTaskRow(Map<String, dynamic> task) {
+    final engine = task['engine']?.toString() ?? 'aria2';
+    final taskAvailable = switch (engine) {
+      'ytdlp' => _capabilities.ytdlpAvailable,
+      'webarchive' => _capabilities.webArchiveAvailable,
+      _ => _capabilities.aria2Available,
+    };
+    return DownloadTaskRow(
+      task: task,
+      canAct: _busy.isEmpty,
+      available: taskAvailable,
+      networkAllowed: _networkAllowed,
+      onAction: _action,
+    );
+  }
+
+  Widget _buildEngineStatusCard(BuildContext context, IslePalette palette) {
+    final colors = Theme.of(context).colorScheme;
+    final caps = _capabilities;
+    Widget pill(String name, bool ok, String detail) => Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      decoration: IsleDecorations.recessedWell(context, radius: 10),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(
+            ok ? Icons.check_circle_rounded : Icons.info_outline_rounded,
+            size: 14,
+            color: ok ? palette['brandSage'] : colors.onSurfaceVariant,
+          ),
+          const SizedBox(width: 5),
+          Text(
+            '$name · $detail',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w600,
+              color: ok ? colors.onSurface : colors.onSurfaceVariant,
+            ),
+          ),
+        ],
+      ),
+    );
+
+    return IsleSurface(
+      key: const ValueKey('downloadEngineStatusCard'),
+      margin: EdgeInsets.zero,
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              pill(
+                'aria2',
+                caps.aria2Available,
+                caps.aria2Available
+                    ? (caps.aria2Version.isNotEmpty
+                          ? 'v${caps.aria2Version}'
+                          : '就绪')
+                    : '未安装',
+              ),
+              pill(
+                'yt-dlp',
+                caps.ytdlpAvailable,
+                caps.ytdlpAvailable
+                    ? (caps.ytdlpVersion.isNotEmpty
+                          ? caps.ytdlpVersion
+                          : '就绪')
+                    : '未安装',
+              ),
+              pill(
+                '网页离线保存',
+                caps.webArchiveAvailable,
+                caps.webArchiveAvailable ? '内置就绪' : '不可用',
+              ),
+            ],
+          ),
+          if (!caps.ytdlpAvailable) ...[
+            const SizedBox(height: 6),
+            Text(
+              '提示：Mac 未安装 yt-dlp 时暂不支持视频站点抓取（可在 Mac 安装 brew install yt-dlp 后自动生效），不影响网页离线保存与常规下载。',
+              style: TextStyle(fontSize: 11.5, color: colors.onSurfaceVariant),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -274,14 +361,14 @@ class _DownloadsPageState extends State<DownloadsPage>
               ),
               IsleFocalMetric(
                 label: '引擎状态',
-                value: !_loaded ? '检测中' : (_available ? '就绪' : '不可用'),
-                accent: _available
+                value: !_loaded ? '检测中' : (_anyAvailable ? '就绪' : '不可用'),
+                accent: _anyAvailable
                     ? palette['brandBlue']
                     : Theme.of(context).colorScheme.onSurfaceVariant,
               ),
             ],
             actions: [
-              if (_loaded && _available && _networkAllowed)
+              if (_loaded && _anyAvailable && _networkAllowed)
                 FilledButton.icon(
                   style: FilledButton.styleFrom(
                     visualDensity: VisualDensity.compact,
@@ -293,18 +380,22 @@ class _DownloadsPageState extends State<DownloadsPage>
             ],
           ),
           const SizedBox(height: 10),
+          if (_loaded && _capabilities.multiEngineSupported) ...[
+            _buildEngineStatusCard(context, palette),
+            const SizedBox(height: 10),
+          ],
           if (_error != null) Notice(_error!, error: true, onRetry: _load),
           if (_loading && !_loaded)
             const IsleLoadingState(compact: true, label: '正在读取下载任务…'),
-          if (_loaded && !_available)
+          if (_loaded && !_anyAvailable)
             Notice(
-              _reason == 'aria2_not_installed'
+              _capabilities.aria2Reason == 'aria2_not_installed'
                   ? 'Mac 尚未安装下载组件 aria2，暂时不能新建下载。已有记录可查看；已下载的任务仍可重试保存文件。'
                   : 'Mac 的下载服务暂时不可用。已有记录可查看；已下载的任务仍可重试保存文件。',
             ),
           if (_loaded && !_networkAllowed)
             const Notice('新建或继续网络下载需要管理员权限，已有任务和已下载的文件仍可管理。'),
-          if (_loaded && _tasks.isEmpty && _available && _networkAllowed)
+          if (_loaded && _tasks.isEmpty && _anyAvailable && _networkAllowed)
             const IsleEmptyStateCard(
               '还没有下载任务。添加一个下载链接即可开始。',
               icon: Icons.download_done_rounded,

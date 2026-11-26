@@ -5,6 +5,7 @@ import '../../core/isle_action_menu.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/widgets.dart';
 import 'file_entry_visuals.dart';
+import 'file_extras_api.dart';
 import 'file_models.dart';
 import 'file_search_widgets.dart';
 
@@ -17,6 +18,7 @@ List<PopupMenuEntry<String>> buildFilesActionMenuItems({
   required FileEntry item,
   required bool writable,
   required bool searching,
+  bool pinned = false,
 }) => [
   if (searching)
     isleActionMenuItem(
@@ -30,12 +32,29 @@ List<PopupMenuEntry<String>> buildFilesActionMenuItems({
       icon: Icons.visibility_outlined,
       label: '预览',
     ),
+  if (!item.isFolder && isReadableArchiveFile(item.name))
+    isleActionMenuItem(
+      value: 'openReader',
+      icon: Icons.auto_stories_outlined,
+      label: '漫画/EPUB 轻阅读',
+    ),
   if (!item.isFolder)
     isleActionMenuItem(
       value: 'openExternal',
       icon: Icons.open_in_new_rounded,
       label: '其他应用打开',
     ),
+  if (!item.isFolder)
+    isleActionMenuItem(
+      value: 'saveOffline',
+      icon: Icons.offline_pin_outlined,
+      label: '保存到离线文件箱',
+    ),
+  isleActionMenuItem(
+    value: 'togglePin',
+    icon: pinned ? Icons.star_rounded : Icons.star_outline_rounded,
+    label: pinned ? '取消置顶' : '置顶到常用',
+  ),
   isleActionMenuItem(
     value: 'download',
     icon: item.isFolder ? Icons.archive_outlined : Icons.download_outlined,
@@ -58,6 +77,12 @@ List<PopupMenuEntry<String>> buildFilesActionMenuItems({
       value: 'share',
       icon: Icons.ios_share_outlined,
       label: '分享文件夹 ZIP',
+    ),
+  if (writable && item.isFolder)
+    isleActionMenuItem(
+      value: 'collectLink',
+      icon: Icons.move_to_inbox_outlined,
+      label: '创建收集链接',
     ),
   const PopupMenuDivider(),
   if (writable)
@@ -87,6 +112,7 @@ Future<String?> showFilesItemContextMenu(
   required FileEntry item,
   required bool writable,
   required bool searching,
+  bool pinned = false,
 }) async {
   final overlay = Overlay.maybeOf(context)?.context.findRenderObject();
   if (overlay is! RenderBox) return null;
@@ -105,6 +131,7 @@ Future<String?> showFilesItemContextMenu(
       item: item,
       writable: writable,
       searching: searching,
+      pinned: pinned,
     ),
   );
 }
@@ -116,11 +143,13 @@ class FilesItemActionsMenu extends StatelessWidget {
     required this.writable,
     required this.searching,
     required this.onSelected,
+    this.pinned = false,
   });
 
   final FileEntry item;
   final bool writable;
   final bool searching;
+  final bool pinned;
   final ValueChanged<String> onSelected;
 
   @override
@@ -138,6 +167,7 @@ class FilesItemActionsMenu extends StatelessWidget {
         item: item,
         writable: writable,
         searching: searching,
+        pinned: pinned,
       ),
     );
   }
@@ -164,11 +194,13 @@ class FilesDesktopTableRow extends StatelessWidget {
     required this.onToggleSelected,
     required this.onAction,
     required this.onSecondaryTapDown,
+    this.pinned = false,
   });
 
   final LightIsleApi api;
   final FileEntry item;
   final bool writable;
+  final bool pinned;
   final bool searching;
   final String searchTerm;
   final bool selecting;
@@ -307,6 +339,7 @@ class FilesDesktopTableRow extends StatelessWidget {
                       item: item,
                       writable: writable,
                       searching: searching,
+                      pinned: pinned,
                       onSelected: onAction,
                     ),
                   ),
@@ -354,12 +387,14 @@ class FilesItemListTile extends StatelessWidget {
     required this.onToggleSelected,
     required this.onAction,
     required this.onSecondaryTapDown,
+    this.pinned = false,
   });
 
   final LightIsleApi api;
   final FileEntry item;
   final bool compact;
   final bool writable;
+  final bool pinned;
   final bool searching;
   final String searchTerm;
   final bool selecting;
@@ -481,6 +516,7 @@ class FilesItemListTile extends StatelessWidget {
             item: item,
             writable: writable,
             searching: searching,
+            pinned: pinned,
             onSelected: onAction,
           ),
         ),

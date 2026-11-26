@@ -6,15 +6,79 @@ import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 
+/// Engine availability snapshot returned by `GET /api/v2/downloads/status`.
+class DownloadEngineCapabilities {
+  const DownloadEngineCapabilities({
+    required this.aria2Available,
+    this.aria2Version = '',
+    this.aria2Reason = '',
+    this.ytdlpAvailable = false,
+    this.ytdlpVersion = '',
+    this.ytdlpReason = '',
+    this.webArchiveAvailable = false,
+    this.multiEngineSupported = false,
+  });
+
+  final bool aria2Available;
+  final String aria2Version;
+  final String aria2Reason;
+  final bool ytdlpAvailable;
+  final String ytdlpVersion;
+  final String ytdlpReason;
+  final bool webArchiveAvailable;
+  final bool multiEngineSupported;
+
+  bool get anyAvailable =>
+      aria2Available || ytdlpAvailable || webArchiveAvailable;
+
+  String get defaultEngine {
+    if (aria2Available) return 'aria2';
+    if (webArchiveAvailable) return 'webarchive';
+    if (ytdlpAvailable) return 'ytdlp';
+    return 'aria2';
+  }
+
+  factory DownloadEngineCapabilities.fromStatusJson(Map<String, dynamic> status) {
+    final legacyAvailable = status['available'] == true;
+    final multi =
+        status.containsKey('aria2Available') ||
+        status.containsKey('ytdlpAvailable') ||
+        status.containsKey('webArchiveAvailable');
+    return DownloadEngineCapabilities(
+      aria2Available: status['aria2Available'] is bool
+          ? status['aria2Available'] as bool
+          : legacyAvailable,
+      aria2Version:
+          status['aria2Version']?.toString() ??
+          status['version']?.toString() ??
+          '',
+      aria2Reason:
+          status['aria2Reason']?.toString() ??
+          status['reason']?.toString() ??
+          '',
+      ytdlpAvailable: status['ytdlpAvailable'] == true,
+      ytdlpVersion: status['ytdlpVersion']?.toString() ?? '',
+      ytdlpReason: status['ytdlpReason']?.toString() ?? '',
+      webArchiveAvailable: status['webArchiveAvailable'] == true,
+      multiEngineSupported: multi,
+    );
+  }
+}
+
 /// Displays the dialog to create a new remote NAS download task.
 Future<Map<String, Object>?> showNewDownloadDialog(
   BuildContext context, {
   required LightIsleApi api,
   required String initialDestination,
+  DownloadEngineCapabilities? capabilities,
 }) => showDialog<Map<String, Object>>(
   context: context,
-  builder: (_) =>
-      _NewDownloadDialog(api: api, initialDestination: initialDestination),
+  builder: (_) => _NewDownloadDialog(
+    api: api,
+    initialDestination: initialDestination,
+    capabilities:
+        capabilities ?? const DownloadEngineCapabilities(aria2Available: true),
+  ),
 );
 
 /// Displays the list of files published/archived by a download task.
@@ -88,27 +152,61 @@ class _NewDownloadDialog extends StatefulWidget {
   const _NewDownloadDialog({
     required this.api,
     required this.initialDestination,
+    required this.capabilities,
   });
   final LightIsleApi api;
   final String initialDestination;
+  final DownloadEngineCapabilities capabilities;
   @override
   State<_NewDownloadDialog> createState() => _NewDownloadDialogState();
 }
 
 class _NewDownloadDialogState extends State<_NewDownloadDialog> {
-  final _url = TextEditingController(), _limit = TextEditingController();
+  static const _ytdlpFormats = <(String, String)>[
+    ('best', '最佳画质'),
+    ('1080p', '1080P 优先'),
+    ('720p', '720P 省空间'),
+    ('audio', '仅提取音频'),
+  ];
+
+  final _url = TextEditingController();
+  final _limit = TextEditingController();
+  final _playlistMax = TextEditingController(text: '10');
   late String _destination = widget.initialDestination;
+  late String _engine = widget.capabilities.defaultEngine;
+  String _ytdlpFormat = 'best';
+  bool _allowPlaylist = false;
   String? _error;
+
+  bool get _selectedEngineAvailable => switch (_engine) {
+    'ytdlp' => widget.capabilities.ytdlpAvailable,
+    'webarchive' => widget.capabilities.webArchiveAvailable,
+    _ => widget.capabilities.aria2Available,
+  };
 
   @override
   void dispose() {
     _url.dispose();
     _limit.dispose();
+    _playlistMax.dispose();
     super.dispose();
   }
 
   void _submit() {
-    final raw = _url.text.trim(), uri = Uri.tryParse(_url.text.trim());
+    if (!_selectedEngineAvailable) {
+      setState(() {
+        _error = _engine == 'ytdlp'
+            ? 'Mac 尚未安装 yt-dlp，请先在 Mac 安装或切换至网页离线保存。'
+            : '当前所选下载引擎暂不可用，请切换其他可用引擎。';
+      });
+      return;
+    }
+    final raw = _url.text.trim(), uri = Uri.tryParse(raw);
+    final httpOnly =
+        uri != null &&
+        const ['http', 'https'].contains(uri.scheme) &&
+        uri.host.isNotEmpty &&
+        uri.userInfo.isEmpty;
     final network =
         uri != null &&
         const ['http', 'https', 'ftp'].contains(uri.scheme) &&
@@ -117,13 +215,22 @@ class _NewDownloadDialogState extends State<_NewDownloadDialog> {
     final magnet = RegExp(
       r'^magnet:\?xt=urn:btih:[A-Za-z0-9]{32,40}(&[A-Za-z0-9_.%*-]+=[^&]*)*$',
     ).hasMatch(raw);
+
+    if (_engine == 'aria2') {
+      if (raw.isEmpty || raw.length > 2048 || (!network && !magnet)) {
+        setState(() => _error = '请输入有效的 HTTP、HTTPS、FTP 或磁力链接。');
+        return;
+      }
+    } else {
+      if (raw.isEmpty || raw.length > 2048 || !httpOnly) {
+        setState(() => _error = '请输入有效的 HTTP 或 HTTPS 网页/视频链接。');
+        return;
+      }
+    }
+
     final limit = _limit.text.trim().isEmpty
         ? 0.0
         : double.tryParse(_limit.text.trim());
-    if (raw.isEmpty || raw.length > 2048 || (!network && !magnet)) {
-      setState(() => _error = '请输入有效的 HTTP、HTTPS、FTP 或磁力链接。');
-      return;
-    }
     if (limit == null ||
         !limit.isFinite ||
         limit < 0 ||
@@ -132,11 +239,33 @@ class _NewDownloadDialogState extends State<_NewDownloadDialog> {
       setState(() => _error = '大小上限请输入 0 到 1024 之间的正数，或留空。');
       return;
     }
-    Navigator.pop(context, <String, Object>{
+
+    var playlistMaxItems = 0;
+    if (_engine == 'ytdlp' && _allowPlaylist) {
+      final parsed = int.tryParse(_playlistMax.text.trim());
+      if (parsed == null || parsed < 1 || parsed > 20) {
+        setState(() => _error = '播放列表最多条目数请输入 1 到 20 之间的整数。');
+        return;
+      }
+      playlistMaxItems = parsed;
+    }
+
+    final payload = <String, Object>{
       'url': raw,
       'destination': _destination,
       'maxBytes': (limit * 1024 * 1024 * 1024).round(),
-    });
+    };
+    if (widget.capabilities.multiEngineSupported || _engine != 'aria2') {
+      payload['engine'] = _engine;
+      if (_engine == 'ytdlp') {
+        payload['options'] = <String, Object>{
+          'format': _ytdlpFormat,
+          'allowPlaylist': _allowPlaylist,
+          if (_allowPlaylist) 'playlistMaxItems': playlistMaxItems,
+        };
+      }
+    }
+    Navigator.pop(context, payload);
   }
 
   @override
@@ -144,6 +273,13 @@ class _NewDownloadDialogState extends State<_NewDownloadDialog> {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
+    final caps = widget.capabilities;
+    final urlHint = switch (_engine) {
+      'ytdlp' => 'https://www.bilibili.com/video/… 或 YouTube 链接',
+      'webarchive' => 'https://example.com/article（保存正文与内联图片）',
+      _ => 'https://… 或 magnet:?…',
+    };
+
     return AlertDialog(
       insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
       titlePadding: const EdgeInsets.fromLTRB(20, 18, 20, 8),
@@ -159,21 +295,96 @@ class _NewDownloadDialogState extends State<_NewDownloadDialog> {
         ),
       ),
       content: SizedBox(
-        width: 460,
+        width: 480,
         child: SingleChildScrollView(
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              if (caps.multiEngineSupported) ...[
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    ChoiceChip(
+                      key: const ValueKey('dlEngineChipAria2'),
+                      visualDensity: VisualDensity.compact,
+                      label: Text(
+                        caps.aria2Available ? '常规下载 (aria2)' : 'aria2 (未安装)',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      selected: _engine == 'aria2',
+                      onSelected: (_) => setState(() {
+                        _engine = 'aria2';
+                        _error = null;
+                      }),
+                    ),
+                    ChoiceChip(
+                      key: const ValueKey('dlEngineChipYtdlp'),
+                      visualDensity: VisualDensity.compact,
+                      label: Text(
+                        caps.ytdlpAvailable
+                            ? '视频/音频 (yt-dlp)'
+                            : 'yt-dlp (未安装)',
+                        style: const TextStyle(fontSize: 12),
+                      ),
+                      selected: _engine == 'ytdlp',
+                      onSelected: (_) => setState(() {
+                        _engine = 'ytdlp';
+                        _error = null;
+                      }),
+                    ),
+                    ChoiceChip(
+                      key: const ValueKey('dlEngineChipWebArchive'),
+                      visualDensity: VisualDensity.compact,
+                      label: const Text(
+                        '网页离线保存',
+                        style: TextStyle(fontSize: 12),
+                      ),
+                      selected: _engine == 'webarchive',
+                      onSelected: (_) => setState(() {
+                        _engine = 'webarchive';
+                        _error = null;
+                      }),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                if (_engine == 'ytdlp' && !caps.ytdlpAvailable)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Notice(
+                      'Mac 尚未安装 yt-dlp，请在 Mac 端安装（如 brew install yt-dlp）后自动生效；此期间仍可正常使用「网页离线保存」。',
+                    ),
+                  ),
+                if (_engine == 'aria2' && !caps.aria2Available)
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 10),
+                    child: Notice(
+                      'Mac 尚未安装 aria2，无法使用常规/磁力下载；可切换至「网页离线保存」。',
+                    ),
+                  ),
+                if (_engine == 'webarchive')
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Text(
+                      '抓取网页正文并安全内联图片为单个离线 HTML 文件，不依赖 aria2 或 yt-dlp。',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        fontSize: 12,
+                        color: colors.onSurfaceVariant,
+                      ),
+                    ),
+                  ),
+              ],
               TextField(
                 controller: _url,
                 keyboardType: TextInputType.url,
                 autocorrect: false,
                 enableSuggestions: false,
-                decoration: const InputDecoration(
+                decoration: InputDecoration(
                   isDense: true,
-                  labelText: '下载链接',
-                  hintText: 'https://… 或 magnet:?…',
+                  labelText: _engine == 'webarchive' ? '网页链接' : '下载链接',
+                  hintText: urlHint,
                 ),
               ),
               const SizedBox(height: 12),
@@ -208,18 +419,60 @@ class _NewDownloadDialogState extends State<_NewDownloadDialog> {
                   ),
                 ],
               ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: _limit,
-                keyboardType: const TextInputType.numberWithOptions(
-                  decimal: true,
+              if (_engine == 'ytdlp') ...[
+                const SizedBox(height: 8),
+                DropdownButtonFormField<String>(
+                  key: const ValueKey('dlYtdlpFormatDropdown'),
+                  initialValue: _ytdlpFormat,
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    labelText: '画质 / 格式偏好',
+                  ),
+                  items: [
+                    for (final opt in _ytdlpFormats)
+                      DropdownMenuItem(value: opt.$1, child: Text(opt.$2)),
+                  ],
+                  onChanged: (v) {
+                    if (v != null) setState(() => _ytdlpFormat = v);
+                  },
                 ),
-                decoration: const InputDecoration(
-                  isDense: true,
-                  labelText: '大小上限（GiB，可选）',
-                  helperText: '留空使用服务端上限，最大 1024 GiB',
+                SwitchListTile.adaptive(
+                  key: const ValueKey('dlYtdlpPlaylistSwitch'),
+                  contentPadding: EdgeInsets.zero,
+                  dense: true,
+                  title: const Text('允许下载播放列表', style: TextStyle(fontSize: 13)),
+                  subtitle: const Text(
+                    '默认仅下载单集；开启后可限制最多抓取条数（上限 20）',
+                    style: TextStyle(fontSize: 11.5),
+                  ),
+                  value: _allowPlaylist,
+                  onChanged: (v) => setState(() => _allowPlaylist = v),
                 ),
-              ),
+                if (_allowPlaylist)
+                  TextField(
+                    key: const ValueKey('dlYtdlpPlaylistMaxField'),
+                    controller: _playlistMax,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      isDense: true,
+                      labelText: '播放列表最大条数（1–20）',
+                    ),
+                  ),
+              ],
+              if (_engine != 'webarchive') ...[
+                const SizedBox(height: 8),
+                TextField(
+                  controller: _limit,
+                  keyboardType: const TextInputType.numberWithOptions(
+                    decimal: true,
+                  ),
+                  decoration: const InputDecoration(
+                    isDense: true,
+                    labelText: '大小上限（GiB，可选）',
+                    helperText: '留空使用服务端上限，最大 1024 GiB',
+                  ),
+                ),
+              ],
               if (_error != null)
                 Padding(
                   padding: const EdgeInsets.only(top: 8),
@@ -237,7 +490,10 @@ class _NewDownloadDialogState extends State<_NewDownloadDialog> {
           onPressed: () => Navigator.pop(context),
           child: const Text('取消'),
         ),
-        FilledButton(onPressed: _submit, child: const Text('开始下载')),
+        FilledButton(
+          onPressed: _selectedEngineAvailable ? _submit : null,
+          child: Text(_engine == 'webarchive' ? '开始保存' : '开始下载'),
+        ),
       ],
     );
   }

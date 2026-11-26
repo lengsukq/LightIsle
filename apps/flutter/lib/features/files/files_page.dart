@@ -9,6 +9,7 @@ import 'package:flutter/services.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/widgets.dart';
+import 'file_pins_and_insights_widgets.dart';
 import 'files_browser_view.dart';
 import 'files_controller.dart';
 import 'files_item_cards.dart';
@@ -335,6 +336,46 @@ class _FilesPageState extends State<FilesPage> {
                                   compact: compact,
                                   availableWidth: contentWidth,
                                 ),
+                                if (!filter.showingTrash && !filter.searching) ...[
+                                  FilesPinsCapsuleBar(
+                                    pins: _controller.pins,
+                                    collapsed: _controller.pinsCollapsed,
+                                    busy: _controller.pinsBusy,
+                                    onToggleCollapsed:
+                                        _controller.togglePinsCollapsed,
+                                    onTapPin: (pin) {
+                                      _controller.setQuickViewMode(
+                                        FilesQuickViewMode.browse,
+                                      );
+                                      if (pin.isFolder) {
+                                        unawaited(
+                                          _controller.loadFiles(
+                                            target: pin.path,
+                                          ),
+                                        );
+                                      } else {
+                                        unawaited(
+                                          _actions.previewEntry(
+                                            context,
+                                            pin.toFileEntry(),
+                                          ),
+                                        );
+                                      }
+                                    },
+                                    onRemovePin: (pin) => unawaited(
+                                      _controller.removePinEntry(pin),
+                                    ),
+                                  ),
+                                  FilesQuickFilterStrip(
+                                    mode: _controller.quickViewMode,
+                                    disabled: dir.loading,
+                                    offlineCount: _controller.offlineFileCount,
+                                    onSelectMode: _controller.setQuickViewMode,
+                                    onOpenOfflineVault: () => unawaited(
+                                      _actions.openOfflineVault(context),
+                                    ),
+                                  ),
+                                ],
                                 if (filter.searching) ...[
                                   const SizedBox(height: 6),
                                   Text(
@@ -402,13 +443,57 @@ class _FilesPageState extends State<FilesPage> {
                                   ),
                                 ],
                                 const SizedBox(height: 10),
-                                FilesBrowserSurface(
-                                  controller: _controller,
-                                  actions: _actions,
-                                  highlightedItemKey: _highlightedItemKey,
-                                  compact: compact,
-                                  availableWidth: contentWidth,
-                                ),
+                                if (!filter.showingTrash &&
+                                    !filter.searching &&
+                                    _controller.quickViewMode !=
+                                        FilesQuickViewMode.browse)
+                                  FilesInsightsPanel(
+                                    mode: _controller.quickViewMode,
+                                    loading: _controller.insightsLoading,
+                                    error: _controller.insightsError,
+                                    response: _controller.insightsResponse,
+                                    minBytes: _controller.insightMinBytes,
+                                    recentDays: _controller.insightRecentDays,
+                                    onChangeMinBytes:
+                                        _controller.setInsightMinBytes,
+                                    onChangeRecentDays:
+                                        _controller.setInsightRecentDays,
+                                    onRetry: () =>
+                                        unawaited(_controller.loadInsights()),
+                                    onOpenItem: (item) => unawaited(
+                                      _actions.previewEntry(
+                                        context,
+                                        item.toFileEntry(),
+                                      ),
+                                    ),
+                                    onOpenContainingFolder: (item) {
+                                      _controller.setQuickViewMode(
+                                        FilesQuickViewMode.browse,
+                                      );
+                                      unawaited(
+                                        _controller.openContainingFolder(
+                                          item.toFileEntry(),
+                                        ),
+                                      );
+                                    },
+                                    onTrashItem: (item) async {
+                                      await _actions.trashEntry(
+                                        context,
+                                        item.toFileEntry(),
+                                      );
+                                      if (mounted && !_controller.isDisposed) {
+                                        await _controller.loadInsights();
+                                      }
+                                    },
+                                  )
+                                else
+                                  FilesBrowserSurface(
+                                    controller: _controller,
+                                    actions: _actions,
+                                    highlightedItemKey: _highlightedItemKey,
+                                    compact: compact,
+                                    availableWidth: contentWidth,
+                                  ),
                                 const SizedBox(height: 16),
                               ],
                             ),
