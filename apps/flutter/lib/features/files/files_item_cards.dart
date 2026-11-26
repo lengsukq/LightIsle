@@ -29,11 +29,13 @@ class FilesItemCard extends StatelessWidget {
     required this.onToggleSelected,
     required this.onAction,
     required this.onSecondaryTapDown,
+    this.pinned = false,
   });
 
   final LightIsleApi api;
   final FileEntry item;
   final bool writable;
+  final bool pinned;
   final bool searching;
   final String searchTerm;
   final bool selecting;
@@ -172,6 +174,7 @@ class FilesItemCard extends StatelessWidget {
                         item: item,
                         writable: writable,
                         searching: searching,
+                        pinned: pinned,
                         onSelected: onAction,
                       ),
                     ],

@@ -394,6 +394,8 @@ class _FilesMoreActionsMenu extends StatelessWidget {
         switch (value) {
           case 'downloads':
             unawaited(actions.openDownloads(context));
+          case 'offlineVault':
+            unawaited(actions.openOfflineVault(context));
           case 'duplicates':
             unawaited(actions.openDuplicates(context));
           case 'trash':
@@ -416,6 +418,11 @@ class _FilesMoreActionsMenu extends StatelessWidget {
           value: 'downloads',
           icon: Icons.download_outlined,
           label: '下载中心',
+        ),
+        isleActionMenuItem(
+          value: 'offlineVault',
+          icon: Icons.offline_pin_outlined,
+          label: '离线文件箱',
         ),
         isleActionMenuItem(
           value: 'duplicates',

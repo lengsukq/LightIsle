@@ -8,7 +8,9 @@ import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
 import 'file_browser_repository.dart';
 import 'file_destination_dialog.dart';
+import 'file_extras_api.dart';
 import 'file_models.dart';
+import 'file_pins_and_insights_widgets.dart';
 import 'file_selection_snapshot.dart';
 import 'file_upload_stream.dart';
 import 'files_batch_coordinator.dart';
@@ -17,6 +19,7 @@ import 'files_page_state_models.dart';
 import 'files_path_utils.dart';
 import 'files_preferences_store.dart';
 import 'files_transfer_coordinator.dart';
+import 'offline_file_store.dart';
 import 'upload_task_center.dart';
 
 final class FilesPageConfig {
@@ -140,15 +143,36 @@ class FilesController extends ChangeNotifier {
   Timer? _highlightTimer;
   bool _disposed = false;
 
+  List<FilePinEntry> pins = const [];
+  bool pinsCollapsed = false;
+  bool pinsBusy = false;
+  FilesQuickViewMode quickViewMode = FilesQuickViewMode.browse;
+  bool insightsLoading = false;
+  String? insightsError;
+  FileInsightsResponse? insightsResponse;
+  int insightMinBytes = 50 << 20;
+  int insightRecentDays = 7;
+  int _insightsGeneration = 0;
+  int offlineFileCount = 0;
+
   LightIsleApi get api => _config.api;
   bool get isAdmin => _config.isAdmin;
   String get accountName => _config.accountName;
   String? get accountId => _config.accountId;
+  String get effectiveOfflineAccountId {
+    final id = _config.accountId?.trim() ?? '';
+    if (id.isNotEmpty) return id;
+    return _config.accountName.trim();
+  }
   String get initialPath => _config.initialPath;
   bool get uploadOnly => _config.uploadOnly;
   FileType get initialUploadType => _config.initialUploadType;
   UploadTaskCenter? get taskCenter => _config.taskCenter;
   bool get isDisposed => _disposed;
+
+  bool isPinned(String path) => pins.any((p) => p.path == path);
+
+  FileExtrasApi get extrasApi => FileExtrasApi(_config.api);
 
   FileBrowserRepository get _browserRepository =>
       FileBrowserRepository(_config.api);
@@ -174,7 +198,8 @@ class FilesController extends ChangeNotifier {
       dir.path == _config.initialPath &&
       !filter.showingTrash &&
       !filter.searching &&
-      !transfers.selecting;
+      !transfers.selecting &&
+      quickViewMode == FilesQuickViewMode.browse;
 
   void _notify() {
     if (!_disposed) notifyListeners();
@@ -212,6 +237,13 @@ class FilesController extends ChangeNotifier {
       filter.reset();
       transfers.resetForRootChange();
       prefs.resetDefaults();
+      pins = const [];
+      quickViewMode = FilesQuickViewMode.browse;
+      insightsResponse = null;
+      insightsError = null;
+      insightsLoading = false;
+      _insightsGeneration++;
+      offlineFileCount = 0;
       // Do not call notifyListeners synchronously inside didUpdateWidget; the
       // host State is already scheduled to rebuild immediately with the reset
       // state, and async completions below will notify safely outside build.
@@ -225,6 +257,8 @@ class FilesController extends ChangeNotifier {
     final initialDirection = prefs.fileSortDirection;
     final initialLoad = loadFiles(notifyBeforeFetch: !deferInitialNotify);
     unawaited(preferences.loadSearchHistory());
+    unawaited(loadPins());
+    unawaited(refreshOfflineFileCount());
     await preferences.restorePreferences(generation);
     if (_disposed || generation != prefs.preferencesGeneration) return;
     if (prefs.fileSort != initialSort ||
@@ -440,12 +474,171 @@ class FilesController extends ChangeNotifier {
   }
 
   Future<void> refreshCurrentView() async {
+    unawaited(loadPins());
+    unawaited(refreshOfflineFileCount());
     if (filter.showingTrash) {
       await loadTrash();
     } else if (filter.searching) {
       await searchFiles();
+    } else if (quickViewMode != FilesQuickViewMode.browse) {
+      await loadInsights();
     } else {
       await loadFiles(target: dir.path);
+    }
+  }
+
+  Future<void> loadPins() async {
+    final rootIdentity = dir.rootIdentity;
+    try {
+      final fetched = await extrasApi.listPins();
+      if (_disposed || dir.rootIdentity != rootIdentity) return;
+      pins = fetched;
+      _notify();
+    } catch (_) {
+      // Optional endpoint: never disturb directory listing when unavailable.
+    }
+  }
+
+  void togglePinsCollapsed() {
+    pinsCollapsed = !pinsCollapsed;
+    _notify();
+  }
+
+  Future<void> togglePin(FileEntry item) async {
+    if (pinsBusy) return;
+    pinsBusy = true;
+    _notify();
+    try {
+      if (isPinned(item.path)) {
+        await extrasApi.removePin(item.path);
+        pins = pins.where((p) => p.path != item.path).toList();
+        onNoticeMessage?.call('已取消置顶“${item.name}”。');
+      } else {
+        final added = await extrasApi.addPin(path: item.path, label: item.name);
+        pins = [added, ...pins.where((p) => p.path != added.path)];
+        onNoticeMessage?.call('已置顶“${item.name}”到常用区。');
+      }
+    } catch (error) {
+      onNoticeMessage?.call('置顶操作失败：${userFacingError(error)}');
+    } finally {
+      if (!_disposed) {
+        pinsBusy = false;
+        _notify();
+      }
+    }
+  }
+
+  Future<void> removePinEntry(FilePinEntry pin) async {
+    if (pinsBusy) return;
+    pinsBusy = true;
+    _notify();
+    try {
+      await extrasApi.removePin(pin.path);
+      pins = pins.where((p) => p.path != pin.path).toList();
+      onNoticeMessage?.call('已取消置顶“${pin.displayName}”。');
+    } catch (error) {
+      onNoticeMessage?.call('取消置顶失败：${userFacingError(error)}');
+    } finally {
+      if (!_disposed) {
+        pinsBusy = false;
+        _notify();
+      }
+    }
+  }
+
+  void setQuickViewMode(FilesQuickViewMode mode) {
+    if (quickViewMode == mode) return;
+    quickViewMode = mode;
+    if (mode == FilesQuickViewMode.browse) {
+      insightsError = null;
+      _notify();
+    } else {
+      unawaited(loadInsights());
+    }
+  }
+
+  void setInsightMinBytes(int bytes) {
+    if (insightMinBytes == bytes) return;
+    insightMinBytes = bytes;
+    unawaited(loadInsights());
+  }
+
+  void setInsightRecentDays(int days) {
+    if (insightRecentDays == days) return;
+    insightRecentDays = days;
+    unawaited(loadInsights());
+  }
+
+  Future<void> loadInsights() async {
+    if (quickViewMode == FilesQuickViewMode.browse) return;
+    final gen = ++_insightsGeneration;
+    final rootIdentity = dir.rootIdentity;
+    final modeStr =
+        quickViewMode == FilesQuickViewMode.large ? 'large' : 'recent';
+    insightsLoading = true;
+    insightsError = null;
+    _notify();
+    try {
+      final res = await extrasApi.fetchInsights(
+        mode: modeStr,
+        path: dir.path,
+        minBytes: modeStr == 'large' ? insightMinBytes : null,
+        days: modeStr == 'recent' ? insightRecentDays : null,
+      );
+      if (_disposed ||
+          gen != _insightsGeneration ||
+          dir.rootIdentity != rootIdentity) {
+        return;
+      }
+      insightsResponse = res;
+    } catch (error) {
+      if (!_disposed &&
+          gen == _insightsGeneration &&
+          dir.rootIdentity == rootIdentity) {
+        insightsError = '加载快筛失败：${userFacingError(error)}';
+      }
+    } finally {
+      if (!_disposed &&
+          gen == _insightsGeneration &&
+          dir.rootIdentity == rootIdentity) {
+        insightsLoading = false;
+        _notify();
+      }
+    }
+  }
+
+  Future<void> refreshOfflineFileCount() async {
+    final account = effectiveOfflineAccountId;
+    if (account.isEmpty) return;
+    try {
+      final stat = await OfflineFileStore(
+        api: _config.api,
+        accountIdentity: account,
+      ).stats();
+      if (!_disposed && offlineFileCount != stat.count) {
+        offlineFileCount = stat.count;
+        _notify();
+      }
+    } catch (_) {}
+  }
+
+  Future<OfflineFileEntry?> saveFileOffline(FileEntry item) async {
+    final account = effectiveOfflineAccountId;
+    if (account.isEmpty) {
+      onNoticeMessage?.call('无法确认当前账号，请重新登录后再保存到离线文件箱。');
+      return null;
+    }
+    try {
+      final entry = await OfflineFileStore(
+        api: _config.api,
+        accountIdentity: account,
+      ).save(item);
+      await refreshOfflineFileCount();
+      onNoticeMessage?.call('已将“${item.name}”保存到离线文件箱，断网亦可直接打开。');
+      return entry;
+    } catch (error) {
+      onNoticeMessage?.call('保存到离线文件箱失败：${userFacingError(error)}');
+      return null;
     }
   }
 
@@ -537,6 +730,8 @@ class FilesController extends ChangeNotifier {
     if (dir.loading) return;
     if (transfers.selecting) {
       batch.exitSelectionMode();
+    } else if (quickViewMode != FilesQuickViewMode.browse) {
+      setQuickViewMode(FilesQuickViewMode.browse);
     } else if (filter.showingTrash) {
       unawaited(toggleTrash());
     } else if (filter.searching) {

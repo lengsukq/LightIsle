@@ -7,6 +7,8 @@ import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
+import '../files/offline_file_store.dart';
+import '../files/offline_vault_page.dart';
 import '../media/offline_photo_store.dart';
 import '../media/offline_photos_page.dart';
 import '../media/offline_video_store.dart';
@@ -31,6 +33,8 @@ class CacheManagementPage extends StatefulWidget {
 class _CacheManagementPageState extends State<CacheManagementPage> {
   final Set<IsleCacheCategory> _selected = IsleCacheCategory.values.toSet();
   IsleCacheReport? _report;
+  int _offlineFileBytes = 0;
+  int _offlineFileCount = 0;
   Map<String, dynamic>? _serverStatus;
   bool _loading = true;
   bool _clearingLocal = false;
@@ -48,11 +52,25 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
     setState(() {
       _loading = true;
     });
+    var offlineFileBytes = 0;
+    var offlineFileCount = 0;
     var offlinePhotoBytes = 0;
     var offlinePhotoCount = 0;
     var offlineVideoBytes = 0;
     var offlineVideoCount = 0;
     if (widget.accountId.isNotEmpty) {
+      try {
+        final stats = await OfflineFileStore(
+          api: widget.api,
+          accountIdentity: widget.accountId,
+        ).stats();
+        offlineFileCount = stats.count;
+        offlineFileBytes = stats.totalBytes;
+      } catch (error) {
+        debugPrint(
+          'CacheManagementPage: offline file vault stats unavailable: $error',
+        );
+      }
       try {
         final photos = await OfflinePhotoStore(
           api: widget.api,
@@ -104,6 +122,8 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
     if (!mounted) return;
     setState(() {
       _report = report;
+      _offlineFileBytes = offlineFileBytes;
+      _offlineFileCount = offlineFileCount;
       _serverStatus = serverStatus;
       _loading = false;
     });
@@ -260,15 +280,19 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
                     report.categories[cat]?.effectiveBytes ?? 0,
                   ),
                 ),
-              if (report.totalOfflineBytes > 0)
+              if (report.totalOfflineBytes + _offlineFileBytes > 0)
                 IsleChartSegment(
                   label: '离线原件',
-                  value: report.totalOfflineBytes.toDouble(),
+                  value: (report.totalOfflineBytes + _offlineFileBytes)
+                      .toDouble(),
                   color: palette['brandViolet'],
-                  detail: formatBytes(report.totalOfflineBytes),
+                  detail: formatBytes(
+                    report.totalOfflineBytes + _offlineFileBytes,
+                  ),
                 ),
             ],
-            semanticsLabel: '本机缓存分类占用，总计 ${formatBytes(totalAll)}',
+            semanticsLabel:
+                '本机缓存分类占用，总计 ${formatBytes(totalAll + _offlineFileBytes)}',
           ),
         ],
       ),
@@ -441,13 +465,47 @@ class _CacheManagementPageState extends State<CacheManagementPage> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Text(
-            '本机离线媒体库',
+            '本机离线文件箱与媒体库',
             style: Theme.of(context).textTheme.titleSmall?.copyWith(
               fontSize: 15,
               fontWeight: FontWeight.w800,
             ),
           ),
           const SizedBox(height: 6),
+          ListTile(
+            key: const ValueKey('cacheOfflineFileVaultTile'),
+            dense: true,
+            contentPadding: EdgeInsets.zero,
+            leading: IsleSquircleBadge(
+              icon: Icons.offline_pin_rounded,
+              color: palette['brandBlue'],
+              size: 32,
+              iconSize: 16.5,
+            ),
+            title: const Text('离线文件箱（独立隔离，不被清缓存误删）'),
+            subtitle: Text(
+              '${formatBytes(_offlineFileBytes)} · $_offlineFileCount 项文档',
+            ),
+            trailing: IslePillButton(
+              key: const ValueKey('manageOfflineVaultBtn'),
+              label: '管理',
+              compact: true,
+              onPressed: widget.accountId.isEmpty
+                  ? null
+                  : () async {
+                      await Navigator.of(context).push(
+                        buildIslePageRoute<void>(
+                          builder: (_) => OfflineVaultPage(
+                            api: widget.api,
+                            accountId: widget.accountId,
+                          ),
+                        ),
+                      );
+                      await _refresh();
+                    },
+            ),
+          ),
+          const Divider(height: 4),
           ListTile(
             dense: true,
             contentPadding: EdgeInsets.zero,

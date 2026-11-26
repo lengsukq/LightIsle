@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:open_filex/open_filex.dart';
 
 import '../../core/isle_theme.dart';
 import '../../core/widgets.dart';
@@ -11,10 +12,13 @@ import '../media/media_models.dart';
 import '../media/photo_gallery_viewer.dart';
 import '../settings/admin_smb_page.dart';
 import '../settings/dav_page.dart';
+import 'collect_links_sheet.dart';
 import 'downloads_page.dart';
 import 'duplicate_files_page.dart';
+import 'file_comic_epub_reader_page.dart';
 import 'file_destination_dialog.dart';
 import 'file_entry_visuals.dart';
+import 'file_extras_api.dart';
 import 'file_media_playlist.dart';
 import 'file_models.dart';
 import 'file_pdf_preview.dart';
@@ -25,6 +29,8 @@ import 'file_upload_stream.dart';
 import 'files_controller.dart';
 import 'files_dialogs.dart';
 import 'files_item_tiles.dart';
+import 'offline_file_store.dart';
+import 'offline_vault_page.dart';
 import 'upload_task_center_page.dart';
 
 typedef FilesUploadRouteOpener =
@@ -287,6 +293,14 @@ class FilesUiActions {
       );
       return;
     }
+    if (isReadableArchiveFile(item.name)) {
+      await openComicEpubReader(context, item);
+      return;
+    }
+    if (isOfficeDocumentFile(item.name)) {
+      await _showOfficePreviewGuide(context, item);
+      return;
+    }
     if (kind == FilePreviewKind.external) {
       controller.setDirectoryError('该文件暂不支持在线预览，请通过右侧更多菜单保存文件或使用其他应用打开。');
       return;
@@ -305,10 +319,99 @@ class FilesUiActions {
         ),
         text: outcome.text,
         error: outcome.error,
+        api: controller.api,
+        canEdit: controller.canWriteItem(item),
+        onSaved: () => unawaited(controller.loadFiles()),
         onOpenExternal: () => unawaited(openExternal(item)),
         onDownload: () => unawaited(downloadEntry(context, item)),
       ),
     );
+  }
+
+  Future<void> openCollectLinks(BuildContext context, FileEntry item) async {
+    if (!item.isFolder || !controller.canWriteItem(item)) return;
+    await showCollectLinksSheet(
+      context,
+      api: controller.api,
+      targetPath: item.path,
+      folderName: item.name,
+    );
+  }
+
+  Future<void> openOfflineVault(BuildContext context) async {
+    await Navigator.of(context).push<void>(
+      buildIslePageRoute<void>(
+        builder: (_) => OfflineVaultPage(
+          api: controller.api,
+          accountId: controller.effectiveOfflineAccountId,
+        ),
+      ),
+    );
+    if (!controller.isDisposed) {
+      await controller.refreshOfflineFileCount();
+    }
+  }
+
+  Future<void> openComicEpubReader(BuildContext context, FileEntry item) async {
+    await Navigator.of(context).push<void>(
+      buildIslePageRoute<void>(
+        builder: (_) =>
+            FileComicEpubReaderPage(api: controller.api, item: item),
+      ),
+    );
+  }
+
+  Future<void> _showOfficePreviewGuide(
+    BuildContext context,
+    FileEntry item,
+  ) async {
+    final choice = await showDialog<String>(
+      context: context,
+      builder: (dialogCtx) => AlertDialog(
+        title: Text(item.name, maxLines: 2, overflow: TextOverflow.ellipsis),
+        content: const Text(
+          'Office 文档（Word / Excel / PowerPoint）暂不内置渲染，可通过系统已安装的办公应用直接预览，或先保存到本机「离线文件箱」后再打开（断网也可查阅，NAS 原文件不会被修改）。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogCtx),
+            child: const Text('取消'),
+          ),
+          OutlinedButton.icon(
+            onPressed: () => Navigator.pop(dialogCtx, 'offlineOpen'),
+            icon: const Icon(Icons.offline_pin_outlined, size: 17),
+            label: const Text('离线保存后打开'),
+          ),
+          FilledButton.icon(
+            onPressed: () => Navigator.pop(dialogCtx, 'external'),
+            icon: const Icon(Icons.open_in_new_rounded, size: 17),
+            label: const Text('用系统应用预览'),
+          ),
+        ],
+      ),
+    );
+    if (choice == null || !context.mounted) return;
+    if (choice == 'external') {
+      await openExternal(item);
+      return;
+    }
+    if (choice == 'offlineOpen') {
+      final saved = await controller.saveFileOffline(item);
+      if (saved == null || !context.mounted) return;
+      try {
+        final store = OfflineFileStore(
+          api: controller.api,
+          accountIdentity: controller.effectiveOfflineAccountId,
+        );
+        final file = await store.fileFor(saved);
+        await OpenFilex.open(file.path);
+      } catch (err) {
+        if (!context.mounted) return;
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('打开离线副本失败：$err')));
+      }
+    }
   }
 
   Future<void> _openCinemaPlayer(
@@ -361,6 +464,14 @@ class FilesUiActions {
     switch (action) {
       case 'preview':
         unawaited(previewEntry(context, item));
+      case 'openReader':
+        unawaited(openComicEpubReader(context, item));
+      case 'saveOffline':
+        unawaited(controller.saveFileOffline(item));
+      case 'togglePin':
+        unawaited(controller.togglePin(item));
+      case 'collectLink':
+        unawaited(openCollectLinks(context, item));
       case 'openContainingFolder':
         unawaited(controller.openContainingFolder(item));
       case 'download':
@@ -393,6 +504,7 @@ class FilesUiActions {
       item: item,
       writable: controller.canWriteItem(item),
       searching: controller.filter.searching,
+      pinned: controller.isPinned(item.path),
     );
     if (selected != null && context.mounted) {
       dispatchFileAction(context, item, selected);
