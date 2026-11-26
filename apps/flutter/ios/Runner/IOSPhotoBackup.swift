@@ -56,48 +56,11 @@ final class IOSPhotoBackup {
     }
 
     private func assetID(_ identifier: String) -> String {
-        Data(identifier.utf8).base64EncodedString()
-            .replacingOccurrences(of: "+", with: "-")
-            .replacingOccurrences(of: "/", with: "_")
-            .replacingOccurrences(of: "=", with: "")
+        IOSPhotoAlbums.encodeID(identifier)
     }
 
     private func localIdentifier(_ encoded: String) -> String? {
-        guard encoded.count <= 200,
-              encoded.range(of: "^[A-Za-z0-9_-]+$", options: .regularExpression) != nil else { return nil }
-        var value = encoded.replacingOccurrences(of: "-", with: "+").replacingOccurrences(of: "_", with: "/")
-        value += String(repeating: "=", count: (4 - value.count % 4) % 4)
-        guard let data = Data(base64Encoded: value), let name = String(data: data, encoding: .utf8),
-              !name.isEmpty, name.count < 150 else { return nil }
-        return name
-    }
-
-    private func fetch(includeVideos: Bool, albumScope: String) -> PHFetchResult<PHAsset> {
-        let options = PHFetchOptions()
-        options.sortDescriptors = [
-            NSSortDescriptor(key: "creationDate", ascending: false),
-            NSSortDescriptor(key: "localIdentifier", ascending: false),
-        ]
-        if albumScope == "camera" {
-            let screenshotBit = PHAssetMediaSubtype.photoScreenshot.rawValue
-            if includeVideos {
-                options.predicate = NSPredicate(
-                    format: "(mediaType == %d || mediaType == %d) && ((mediaSubtypes & %d) == 0)",
-                    PHAssetMediaType.image.rawValue,
-                    PHAssetMediaType.video.rawValue,
-                    screenshotBit
-                )
-                return PHAsset.fetchAssets(with: options)
-            } else {
-                options.predicate = NSPredicate(
-                    format: "(mediaSubtypes & %d) == 0",
-                    screenshotBit
-                )
-                return PHAsset.fetchAssets(with: .image, options: options)
-            }
-        }
-        return includeVideos ? PHAsset.fetchAssets(with: options)
-            : PHAsset.fetchAssets(with: .image, options: options)
+        IOSPhotoAlbums.decodeID(encoded)
     }
 
     /// Deterministic positive 52-bit version stamp that changes whenever an
@@ -113,16 +76,6 @@ final class IOSPhotoBackup {
         }
         let bounded = Int64(value & 0x000F_FFFF_FFFF_FFFF)
         return bounded > 0 ? bounded : 1
-    }
-
-    private func version(_ assets: PHFetchResult<PHAsset>, albumScope: String) -> String {
-        let first = assets.count > 0 ? assets.object(at: 0) : nil
-        let last = assets.count > 0 ? assets.object(at: assets.count - 1) : nil
-        let firstTime = first?.modificationDate?.timeIntervalSince1970 ?? 0
-        let lastTime = last?.modificationDate?.timeIntervalSince1970 ?? 0
-        return "ios:" + albumScope + ":" + String(assets.count) + ":" +
-            (first?.localIdentifier ?? "") + ":" + String(firstTime) + ":" +
-            (last?.localIdentifier ?? "") + ":" + String(lastTime)
     }
 
     private func isICloudNetworkRequired(_ error: Error) -> Bool {
@@ -147,6 +100,40 @@ final class IOSPhotoBackup {
             }
         case "isWifi":
             result(stateQueue.sync { connectedToWifi })
+        case "listAlbums":
+            guard authorized() else {
+                result(error("photo_permission_denied", "请授予全部照片读取权限，有限照片访问不适合完整备份。"))
+                return
+            }
+            let args = call.arguments as? [String: Any] ?? [:]
+            let includeVideos = args["includeVideos"] as? Bool ?? false
+            DispatchQueue.global(qos: .userInitiated).async {
+                let albums = IOSPhotoAlbums.listAlbums(includeVideos: includeVideos)
+                DispatchQueue.main.async { result(["albums": albums]) }
+            }
+        case "requestDeleteAssets":
+            guard authorized() else {
+                result(error("photo_permission_denied", "需要全部照片权限才能发起系统安全释放确认。"))
+                return
+            }
+            let args = call.arguments as? [String: Any] ?? [:]
+            let assetIds = (args["assetIds"] as? [Any] ?? []).compactMap { $0 as? String }
+            if assetIds.count > 500 {
+                result(error("too_many_delete_assets", "单次最多释放 500 项原片，请分批操作。"))
+                return
+            }
+            IOSPhotoAlbums.requestDeleteAssets(encodedIds: assetIds) { [weak self] outcome in
+                DispatchQueue.main.async {
+                    switch outcome {
+                    case .success(let payload):
+                        result(payload)
+                    case .failure:
+                        let err = self?.error("photo_delete_failed", "系统删除确认失败，本机照片未被删除。")
+                            ?? FlutterError(code: "photo_delete_failed", message: "系统删除确认失败，本机照片未被删除。", details: nil)
+                        result(err)
+                    }
+                }
+            }
         case "list":
             guard authorized() else {
                 result(error("photo_permission_denied", "请授予全部照片读取权限，有限照片访问不适合完整备份。"))
@@ -155,67 +142,74 @@ final class IOSPhotoBackup {
             let args = call.arguments as? [String: Any] ?? [:]
             let limit = min(100, max(1, args["limit"] as? Int ?? 40))
             let includeVideos = args["includeVideos"] as? Bool ?? false
-            let albumScope = (args["albumScope"] as? String) == "camera" ? "camera" : "all"
+            let albumScope = IOSPhotoAlbums.normalizeAlbumScope(args["albumScope"] as? String)
+            let selectedAlbumIds = (args["selectedAlbumIds"] as? [Any] ?? []).compactMap { $0 as? String }
             let offsetString = args["beforeId"] as? String ?? ""
             guard offsetString.isEmpty || (offsetString.count <= 9 && offsetString.allSatisfy(\.isNumber)),
                   let offset = Int(offsetString.isEmpty ? "0" : offsetString), offset >= 0 else {
                 result(error("invalid_cursor", "照片分页游标无效")); return
             }
-            let assets = fetch(includeVideos: includeVideos, albumScope: albumScope)
+            let assets = IOSPhotoAlbums.fetchAssets(
+                includeVideos: includeVideos,
+                albumScope: albumScope,
+                collectionIds: selectedAlbumIds
+            )
             guard offset <= assets.count else {
                 result(error("photo_library_changed", "相册内容发生变化，请从最新照片重新扫描")); return
             }
             let end = min(offset + limit, assets.count)
+            let pageSlice = end > offset ? Array(assets[offset..<end]) : []
+            let albumNameMap = IOSPhotoAlbums.albumNames(for: pageSlice)
             var rows = [[String: Any]]()
             var invalidCount = 0
-            if end > offset {
-                for i in offset..<end {
-                    let asset = assets.object(at: i)
-                    let resources = PHAssetResource.assetResources(for: asset)
-                    let date = asset.modificationDate ?? asset.creationDate ?? .distantPast
-                    var selected = [(String, PHAssetResource)]()
-                    if asset.mediaType == .image {
-                        if let photo = resources.first(where: { $0.type == .photo || $0.type == .fullSizePhoto }) {
-                            selected.append((assetID(asset.localIdentifier), photo))
-                        } else {
-                            invalidCount += 1
-                        }
-                        let rawTypes: Set<String> = ["dng", "cr2", "cr3", "nef", "arw", "raf", "rw2", "orf", "pef"]
-                        if let raw = resources.first(where: { item in
-                            item.type == .alternatePhoto &&
-                            rawTypes.contains((item.originalFilename as NSString).pathExtension.lowercased())
-                        }) {
-                            selected.append(("r." + assetID(asset.localIdentifier), raw))
-                        }
-                        if includeVideos && asset.mediaSubtypes.contains(.photoLive) {
-                            if let paired = resources.first(where: { $0.type == .pairedVideo }) {
-                                selected.append(("l." + assetID(asset.localIdentifier), paired))
-                            } else {
-                                invalidCount += 1
-                            }
-                        }
-                    } else if includeVideos && asset.mediaType == .video {
-                        if let video = resources.first(where: { $0.type == .video || $0.type == .fullSizeVideo }) {
-                            selected.append(("v." + assetID(asset.localIdentifier), video))
+            for asset in pageSlice {
+                let resources = PHAssetResource.assetResources(for: asset)
+                let date = asset.modificationDate ?? asset.creationDate ?? .distantPast
+                let albumName = albumNameMap[asset.localIdentifier] ?? "相机胶卷"
+                var selected = [(String, PHAssetResource, Bool)]()
+                if asset.mediaType == .image {
+                    if let photo = resources.first(where: { $0.type == .photo || $0.type == .fullSizePhoto }) {
+                        selected.append((assetID(asset.localIdentifier), photo, false))
+                    } else {
+                        invalidCount += 1
+                    }
+                    let rawTypes: Set<String> = ["dng", "cr2", "cr3", "nef", "arw", "raf", "rw2", "orf", "pef"]
+                    if let raw = resources.first(where: { item in
+                        item.type == .alternatePhoto &&
+                        rawTypes.contains((item.originalFilename as NSString).pathExtension.lowercased())
+                    }) {
+                        selected.append(("r." + assetID(asset.localIdentifier), raw, false))
+                    }
+                    if includeVideos && asset.mediaSubtypes.contains(.photoLive) {
+                        if let paired = resources.first(where: { $0.type == .pairedVideo }) {
+                            selected.append(("l." + assetID(asset.localIdentifier), paired, true))
                         } else {
                             invalidCount += 1
                         }
                     }
-                    for (encoded, resource) in selected {
-                        rows.append([
-                            "id": encoded,
-                            "name": resource.originalFilename,
-                            "modified": Int64(date.timeIntervalSince1970),
-                            "size": 0,
-                            "generation": assetGeneration(asset, resource),
-                        ])
+                } else if includeVideos && asset.mediaType == .video {
+                    if let video = resources.first(where: { $0.type == .video || $0.type == .fullSizeVideo }) {
+                        selected.append(("v." + assetID(asset.localIdentifier), video, true))
+                    } else {
+                        invalidCount += 1
                     }
+                }
+                for (encoded, resource, isVideo) in selected {
+                    rows.append([
+                        "id": encoded,
+                        "name": resource.originalFilename,
+                        "modified": Int64(date.timeIntervalSince1970),
+                        "size": 0,
+                        "generation": assetGeneration(asset, resource),
+                        "albumName": albumName,
+                        "isVideo": isVideo,
+                    ])
                 }
             }
             result([
                 "items": rows,
                 "nextCursor": end < assets.count ? String(end) : "",
-                "version": version(assets, albumScope: albumScope),
+                "version": IOSPhotoAlbums.versionStamp(assets, albumScope: albumScope, collectionIds: selectedAlbumIds),
                 "invalidCount": invalidCount,
             ])
         case "prepare":

@@ -4,6 +4,7 @@ import android.Manifest
 import android.app.Activity
 import android.app.PictureInPictureParams
 import android.content.Intent
+import android.content.IntentSender
 import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.os.Build
@@ -44,8 +45,11 @@ class MainActivity : FlutterActivity() {
     private val exportRequest = 22991
     private val exportBatchRequest = 22993
     private val photosPermissionRequest = 22992
+    private val photoDeleteRequest = 22994
     private var photosPermissionPending: MethodChannel.Result? = null
     private var photosPermissionIncludesVideos = false
+    private var pendingPhotoDeleteResult: MethodChannel.Result? = null
+    private var pendingPhotoDeleteCount = 0
     private var nasDiscovery: AndroidNasDiscovery? = null
 
     private var pipChannel: MethodChannel? = null
@@ -217,6 +221,7 @@ class MainActivity : FlutterActivity() {
                     requestPermissions(photoReadPermissions(includeVideos), photosPermissionRequest)
                 }
             },
+            requestPhotoDelete = ::launchPhotoDeleteRequest,
         ).also { it.attach(flutterEngine) }
 
         nasDiscovery?.destroy()
@@ -364,6 +369,14 @@ class MainActivity : FlutterActivity() {
         photosPermissionPending = null
         photosPermissionIncludesVideos = false
 
+        pendingPhotoDeleteResult?.let {
+            try {
+                it.success(mapOf("deleted" to false, "cancelled" to true, "deletedCount" to 0))
+            } catch (_: Exception) { }
+        }
+        pendingPhotoDeleteResult = null
+        pendingPhotoDeleteCount = 0
+
         nasDiscovery?.destroy()
         nasDiscovery = null
 
@@ -380,9 +393,58 @@ class MainActivity : FlutterActivity() {
         photosPermissionIncludesVideos = false
     }
 
+    @Suppress("DEPRECATION")
+    private fun launchPhotoDeleteRequest(
+        intentSender: IntentSender,
+        count: Int,
+        result: MethodChannel.Result,
+    ) {
+        if (pendingPhotoDeleteResult != null) {
+            result.error("photo_delete_busy", "请先完成当前的系统删除确认弹窗。", null)
+            return
+        }
+        pendingPhotoDeleteResult = result
+        pendingPhotoDeleteCount = count
+        try {
+            startIntentSenderForResult(intentSender, photoDeleteRequest, null, 0, 0, 0)
+        } catch (_: Exception) {
+            pendingPhotoDeleteResult = null
+            pendingPhotoDeleteCount = 0
+            result.error("photo_delete_failed", "无法拉起系统相册删除确认弹窗，本机原片未被删除。", null)
+        }
+    }
+
+    private fun handlePhotoDeleteResult(resultCode: Int) {
+        val result = pendingPhotoDeleteResult ?: return
+        val count = pendingPhotoDeleteCount
+        pendingPhotoDeleteResult = null
+        pendingPhotoDeleteCount = 0
+        if (resultCode == Activity.RESULT_OK) {
+            result.success(
+                mapOf(
+                    "deleted" to true,
+                    "cancelled" to false,
+                    "deletedCount" to count,
+                ),
+            )
+        } else {
+            result.success(
+                mapOf(
+                    "deleted" to false,
+                    "cancelled" to true,
+                    "deletedCount" to 0,
+                ),
+            )
+        }
+    }
+
     @Deprecated("Used by the Flutter activity plugin dispatch contract")
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
         super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode == photoDeleteRequest) {
+            handlePhotoDeleteResult(resultCode)
+            return
+        }
         val appContext = applicationContext
         val activityRef = WeakReference(this)
         val handler = mainHandler

@@ -9,13 +9,17 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/lightisle_api.dart';
+import '../../core/user_facing_error.dart';
 import 'mobile_photo_backup_state_models.dart';
 import 'photo_backup_hash.dart';
+import 'photo_backup_prefs_schema.dart';
+import 'photo_backup_verified_ledger.dart';
 
 const MethodChannel mobilePhotosMethodChannel = MethodChannel(
   'lightisle/photos',
 );
 const int photoPageFetchLimit = 40;
+const int _maxDirectRemoteSha256Bytes = 2 << 30;
 
 const Set<String> _supportedPhotoExtensions = {
   'jpg',
@@ -70,6 +74,20 @@ class NativeStreamInspection {
   final int generation;
   final String digest;
   final List<String> chunkDigests;
+}
+
+class NativePhotoDeleteResult {
+  const NativePhotoDeleteResult({
+    required this.deleted,
+    required this.cancelled,
+    required this.deletedCount,
+    required this.alreadyMissingCount,
+  });
+
+  final bool deleted;
+  final bool cancelled;
+  final int deletedCount;
+  final int alreadyMissingCount;
 }
 
 class PhotoPageResponse {
@@ -191,17 +209,180 @@ class MobilePhotoBackupTransferClient {
   Future<bool> isWifi() async =>
       await channel.invokeMethod<bool>('isWifi') == true;
 
+  Future<List<DevicePhotoAlbum>> listAlbums({
+    required bool includeVideos,
+  }) async {
+    final response = await channel.invokeMapMethod<String, dynamic>(
+      'listAlbums',
+      {'includeVideos': includeVideos},
+    );
+    final raw = response?['albums'];
+    if (raw is! List) return const <DevicePhotoAlbum>[];
+    return raw
+        .whereType<Map>()
+        .map((item) => DevicePhotoAlbum.fromMap(item.cast<String, dynamic>()))
+        .where((album) => album.id.isNotEmpty)
+        .toList(growable: false);
+  }
+
+  Future<NativePhotoDeleteResult> requestDeleteAssets(
+    List<String> assetIds,
+  ) async {
+    if (assetIds.isEmpty) {
+      return const NativePhotoDeleteResult(
+        deleted: true,
+        cancelled: false,
+        deletedCount: 0,
+        alreadyMissingCount: 0,
+      );
+    }
+    final response = await channel.invokeMapMethod<String, dynamic>(
+      'requestDeleteAssets',
+      {'assetIds': assetIds},
+    );
+    return NativePhotoDeleteResult(
+      deleted: response?['deleted'] == true,
+      cancelled: response?['cancelled'] == true,
+      deletedCount: (response?['deletedCount'] as num?)?.toInt() ?? 0,
+      alreadyMissingCount:
+          (response?['alreadyMissingCount'] as num?)?.toInt() ?? 0,
+    );
+  }
+
+  Future<bool> verifyBoundRootOnline() async {
+    final root = boundRoot;
+    if (root == null || !root.online || !isPersonalDestination) return false;
+    if (api.selectedRoot?.identity != root.identity) return false;
+    final discovery = await api.get('/api/v2/roots');
+    final roots = discovery['roots'];
+    if (roots is! List) return false;
+    return roots.any(
+      (value) =>
+          value is Map &&
+          value['rootID'] == root.id &&
+          value['generation'] == root.generation &&
+          value['online'] == true,
+    );
+  }
+
+  /// Online check for space release: calls GET /api/v2/roots/{rootID}/files/sha256
+  /// with rootGeneration validation and fails closed on any mismatch or root issue.
+  Future<RemoteReleaseVerifyOutcome> verifyRemoteAssetForRelease(
+    VerifiedPhotoBackupRecord record, {
+    void Function()? checkActive,
+  }) async {
+    final root = boundRoot;
+    if (root == null ||
+        !root.online ||
+        !isPersonalDestination ||
+        api.selectedRoot?.identity != root.identity) {
+      return const RemoteReleaseVerifyOutcome(
+        status: RemoteReleaseVerifyStatus.rootChangedOrOffline,
+        reason: '照片存储硬盘已离线或已更换，已停止释放并保留全部手机原片。',
+      );
+    }
+    try {
+      checkActive?.call();
+      if (record.sizeBytes > _maxDirectRemoteSha256Bytes) {
+        if (record.chunkDigests.isEmpty) {
+          return const RemoteReleaseVerifyOutcome(
+            status: RemoteReleaseVerifyStatus.unverifiableLargeFile,
+            reason: '超大原片缺少分块摘要记录，为保障安全已保留手机原片。',
+          );
+        }
+        final matched = await api.remoteFileMatchesSHA256(
+          record.remotePath,
+          record.sizeBytes,
+          record.sha256,
+          chunkSHA256s: record.chunkDigests,
+          checkActive: checkActive,
+        );
+        return matched
+            ? const RemoteReleaseVerifyOutcome(
+                status: RemoteReleaseVerifyStatus.verified,
+                reason: 'SHA-256 核验通过',
+              )
+            : const RemoteReleaseVerifyOutcome(
+                status: RemoteReleaseVerifyStatus.mismatch,
+                reason: 'NAS 远端文件缺失或分块 SHA-256 不一致，已保留手机原片。',
+              );
+      }
+
+      final result = await api.get(
+        photoApi('files/sha256'),
+        query: photoQuery({'path': record.remotePath}),
+      );
+      checkActive?.call();
+      final actualDigest = result['sha256'];
+      final actualSize = result['size'];
+      if (result['algorithm'] != 'sha256' ||
+          actualDigest is! String ||
+          !_sha256Pattern.hasMatch(actualDigest) ||
+          actualSize is! num) {
+        return const RemoteReleaseVerifyOutcome(
+          status: RemoteReleaseVerifyStatus.mismatch,
+          reason: '服务端未返回有效的 SHA-256 校验结果，已保留手机原片。',
+        );
+      }
+      if (actualDigest != record.sha256 ||
+          actualSize.toInt() != record.sizeBytes) {
+        return const RemoteReleaseVerifyOutcome(
+          status: RemoteReleaseVerifyStatus.mismatch,
+          reason: '远端原片 SHA-256 或文件大小与备份记录不一致，已保留手机原片。',
+        );
+      }
+      return const RemoteReleaseVerifyOutcome(
+        status: RemoteReleaseVerifyStatus.verified,
+        reason: 'SHA-256 核验通过',
+      );
+    } on LightIsleApiException catch (error) {
+      if (error.statusCode == HttpStatus.notFound) {
+        return const RemoteReleaseVerifyOutcome(
+          status: RemoteReleaseVerifyStatus.missing,
+          reason: 'NAS 上未找到该备份文件（可能已被移动或删除），已保留手机原片。',
+        );
+      }
+      if (_isRootOfflineOrReplacedError(error)) {
+        return const RemoteReleaseVerifyOutcome(
+          status: RemoteReleaseVerifyStatus.rootChangedOrOffline,
+          reason: '照片硬盘离线或已更换，已中止释放并保留全部手机原片。',
+        );
+      }
+      return RemoteReleaseVerifyOutcome(
+        status: RemoteReleaseVerifyStatus.error,
+        reason: '在线核验失败（${userFacingError(error)}），已保留手机原片。',
+      );
+    } catch (error) {
+      return RemoteReleaseVerifyOutcome(
+        status: RemoteReleaseVerifyStatus.error,
+        reason: '在线核验失败（${userFacingError(error)}），已保留手机原片。',
+      );
+    }
+  }
+
+  bool _isRootOfflineOrReplacedError(LightIsleApiException error) =>
+      error.statusCode == HttpStatus.serviceUnavailable ||
+      error.code == 'root_generation_changed' ||
+      error.code == 'root_not_found' ||
+      error.code == 'root_unavailable' ||
+      error.code == 'storage_destination_not_assigned';
+
   Future<PhotoPageResponse> fetchPhotoPage({
     required String beforeCursor,
     required bool includeVideos,
     required String albumScope,
+    List<String> selectedAlbumIds = const <String>[],
     required void Function() checkActive,
   }) async {
+    final includeAlbumFilter =
+        albumScope == PhotoBackupPrefsSchema.albumScopeSelected ||
+        albumScope == PhotoBackupPrefsSchema.albumScopeExcluded;
     final response = await channel.invokeMapMethod<String, dynamic>('list', {
       'beforeId': beforeCursor.isEmpty ? null : beforeCursor,
       'limit': photoPageFetchLimit,
       'includeVideos': includeVideos,
       'albumScope': albumScope,
+      if (includeAlbumFilter) 'selectedAlbumIds': selectedAlbumIds,
       if (isAndroid) 'allowLargeOriginals': true,
     });
     checkActive();
@@ -394,17 +575,22 @@ class MobilePhotoBackupTransferClient {
     required void Function() checkActive,
   }) async {
     if (entryDir == destinationDir || ensuredSubdirs.contains(entryDir)) return;
-    final yearSlash = entryDir.lastIndexOf('/');
-    if (yearSlash > destinationDir.length) {
-      await ensureFolder(
-        entryDir.substring(0, yearSlash),
-        checkActive: checkActive,
-      );
+    final prefix = '$destinationDir/';
+    if (!entryDir.startsWith(prefix)) {
+      await ensureFolder(entryDir, checkActive: checkActive);
       checkActive();
+      ensuredSubdirs.add(entryDir);
+      return;
     }
-    await ensureFolder(entryDir, checkActive: checkActive);
-    checkActive();
-    ensuredSubdirs.add(entryDir);
+    var current = destinationDir;
+    for (final segment
+        in entryDir.substring(prefix.length).split('/').where((s) => s.isNotEmpty)) {
+      current = '$current/$segment';
+      if (ensuredSubdirs.contains(current)) continue;
+      await ensureFolder(current, checkActive: checkActive);
+      checkActive();
+      ensuredSubdirs.add(current);
+    }
   }
 
   Future<Map<String, dynamic>?> _existingUpload({

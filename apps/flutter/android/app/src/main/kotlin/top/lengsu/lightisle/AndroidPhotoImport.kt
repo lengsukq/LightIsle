@@ -38,7 +38,7 @@ internal object AndroidPhotoImport {
     )
 
     fun normalizeAlbumScope(raw: String?): String =
-        if (raw == "camera") "camera" else "all"
+        AndroidPhotoAlbums.normalizeAlbumScope(raw)
 
     fun list(
         context: Context,
@@ -47,6 +47,7 @@ internal object AndroidPhotoImport {
         includeVideos: Boolean = false,
         albumScope: String = "all",
         allowLargeOriginals: Boolean = false,
+        selectedBucketIds: List<String> = emptyList(),
     ): Map<String, Any> {
         val resolver: ContentResolver = context.contentResolver
         val normalizedScope = normalizeAlbumScope(albumScope)
@@ -59,6 +60,9 @@ internal object AndroidPhotoImport {
             MediaStore.Files.FileColumns.DISPLAY_NAME,
             MediaStore.Files.FileColumns.SIZE,
             MediaStore.Files.FileColumns.DATE_MODIFIED,
+            MediaStore.Files.FileColumns.MEDIA_TYPE,
+            MediaStore.MediaColumns.BUCKET_ID,
+            MediaStore.MediaColumns.BUCKET_DISPLAY_NAME,
         )
         if (Build.VERSION.SDK_INT >= 30) {
             projection.add(MediaStore.Files.FileColumns.GENERATION_MODIFIED)
@@ -79,22 +83,10 @@ internal object AndroidPhotoImport {
             selectionParts.add("${MediaStore.Files.FileColumns._ID} < ?")
             argList.add(beforeId.toString())
         }
-        if (normalizedScope == "camera") {
-            if (Build.VERSION.SDK_INT >= 29) {
-                selectionParts.add(
-                    "(${MediaStore.MediaColumns.RELATIVE_PATH} LIKE ? OR ${MediaStore.MediaColumns.RELATIVE_PATH} = ?) " +
-                        "AND ${MediaStore.MediaColumns.RELATIVE_PATH} NOT LIKE ?",
-                )
-                argList.add("DCIM/%")
-                argList.add("DCIM")
-                argList.add("%/.%")
-            } else {
-                @Suppress("DEPRECATION")
-                val dataColumn = MediaStore.MediaColumns.DATA
-                selectionParts.add("$dataColumn LIKE ? AND $dataColumn NOT LIKE ?")
-                argList.add("%/DCIM/%")
-                argList.add("%/.%")
-            }
+        val bucketSelection = AndroidPhotoAlbums.buildBucketSelection(normalizedScope, selectedBucketIds)
+        if (bucketSelection.clause != null) {
+            selectionParts.add(bucketSelection.clause)
+            argList.addAll(bucketSelection.args)
         }
         val selection = selectionParts.joinToString(" AND ")
         val args = argList.toTypedArray()
@@ -115,6 +107,9 @@ internal object AndroidPhotoImport {
             val nameColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DISPLAY_NAME)
             val sizeColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.SIZE)
             val timeColumn = cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.DATE_MODIFIED)
+            val mediaTypeColumn = cursor.getColumnIndex(MediaStore.Files.FileColumns.MEDIA_TYPE)
+            val bucketIdColumn = cursor.getColumnIndex(MediaStore.MediaColumns.BUCKET_ID)
+            val bucketNameColumn = cursor.getColumnIndex(MediaStore.MediaColumns.BUCKET_DISPLAY_NAME)
             val generationColumn = if (Build.VERSION.SDK_INT >= 30) {
                 cursor.getColumnIndexOrThrow(MediaStore.Files.FileColumns.GENERATION_MODIFIED)
             } else {
@@ -129,6 +124,10 @@ internal object AndroidPhotoImport {
                 val generation = if (generationColumn >= 0) cursor.getLong(generationColumn) else 0L
                 val name = cursor.getString(nameColumn) ?: "photo"
                 val modified = cursor.getLong(timeColumn)
+                val isVideo = mediaTypeColumn >= 0 &&
+                    cursor.getInt(mediaTypeColumn) == MediaStore.Files.FileColumns.MEDIA_TYPE_VIDEO
+                val bucketId = if (bucketIdColumn >= 0) cursor.getString(bucketIdColumn)?.trim() ?: "" else ""
+                val bucketName = if (bucketNameColumn >= 0) cursor.getString(bucketNameColumn)?.trim() ?: "" else ""
                 if (id <= 0 || size <= 0) {
                     invalidCount++
                     if (id > 0) {
@@ -166,6 +165,9 @@ internal object AndroidPhotoImport {
                         "size" to size,
                         "modified" to modified,
                         "generation" to generation,
+                        "bucketId" to bucketId,
+                        "bucketName" to bucketName,
+                        "isVideo" to isVideo,
                     ),
                 )
             }
