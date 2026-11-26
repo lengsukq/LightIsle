@@ -84,7 +84,14 @@ func TestAppReminderNotifierBridgesAndSanitizesToNotifyHub(t *testing.T) {
 	if err := mgr.Reload(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := mgr.InstallTemplateAt("medicine-expiry", ""); err != nil {
+	storeDir, err := filepath.Abs(filepath.Join("..", "..", "..", "plugins-store"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	storeSrv := httptest.NewServer(http.FileServer(http.Dir(storeDir)))
+	defer storeSrv.Close()
+	mgr.SetStoreTestConfigForTesting(storeSrv.URL+"/registry.json", true)
+	if _, err := mgr.InstallStorePlugin(context.Background(), "medicine-expiry", ""); err != nil {
 		t.Fatal(err)
 	}
 

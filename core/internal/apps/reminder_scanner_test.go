@@ -25,7 +25,8 @@ func TestAppReminderScannerDedupAndBuckets(t *testing.T) {
 	if err := mgr.Reload(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := mgr.InstallTemplateAt("medicine-expiry", ""); err != nil {
+	attachRepoStoreForTest(t, mgr)
+	if _, err := mgr.InstallStorePlugin(context.Background(), "medicine-expiry", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -107,7 +108,8 @@ func TestAppReminderScannerLifecycle(t *testing.T) {
 	if err := mgr.Reload(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := mgr.InstallTemplateAt("pet-care", ""); err != nil {
+	attachRepoStoreForTest(t, mgr)
+	if _, err := mgr.InstallStorePlugin(context.Background(), "pet-care", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -154,7 +156,8 @@ func TestAppReminderScannerReadyCheckAndLedgerFailureAbort(t *testing.T) {
 	if err := mgr.Reload(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := mgr.InstallTemplateAt("medicine-expiry", ""); err != nil {
+	attachRepoStoreForTest(t, mgr)
+	if _, err := mgr.InstallStorePlugin(context.Background(), "medicine-expiry", ""); err != nil {
 		t.Fatal(err)
 	}
 	kvDir := filepath.Join(dataDir, "plugin-data", "medicine-expiry", "kv")

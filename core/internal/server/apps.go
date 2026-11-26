@@ -152,13 +152,19 @@ func isIsolatedAppOriginRequest(r *http.Request) bool {
 func replyAppsList(w http.ResponseWriter, appsMgr *apps.Manager, store *auth.Store, user apps.UserIdentity) {
 	isAdmin := user.Role == auth.RoleAdmin
 	templates := []apps.OfficialAppTemplate{}
+	var storeSnap *apps.AppStoreSnapshot
 	if isAdmin {
+		snap := appsMgr.GetStoreSnapshot()
+		storeSnap = &snap
 		templates = appsMgr.ListTemplates()
 	}
 	resp := map[string]any{
 		"apps":      appsMgr.ListForUser(user.ID, user.Role),
 		"templates": templates,
 		"isAdmin":   isAdmin,
+	}
+	if storeSnap != nil {
+		resp["store"] = storeSnap
 	}
 	if isAdmin {
 		storageSnap := appsMgr.GetStorageSnapshot()
@@ -221,8 +227,19 @@ func appsErrorReply(w http.ResponseWriter, err error) {
 	case errors.Is(err, apps.ErrStorageOffline):
 		g := apiErrorCatalog["app_storage_offline"]
 		writeAPIError(w, http.StatusConflict, "app_storage_offline", safeAppDomainDetail(err, apps.ErrStorageOffline, g.message), g.dataSafe, g.nextAction)
-	case errors.Is(err, apps.ErrTemplateNotFound):
-		writeAPIErrorCode(w, http.StatusNotFound, "app_template_not_found")
+	case errors.Is(err, apps.ErrStoreInvalidConfig):
+		g := apiErrorCatalog["app_store_invalid_config"]
+		writeAPIError(w, http.StatusBadRequest, "app_store_invalid_config", safeAppDomainDetail(err, apps.ErrStoreInvalidConfig, g.message), g.dataSafe, g.nextAction)
+	case errors.Is(err, apps.ErrStorePluginNotFound):
+		writeAPIErrorCode(w, http.StatusNotFound, "app_store_plugin_not_found")
+	case errors.Is(err, apps.ErrStoreChecksumMismatch):
+		g := apiErrorCatalog["app_store_checksum_mismatch"]
+		writeAPIError(w, http.StatusBadGateway, "app_store_checksum_mismatch", safeAppDomainDetail(err, apps.ErrStoreChecksumMismatch, g.message), g.dataSafe, g.nextAction)
+	case errors.Is(err, apps.ErrStoreNoUpdate):
+		writeAPIErrorCode(w, http.StatusConflict, "app_store_no_update")
+	case errors.Is(err, apps.ErrStoreUnavailable):
+		g := apiErrorCatalog["app_store_unavailable"]
+		writeAPIError(w, http.StatusBadGateway, "app_store_unavailable", safeAppDomainDetail(err, apps.ErrStoreUnavailable, g.message), g.dataSafe, g.nextAction)
 	case errors.Is(err, apps.ErrAlreadyInstalled):
 		writeAPIErrorCode(w, http.StatusConflict, "app_already_exists")
 	case errors.Is(err, apps.ErrNotFound):

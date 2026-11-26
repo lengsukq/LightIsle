@@ -57,6 +57,10 @@ type Manager struct {
 	reminderScanInterval                                                       time.Duration
 	reminderScannerStarted                                                     bool
 	reminderMu                                                                 sync.Mutex
+	storeMu                                                                    sync.Mutex
+	storeCache                                                                 *storeCacheFile
+	allowStoreLoopbackForTest                                                  bool
+	storeTreatOfficialForTest                                                  bool
 	kvLocksMu                                                                  sync.Mutex
 	kvAppLocks                                                                 map[string]*sync.Mutex
 	mu                                                                         sync.RWMutex
@@ -80,7 +84,6 @@ func NewManager(dataDir, execPath string, autoMgr *automation.Manager) *Manager 
 	pluginDataRoot := filepath.Join(dataDir, "plugin-data")
 	_ = os.MkdirAll(pluginsDir, 0700)
 	_ = os.MkdirAll(pluginDataRoot, 0700)
-	ensureBuiltInDemoApp(pluginsDir)
 
 	secret := make([]byte, 32)
 	_, _ = rand.Read(secret)
@@ -547,7 +550,7 @@ func resolvePluginInstance(name, pluginDir, dataDir string, manifest PluginManif
 func resolvePluginActivation(name string, prevApps map[string]appRecord, sysCfg *AppsSystemConfig, fromMCP bool) (bool, bool) {
 	prevRec, existedBefore := prevApps[name]
 	explicitPending := slices.Contains(sysCfg.PendingApps, name)
-	isActivated := (!explicitPending && isOfficialTemplateID(name)) || slices.Contains(sysCfg.ActivatedApps, name)
+	isActivated := !explicitPending && slices.Contains(sysCfg.ActivatedApps, name)
 	isPending := explicitPending || (existedBefore && prevRec.pendingActivation)
 	if fromMCP && !isActivated && (!existedBefore || isPending) {
 		isPending = true

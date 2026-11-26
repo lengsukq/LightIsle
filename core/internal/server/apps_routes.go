@@ -39,7 +39,14 @@ func registerAppsManagementRoutes(
 func (h *appsManagementHandler) register(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/v2/apps", h.api.requireLogin(h.handleListApps))
 	mux.HandleFunc("GET /api/v2/apps/templates", h.api.requireLogin(h.handleListTemplates))
-	mux.HandleFunc("POST /api/v2/apps/templates/{id}/install", h.api.requireAdmin(h.handleInstallTemplate))
+	mux.HandleFunc("POST /api/v2/apps/templates/{id}/install", h.api.requireAdmin(h.handleInstallStorePlugin))
+
+	mux.HandleFunc("GET /api/v2/apps/store", h.api.requireLogin(h.handleGetStore))
+	mux.HandleFunc("POST /api/v2/apps/store/refresh", h.api.requireAdmin(h.handleRefreshStore))
+	mux.HandleFunc("PUT /api/v2/apps/store/config", h.api.requireAdmin(h.handleUpdateStoreConfig))
+	mux.HandleFunc("POST /api/v2/apps/store/{id}/install", h.api.requireAdmin(h.handleInstallStorePlugin))
+	mux.HandleFunc("POST /api/v2/apps/store/{id}/upgrade", h.api.requireAdmin(h.handleUpgradeStorePlugin))
+	mux.HandleFunc("GET /api/v2/apps/store/{id}/icon", h.api.requireAdmin(h.handleServeStoreIcon))
 
 	mux.HandleFunc("GET /api/v2/apps/storage", h.api.requireAdmin(h.handleGetStorage))
 	mux.HandleFunc("PUT /api/v2/apps/storage", h.api.requireAdmin(h.handleMutateStorage))
@@ -98,7 +105,64 @@ func (h *appsManagementHandler) handleListTemplates(w http.ResponseWriter, r *ht
 	jsonReply(w, http.StatusOK, map[string]any{"templates": h.appsMgr.ListTemplates()})
 }
 
-func (h *appsManagementHandler) handleInstallTemplate(w http.ResponseWriter, r *http.Request) {
+func (h *appsManagementHandler) handleGetStore(w http.ResponseWriter, r *http.Request) {
+	user, ok := h.resolveSession(r)
+	if !ok {
+		jsonReply(w, http.StatusUnauthorized, map[string]string{"error": "authentication_required"})
+		return
+	}
+	if user.Role != auth.RoleAdmin {
+		jsonReply(w, http.StatusOK, map[string]any{"store": apps.AppStoreSnapshot{Plugins: []apps.StorePluginView{}}})
+		return
+	}
+	jsonReply(w, http.StatusOK, map[string]any{"store": h.appsMgr.GetStoreSnapshot()})
+}
+
+func (h *appsManagementHandler) handleRefreshStore(w http.ResponseWriter, r *http.Request) {
+	snap, err := h.appsMgr.RefreshStore(r.Context())
+	if err != nil {
+		jsonReply(w, http.StatusOK, map[string]any{
+			"store":     snap,
+			"templates": h.appsMgr.ListTemplates(),
+			"error":     "app_store_unavailable",
+			"message":   snap.Error,
+		})
+		return
+	}
+	jsonReply(w, http.StatusOK, map[string]any{
+		"store":     snap,
+		"templates": h.appsMgr.ListTemplates(),
+	})
+}
+
+func (h *appsManagementHandler) handleUpdateStoreConfig(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	defer r.Body.Close()
+	var req apps.AppStoreConfigRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		jsonReply(w, http.StatusBadRequest, map[string]string{"error": "invalid_request", "message": "无效的商店源配置参数"})
+		return
+	}
+	snap, err := h.appsMgr.UpdateStoreConfig(r.Context(), req)
+	if err != nil {
+		if errors.Is(err, apps.ErrStoreInvalidConfig) {
+			appsErrorReply(w, err)
+			return
+		}
+		jsonReply(w, http.StatusOK, map[string]any{
+			"store":     snap,
+			"templates": h.appsMgr.ListTemplates(),
+			"warning":   snap.Error,
+		})
+		return
+	}
+	jsonReply(w, http.StatusOK, map[string]any{
+		"store":     snap,
+		"templates": h.appsMgr.ListTemplates(),
+	})
+}
+
+func (h *appsManagementHandler) handleInstallStorePlugin(w http.ResponseWriter, r *http.Request) {
 	user, _ := h.resolveSession(r)
 	var body struct {
 		LocationID string `json:"locationId"`
@@ -111,7 +175,7 @@ func (h *appsManagementHandler) handleInstallTemplate(w http.ResponseWriter, r *
 			return
 		}
 	}
-	app, err := h.appsMgr.InstallTemplateAt(r.PathValue("id"), body.LocationID)
+	app, err := h.appsMgr.InstallStorePlugin(r.Context(), r.PathValue("id"), body.LocationID)
 	if err != nil {
 		appsErrorReply(w, err)
 		return
@@ -119,9 +183,30 @@ func (h *appsManagementHandler) handleInstallTemplate(w http.ResponseWriter, r *
 	jsonReply(w, http.StatusCreated, map[string]any{
 		"app":        app,
 		"apps":       h.appsMgr.ListForUser(user.ID, user.Role),
+		"store":      h.appsMgr.GetStoreSnapshot(),
 		"templates":  h.appsMgr.ListTemplates(),
 		"appStorage": h.appsMgr.GetStorageSnapshot(),
 	})
+}
+
+func (h *appsManagementHandler) handleUpgradeStorePlugin(w http.ResponseWriter, r *http.Request) {
+	user, _ := h.resolveSession(r)
+	app, err := h.appsMgr.UpgradeStorePlugin(r.Context(), r.PathValue("id"))
+	if err != nil {
+		appsErrorReply(w, err)
+		return
+	}
+	jsonReply(w, http.StatusOK, map[string]any{
+		"app":        app,
+		"apps":       h.appsMgr.ListForUser(user.ID, user.Role),
+		"store":      h.appsMgr.GetStoreSnapshot(),
+		"templates":  h.appsMgr.ListTemplates(),
+		"appStorage": h.appsMgr.GetStorageSnapshot(),
+	})
+}
+
+func (h *appsManagementHandler) handleServeStoreIcon(w http.ResponseWriter, r *http.Request) {
+	h.appsMgr.ServeStoreIcon(w, r, r.PathValue("id"))
 }
 
 func (h *appsManagementHandler) handleGetStorage(w http.ResponseWriter, _ *http.Request) {
@@ -148,6 +233,7 @@ func (h *appsManagementHandler) handleMutateStorage(w http.ResponseWriter, r *ht
 	jsonReply(w, http.StatusOK, map[string]any{
 		"appStorage":    storageSnap,
 		"apps":          h.appsMgr.ListForUser(user.ID, user.Role),
+		"store":         h.appsMgr.GetStoreSnapshot(),
 		"templates":     h.appsMgr.ListTemplates(),
 		"pluginsDir":    mcpSnap.PluginsDir,
 		"pluginDataDir": mcpSnap.PluginDataDir,
@@ -208,6 +294,7 @@ func (h *appsManagementHandler) handleDeleteApp(w http.ResponseWriter, r *http.R
 	jsonReply(w, http.StatusOK, map[string]any{
 		"deleted": true,
 		"apps":    h.appsMgr.ListForUser(user.ID, user.Role),
+		"store":   h.appsMgr.GetStoreSnapshot(),
 	})
 }
 
@@ -482,6 +569,7 @@ func (h *appsManagementHandler) handleImportAppPackage(w http.ResponseWriter, r 
 	jsonReply(w, http.StatusCreated, map[string]any{
 		"app":        app,
 		"apps":       h.appsMgr.ListForUser(user.ID, user.Role),
+		"store":      h.appsMgr.GetStoreSnapshot(),
 		"templates":  h.appsMgr.ListTemplates(),
 		"appStorage": h.appsMgr.GetStorageSnapshot(),
 	})

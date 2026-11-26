@@ -347,9 +347,34 @@ var apiErrorCatalog = map[string]apiErrorGuidance{
 		nextAction: "请检查外置硬盘连接并重新挂载后再启动或管理应用。",
 	},
 	"app_template_not_found": {
-		message:    "未找到对应的精选轻应用模板。",
+		message:    "未在在线插件商店中找到对应的应用。",
 		dataSafe:   true,
-		nextAction: "请刷新应用中心列表后重试。",
+		nextAction: "请刷新在线插件商店列表后重试。",
+	},
+	"app_store_unavailable": {
+		message:    "暂时无法连接 Git 在线插件商店。",
+		dataSafe:   true,
+		nextAction: "请检查网络连接，或在应用中心「商店源设置」中配置镜像前缀或自定义 Git 仓库地址后重试。",
+	},
+	"app_store_plugin_not_found": {
+		message:    "未在在线插件商店中找到对应的插件应用。",
+		dataSafe:   true,
+		nextAction: "请先刷新在线商店目录后重试。",
+	},
+	"app_store_checksum_mismatch": {
+		message:    "下载的插件包 SHA-256 校验未通过，系统已拒绝安装。",
+		dataSafe:   true,
+		nextAction: "请稍后重试下载，或检查自定义商店仓库中的包摘要是否已同步更新。",
+	},
+	"app_store_invalid_config": {
+		message:    "在线商店源地址或镜像前缀无效。",
+		dataSafe:   true,
+		nextAction: "请填写有效的 HTTPS 仓库索引地址或镜像前缀，或恢复官方默认源。",
+	},
+	"app_store_no_update": {
+		message:    "当前已安装插件已是商店中的最新版本。",
+		dataSafe:   true,
+		nextAction: "可先刷新在线商店检查是否有新版本发布。",
 	},
 	"app_already_exists": {
 		message:    "该轻应用已安装，无需重复添加。",

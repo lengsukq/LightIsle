@@ -52,6 +52,7 @@ type nativeAutomationUpdateRequest struct {
 
 type nativeAppsOverview struct {
 	Apps                 []apps.PublicApp            `json:"apps"`
+	Store                *apps.AppStoreSnapshot      `json:"store,omitempty"`
 	Templates            []apps.OfficialAppTemplate  `json:"templates"`
 	AppStorage           apps.AppStorageSnapshot     `json:"appStorage"`
 	MCP                  apps.MCPConfigSnapshot      `json:"mcp"`
@@ -72,6 +73,7 @@ type appsIPCRequest struct {
 	RequestID        string                          `json:"requestID,omitempty"`
 	AppID            string                          `json:"appID,omitempty"`
 	TemplateID       string                          `json:"templateId,omitempty"`
+	PluginID         string                          `json:"pluginId,omitempty"`
 	LocationID       string                          `json:"locationId,omitempty"`
 	Action           string                          `json:"action,omitempty"`
 	DeleteData       bool                            `json:"deleteData,omitempty"`
@@ -79,6 +81,7 @@ type appsIPCRequest struct {
 	MCPLanEnabled    *bool                           `json:"mcpLanEnabled,omitempty"`
 	Update           *apps.AppUpdateRequest          `json:"update,omitempty"`
 	Storage          *apps.AppStorageMutationRequest `json:"storage,omitempty"`
+	StoreConfig      *apps.AppStoreConfigRequest     `json:"storeConfig,omitempty"`
 	Scaffold         json.RawMessage                 `json:"scaffold,omitempty"`
 	Probe            *apps.AppProbeRequest           `json:"probe,omitempty"`
 	MCPDebug         *apps.MCPDebugExecRequest       `json:"mcpDebug,omitempty"`
@@ -136,7 +139,27 @@ func appsIPCErrorMessage(err error) string {
 		}
 		return err.Error()
 	case errors.Is(err, apps.ErrAlreadyInstalled):
-		return "该精选模板已安装，无需重复添加"
+		return "该插件已安装，无需重复下载"
+	case errors.Is(err, apps.ErrStorePluginNotFound):
+		return "未在在线插件商店中找到该应用，请先刷新商店目录"
+	case errors.Is(err, apps.ErrStoreChecksumMismatch):
+		return "下载的插件包 SHA-256 校验未通过，系统已拒绝安装"
+	case errors.Is(err, apps.ErrStoreNoUpdate):
+		return "当前已安装插件已是商店最新版本"
+	case errors.Is(err, apps.ErrStoreInvalidConfig):
+		detail := strings.TrimSpace(strings.TrimPrefix(err.Error(), apps.ErrStoreInvalidConfig.Error()))
+		detail = strings.TrimSpace(strings.TrimPrefix(detail, ":"))
+		if detail != "" {
+			return detail
+		}
+		return "在线商店源地址或镜像前缀无效"
+	case errors.Is(err, apps.ErrStoreUnavailable):
+		detail := strings.TrimSpace(strings.TrimPrefix(err.Error(), apps.ErrStoreUnavailable.Error()))
+		detail = strings.TrimSpace(strings.TrimPrefix(detail, ":"))
+		if detail != "" {
+			return detail
+		}
+		return "暂时无法连接 Git 在线插件商店，请检查网络或配置镜像前缀"
 	case errors.Is(err, automation.ErrInvalid):
 		return "定时脚本配置、Cron 表达式或时区无效，请检查后重试"
 	case errors.Is(err, automation.ErrNotFound):
@@ -190,8 +213,10 @@ func buildNativeAppsOverview(appsMgr *apps.Manager, autoMgr *automation.Manager,
 			}
 		}
 	}
+	storeSnap := appsMgr.GetStoreSnapshot()
 	return nativeAppsOverview{
 		Apps:                 appsMgr.ListForUser(0, auth.RoleAdmin),
+		Store:                &storeSnap,
 		Templates:            appsMgr.ListTemplates(),
 		AppStorage:           appsMgr.GetStorageSnapshot(),
 		MCP:                  appsMgr.BuildMCPConfigSnapshot(""),
@@ -411,13 +436,50 @@ func (h appsIPCHandler) handleInventoryOp(operation string, req appsIPCRequest) 
 		}
 		_, err := h.appsMgr.MutateStorageLocation(*req.Storage)
 		emitAppsReply(req.RequestID, operation, h.overview(), err)
-	case "install-template":
-		tplID := strings.TrimSpace(req.TemplateID)
-		if tplID == "" {
-			tplID = strings.TrimSpace(req.AppID)
+	case "install-template", "store-install":
+		pluginID := strings.TrimSpace(req.PluginID)
+		if pluginID == "" {
+			pluginID = strings.TrimSpace(req.TemplateID)
 		}
-		_, err := h.appsMgr.InstallTemplateAt(tplID, req.LocationID)
-		emitAppsReply(req.RequestID, operation, h.overview(), err)
+		if pluginID == "" {
+			pluginID = strings.TrimSpace(req.AppID)
+		}
+		runAppsIPCAsync(h.parentCtx, req.RequestID, operation, func(ctx context.Context) {
+			_, err := h.appsMgr.InstallStorePlugin(ctx, pluginID, req.LocationID)
+			emitAppsReply(req.RequestID, operation, h.overview(), err)
+		})
+	case "store-refresh":
+		runAppsIPCAsync(h.parentCtx, req.RequestID, operation, func(ctx context.Context) {
+			snap, err := h.appsMgr.RefreshStore(ctx)
+			ov := h.overview()
+			ov.Store = &snap
+			emitAppsReply(req.RequestID, operation, ov, err)
+		})
+	case "store-config":
+		if req.StoreConfig == nil {
+			emitAppsReply(req.RequestID, operation, nil, errors.New("缺少商店源配置参数"))
+			return true
+		}
+		cfgReq := *req.StoreConfig
+		runAppsIPCAsync(h.parentCtx, req.RequestID, operation, func(ctx context.Context) {
+			snap, err := h.appsMgr.UpdateStoreConfig(ctx, cfgReq)
+			ov := h.overview()
+			ov.Store = &snap
+			if errors.Is(err, apps.ErrStoreInvalidConfig) {
+				emitAppsReply(req.RequestID, operation, nil, err)
+				return
+			}
+			emitAppsReply(req.RequestID, operation, ov, err)
+		})
+	case "store-upgrade":
+		pluginID := strings.TrimSpace(req.PluginID)
+		if pluginID == "" {
+			pluginID = strings.TrimSpace(req.AppID)
+		}
+		runAppsIPCAsync(h.parentCtx, req.RequestID, operation, func(ctx context.Context) {
+			_, err := h.appsMgr.UpgradeStorePlugin(ctx, pluginID)
+			emitAppsReply(req.RequestID, operation, h.overview(), err)
+		})
 	case "delete":
 		err := h.appsMgr.DeleteApp(req.AppID, req.DeleteData)
 		emitAppsReply(req.RequestID, operation, h.overview(), err)

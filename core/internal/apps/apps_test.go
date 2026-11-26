@@ -30,10 +30,11 @@ func TestBuiltInDemoAppAndStaticGateway(t *testing.T) {
 	if err := mgr.Reload(); err != nil {
 		t.Fatal(err)
 	}
+	installRepoStorePlugin(t, mgr, "network-pulse", "")
 
 	adminApps := mgr.ListForUser(1, "admin")
 	if len(adminApps) != 1 || adminApps[0].ID != "network-pulse" || !adminApps[0].Valid {
-		t.Fatalf("expected built-in network-pulse demo app, got %+v", adminApps)
+		t.Fatalf("expected store-installed network-pulse app, got %+v", adminApps)
 	}
 	if adminApps[0].Web.Status != StatusStatic {
 		t.Fatalf("expected static status, got %s", adminApps[0].Web.Status)
@@ -284,6 +285,7 @@ func TestLaunchTicketSingleUseAndScopedCookie(t *testing.T) {
 	if err := mgr.Reload(); err != nil {
 		t.Fatal(err)
 	}
+	installRepoStorePlugin(t, mgr, "network-pulse", "")
 
 	user := UserIdentity{ID: 7, Username: "mobileuser", Role: "member", SessionToken: "raw-host-session-secret-token-999"}
 	ticket := mgr.IssueTicket("network-pulse", user)

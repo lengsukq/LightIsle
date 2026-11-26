@@ -141,6 +141,7 @@ type AppsSystemConfig struct {
 	PendingApps   []string             `json:"pendingApps,omitempty"`
 	ActivatedApps []string             `json:"activatedApps,omitempty"`
 	Storage       *AppsStorageSettings `json:"storage,omitempty"`
+	Store         *AppStoreConfig      `json:"store,omitempty"`
 }
 
 type PluginManifest struct {

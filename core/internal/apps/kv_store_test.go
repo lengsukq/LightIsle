@@ -40,10 +40,11 @@ func TestAppKVStoreCRUDLockingCSRFAndBackupRoundTrip(t *testing.T) {
 	if err := mgr.Reload(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := mgr.InstallTemplateAt("house-info", ""); err != nil {
+	attachRepoStoreForTest(t, mgr)
+	if _, err := mgr.InstallStorePlugin(context.Background(), "house-info", ""); err != nil {
 		t.Fatalf("install house-info: %v", err)
 	}
-	if _, err := mgr.InstallTemplateAt("weekly-menu", ""); err != nil {
+	if _, err := mgr.InstallStorePlugin(context.Background(), "weekly-menu", ""); err != nil {
 		t.Fatalf("install weekly-menu: %v", err)
 	}
 
@@ -253,7 +254,8 @@ func TestAppKVStoreQuotasSymlinkAndConcurrency(t *testing.T) {
 	if err := mgr.Reload(); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := mgr.InstallTemplateAt("house-info", ""); err != nil {
+	attachRepoStoreForTest(t, mgr)
+	if _, err := mgr.InstallStorePlugin(context.Background(), "house-info", ""); err != nil {
 		t.Fatal(err)
 	}
 	srv := setupKVTestServer(t, mgr)

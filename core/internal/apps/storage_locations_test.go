@@ -158,7 +158,12 @@ func TestAppStorageSlotLimitsValidationAndSafeRemoval(t *testing.T) {
 		t.Fatalf("expected ErrStorageSlotLimit adding second external, got %v", err)
 	}
 
-	// Customize internal slot & ensure built-in network-pulse from dataDir stays visible via fallback.
+	// Seed network-pulse into default dataDir via Git store, then customize internal slot
+	// & ensure legacy/default apps from dataDir stay visible via fallback.
+	attachRepoStoreForTest(t, mgr)
+	if _, err := mgr.InstallStorePlugin(context.Background(), "network-pulse", AppStorageIDInternal); err != nil {
+		t.Fatalf("failed installing network-pulse to internal: %v", err)
+	}
 	snap, err = mgr.MutateStorageLocation(AppStorageMutationRequest{
 		Action: "set",
 		Kind:   AppStorageKindInternal,
@@ -182,10 +187,10 @@ func TestAppStorageSlotLimitsValidationAndSafeRemoval(t *testing.T) {
 		t.Fatalf("expected network-pulse to stay discoverable after customizing internal path")
 	}
 
-	// Install official template explicitly onto external disk (via default).
-	installed, err := mgr.InstallTemplateAt("family-subscriptions", "")
+	// Install official store plugin explicitly onto external disk (via default).
+	installed, err := mgr.InstallStorePlugin(context.Background(), "family-subscriptions", "")
 	if err != nil {
-		t.Fatalf("InstallTemplateAt failed: %v", err)
+		t.Fatalf("InstallStorePlugin failed: %v", err)
 	}
 	if installed.LocationID != AppStorageIDExternal || installed.PluginsDir != filepath.Join(extAppDir, "plugins", "family-subscriptions") {
 		t.Fatalf("unexpected install location: %+v", installed)
@@ -202,7 +207,7 @@ func TestAppStorageSlotLimitsValidationAndSafeRemoval(t *testing.T) {
 	if snap.Locations[1].Online || snap.Locations[1].Writable {
 		t.Fatalf("expected external location offline after UUID mismatch: %+v", snap.Locations[1])
 	}
-	if _, err := mgr.InstallTemplateAt("family-board", AppStorageIDExternal); !errors.Is(err, ErrStorageOffline) {
+	if _, err := mgr.InstallStorePlugin(context.Background(), "family-board", AppStorageIDExternal); !errors.Is(err, ErrStorageOffline) {
 		t.Fatalf("expected ErrStorageOffline installing to swapped/offline external, got %v", err)
 	}
 
@@ -326,8 +331,9 @@ func TestExternalAppRuntimeSwapGuardsWithoutReload(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := mgr.InstallTemplateAt("family-board", AppStorageIDExternal); err != nil {
-		t.Fatalf("InstallTemplateAt external failed: %v", err)
+	attachRepoStoreForTest(t, mgr)
+	if _, err := mgr.InstallStorePlugin(context.Background(), "family-board", AppStorageIDExternal); err != nil {
+		t.Fatalf("InstallStorePlugin external failed: %v", err)
 	}
 
 	// Verify ProtectedHostDirs and ProtectedVolumeUUIDs cover the external slot.

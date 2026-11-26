@@ -70,6 +70,13 @@ func TestAppsStorageHTTPRoutes(t *testing.T) {
 	appsMgr := apps.NewManager(dataDir, "lightisled", autoMgr)
 	defer appsMgr.Close()
 	appsMgr.SetStoragePolicyForTesting(stub, []string{extPrefix})
+	storeDir, err := filepath.Abs(filepath.Join("..", "..", "..", "plugins-store"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	storeSrv := httptest.NewServer(http.FileServer(http.Dir(storeDir)))
+	defer storeSrv.Close()
+	appsMgr.SetStoreTestConfigForTesting(storeSrv.URL+"/registry.json", true)
 	if err := appsMgr.Reload(); err != nil {
 		t.Fatal(err)
 	}
@@ -129,12 +136,16 @@ func TestAppsStorageHTTPRoutes(t *testing.T) {
 		t.Fatalf("expected 409 app_storage_slot_limit, got %d (%s)", rec.Code, rec.Body.String())
 	}
 
-	// Install template onto external location.
-	rec = call("POST", "/api/v2/apps/templates/family-subscriptions/install", adminTok, map[string]string{
+	// Refresh store catalog and install plugin onto external location via /api/v2/apps/store/{id}/install.
+	rec = call("POST", "/api/v2/apps/store/refresh", adminTok, map[string]any{})
+	if rec.Code != http.StatusOK || !bytes.Contains(rec.Body.Bytes(), []byte("family-subscriptions")) {
+		t.Fatalf("expected 200 store refresh, got %d (%s)", rec.Code, rec.Body.String())
+	}
+	rec = call("POST", "/api/v2/apps/store/family-subscriptions/install", adminTok, map[string]string{
 		"locationId": apps.AppStorageIDExternal,
 	})
 	if rec.Code != http.StatusCreated {
-		t.Fatalf("expected 201 installing template to external, got %d (%s)", rec.Code, rec.Body.String())
+		t.Fatalf("expected 201 installing store plugin to external, got %d (%s)", rec.Code, rec.Body.String())
 	}
 	var installResp struct {
 		App apps.PublicApp `json:"app"`
@@ -148,7 +159,7 @@ func TestAppsStorageHTTPRoutes(t *testing.T) {
 
 	// Offline external blocks installation without falling back.
 	stub.offline = true
-	rec = call("POST", "/api/v2/apps/templates/family-board/install", adminTok, map[string]string{
+	rec = call("POST", "/api/v2/apps/store/family-board/install", adminTok, map[string]string{
 		"locationId": apps.AppStorageIDExternal,
 	})
 	if rec.Code != http.StatusConflict || !bytes.Contains(rec.Body.Bytes(), []byte("app_storage_offline")) {

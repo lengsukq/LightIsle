@@ -295,8 +295,12 @@ func toolScaffoldApp(dataDir string, mgr *Manager, rawArgs json.RawMessage) mcpT
 		},
 	}
 
+	const defaultScaffoldIconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
+  <rect width="64" height="64" rx="16" fill="#0E6B74"/>
+  <path d="M20 32h24M32 20v24" stroke="#FFFFFF" stroke-width="4" stroke-linecap="round"/>
+</svg>`
 	createdFiles := []string{"plugin.json", "icon.svg", "env.json"}
-	_ = os.WriteFile(filepath.Join(pluginDir, "icon.svg"), []byte(builtInDemoIconSVG), 0600)
+	_ = os.WriteFile(filepath.Join(pluginDir, "icon.svg"), []byte(defaultScaffoldIconSVG), 0600)
 	_ = os.WriteFile(filepath.Join(pluginDir, "env.json"), []byte("{}\n"), 0600)
 
 	switch args.Mode {

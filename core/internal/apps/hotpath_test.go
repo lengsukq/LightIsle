@@ -13,6 +13,7 @@ func TestServeIconETagAnd304(t *testing.T) {
 	if err := mgr.Reload(); err != nil {
 		t.Fatal(err)
 	}
+	installRepoStorePlugin(t, mgr, "network-pulse", "")
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v2/apps/network-pulse/icon", nil)
 	rec := httptest.NewRecorder()

@@ -2,6 +2,7 @@ package server
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -63,6 +64,16 @@ func TestAppsServerRoutesContractsAndSessionInvalidation(t *testing.T) {
 
 	if err := appsMgr.Reload(); err != nil {
 		t.Fatal(err)
+	}
+	storeDir, err := filepath.Abs(filepath.Join("..", "..", "..", "plugins-store"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	storeSrv := httptest.NewServer(http.FileServer(http.Dir(storeDir)))
+	defer storeSrv.Close()
+	appsMgr.SetStoreTestConfigForTesting(storeSrv.URL+"/registry.json", true)
+	if _, err := appsMgr.InstallStorePlugin(context.Background(), "network-pulse", ""); err != nil {
+		t.Fatalf("install network-pulse from local store: %v", err)
 	}
 
 	handler := WithApps(New("", accounts, nil), "", accounts, appsMgr)
@@ -298,6 +309,16 @@ func TestLANMCPEndpointsDebugProbeAndTokenRotation(t *testing.T) {
 	defer appsMgr.Close()
 	if err := appsMgr.Reload(); err != nil {
 		t.Fatal(err)
+	}
+	storeDir, err := filepath.Abs(filepath.Join("..", "..", "..", "plugins-store"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	storeSrv := httptest.NewServer(http.FileServer(http.Dir(storeDir)))
+	defer storeSrv.Close()
+	appsMgr.SetStoreTestConfigForTesting(storeSrv.URL+"/registry.json", true)
+	if _, err := appsMgr.InstallStorePlugin(context.Background(), "network-pulse", ""); err != nil {
+		t.Fatalf("install network-pulse from local store: %v", err)
 	}
 
 	handler := WithApps(New("", accounts, nil), "", accounts, appsMgr)
