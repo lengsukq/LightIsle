@@ -12,9 +12,11 @@ class _FakeAppsApi extends LightIsleApi {
   String defaultLocationId = 'internal';
   Map<String, dynamic>? externalStorageLocation;
   bool includeTemplates = false;
+  Map<String, dynamic>? storeSnapshot;
   final List<String> calls = <String>[];
   Map<String, dynamic>? lastPutBody;
   Map<String, dynamic>? lastStorageBody;
+  Map<String, dynamic>? lastStoreConfigBody;
   String? lastDownloadedPath;
   String? lastDownloadSavePath;
 
@@ -70,6 +72,7 @@ class _FakeAppsApi extends LightIsleApi {
   Map<String, dynamic> _snapshot() => {
     'apps': apps.map((e) => Map<String, dynamic>.from(e)).toList(),
     'isAdmin': isAdmin,
+    if (storeSnapshot != null) 'store': Map<String, dynamic>.from(storeSnapshot!),
     if (includeTemplates)
       'templates': <Map<String, dynamic>>[
         <String, dynamic>{
@@ -164,6 +167,46 @@ class _FakeAppsApi extends LightIsleApi {
   }) async {
     calls.add('$method $path');
     if (method == 'POST' && path == '/api/v2/apps/refresh') {
+      return _snapshot();
+    }
+    if (method == 'POST' && path == '/api/v2/apps/store/refresh') {
+      return _snapshot();
+    }
+    if (method == 'PUT' && path == '/api/v2/apps/store/config') {
+      final map = Map<String, dynamic>.from(body as Map);
+      lastStoreConfigBody = map;
+      if (storeSnapshot != null) {
+        storeSnapshot!['mirrorPrefix'] = map['resetDefault'] == true
+            ? ''
+            : (map['mirrorPrefix']?.toString() ?? '');
+      }
+      return _snapshot();
+    }
+    if (method == 'POST' && path == '/api/v2/apps/store/pet-care/install') {
+      if (storeSnapshot != null) {
+        final list = (storeSnapshot!['plugins'] as List)
+            .cast<Map<String, dynamic>>();
+        for (final p in list) {
+          if (p['id'] == 'pet-care') {
+            p['installed'] = true;
+            p['installedVersion'] = p['version'];
+          }
+        }
+      }
+      return _snapshot();
+    }
+    if (method == 'POST' &&
+        path == '/api/v2/apps/store/network-pulse/upgrade') {
+      if (storeSnapshot != null) {
+        final list = (storeSnapshot!['plugins'] as List)
+            .cast<Map<String, dynamic>>();
+        for (final p in list) {
+          if (p['id'] == 'network-pulse') {
+            p['updateAvailable'] = false;
+            p['installedVersion'] = p['version'];
+          }
+        }
+      }
       return _snapshot();
     }
     if (method == 'PUT' && path == '/api/v2/apps/storage') {
@@ -781,6 +824,113 @@ void main() {
       expect(launched.single.path, '/apps/network-pulse/');
       expect(find.byType(AppsCenterPage), findsNothing);
       expect(find.byType(OverviewPage), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'Git online plugin store supports refresh, download install, in-place upgrade, and mirror config',
+    (tester) async {
+      tester.view.physicalSize = const Size(1100, 1800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      final api = _FakeAppsApi(isAdmin: true)
+        ..storeSnapshot = <String, dynamic>{
+          'storeName': 'LightIsle 官方家庭轻应用商店',
+          'registryUrl':
+              'https://raw.githubusercontent.com/lengsukq/LightIsle/main/plugins-store/registry.json',
+          'effectiveUrl':
+              'https://raw.githubusercontent.com/lengsukq/LightIsle/main/plugins-store/registry.json',
+          'defaultUrl':
+              'https://raw.githubusercontent.com/lengsukq/LightIsle/main/plugins-store/registry.json',
+          'mirrorPrefix': '',
+          'isOfficial': true,
+          'source': 'remote',
+          'plugins': <Map<String, dynamic>>[
+            <String, dynamic>{
+              'id': 'pet-care',
+              'name': '宠物照护记录',
+              'version': '1.0.0',
+              'category': 'home',
+              'mode': 'static',
+              'description': '记录疫苗、驱虫与日常喂养',
+              'sizeBytes': 12288,
+              'installed': false,
+              'updateAvailable': false,
+            },
+            <String, dynamic>{
+              'id': 'network-pulse',
+              'name': '轻屿网络脉搏',
+              'version': '1.1.0',
+              'installedVersion': '1.0.0',
+              'category': 'network',
+              'mode': 'static',
+              'description': '实时监控 NAS 与局域网延迟',
+              'sizeBytes': 10240,
+              'installed': true,
+              'updateAvailable': true,
+            },
+          ],
+        };
+      addTearDown(api.close);
+
+      await tester.pumpWidget(
+        MaterialApp(home: AppsCenterPage(api: api, isAdmin: true)),
+      );
+      await tester.pumpAndSettle();
+
+      expect(
+        find.byKey(const ValueKey('onlinePluginStoreCard')),
+        findsOneWidget,
+      );
+      expect(find.text('官方 Git 仓库'), findsOneWidget);
+      expect(find.text('1 个可更新'), findsOneWidget);
+
+      await tester.tap(find.byKey(const ValueKey('refreshStoreButton')));
+      await tester.pumpAndSettle();
+      expect(api.calls, contains('POST /api/v2/apps/store/refresh'));
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('installStorePlugin_pet-care')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('installStorePlugin_pet-care')),
+      );
+      await tester.pumpAndSettle();
+      expect(api.calls, contains('POST /api/v2/apps/store/pet-care/install'));
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('upgradeStorePlugin_network-pulse')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(
+        find.byKey(const ValueKey('upgradeStorePlugin_network-pulse')),
+      );
+      await tester.pumpAndSettle();
+      expect(find.textContaining('原地升级至 v1.1.0'), findsOneWidget);
+      await tester.tap(find.text('校验并升级'));
+      await tester.pumpAndSettle();
+      expect(
+        api.calls,
+        contains('POST /api/v2/apps/store/network-pulse/upgrade'),
+      );
+
+      await tester.ensureVisible(
+        find.byKey(const ValueKey('storeConfigButton')),
+      );
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('storeConfigButton')));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('ghfast.top'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.byKey(const ValueKey('saveStoreConfigButton')));
+      await tester.pumpAndSettle();
+      expect(api.calls, contains('PUT /api/v2/apps/store/config'));
+      expect(api.lastStoreConfigBody?['mirrorPrefix'], 'https://ghfast.top/');
+      expect(find.text('已启用镜像加速'), findsOneWidget);
       expect(tester.takeException(), isNull);
     },
   );

@@ -75,6 +75,54 @@ struct NativeOfficialAppTemplate: Decodable, Identifiable, Equatable {
     let installed: Bool
 }
 
+struct NativeAppStorePlugin: Decodable, Identifiable, Equatable {
+    let id: String
+    let name: String
+    let version: String
+    let author: String?
+    let category: String
+    let mode: String
+    let defaultScope: String?
+    let description: String
+    let tags: [String]?
+    let iconUrl: String?
+    let sizeBytes: Int64?
+    let sha256: String?
+    let installed: Bool
+    let installedVersion: String?
+    let updateAvailable: Bool
+    let locationId: String?
+}
+
+struct NativeAppStoreSnapshot: Decodable, Equatable {
+    let storeName: String
+    let repositoryUrl: String?
+    let registryUrl: String
+    let effectiveUrl: String
+    let defaultUrl: String
+    let mirrorPrefix: String?
+    let isOfficial: Bool
+    let source: String
+    let fetchedAt: String?
+    let updatedAt: String?
+    let error: String?
+    let plugins: [NativeAppStorePlugin]
+
+    var updatableCount: Int {
+        plugins.filter(\.updateAvailable).count
+    }
+
+    var installedCount: Int {
+        plugins.filter(\.installed).count
+    }
+}
+
+struct NativeAppStoreConfigPayload: Encodable {
+    var registryUrl: String
+    var mirrorPrefix: String
+    var resetDefault: Bool
+}
+
 struct NativeAppStorageLocation: Decodable, Identifiable, Equatable {
     let id: String
     let kind: String

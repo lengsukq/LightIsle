@@ -4,6 +4,7 @@ import SwiftUI
 
 private struct NativeAppsOverviewPayload: Decodable {
     let apps: [NativePublicApp]
+    let store: NativeAppStoreSnapshot?
     let templates: [NativeOfficialAppTemplate]?
     let appStorage: NativeAppStorageSnapshot?
     let mcp: NativeMCPConfigSnapshot
@@ -63,6 +64,7 @@ final class NativeAppsModel: ObservableObject {
     @Published private(set) var connected = false
     @Published private(set) var busy = false
     @Published private(set) var apps: [NativePublicApp] = []
+    @Published private(set) var store: NativeAppStoreSnapshot?
     @Published private(set) var templates: [NativeOfficialAppTemplate] = []
     @Published private(set) var appStorage: NativeAppStorageSnapshot?
     @Published private(set) var mcp: NativeMCPConfigSnapshot = .empty
@@ -86,6 +88,7 @@ final class NativeAppsModel: ObservableObject {
     private var activeRequestID: String?
     private var timeoutTask: Task<Void, Never>?
     private var pendingCatalogPhase: MCPCatalogPhase = .idle
+    private var hasAutoRefreshedStore = false
 
     func connect(_ writer: @escaping (String) throws -> Void) {
         self.writer = writer
@@ -102,6 +105,7 @@ final class NativeAppsModel: ObservableObject {
         activeRequestID = nil
         pendingCatalogPhase = .idle
         mcpCatalogLoading = false
+        hasAutoRefreshedStore = false
     }
 
     func refresh() {
@@ -141,11 +145,32 @@ final class NativeAppsModel: ObservableObject {
     }
 
     func installTemplate(id: String, locationID: String? = nil) {
-        var payload: [String: Any] = ["templateId": id]
+        installStorePlugin(id: id, locationID: locationID)
+    }
+
+    func refreshStore() {
+        sendRawDict(operation: "store-refresh", payload: [:])
+    }
+
+    func updateStoreConfig(registryURL: String, mirrorPrefix: String, resetDefault: Bool = false) {
+        let cfg = NativeAppStoreConfigPayload(
+            registryUrl: registryURL.trimmingCharacters(in: .whitespacesAndNewlines),
+            mirrorPrefix: mirrorPrefix.trimmingCharacters(in: .whitespacesAndNewlines),
+            resetDefault: resetDefault
+        )
+        sendEncodable(operation: "store-config", field: "storeConfig", value: cfg)
+    }
+
+    func installStorePlugin(id: String, locationID: String? = nil) {
+        var payload: [String: Any] = ["pluginId": id]
         if let locationID, !locationID.isEmpty {
             payload["locationId"] = locationID
         }
-        sendRawDict(operation: "install-template", payload: payload)
+        sendRawDict(operation: "store-install", payload: payload)
+    }
+
+    func upgradeStorePlugin(id: String) {
+        sendRawDict(operation: "store-upgrade", payload: ["pluginId": id])
     }
 
     func mutateAppStorage(
@@ -386,6 +411,9 @@ final class NativeAppsModel: ObservableObject {
         if let payload = envelope.result {
             if !connected { connected = true }
             if apps != payload.apps { apps = payload.apps }
+            if let nextStore = payload.store, store != nextStore {
+                store = nextStore
+            }
             if let nextTemplates = payload.templates, templates != nextTemplates {
                 templates = nextTemplates
             }
@@ -442,6 +470,14 @@ final class NativeAppsModel: ObservableObject {
         if errorMessage != nil { errorMessage = nil }
 
         switch envelope.operation {
+        case "list":
+            if !hasAutoRefreshedStore,
+               let currentStore = store,
+               currentStore.source == "empty",
+               currentStore.plugins.isEmpty {
+                hasAutoRefreshedStore = true
+                refreshStore()
+            }
         case "refresh":
             message = "已重新扫描 plugins 目录并同步轻应用状态。"
         case "set-mcp":
@@ -452,8 +488,14 @@ final class NativeAppsModel: ObservableObject {
             message = "已轮换 MCP 鉴权 Token，请更新局域网 Agent 配置。"
         case "scaffold":
             message = "已创建轻应用脚手架并完成激活。"
-        case "install-template":
-            message = "已一键安装官方精选轻应用。"
+        case "install-template", "store-install":
+            message = "已从 Git 在线商店校验 SHA-256 并安装该轻应用。"
+        case "store-refresh":
+            message = "已从 Git 在线商店同步最新目录（共 \(store?.plugins.count ?? 0) 款轻应用）。"
+        case "store-config":
+            message = "已保存 Git 插件商店源与镜像配置并同步目录。"
+        case "store-upgrade":
+            message = "已原地升级轻应用版本，历史业务数据（plugin-data）已完整保留。"
         case "set-storage":
             message = "已更新应用数据存储位置配置。"
         case "update":

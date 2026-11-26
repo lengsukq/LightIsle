@@ -18,6 +18,7 @@ export 'apps_center_sheets.dart';
 
 part 'apps_center_cards.dart';
 part 'apps_center_storage_card.dart';
+part 'apps_center_store_card.dart';
 
 class AppsCenterPage extends StatefulWidget {
   const AppsCenterPage({
@@ -45,12 +46,14 @@ class AppsCenterPage extends StatefulWidget {
 class _AppsCenterPageState extends State<AppsCenterPage> {
   List<Map<String, dynamic>> _apps = const [];
   List<Map<String, dynamic>> _templates = const [];
+  Map<String, dynamic>? _store;
   List<Map<String, dynamic>> _members = const [];
   Map<String, dynamic>? _appStorage;
   String _selectedInstallLocationId = '';
+  String _storeCategoryFilter = 'all';
   Set<String> _configuredChannels = const {};
-  bool _isAdmin = false, _busy = false;
-  bool _loaded = false, _workbenchFullscreen = false;
+  bool _isAdmin = false, _busy = false, _storeBusy = false;
+  bool _loaded = false, _workbenchFullscreen = false, _autoRefreshedStore = false;
   String? _wakingAppId,
       _pendingInitialLaunchAppId,
       _activeWorkbenchAppId,
@@ -79,7 +82,10 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
       _activeWorkbenchAppId = null;
       _activeWorkbenchUrl = null;
       _loaded = false;
+      _store = null;
+      _autoRefreshedStore = false;
       _selectedInstallLocationId = '';
+      _storeCategoryFilter = 'all';
       unawaited(_reload(refresh: false));
     } else if (oldWidget.initialLaunchAppId != widget.initialLaunchAppId) {
       _pendingInitialLaunchAppId = widget.initialLaunchAppId;
@@ -91,9 +97,13 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
 
   void _applySnapshot(Map<String, dynamic> res) {
     final channelsRaw = res['configuredChannels'];
+    var shouldAutoRefreshStore = false;
     setState(() {
       if (res['apps'] is List) _apps = objectList(res['apps']);
       if (res['templates'] is List) _templates = objectList(res['templates']);
+      if (res['store'] is Map) {
+        _store = Map<String, dynamic>.from(res['store'] as Map);
+      }
       if (res['members'] is List) _members = objectList(res['members']);
       if (channelsRaw is List) {
         _configuredChannels = {
@@ -118,8 +128,19 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
       }
       if (res['isAdmin'] is bool) _isAdmin = res['isAdmin'] as bool;
       _loaded = true;
+      if (_isAdmin &&
+          !_autoRefreshedStore &&
+          _store != null &&
+          _store!['source'] == 'empty' &&
+          objectList(_store!['plugins']).isEmpty) {
+        _autoRefreshedStore = true;
+        shouldAutoRefreshStore = true;
+      }
     });
     _consumeInitialLaunchIfReady();
+    if (shouldAutoRefreshStore) {
+      unawaited(_refreshStore(silentNotice: true));
+    }
   }
 
   void _consumeInitialLaunchIfReady() {
@@ -237,21 +258,106 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
     });
   }
 
-  Future<void> _installOfficialTemplate(Map<String, dynamic> tpl) async {
-    final id = tpl['id']?.toString() ?? '';
-    final name = tpl['name']?.toString() ?? id;
+  Future<void> _refreshStore({bool silentNotice = false}) async {
+    if (!_isAdmin || _storeBusy) return;
+    setState(() {
+      _storeBusy = true;
+      if (!silentNotice) {
+        _error = null;
+        _notice = null;
+      }
+    });
+    try {
+      final res = await widget.api.send('POST', '/api/v2/apps/store/refresh');
+      if (!mounted) return;
+      _applySnapshot(res);
+      if (!silentNotice) {
+        final count = objectList(_store?['plugins']).length;
+        setState(() => _notice = '已从 Git 在线商店同步最新目录（共 $count 款应用）。');
+      }
+    } catch (e) {
+      if (mounted && !silentNotice) {
+        setState(() => _error = '刷新在线插件商店失败：${userFacingError(e)}');
+      }
+    } finally {
+      if (mounted) setState(() => _storeBusy = false);
+    }
+  }
+
+  Future<void> _updateStoreConfig({
+    required String registryUrl,
+    required String mirrorPrefix,
+    required bool resetDefault,
+  }) async {
+    if (!_isAdmin || _busy || _storeBusy) return;
+    await _runBusy('保存插件商店配置失败', () async {
+      final res = await widget.api.send(
+        'PUT',
+        '/api/v2/apps/store/config',
+        body: <String, dynamic>{
+          'registryUrl': registryUrl,
+          'mirrorPrefix': mirrorPrefix,
+          'resetDefault': resetDefault,
+        },
+      );
+      if (!mounted) return;
+      _applySnapshot(res);
+      setState(() {
+        _notice = resetDefault
+            ? '已恢复官方默认 Git 插件商店并刷新目录。'
+            : '已保存 Git 插件商店源与镜像配置并同步目录。';
+      });
+    });
+  }
+
+  Future<void> _installStorePlugin(Map<String, dynamic> plugin) async {
+    final id = plugin['id']?.toString() ?? '';
+    final name = plugin['name']?.toString() ?? id;
     if (id.isEmpty || _busy) return;
-    await _runBusy('安装模板失败', () async {
+    final endpoint = _store != null
+        ? '/api/v2/apps/store/${Uri.encodeComponent(id)}/install'
+        : '/api/v2/apps/templates/${Uri.encodeComponent(id)}/install';
+    await _runBusy('下载安装插件失败', () async {
       final res = await widget.api.send(
         'POST',
-        '/api/v2/apps/templates/${Uri.encodeComponent(id)}/install',
+        endpoint,
         body: _selectedInstallLocationId.isEmpty
             ? const <String, dynamic>{}
             : <String, dynamic>{'locationId': _selectedInstallLocationId},
       );
       if (!mounted) return;
       _applySnapshot(res);
-      setState(() => _notice = '已一键安装官方精选轻应用「$name」（纯静态 · 0 MB）。');
+      final pending =
+          res['app'] is Map && (res['app'] as Map)['pendingActivation'] == true;
+      setState(
+        () => _notice = pending
+            ? '已从在线商店下载并校验「$name」，请确认安全后点击「确认激活」。'
+            : '已从在线商店校验 SHA-256 并安装「$name」。',
+      );
+    });
+  }
+
+  Future<void> _upgradeStorePlugin(Map<String, dynamic> plugin) async {
+    final id = plugin['id']?.toString() ?? '';
+    final name = plugin['name']?.toString() ?? id;
+    final nextVer = plugin['version']?.toString() ?? '';
+    final curVer = plugin['installedVersion']?.toString() ?? '';
+    if (id.isEmpty || _busy) return;
+    final confirmed = await confirmAction(
+      context,
+      '确认升级轻应用「$name」？',
+      '将从 ${curVer.isEmpty ? '当前版本' : 'v$curVer'} 原地升级至 v$nextVer。升级过程会强制校验 SHA-256，仅替换应用代码，不会删除业务数据目录（plugin-data）、env.json 与成员访问权限。',
+      action: '校验并升级',
+    );
+    if (!confirmed || !mounted) return;
+    await _runBusy('升级轻应用失败', () async {
+      final res = await widget.api.send(
+        'POST',
+        '/api/v2/apps/store/${Uri.encodeComponent(id)}/upgrade',
+      );
+      if (!mounted) return;
+      _applySnapshot(res);
+      setState(() => _notice = '已原地升级「$name」至 v$nextVer，原有业务数据已完整保留。');
     });
   }
 
@@ -501,8 +607,8 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
                 _buildStorageLocationsCard(context),
                 const SizedBox(height: 12),
               ],
-              if (_isAdmin && _templates.isNotEmpty) ...[
-                _buildOfficialTemplatesCard(context),
+              if (_isAdmin && (_store != null || _templates.isNotEmpty)) ...[
+                _buildOnlineStoreCard(context),
                 const SizedBox(height: 12),
               ],
               if (_error != null)
@@ -517,7 +623,7 @@ class _AppsCenterPageState extends State<AppsCenterPage> {
               if (_loaded && _apps.isEmpty && !_busy)
                 IsleEmptyStateCard(
                   _isAdmin
-                      ? '还没有已安装的轻应用插件。可一键安装上方精选模板，或在 Mac 端添加。'
+                      ? '还没有已安装的轻应用插件。可从上方 Git 在线插件商店按需下载安装，或在 Mac 端添加。'
                       : '管理员暂未向当前账号开放轻应用。',
                   title: '暂无可用轻应用',
                   icon: Icons.widgets_outlined,

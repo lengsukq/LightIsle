@@ -127,139 +127,14 @@ extension _AppsCenterCards on _AppsCenterPageState {
     );
   }
 
-  Widget _buildOfficialTemplatesCard(BuildContext context) {
-    final theme = Theme.of(context), colors = theme.colorScheme;
-    final palette = IslePalette.of(context);
-    final violet = palette['brandViolet'];
-    return IsleSurface(
-      radius: IsleRadius.hero,
-      tint: violet,
-      margin: EdgeInsets.zero,
-      padding: const EdgeInsets.all(18),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              IsleSquircleBadge(
-                icon: Icons.auto_awesome_rounded,
-                color: violet,
-                size: 36,
-                iconSize: 18,
-              ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  '官方精选家庭轻应用模板（0 MB 静态即装即用）',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w800,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          if (_appStorage != null &&
-              objectList(_appStorage?['locations']).length > 1) ...[
-            const SizedBox(height: 12),
-            KeyedSubtree(
-              key: ValueKey('location_$_selectedInstallLocationId'),
-              child: DropdownButtonFormField<String>(
-                key: const ValueKey('templateInstallLocationDropdown'),
-                initialValue: _selectedInstallLocationId,
-                isExpanded: true,
-                decoration: const InputDecoration(
-                  labelText: '模板安装目标位置',
-                  isDense: true,
-                ),
-                items: [
-                  const DropdownMenuItem(
-                    value: '',
-                    child: Text(
-                      '跟随默认位置',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                  ),
-                  for (final loc in objectList(_appStorage?['locations']))
-                    DropdownMenuItem(
-                      value: loc['id']?.toString() ?? '',
-                      enabled: loc['online'] == true && loc['writable'] == true,
-                      child: Text(
-                        '${loc['kind'] == 'external' ? '其他盘' : '内置盘'} · ${loc['name'] ?? ''}'
-                        '${loc['online'] == true ? '' : '（离线）'}',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                ],
-                onChanged: _busy
-                    ? null
-                    : (v) => _updateState(
-                        () => _selectedInstallLocationId = v ?? '',
-                      ),
-              ),
-            ),
-          ],
-          const SizedBox(height: 14),
-          IsleResponsiveGrid(
-            minItemWidth: 240,
-            maxColumns: 4,
-            spacing: 10,
-            runSpacing: 10,
-            children: [
-              for (final tpl in _templates)
-                Container(
-                  padding: const EdgeInsets.all(14),
-                  decoration: BoxDecoration(
-                    color: palette['cardTop'],
-                    borderRadius: IsleRadius.brMd,
-                    border: Border.all(
-                      color: IsleGlass.rimBorderColor(
-                        theme.brightness == Brightness.dark,
-                      ),
-                      width: 1.0,
-                    ),
-                  ),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        tpl['name']?.toString() ?? '',
-                        style: theme.textTheme.titleSmall?.copyWith(
-                          fontWeight: FontWeight.w800,
-                        ),
-                      ),
-                      const SizedBox(height: 4),
-                      Text(
-                        tpl['description']?.toString() ?? '',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: colors.onSurfaceVariant,
-                        ),
-                      ),
-                      const SizedBox(height: 10),
-                      FilledButton.tonal(
-                        onPressed: _busy || tpl['installed'] == true
-                            ? null
-                            : () => _installOfficialTemplate(tpl),
-                        child: Text(tpl['installed'] == true ? '已安装' : '一键安装'),
-                      ),
-                    ],
-                  ),
-                ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
   Widget _buildAppCard(BuildContext context, Map<String, dynamic> app) {
     final theme = Theme.of(context), colors = theme.colorScheme;
     final palette = IslePalette.of(context);
     final draft = AppConfigDraft.fromApp(app);
     final id = draft.id, name = draft.name;
+    final storeEntry = _storePluginFor(id);
+    final hasStoreUpdate = storeEntry?['updateAvailable'] == true;
+    final storeNextVersion = storeEntry?['version']?.toString().trim() ?? '';
     final description = app['description']?.toString().trim() ?? '';
     final category = app['category']?.toString();
     final catColor = appCategoryColor(category, colors);
@@ -411,6 +286,15 @@ extension _AppsCenterCards on _AppsCenterPageState {
                 ),
                 label: Text(isWaking ? '正在唤醒…' : '立即打开'),
               ),
+              if (_isAdmin && hasStoreUpdate && storeEntry != null)
+                FilledButton.tonalIcon(
+                  key: ValueKey('cardUpgradeApp_$id'),
+                  onPressed: _busy || _storeBusy
+                      ? null
+                      : () => _upgradeStorePlugin(storeEntry),
+                  icon: const Icon(Icons.system_update_alt_rounded, size: 16),
+                  label: Text('更新 v$storeNextVersion'),
+                ),
               if (_isAdmin)
                 OutlinedButton.icon(
                   key: ValueKey('detailApp_$id'),

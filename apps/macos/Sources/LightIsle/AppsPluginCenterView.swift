@@ -8,6 +8,7 @@ struct AppsPluginCenterView: View {
     @Environment(\.isleReduceMotion) private var reduceMotion
     @State private var showingScaffoldSheet = false
     @State private var deletingApp: NativePublicApp?
+    @State private var upgradingPlugin: NativeAppStorePlugin?
     @State private var selectedInstallLocationID = ""
 
     private var selectedApp: NativePublicApp? {
@@ -32,7 +33,11 @@ struct AppsPluginCenterView: View {
                     overviewSection
                     noticeBanners
                     AppStorageLocationsSection(appsCenter: appsCenter)
-                    templatesSection
+                    AppStoreSectionView(
+                        appsCenter: appsCenter,
+                        selectedInstallLocationID: $selectedInstallLocationID,
+                        onRequestUpgrade: { upgradingPlugin = $0 }
+                    )
                     appsListSection
                     IsleQuickJumpBar(items: [
                         IsleQuickJumpItem("定时脚本", icon: "clock.badge.checkmark.fill", tint: IsleFluidPalette.brandViolet, help: "管理 automation/scripts 本机独立定时任务") {
@@ -81,6 +86,27 @@ struct AppsPluginCenterView: View {
             Button("取消", role: .cancel) { deletingApp = nil }
         } message: {
             Text("卸载会停止正在运行的实例并移除应用代码目录。如未来仍需恢复数据，请先导出备份或选择保留数据。")
+        }
+        .confirmationDialog(
+            "确认升级轻应用「\(upgradingPlugin?.name ?? "")」？",
+            isPresented: Binding(
+                get: { upgradingPlugin != nil },
+                set: { if !$0 { upgradingPlugin = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            if let plugin = upgradingPlugin {
+                Button("校验 SHA-256 并原地升级到 v\(plugin.version)") {
+                    appsCenter.upgradeStorePlugin(id: plugin.id)
+                    upgradingPlugin = nil
+                }
+            }
+            Button("取消", role: .cancel) { upgradingPlugin = nil }
+        } message: {
+            if let plugin = upgradingPlugin {
+                let currentVer = plugin.installedVersion ?? "旧版本"
+                Text("将从 v\(currentVer) 升级至 v\(plugin.version)。系统仅替换应用代码并强制校验 SHA-256，不会清空业务数据目录（plugin-data）、环境变量（env.json）及家庭成员权限。")
+            }
         }
         .onChange(of: appsCenter.apps) { _, list in
             if let currentID = selectedAppID, !list.contains(where: { $0.id == currentID }) {
@@ -223,120 +249,6 @@ struct AppsPluginCenterView: View {
         }
     }
 
-    private var installTargetBlockedReason: String? {
-        guard let locations = appsCenter.appStorage?.locations, !locations.isEmpty else { return nil }
-        let target: NativeAppStorageLocation?
-        if selectedInstallLocationID.isEmpty {
-            target = locations.first(where: { $0.isDefault }) ?? locations.first
-        } else {
-            target = locations.first(where: { $0.id == selectedInstallLocationID })
-        }
-        guard let loc = target else { return nil }
-        if !loc.online {
-            return "安装目标「\(loc.name)」当前已离线，请先重新连接硬盘或改选其他位置。"
-        }
-        if !loc.writable {
-            return "安装目标「\(loc.name)」当前不可写，请检查磁盘权限后再安装。"
-        }
-        return nil
-    }
-
-    @ViewBuilder
-    private var templatesSection: some View {
-        let templates = appsCenter.templates
-        if !templates.isEmpty {
-            VStack(alignment: .leading, spacing: 12) {
-                HStack(alignment: .center, spacing: 8) {
-                    Text("精选家庭轻应用")
-                        .font(.system(size: 15, weight: .semibold))
-                    IsleStatusPill(text: "0 MB 纯静态 · 开箱即用", tone: .accent, icon: "sparkles")
-                    Spacer()
-                    if let locations = appsCenter.appStorage?.locations, locations.count > 1 {
-                        HStack(spacing: 6) {
-                            Text("安装到")
-                                .font(.system(size: 12))
-                                .foregroundStyle(IsleTheme.secondaryText)
-                            Picker("安装位置", selection: $selectedInstallLocationID) {
-                                Text("默认（\(locations.first(where: { $0.isDefault })?.name ?? "内置盘")）").tag("")
-                                ForEach(locations) { loc in
-                                    let statusSuffix = !loc.online ? "（离线）" : (loc.writable ? "" : "（只读）")
-                                    Text("\(loc.kind == "external" ? "其他盘" : "内置盘") · \(loc.name)\(statusSuffix)").tag(loc.id)
-                                }
-                            }
-                            .labelsHidden()
-                            .frame(width: 220)
-                        }
-                    }
-                }
-                .onChange(of: appsCenter.appStorage?.locations) { _, newLocations in
-                    guard !selectedInstallLocationID.isEmpty else { return }
-                    if !(newLocations ?? []).contains(where: { $0.id == selectedInstallLocationID }) {
-                        selectedInstallLocationID = ""
-                    }
-                }
-
-                if let blocked = installTargetBlockedReason {
-                    Label(blocked, systemImage: "exclamationmark.triangle.fill")
-                        .font(.caption)
-                        .foregroundStyle(IsleTheme.warningText)
-                }
-
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 250), spacing: 14)], spacing: 14) {
-                    ForEach(templates) { tpl in
-                        templateCard(tpl)
-                    }
-                }
-            }
-        }
-    }
-
-    private func templateCard(_ tpl: NativeOfficialAppTemplate) -> some View {
-        let visual = templateVisual(for: tpl.id)
-        let installBlocked = installTargetBlockedReason != nil
-        return VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .center, spacing: 10) {
-                IsleHeaderIconBadge(icon: visual.icon, tint: visual.tint, size: 36)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(tpl.name)
-                        .font(.system(size: 14.5, weight: .semibold))
-                        .lineLimit(1)
-                    Text("v\(tpl.version) · 官方精选")
-                        .font(.system(size: 11))
-                        .foregroundStyle(IsleTheme.secondaryText)
-                }
-                Spacer(minLength: 4)
-                IsleStatusPill(
-                    text: tpl.installed ? "已安装" : "零依赖",
-                    tone: tpl.installed ? .success : .neutral,
-                    showDot: tpl.installed
-                )
-            }
-
-            Text(tpl.description)
-                .font(.system(size: 12.5))
-                .foregroundStyle(IsleTheme.secondaryText)
-                .lineLimit(2)
-                .fixedSize(horizontal: false, vertical: true)
-
-            Spacer(minLength: 0)
-
-            HStack {
-                Spacer()
-                Button(tpl.installed ? "已安装在列表中" : "一键安装") {
-                    appsCenter.installTemplate(
-                        id: tpl.id,
-                        locationID: selectedInstallLocationID.isEmpty ? nil : selectedInstallLocationID
-                    )
-                }
-                .buttonStyle(LiquidButtonStyle(variant: tpl.installed ? .secondary : .prominent, size: .small))
-                .disabled(appsCenter.busy || tpl.installed || installBlocked)
-            }
-        }
-        .padding(16)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .modifier(IsleItemCardSurface(interactive: !tpl.installed && !installBlocked))
-    }
-
     @ViewBuilder
     private var appsListSection: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -353,7 +265,7 @@ struct AppsPluginCenterView: View {
                         IsleHeaderIconBadge(icon: "puzzlepiece.extension", tint: IsleFluidPalette.brandIndigo, size: 48)
                         Text("还没有安装轻应用")
                             .font(.system(size: 15, weight: .semibold))
-                        Text("可以先从上方一键安装精选家庭应用，或者新建空白轻应用并用 AI Agent (MCP) 生成功能。")
+                        Text("可以先从上方 Git 在线商店按需下载基础轻应用，或者新建空白轻应用并用 AI Agent (MCP) 生成功能。")
                             .font(.system(size: 12.5))
                             .foregroundStyle(IsleTheme.secondaryText)
                             .multilineTextAlignment(.center)
@@ -377,6 +289,7 @@ struct AppsPluginCenterView: View {
 
     private func appCard(_ app: NativePublicApp) -> some View {
         let visual = appVisual(for: app)
+        let storeUpdate = appsCenter.store?.plugins.first(where: { $0.id == app.id && $0.updateAvailable })
         let statusTone: IsleStatusTone = {
             if !app.valid || app.diagnostic != nil { return .warning }
             if app.pendingActivation { return .warning }
@@ -494,6 +407,16 @@ struct AppsPluginCenterView: View {
                     }
                 }
 
+                if let storeUpdate {
+                    Button {
+                        upgradingPlugin = storeUpdate
+                    } label: {
+                        Label("更新 v\(storeUpdate.version)", systemImage: "arrow.up.circle.fill")
+                    }
+                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+                    .disabled(appsCenter.busy)
+                }
+
                 Spacer(minLength: 4)
 
                 Button {
@@ -552,19 +475,6 @@ struct AppsPluginCenterView: View {
         .padding(.horizontal, 8)
         .padding(.vertical, 3.5)
         .background(Color.primary.opacity(0.05), in: Capsule())
-    }
-
-    private func templateVisual(for id: String) -> (icon: String, tint: Color) {
-        if id.contains("ledger") || id.contains("bill") {
-            return ("yensign.circle.fill", IsleFluidPalette.brandCyan)
-        }
-        if id.contains("calendar") || id.contains("duty") || id.contains("countdown") {
-            return ("calendar.badge.clock", IsleFluidPalette.brandBlue)
-        }
-        if id.contains("recipe") || id.contains("meal") || id.contains("kitchen") {
-            return ("fork.knife.circle.fill", .orange)
-        }
-        return ("sparkles", IsleFluidPalette.brandViolet)
     }
 
     private func appVisual(for app: NativePublicApp) -> (icon: String, tint: Color) {
