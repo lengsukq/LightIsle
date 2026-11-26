@@ -43,7 +43,7 @@ withDefaults(
 .isle-grouped-section {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 9px;
   min-width: 0;
 }
 
@@ -58,24 +58,24 @@ withDefaults(
 
 .isle-grouped-titles {
   display: grid;
-  gap: 2px;
+  gap: 3px;
   min-width: 0;
   flex: 1 1 200px;
 }
 
 .isle-grouped-titles h3 {
   margin: 0;
-  font-size: 13px;
+  font-size: 13.5px;
   font-weight: 650;
   letter-spacing: -0.01em;
-  color: var(--text-secondary);
+  color: var(--text-primary);
 }
 
 .isle-grouped-titles p {
   margin: 0;
   font-size: 12px;
   line-height: 1.45;
-  color: var(--text-tertiary);
+  color: var(--text-secondary);
 }
 
 .isle-grouped-actions {
@@ -102,8 +102,8 @@ withDefaults(
   box-shadow: var(--fluid-item-card-shadow);
 }
 
-.isle-grouped-card > :slotted(*) {
-  padding: 12px 16px;
+.isle-grouped-card:not(.is-flush) > :slotted(*) {
+  padding: 13px 16px;
   margin: 0;
   border-radius: 0;
   border: 0;
@@ -113,7 +113,7 @@ withDefaults(
 }
 
 .isle-grouped-card.is-flush > :slotted(*) {
-  padding: 0;
+  margin: 0;
 }
 
 .isle-grouped-card > :slotted(* + *) {
@@ -129,7 +129,7 @@ withDefaults(
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .isle-grouped-card > :slotted(*) {
+  .isle-grouped-card:not(.is-flush) > :slotted(*) {
     transition: none;
   }
 }

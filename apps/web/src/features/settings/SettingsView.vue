@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, inject, nextTick, onMounted, ref, watch, type Component } from "vue";
 import {
-  Activity, ChevronRight, Folder, HardDrive, Images, KeyRound, Link2,
+  Activity, ChevronRight, Folder, HardDrive, KeyRound, Link2,
   RefreshCw, ShieldCheck, UserPlus, Users, Workflow,
 } from "lucide-vue-next";
 import { SETTINGS_VIEW_CTX } from "../../contexts/shellContexts.ts";
@@ -18,6 +18,7 @@ import IsleGroupedList from "../../components/ui/IsleGroupedList.vue";
 import IsleModal from "../../components/ui/IsleModal.vue";
 import IslePageHeader from "../../components/ui/IslePageHeader.vue";
 import IsleSlidingIndicator from "../../components/ui/IsleSlidingIndicator.vue";
+import AccountSecuritySection from "./AccountSecuritySection.vue";
 import CacheManagementPanel from "./CacheManagementPanel.vue";
 import DavAccess from "../storage/DavAccess.vue";
 import SmbManagement from "../storage/SmbManagement.vue";
@@ -32,7 +33,6 @@ import OpsDiagnostics from "./OpsDiagnostics.vue";
 import BetaDiagnosticReport from "./BetaDiagnosticReport.vue";
 import AuditLogView from "./AuditLogView.vue";
 import PendingReservations from "./PendingReservations.vue";
-import PendingMedia from "./PendingMedia.vue";
 
 const AutomationView = defineAsyncComponent(() => import("../automation/AutomationView.vue"));
 
@@ -401,88 +401,26 @@ function triggerAllocForMember(userId: number) {
               </IsleDisclosure>
             </template>
 
-            <template v-if="settingsGroup === 'account'">
-              <IsleGroupedList title="账号与安全" subtitle="当前登录身份与密码安全设置" flush>
-                <div class="account-row">
-                  <div class="settings-member-lead">
-                    <span class="settings-avatar" aria-hidden="true">{{ user.username.slice(0, 1).toUpperCase() }}</span>
-                    <div class="settings-member-meta">
-                      <strong class="settings-row-title">
-                        <span>{{ user.username }}</span>
-                        <IsleBadge :variant="user.role === 'admin' ? 'accent' : 'neutral'" size="sm">{{ user.role === "admin" ? "管理员" : "家庭成员" }}</IsleBadge>
-                        <IsleBadge variant="online" size="sm" dot>当前已登录</IsleBadge>
-                      </strong>
-                      <small>{{ user.role === "admin" ? "拥有存储管理、成员授权与系统维护权限。" : "家庭成员账号与目录配额由管理员统一维护。" }}</small>
-                    </div>
-                  </div>
-                </div>
-
-                <button type="button" class="settings-nav-row" @click="openOwnPasswordModal">
-                  <div class="settings-nav-row-lead">
-                    <span class="settings-row-icon" aria-hidden="true"><KeyRound :size="16" /></span>
-                    <div><strong>修改登录密码</strong><small>更新密码后将自动下线其他所有已登录设备</small></div>
-                  </div>
-                  <ChevronRight :size="16" class="settings-row-chevron" aria-hidden="true" />
-                </button>
-              </IsleGroupedList>
-
-              <UserStoragePanel v-if="user.role !== 'admin'" mode="users" :admin="false" />
-
-              <IsleGroupedList title="登录设备与会话" subtitle="查看已登录终端与最近活跃时间，支持单设备远程下线" flush>
-                <template #actions>
-                  <span v-if="sessionsUpdatedAt" class="settings-updated-at">{{ formatUpdatedTime(sessionsUpdatedAt) }}</span>
-                  <IsleButton variant="ghost" size="sm" :loading="sessionsLoading" aria-label="刷新登录设备" title="刷新登录设备" @click="refreshSessionsSilent">
-                    <template #icon><RefreshCw :size="14" /></template>
-                  </IsleButton>
-                  <IsleButton v-if="sessionsLoaded && loginSessions.length > 1" variant="danger" size="sm" :disabled="sessionsLoading" @click="revokeLoginSession('others')">
-                    退出其他设备
-                  </IsleButton>
-                </template>
-                <div v-if="!sessionsLoaded && !sessionsLoading" class="settings-empty-pad">
-                  <IsleEmpty compact :icon="ShieldCheck" title="正在同步已登录设备…" />
-                </div>
-                <div v-else-if="sessionsLoaded && !loginSessions.length" class="settings-empty-pad">
-                  <IsleEmpty compact description="没有可显示的有效会话。" />
-                </div>
-                <TransitionGroup v-else name="isle-list" tag="div" class="settings-grouped-rows">
-                  <div v-for="session in loginSessions" :key="session.id" class="account-row">
-                    <div>
-                      <strong class="settings-row-title">
-                        <span>{{ session.deviceLabel || (session.current ? "当前设备" : "未知终端") }}</span>
-                        <IsleBadge :variant="session.current ? 'online' : 'neutral'" size="sm" :dot="session.current">
-                          {{ session.current ? "本机当前会话" : "远程在线设备" }}
-                        </IsleBadge>
-                        <IsleBadge v-if="session.clientIp" variant="neutral" size="sm">{{ session.clientIp }}</IsleBadge>
-                      </strong>
-                      <small class="settings-tabular">
-                        登录：{{ formatDateTime(session.createdAt * 1000) }}<template v-if="session.lastSeenAt"> · 最近活跃：{{ formatDateTime(session.lastSeenAt * 1000) }}</template> · 到期：{{ formatDateTime(session.expiresAt * 1000) }}
-                      </small>
-                    </div>
-                    <IsleButton :variant="session.current ? 'glass' : 'danger'" size="sm" :disabled="sessionsLoading" @click="revokeLoginSession(session)">
-                      {{ session.current ? "退出本机" : "远程下线" }}
-                    </IsleButton>
-                  </div>
-                </TransitionGroup>
-                <template v-if="sessionsTruncated || sessionsError || sessionsMessage" #footnote>
-                  <div class="settings-foot-stack">
-                    <span v-if="sessionsTruncated">仅显示最近 100 条会话，可选择退出其他所有设备。</span>
-                    <IsleBanner v-if="sessionsError" type="error" compact role="alert" :message="sessionsError" />
-                    <IsleBanner v-if="sessionsMessage" type="info" compact role="status" :message="sessionsMessage" />
-                  </div>
-                </template>
-              </IsleGroupedList>
-
-              <IsleDisclosure
-                v-if="user.role !== 'admin' && rootFeatureContextReady"
-                v-model="pendingMediaOpen"
-                title="缺失媒体记录核对"
-                subtitle="移动或重命名媒体文件后，重新关联收藏与观看进度"
-                :icon="Images"
-              >
-                <PendingMedia v-if="pendingMediaOpen" :key="rootViewKey" :root-id="selectedRootID" :root-generation="selectedRootGeneration" :admin="false" />
-              </IsleDisclosure>
-              <IsleBanner v-else-if="user.role !== 'admin'" type="info" compact message="选择硬盘后可检查自己的缺失媒体记录。" />
-            </template>
+            <AccountSecuritySection
+              v-if="settingsGroup === 'account'"
+              :user="user"
+              :login-sessions="loginSessions"
+              :sessions-loading="sessionsLoading"
+              :sessions-loaded="sessionsLoaded"
+              :sessions-truncated="sessionsTruncated"
+              :sessions-error="sessionsError"
+              :sessions-message="sessionsMessage"
+              :sessions-updated-label="formatUpdatedTime(sessionsUpdatedAt)"
+              :root-feature-context-ready="rootFeatureContextReady"
+              :pending-media-open="pendingMediaOpen"
+              :root-view-key="rootViewKey"
+              :selected-root-id="selectedRootID"
+              :selected-root-generation="selectedRootGeneration"
+              @open-password="openOwnPasswordModal"
+              @refresh-sessions="refreshSessionsSilent"
+              @revoke-session="revokeLoginSession"
+              @update:pending-media-open="pendingMediaOpen = $event"
+            />
           </div>
         </Transition>
       </div>

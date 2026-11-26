@@ -2,14 +2,14 @@
 .settings-page {
   display: flex;
   flex-direction: column;
-  max-width: 1120px;
+  max-width: 1060px;
   margin: 0 auto;
   width: 100%;
 }
 .settings-workspace {
   display: grid;
-  grid-template-columns: 212px minmax(0, 1fr);
-  gap: 24px;
+  grid-template-columns: 204px minmax(0, 1fr);
+  gap: 28px;
   align-items: start;
 }
 .settings-page .settings-workspace .settings-nav {
@@ -100,7 +100,7 @@
 .settings-stack {
   display: flex;
   flex-direction: column;
-  gap: 14px;
+  gap: 20px;
   min-width: 0;
 }
 .settings-pane-fade-enter-active {
@@ -131,6 +131,8 @@
 }
 .settings-nav-row {
   width: 100%;
+  min-height: 56px;
+  padding: 13px 16px;
   border: 0;
   background: transparent;
   color: var(--text-primary);
@@ -141,6 +143,7 @@
   text-align: left;
   cursor: pointer;
   font: inherit;
+  transition: background-color var(--motion-fast, 160ms) ease;
 }
 .settings-nav-row:hover {
   background: var(--fluid-card-hover);
@@ -155,7 +158,7 @@
   position: relative;
 }
 .settings-grouped-rows > * {
-  padding: 12px 16px;
+  padding: 13px 16px;
   margin: 0;
   border-radius: 0;
   border: 0;
@@ -754,6 +757,7 @@ iframe.preview-video {
   .isle-modal-body .account-form input,
   .settings-page .settings-workspace .settings-nav button,
   .settings-nav-icon,
+  .settings-nav-row,
   .settings-pane-fade-enter-active,
   .settings-pane-fade-leave-active,
   .isle-list-enter-active,
