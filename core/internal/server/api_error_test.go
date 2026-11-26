@@ -93,4 +93,19 @@ func TestAPIErrorCatalogsAreCompleteAndDisjoint(t *testing.T) {
 			t.Fatalf("duplicate error code %q across apiErrorCatalog and apiErrorDomainCatalog", code)
 		}
 	}
+	requiredDomainCodes := []string{
+		"invalid_zip_archive",
+		"archive_limit_exceeded",
+		"archive_unsafe_entry",
+		"unsupported_file_identity",
+		"upload_begin_uncertain",
+		"invalid_chunk_size",
+		"invalid_offset",
+		"storage_accounting_uncertain",
+	}
+	for _, code := range requiredDomainCodes {
+		if _, ok := apiErrorDomainCatalog[code]; !ok {
+			t.Fatalf("missing required domain error code %q in apiErrorDomainCatalog", code)
+		}
+	}
 }

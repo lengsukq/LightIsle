@@ -9,6 +9,7 @@ import (
 	"image/color"
 	"image/png"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -300,6 +301,9 @@ echo "[download] 100.0% of   1.00KiB"
 		Publisher:   publisher,
 		CanImport:   func(int64, string) bool { return allowImport.Load() },
 		CanFetch:    func(uid int64) bool { return uid == owner.ID },
+		LookupIPAddr: func(_ context.Context, _ string) ([]net.IPAddr, error) {
+			return []net.IPAddr{{IP: net.ParseIP("93.184.216.34")}}, nil
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -442,5 +446,108 @@ func TestWebArchiveEndToEndWithoutAria2AndSSRFBlockedByDefault(t *testing.T) {
 	meter, err := accounts.StorageMeter(session, member.ID)
 	if err != nil || meter.UsedBytes != int64(len(content)) {
 		t.Fatalf("webarchive quota not charged: %+v %v", meter, err)
+	}
+}
+
+func TestYtDlpSSRFMaxBytesCancelRetryAndFFmpegInjection(t *testing.T) {
+	data, _, reg, accounts, owner, _, _, _, locationPath := setupScopedRegistryEnv(t)
+
+	// Verify helper injects --ffmpeg-location before -- and appends Homebrew PATH.
+	injected := injectYtDlpFFmpegLocation([]string{"--no-exec", "--", "https://example.com/v"}, "/opt/homebrew/bin/ffmpeg")
+	if len(injected) < 4 || injected[len(injected)-4] != "--ffmpeg-location" || injected[len(injected)-3] != "/opt/homebrew/bin/ffmpeg" || injected[len(injected)-2] != "--" {
+		t.Fatalf("unexpected injected args: %v", injected)
+	}
+	env := withTrustedHomebrewPATH([]string{"PATH=/usr/bin:/bin"})
+	if !strings.Contains(env[0], "/opt/homebrew/bin") || !strings.Contains(env[0], "/usr/local/bin") {
+		t.Fatalf("missing Homebrew PATH entries: %v", env)
+	}
+
+	mockBin := filepath.Join(data, "mock-yt-dlp-hardened")
+	script := `#!/bin/sh
+set -eu
+out_dir=""
+url=""
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --paths) out_dir="$2"; shift 2 ;;
+    --) shift; url="${1:-}"; break ;;
+    *) shift ;;
+  esac
+done
+case "$url" in
+  *oversize*)
+    dd if=/dev/zero of="$out_dir/huge.bin" bs=1024 count=64 2>/dev/null
+    sleep 1
+    ;;
+  *race-slow*)
+    if [ ! -f "$out_dir/../retried.flag" ]; then
+      touch "$out_dir/../retried.flag"
+      sleep 2
+      exit 1
+    fi
+    printf 'retry-ok-bytes' > "$out_dir/retried.mp4"
+    ;;
+esac
+`
+	if err := os.WriteFile(mockBin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	m, err := New(Options{
+		DataDir:     data,
+		YtDlpBinary: mockBin,
+		Publisher:   NewRegistryPublisher(reg, accounts),
+		CanImport:   func(int64, string) bool { return true },
+		CanFetch:    func(int64) bool { return true },
+		LookupIPAddr: func(_ context.Context, host string) ([]net.IPAddr, error) {
+			if host == "ssrf-internal.example" {
+				return []net.IPAddr{{IP: net.ParseIP("192.168.1.50")}}, nil
+			}
+			return []net.IPAddr{{IP: net.ParseIP("93.184.216.34")}}, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.Close()
+
+	// 1. SSRF DNS resolution to private IP must be blocked before spawning yt-dlp.
+	ssrfTask, err := m.CreateWithEngine(owner.ID, EngineYtDlp, "https://ssrf-internal.example/video", locationPath, 0, EngineOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ssrfDone := waitForTaskTerminal(t, m, owner.ID, ssrfTask.ID)
+	if ssrfDone.Status != StatusFailed || ssrfDone.Error != webarchive.ErrBlockedAddress.Error() {
+		t.Fatalf("expected SSRF failure, got %+v", ssrfDone)
+	}
+
+	// 2. Runtime MaxBytes monitor aborts oversize staging and cleans staging dir.
+	bigTask, err := m.CreateWithEngine(owner.ID, EngineYtDlp, "https://example.com/oversize", locationPath, 1024, EngineOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bigDone := waitForTaskTerminal(t, m, owner.ID, bigTask.ID)
+	if bigDone.Status != StatusFailed || bigDone.Error != "download_exceeds_limit" {
+		t.Fatalf("expected download_exceeds_limit, got %+v", bigDone)
+	}
+	if _, statErr := os.Stat(m.stagingDir(bigTask.ID)); !errors.Is(statErr, os.ErrNotExist) {
+		t.Fatalf("expected staging cleaned on oversize failure, statErr=%v", statErr)
+	}
+
+	// 3. Cancel immediately followed by Retry must not let cancelled run clobber retried run!
+	raceTask, err := m.CreateWithEngine(owner.ID, EngineYtDlp, "https://example.com/race-slow", locationPath, 0, EngineOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitForTaskRunning(t, m, owner.ID, raceTask.ID)
+	if _, err := m.Cancel(owner.ID, raceTask.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.Action(owner.ID, raceTask.ID, "retry"); err != nil {
+		t.Fatal(err)
+	}
+	raceDone := waitForTaskTerminal(t, m, owner.ID, raceTask.ID)
+	if raceDone.Status != StatusCompleted || raceDone.Filename != "retried.mp4" {
+		t.Fatalf("expected retried task to complete cleanly, got %+v", raceDone)
 	}
 }

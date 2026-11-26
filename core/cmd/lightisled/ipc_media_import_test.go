@@ -498,3 +498,56 @@ func TestMediaImportYMArchiveAndCancel(t *testing.T) {
 		t.Fatal("expected IsRunning false after completion")
 	}
 }
+
+type observingWriter struct {
+	syncBuffer
+	onWrite func(s string)
+}
+
+func (w *observingWriter) Write(p []byte) (int, error) {
+	if w.onWrite != nil {
+		w.onWrite(string(p))
+	}
+	return w.syncBuffer.Write(p)
+}
+
+func TestMediaImportClearsRunningBeforeCompleteEventAndReportsPartialErrors(t *testing.T) {
+	_, volumesDir, cardDir, _, registry, store, root, member := setupMediaImportFixture(t)
+	ts := time.Date(2026, 11, 20, 9, 15, 0, 0, time.Local)
+	writeTestMediaFile(t, filepath.Join(cardDir, "DCIM", "OK.JPG"), []byte("ok-photo-bytes"), ts)
+
+	var runningAtComplete bool
+	var sawComplete bool
+	var ctl *mediaImportControl
+	obs := &observingWriter{}
+	obs.onWrite = func(line string) {
+		if strings.HasPrefix(line, "LIGHTISLE_MEDIA_IMPORT ") {
+			encoded := strings.TrimSpace(strings.TrimPrefix(line, "LIGHTISLE_MEDIA_IMPORT "))
+			raw, err := base64.RawURLEncoding.DecodeString(encoded)
+			if err == nil && strings.Contains(string(raw), `"operation":"complete"`) {
+				sawComplete = true
+				runningAtComplete = ctl.IsRunning()
+			}
+		}
+	}
+	ctl = newMediaImportControl(registry, store, nil, nil)
+	ctl.output = obs
+	ctl.allowedSourcePrefix = volumesDir
+
+	ctl.handle(context.Background(), encodeMediaImportCommand("start", mediaImportRequest{
+		RequestID:   "eject-race-1",
+		SourcePath:  cardDir,
+		RootID:      root.ID,
+		Generation:  root.Generation,
+		UserID:      member.ID,
+		Category:    "photos",
+		ArchiveMode: "ymd",
+	}))
+	ctl.Wait()
+	if !sawComplete {
+		t.Fatal("never observed complete event")
+	}
+	if runningAtComplete {
+		t.Fatal("IsRunning() was still true when complete event was emitted (triggers disk_busy on immediate eject)")
+	}
+}

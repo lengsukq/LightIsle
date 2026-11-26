@@ -53,6 +53,7 @@ type Manager struct {
 	externalVolumesFn                                                          func() []ExternalVolumeInfo
 	externalPrefixes                                                           []string
 	reminderNotifier                                                           func(code, title, body, severity string)
+	reminderReadyCheck                                                         func() bool
 	reminderScanInterval                                                       time.Duration
 	reminderScannerStarted                                                     bool
 	reminderMu                                                                 sync.Mutex

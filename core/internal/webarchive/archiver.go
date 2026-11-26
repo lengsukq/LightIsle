@@ -80,14 +80,28 @@ type Result struct {
 }
 
 var (
-	carrierNAT   = mustCIDR("100.64.0.0/10")
-	thisNetwork  = mustCIDR("0.0.0.0/8")
-	ietfProtocol = mustCIDR("192.0.0.0/24")
-	testNet1     = mustCIDR("192.0.2.0/24")
-	benchmarkNet = mustCIDR("198.18.0.0/15")
-	testNet2     = mustCIDR("198.51.100.0/24")
-	testNet3     = mustCIDR("203.0.113.0/24")
-	reservedNet  = mustCIDR("240.0.0.0/4")
+	carrierNAT      = mustCIDR("100.64.0.0/10")
+	thisNetwork     = mustCIDR("0.0.0.0/8")
+	ietfProtocol    = mustCIDR("192.0.0.0/24")
+	testNet1        = mustCIDR("192.0.2.0/24")
+	benchmarkNet    = mustCIDR("198.18.0.0/15")
+	testNet2        = mustCIDR("198.51.100.0/24")
+	testNet3        = mustCIDR("203.0.113.0/24")
+	reservedNet     = mustCIDR("240.0.0.0/4")
+	nat64WellKnown  = mustCIDR("64:ff9b::/96")
+	nat64LocalUse   = mustCIDR("64:ff9b:1::/48")
+	sixToFourNet    = mustCIDR("2002::/16")
+	teredoNet       = mustCIDR("2001::/32")
+	ipv6DiscardNet  = mustCIDR("100::/64")
+	ipv6DocNet      = mustCIDR("2001:db8::/32")
+	ipv4BlockedNets = []*net.IPNet{
+		carrierNAT, thisNetwork, ietfProtocol,
+		testNet1, benchmarkNet, testNet2, testNet3, reservedNet,
+	}
+	ipv6BlockedNets = []*net.IPNet{
+		nat64WellKnown, nat64LocalUse, sixToFourNet,
+		teredoNet, ipv6DiscardNet, ipv6DocNet,
+	}
 )
 
 func mustCIDR(cidr string) *net.IPNet {
@@ -146,13 +160,16 @@ func IsBlockedIP(ip net.IP) bool {
 		return true
 	}
 	if ip.To4() != nil {
-		for _, blocked := range []*net.IPNet{
-			carrierNAT, thisNetwork, ietfProtocol,
-			testNet1, benchmarkNet, testNet2, testNet3, reservedNet,
-		} {
+		for _, blocked := range ipv4BlockedNets {
 			if blocked.Contains(ip) {
 				return true
 			}
+		}
+		return false
+	}
+	for _, blocked := range ipv6BlockedNets {
+		if blocked.Contains(ip) {
+			return true
 		}
 	}
 	return false
@@ -327,16 +344,14 @@ func Archive(ctx context.Context, rawURL string, opts Options) (Result, error) {
 			title = fallbackTitle(finalURL)
 		}
 		contentRoot := pickContentRoot(doc)
+		wrapperOverhead := int64(len(buildArchiveDocument(title, finalURL.String(), archivedAt, "")))
 		state := &sanitizeState{
-			ctx:           reqCtx,
-			client:        client,
-			baseURL:       finalURL,
-			cfg:           cfg,
-			remainingSize: max(0, cfg.MaxTotalBytes-int64(len(rawBody))),
+			ctx:     reqCtx,
+			client:  client,
+			baseURL: finalURL,
+			cfg:     cfg,
 		}
-		var fragment bytes.Buffer
-		state.renderChildren(&fragment, contentRoot)
-		bodyHTML = fragment.String()
+		bodyHTML = state.sanitizeAndInline(contentRoot, cfg.MaxTotalBytes-wrapperOverhead)
 		inlined = state.inlinedImages
 		skipped = state.skippedImages
 	}

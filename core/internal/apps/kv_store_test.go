@@ -166,7 +166,32 @@ func TestAppKVStoreCRUDLockingCSRFAndBackupRoundTrip(t *testing.T) {
 		t.Fatalf("expected 304 on If-None-Match, got %d", resp304.StatusCode)
 	}
 
-	// 9. Optimistic locking with If-Match
+	// 9. Optimistic locking with If-Match and If-None-Match: *
+	createIfAbsent := func(key, body string) *http.Response {
+		req, _ := http.NewRequest(http.MethodPut, srv.URL+"/apps/house-info/__lightisle_kv/"+key, strings.NewReader(body))
+		req.Header.Set("X-Test-User", "member")
+		req.Header.Set("X-LightIsle-Request", "1")
+		req.Header.Set("If-None-Match", "*")
+		r, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return r
+	}
+	rInmConflict := createIfAbsent("state", `[{"id":"dup"}]`)
+	var inmBody map[string]string
+	_ = json.NewDecoder(rInmConflict.Body).Decode(&inmBody)
+	inmETag := rInmConflict.Header.Get("ETag")
+	rInmConflict.Body.Close()
+	if rInmConflict.StatusCode != http.StatusPreconditionFailed || inmBody["etag"] != etag1 || inmETag != etag1 {
+		t.Fatalf("expected 412 for If-None-Match: * on existing key, got status=%d body=%+v hdr=%q", rInmConflict.StatusCode, inmBody, inmETag)
+	}
+	rInmOK := createIfAbsent("brand_new", `{"created":true}`)
+	rInmOK.Body.Close()
+	if rInmOK.StatusCode != http.StatusOK {
+		t.Fatalf("expected 200 for If-None-Match: * on missing key, got %d", rInmOK.StatusCode)
+	}
+
 	resp = doReq(http.MethodPut, "/apps/house-info/__lightisle_kv/state", "member", "1", `"stale-etag"`, `[{"id":"2"}]`)
 	var conflictBody map[string]string
 	_ = json.NewDecoder(resp.Body).Decode(&conflictBody)

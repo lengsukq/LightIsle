@@ -161,6 +161,7 @@ func main() {
 	execPath, _ := os.Executable()
 	appsManager := apps.NewManager(dataDir, execPath, automationManager)
 	appsManager.SetConfiguredChannels(notifyHub.ConfiguredChannels)
+	appsManager.SetReminderReadyCheck(notifyHub.Configured)
 	appsManager.SetReminderNotifier(newAppReminderNotifier(notifyHub))
 	appsManager.SetExternalVolumesProvider(func() []apps.ExternalVolumeInfo {
 		vols := system.Volumes()

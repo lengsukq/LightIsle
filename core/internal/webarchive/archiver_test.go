@@ -47,6 +47,12 @@ func TestIsBlockedIPCoversAllSSRFClasses(t *testing.T) {
 		"::",
 		"100.64.0.1",
 		"255.255.255.255",
+		"64:ff9b::127.0.0.1",
+		"64:ff9b:1::10.0.0.1",
+		"2002:7f00:0001::1",
+		"2001:0:4136:e378:8000:63bf:3fff:fdd2",
+		"100::1",
+		"2001:db8::1",
 	}
 	for _, raw := range blocked {
 		ip := net.ParseIP(raw)
@@ -233,5 +239,63 @@ func TestValidateURLRejectsUnsafeSchemes(t *testing.T) {
 		if err := ValidateURL(bad); !errors.Is(err, ErrInvalidURL) {
 			t.Errorf("expected ErrInvalidURL for %q, got %v", bad, err)
 		}
+	}
+}
+
+func TestArchiveLazyImageMagicBytesBudgetAndWarmGalleryPalette(t *testing.T) {
+	pngBytes := tinyPNG(t)
+	validAVIF := []byte{0x00, 0x00, 0x00, 0x18, 'f', 't', 'y', 'p', 'a', 'v', 'i', 'f', 0, 0, 0, 0, 'm', 'i', 'f', '1', 'a', 'v', 'i', 'f'}
+	validICO := []byte{0x00, 0x00, 0x01, 0x00, 0x01, 0x00, 1, 1, 0, 0, 1, 0, 32, 0}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/page":
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			bloat := strings.Repeat("var junk = 1234567890;\n", 400) // ~9 KiB of script stripped by sanitizer
+			_, _ = w.Write([]byte(`<!doctype html><html><head><title>Lazy Test</title><script>` + bloat + `</script></head><body><article>
+				<p>Clean body</p>
+				<img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" data-src="/real.png" alt="lazy">
+				<img src="/spoof-avif" alt="spoof-avif">
+				<img src="/real.avif" alt="real-avif">
+				<img src="/real.ico" alt="real-ico">
+				<img src="data:image/png;base64,PHNjcmlwdD5hbGVydCgxKTwvc2NyaXB0Pg==" alt="spoof-data">
+			</article></body></html>`))
+		case "/real.png":
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write(pngBytes)
+		case "/spoof-avif":
+			w.Header().Set("Content-Type", "image/avif")
+			_, _ = w.Write([]byte("<html><script>evil()</script></html>"))
+		case "/real.avif":
+			w.Header().Set("Content-Type", "image/avif")
+			_, _ = w.Write(validAVIF)
+		case "/real.ico":
+			w.Header().Set("Content-Type", "image/x-icon")
+			_, _ = w.Write(validICO)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	// MaxTotalBytes (12 KiB) is larger than sanitized output + images, even though raw HTML is ~9.5 KiB.
+	res, err := Archive(context.Background(), srv.URL+"/page", Options{
+		AllowHosts:    []string{"127.0.0.1", "::1"},
+		MaxTotalBytes: 12 * 1024,
+	})
+	if err != nil {
+		t.Fatalf("Archive failed: %v", err)
+	}
+	if res.InlinedImages != 3 || res.SkippedImages != 2 {
+		t.Fatalf("expected 3 inlined (lazy png + avif + ico) and 2 skipped (spoof avif + spoof data), got inlined=%d skipped=%d", res.InlinedImages, res.SkippedImages)
+	}
+	doc := string(res.HTML)
+	for _, want := range []string{"data:image/png;base64,", "data:image/avif;base64,", "data:image/x-icon;base64,", "#0E6B74", "#F7F6F3", "#5CC8D4", "#0E0E0D"} {
+		if !strings.Contains(doc, want) {
+			t.Errorf("expected archive HTML to contain %q", want)
+		}
+	}
+	if strings.Contains(doc, "PHNjcmlwdD") {
+		t.Fatalf("spoofed data URI was not rejected")
 	}
 }

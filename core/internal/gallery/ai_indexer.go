@@ -227,6 +227,40 @@ type aiCandidate struct {
 	relPath  string
 	size     int64
 	modified int64
+	priority bool
+}
+
+func (l *Library) requeuePriorityAI(paths []string) {
+	if len(paths) == 0 {
+		return
+	}
+	now := l.currentTime()
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.aiPrioritySet == nil {
+		l.aiPrioritySet = make(map[string]struct{})
+	}
+	prepended := make([]aiPriorityItem, 0, len(paths))
+	for _, rel := range paths {
+		clean := cleanPriorityRelPath(rel)
+		if clean == "" {
+			continue
+		}
+		if _, exists := l.aiPrioritySet[clean]; exists {
+			continue
+		}
+		prepended = append(prepended, aiPriorityItem{relPath: clean, enqueuedAt: now})
+		l.aiPrioritySet[clean] = struct{}{}
+	}
+	if len(prepended) == 0 {
+		return
+	}
+	l.aiPriority = append(prepended, l.aiPriority...)
+	for len(l.aiPriority) > maxPriorityAIQueueLen {
+		evicted := l.aiPriority[len(l.aiPriority)-1]
+		l.aiPriority = l.aiPriority[:len(l.aiPriority)-1]
+		delete(l.aiPrioritySet, evicted.relPath)
+	}
 }
 
 func (l *Library) popPriorityAICandidates(share string, limit int) []aiCandidate {
@@ -267,6 +301,7 @@ func (l *Library) popPriorityAICandidates(share string, limit int) []aiCandidate
 		removePaths[item.relPath] = struct{}{}
 		needsIndex := !aiVer.Valid || aiVer.Int64 < aiSchemaVersion || srcSize.Int64 != c.size || srcMod.Int64 != c.modified
 		if needsIndex {
+			c.priority = true
 			selected = append(selected, c)
 		}
 	}
@@ -338,8 +373,14 @@ func (l *Library) processAIBatch(share string, analyzer aiBatchAnalyzer, candida
 	}()
 
 	nowUnix := l.currentTime().Unix()
-	for _, c := range candidates {
+	var unopenedPriority []string
+	for idx, c := range candidates {
 		if l.ctx.Err() != nil || l.Status().Running || l.AIPaused() {
+			for _, rem := range candidates[idx:] {
+				if rem.priority {
+					unopenedPriority = append(unopenedPriority, rem.relPath)
+				}
+			}
 			break
 		}
 		file, info, err := l.storage.Read(c.relPath)
@@ -359,36 +400,65 @@ func (l *Library) processAIBatch(share string, analyzer aiBatchAnalyzer, candida
 		})
 	}
 	if len(inputs) == 0 {
+		l.requeuePriorityAI(unopenedPriority)
 		return false, 0
 	}
 
 	results, err := analyzer.AnalyzeBatch(l.ctx, inputs)
 	if err != nil {
 		if errors.Is(err, mediaworker.ErrThrottled) {
+			requeue := make([]string, 0, len(valid)+len(unopenedPriority))
+			for _, c := range valid {
+				if c.priority {
+					requeue = append(requeue, c.relPath)
+				}
+			}
+			requeue = append(requeue, unopenedPriority...)
+			l.requeuePriorityAI(requeue)
 			return true, 0
 		}
 		if errors.Is(err, mediaworker.ErrUnavailable) || errors.Is(err, context.Canceled) {
+			requeue := make([]string, 0, len(valid)+len(unopenedPriority))
+			for _, c := range valid {
+				if c.priority {
+					requeue = append(requeue, c.relPath)
+				}
+			}
+			requeue = append(requeue, unopenedPriority...)
+			l.requeuePriorityAI(requeue)
 			return false, 0
 		}
 		for _, c := range valid {
 			_ = l.recordAIStateOnly(c.id, c.size, c.modified, "failed", nowUnix)
 		}
+		l.requeuePriorityAI(unopenedPriority)
 		return false, 0
 	}
 
 	throttled := false
 	processed := 0
-	for i, res := range results {
-		if i >= len(valid) {
-			break
-		}
-		if res.Status == "throttled" {
-			throttled = true
+	var throttledPriority []string
+	for i, c := range valid {
+		if i >= len(results) {
+			if throttled && c.priority {
+				throttledPriority = append(throttledPriority, c.relPath)
+			}
 			continue
 		}
-		if l.persistAIAnalysis(share, valid[i], res, nowUnix) == nil {
+		res := results[i]
+		if res.Status == "throttled" {
+			throttled = true
+			if c.priority {
+				throttledPriority = append(throttledPriority, c.relPath)
+			}
+			continue
+		}
+		if l.persistAIAnalysis(share, c, res, nowUnix) == nil {
 			processed++
 		}
+	}
+	if len(throttledPriority) > 0 || len(unopenedPriority) > 0 {
+		l.requeuePriorityAI(append(throttledPriority, unopenedPriority...))
 	}
 	return throttled, processed
 }

@@ -27,10 +27,16 @@ const (
 )
 
 type archiveEntryDescriptor struct {
-	Name string `json:"name"`
-	Size int64  `json:"size"`
-	MIME string `json:"mime"`
-	Kind string `json:"kind"`
+	Index int    `json:"index"`
+	Name  string `json:"name"`
+	Size  int64  `json:"size"`
+	MIME  string `json:"mime"`
+	Kind  string `json:"kind"`
+}
+
+func cleanReadableZipEntryPath(raw string) (string, bool, error) {
+	normalized := strings.ReplaceAll(raw, "\\", "/")
+	return cleanZipEntryPath(normalized)
 }
 
 func readableArchiveFormat(relPath string) (string, bool) {
@@ -69,8 +75,10 @@ func classifyArchiveEntryMIME(entryName string) (mimeType, kind string, ok bool)
 		return "image/bmp", "image", true
 	case ".svg":
 		return "image/svg+xml", "image", true
-	case ".xhtml", ".html", ".htm":
+	case ".xhtml":
 		return "application/xhtml+xml; charset=utf-8", "document", true
+	case ".html", ".htm":
+		return "text/html; charset=utf-8", "document", true
 	case ".xml", ".opf", ".ncx", ".smil":
 		return "application/xml; charset=utf-8", "metadata", true
 	case ".css":
@@ -160,8 +168,8 @@ func (a *API) fileArchiveEntries(w http.ResponseWriter, r *http.Request) {
 
 	entries := make([]archiveEntryDescriptor, 0, len(zr.File))
 	var cumulative int64
-	for _, item := range zr.File {
-		rel, isDir, err := cleanZipEntryPath(item.Name)
+	for idx, item := range zr.File {
+		rel, isDir, err := cleanReadableZipEntryPath(item.Name)
 		if err != nil || isDir || item.FileInfo().IsDir() {
 			continue
 		}
@@ -186,14 +194,18 @@ func (a *API) fileArchiveEntries(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		entries = append(entries, archiveEntryDescriptor{
-			Name: rel,
-			Size: size,
-			MIME: mimeType,
-			Kind: kind,
+			Index: idx,
+			Name:  strings.ToValidUTF8(rel, "\uFFFD"),
+			Size:  size,
+			MIME:  mimeType,
+			Kind:  kind,
 		})
 	}
 	sort.Slice(entries, func(i, j int) bool {
-		return naturalPathLess(entries[i].Name, entries[j].Name)
+		if entries[i].Name != entries[j].Name {
+			return naturalPathLess(entries[i].Name, entries[j].Name)
+		}
+		return entries[i].Index < entries[j].Index
 	})
 	jsonReply(w, http.StatusOK, map[string]any{
 		"path":          cleanPath,
@@ -206,16 +218,34 @@ func (a *API) fileArchiveEntries(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) fileArchiveEntry(w http.ResponseWriter, r *http.Request) {
+	rawIndex := strings.TrimSpace(r.URL.Query().Get("index"))
 	rawEntry := r.URL.Query().Get("entry")
-	cleanEntry, isDir, err := cleanZipEntryPath(rawEntry)
-	if err != nil || isDir || shouldSkipMacZipMetadata(cleanEntry) {
-		writeAPIErrorCode(w, http.StatusBadRequest, "path_not_allowed")
-		return
-	}
-	mimeType, _, allowed := classifyArchiveEntryMIME(cleanEntry)
-	if !allowed {
-		writeAPIErrorCode(w, http.StatusUnsupportedMediaType, "archive_entry_type_forbidden")
-		return
+
+	var requestedIdx int
+	useIndex := rawIndex != ""
+	var cleanEntry string
+	var mimeType string
+	if useIndex {
+		parsedIdx, parseErr := strconv.Atoi(rawIndex)
+		if parseErr != nil || parsedIdx < 0 {
+			writeAPIErrorCode(w, http.StatusBadRequest, "path_not_allowed")
+			return
+		}
+		requestedIdx = parsedIdx
+	} else {
+		var isDir bool
+		var err error
+		cleanEntry, isDir, err = cleanReadableZipEntryPath(rawEntry)
+		if err != nil || isDir || shouldSkipMacZipMetadata(cleanEntry) {
+			writeAPIErrorCode(w, http.StatusBadRequest, "path_not_allowed")
+			return
+		}
+		var allowed bool
+		mimeType, _, allowed = classifyArchiveEntryMIME(cleanEntry)
+		if !allowed {
+			writeAPIErrorCode(w, http.StatusUnsupportedMediaType, "archive_entry_type_forbidden")
+			return
+		}
 	}
 
 	f, info, zr, cleanPath, _, ok := a.openReadableArchive(w, r)
@@ -225,14 +255,40 @@ func (a *API) fileArchiveEntry(w http.ResponseWriter, r *http.Request) {
 	defer f.Close()
 
 	var target *zip.File
-	for _, item := range zr.File {
-		rel, dirFlag, cleanErr := cleanZipEntryPath(item.Name)
-		if cleanErr != nil || dirFlag || item.FileInfo().IsDir() {
-			continue
+	var targetIdx int
+	var targetRel string
+	if useIndex {
+		if requestedIdx >= len(zr.File) {
+			writeAPIErrorCode(w, http.StatusNotFound, "not_found")
+			return
 		}
-		if rel == cleanEntry {
-			target = item
-			break
+		item := zr.File[requestedIdx]
+		rel, dirFlag, cleanErr := cleanReadableZipEntryPath(item.Name)
+		if cleanErr != nil || dirFlag || item.FileInfo().IsDir() || shouldSkipMacZipMetadata(rel) {
+			writeAPIErrorCode(w, http.StatusBadRequest, "archive_unsafe_entry")
+			return
+		}
+		var allowed bool
+		mimeType, _, allowed = classifyArchiveEntryMIME(rel)
+		if !allowed {
+			writeAPIErrorCode(w, http.StatusUnsupportedMediaType, "archive_entry_type_forbidden")
+			return
+		}
+		target = item
+		targetIdx = requestedIdx
+		targetRel = rel
+	} else {
+		for idx, item := range zr.File {
+			rel, dirFlag, cleanErr := cleanReadableZipEntryPath(item.Name)
+			if cleanErr != nil || dirFlag || item.FileInfo().IsDir() {
+				continue
+			}
+			if rel == cleanEntry {
+				target = item
+				targetIdx = idx
+				targetRel = rel
+				break
+			}
 		}
 	}
 	if target == nil {
@@ -248,7 +304,7 @@ func (a *API) fileArchiveEntry(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	etagSum := sha256.Sum256([]byte(cleanPath + "|" + cleanEntry + "|" + strconv.FormatInt(info.Size(), 16) + "|" + strconv.FormatInt(info.ModTime().UnixNano(), 16)))
+	etagSum := sha256.Sum256([]byte(cleanPath + "|" + strconv.Itoa(targetIdx) + "|" + targetRel + "|" + strconv.FormatInt(info.Size(), 16) + "|" + strconv.FormatInt(info.ModTime().UnixNano(), 16)))
 	etag := `"` + hex.EncodeToString(etagSum[:16]) + `"`
 	w.Header().Set("ETag", etag)
 	w.Header().Set("Cache-Control", "private, max-age=300")

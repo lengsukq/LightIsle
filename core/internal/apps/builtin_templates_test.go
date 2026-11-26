@@ -77,6 +77,23 @@ func TestBuiltInOfficialTemplates(t *testing.T) {
 		if reminderTemplates[id] && !strings.Contains(html, "buildReminders") {
 			t.Fatalf("template %s expected buildReminders integration for _reminders", id)
 		}
+		if !strings.Contains(html, "writeChain") || !strings.Contains(html, "If-None-Match") || !strings.Contains(html, "--accent-fg") {
+			t.Fatalf("template %s missing hardened KV serial queue or dark-mode contrast tokens", id)
+		}
+	}
+
+	// Spot-check template-specific fixes.
+	petHTML, _ := os.ReadFile(filepath.Join(dataDir, "plugins", "pet-care", "ui", "index.html"))
+	if !strings.Contains(string(petHTML), "删除当前宠物") || !strings.Contains(string(petHTML), `id="weightList"`) {
+		t.Fatalf("pet-care missing delete pet or delete weight controls")
+	}
+	menuHTML, _ := os.ReadFile(filepath.Join(dataDir, "plugins", "weekly-menu", "ui", "index.html"))
+	if !strings.Contains(string(menuHTML), "renderPantryAndStats") || !strings.Contains(string(menuHTML), ".catch(") {
+		t.Fatalf("weekly-menu missing draft preservation or copyText catch")
+	}
+	subHTML, _ := os.ReadFile(filepath.Join(dataDir, "plugins", "family-subscriptions", "ui", "index.html"))
+	if !strings.Contains(string(subHTML), "if (days === null)") {
+		t.Fatalf("family-subscriptions missing days === null guard")
 	}
 
 	spec, ok := ReadSpecResource("lightisle://specs/plugin-v2")

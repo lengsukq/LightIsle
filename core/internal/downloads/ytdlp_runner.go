@@ -2,23 +2,20 @@ package downloads
 
 import (
 	"bufio"
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"net"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
-	"strconv"
-	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
+
+	"github.com/lengsukq/lightisle/core/internal/ffmpegbin"
+	"github.com/lengsukq/lightisle/core/internal/webarchive"
 )
 
 const (
@@ -26,9 +23,12 @@ const (
 	EngineYtDlp      = "ytdlp"
 	EngineWebArchive = "webarchive"
 
-	maxYtDlpPlaylistItems = 20
-	ytdlpTimeout          = 30 * time.Minute
-	maxYtDlpStderrBytes   = 4 << 10
+	maxYtDlpPlaylistItems    = 20
+	ytdlpTimeout             = 30 * time.Minute
+	maxYtDlpStderrBytes      = 4 << 10
+	ytdlpSizePollInterval    = 250 * time.Millisecond
+	ytdlpDNSLookupTimeout    = 5 * time.Second
+	trustedHomebrewPathEntry = "/opt/homebrew/bin:/usr/local/bin"
 )
 
 // ErrYtDlpNotAvailable reports that yt-dlp is not installed on the host.
@@ -134,148 +134,6 @@ func (m *Manager) resolveYtDlp() (string, string) {
 	return binPath, version
 }
 
-// NormalizeEngine defaults an empty engine to aria2 and rejects unknown names.
-func NormalizeEngine(engine string) (string, error) {
-	switch strings.ToLower(strings.TrimSpace(engine)) {
-	case "", EngineAria2:
-		return EngineAria2, nil
-	case EngineYtDlp:
-		return EngineYtDlp, nil
-	case EngineWebArchive:
-		return EngineWebArchive, nil
-	default:
-		return "", ErrInput
-	}
-}
-
-// ValidateYtDlpURL enforces strict http/https-only URLs and rejects leading
-// dashes, embedded credentials, whitespace or control characters so URLs can
-// never act as yt-dlp CLI flags.
-func ValidateYtDlpURL(raw string) error {
-	if raw == "" || len(raw) > maxURLLength {
-		return ErrInput
-	}
-	if strings.HasPrefix(raw, "-") {
-		return ErrInput
-	}
-	for _, r := range raw {
-		if r <= 0x20 || r == 0x7f {
-			return ErrInput
-		}
-	}
-	parsed, err := url.Parse(raw)
-	if err != nil {
-		return ErrInput
-	}
-	switch strings.ToLower(parsed.Scheme) {
-	case "http", "https":
-	default:
-		return ErrInput
-	}
-	if parsed.Host == "" || parsed.Hostname() == "" || parsed.User != nil {
-		return ErrInput
-	}
-	if _, _, err := net.SplitHostPort(hostnamePort(parsed)); err != nil && parsed.Port() != "" {
-		return ErrInput
-	}
-	return nil
-}
-
-// ValidateEngineOptions validates and normalizes per-engine options.
-func ValidateEngineOptions(engine string, opts EngineOptions) (EngineOptions, error) {
-	if engine != EngineYtDlp {
-		return EngineOptions{}, nil
-	}
-	out := EngineOptions{
-		AllowPlaylist:    opts.AllowPlaylist,
-		PlaylistMaxItems: opts.PlaylistMaxItems,
-		Format:           strings.ToLower(strings.TrimSpace(opts.Format)),
-	}
-	switch out.Format {
-	case "", "best", "1080p", "720p", "audio":
-	default:
-		return EngineOptions{}, ErrInput
-	}
-	if out.PlaylistMaxItems < 0 || out.PlaylistMaxItems > maxYtDlpPlaylistItems {
-		return EngineOptions{}, ErrInput
-	}
-	if out.AllowPlaylist {
-		if out.PlaylistMaxItems == 0 {
-			out.PlaylistMaxItems = maxYtDlpPlaylistItems
-		}
-	} else {
-		out.PlaylistMaxItems = 0
-	}
-	return out, nil
-}
-
-func encodeEngineOptions(opts EngineOptions) (string, error) {
-	if opts.isZero() {
-		return "{}", nil
-	}
-	raw, err := json.Marshal(opts)
-	if err != nil {
-		return "", err
-	}
-	return string(raw), nil
-}
-
-func decodeEngineOptions(raw string) *EngineOptions {
-	trimmed := strings.TrimSpace(raw)
-	if trimmed == "" || trimmed == "{}" {
-		return nil
-	}
-	var opts EngineOptions
-	if err := json.Unmarshal([]byte(trimmed), &opts); err != nil || opts.isZero() {
-		return nil
-	}
-	return &opts
-}
-
-func buildYtDlpArgs(stagingDir, rawURL string, maxBytes int64, opts EngineOptions) ([]string, error) {
-	if err := ValidateYtDlpURL(rawURL); err != nil {
-		return nil, err
-	}
-	normOpts, err := ValidateEngineOptions(EngineYtDlp, opts)
-	if err != nil {
-		return nil, err
-	}
-	args := []string{
-		"--ignore-config",
-		"--no-exec",
-		"--no-overwrites",
-		"--restrict-filenames",
-		"--newline",
-		"--progress",
-		"--no-color",
-		"--paths", stagingDir,
-		"--output", "%(title).80s [%(id).20s].%(ext)s",
-	}
-	if normOpts.AllowPlaylist {
-		limit := normOpts.PlaylistMaxItems
-		if limit <= 0 || limit > maxYtDlpPlaylistItems {
-			limit = maxYtDlpPlaylistItems
-		}
-		args = append(args, "--yes-playlist", "--playlist-end", strconv.Itoa(limit))
-	} else {
-		args = append(args, "--no-playlist")
-	}
-	if maxBytes > 0 {
-		args = append(args, "--max-filesize", strconv.FormatInt(maxBytes, 10))
-	}
-	switch normOpts.Format {
-	case "1080p":
-		args = append(args, "-f", "bv*[height<=1080]+ba/b[height<=1080]/b")
-	case "720p":
-		args = append(args, "-f", "bv*[height<=720]+ba/b[height<=720]/b")
-	case "audio":
-		args = append(args, "-f", "ba/b")
-	}
-	// Terminate option parsing so rawURL can never be interpreted as a flag.
-	args = append(args, "--", rawURL)
-	return args, nil
-}
-
 func (m *Manager) registerTaskCancel(id string, cancel context.CancelFunc) uint64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -286,6 +144,20 @@ func (m *Manager) registerTaskCancel(id string, cancel context.CancelFunc) uint6
 	}
 	m.activeCancels[id] = activeTaskCancel{token: token, cancel: cancel}
 	return token
+}
+
+func (m *Manager) isActiveRunToken(id string, token uint64) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	current, ok := m.activeCancels[id]
+	return ok && current.token == token
+}
+
+func (m *Manager) hasActiveRun(id string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	_, ok := m.activeCancels[id]
+	return ok
 }
 
 func (m *Manager) clearTaskCancel(id string, token uint64) {
@@ -391,11 +263,13 @@ func (m *Manager) runYtDlpTask(id string) {
 	}
 	args, err := buildYtDlpArgs(staging, task.URL, task.MaxBytes, opts)
 	if err != nil {
+		_ = os.RemoveAll(staging)
 		m.failTask(id, ErrInput.Error(), "")
 		m.importMu.Unlock()
 		return
 	}
 	if err := m.update(id, "status", StatusRunning, "error", ""); err != nil {
+		_ = os.RemoveAll(staging)
 		m.importMu.Unlock()
 		return
 	}
@@ -408,11 +282,29 @@ func (m *Manager) runYtDlpTask(id string) {
 		m.clearTaskCancel(id, token)
 	}()
 
-	stderrTail, runErr := m.execYtDlp(runCtx, id, binPath, staging, args)
+	var stderrTail string
+	var exceededLimit bool
+	runErr := m.checkYtDlpHost(runCtx, task.URL)
+	if runErr == nil {
+		stderrTail, exceededLimit, runErr = m.execYtDlp(runCtx, id, token, binPath, staging, args, task.MaxBytes)
+	}
 
 	m.importMu.Lock()
 	defer m.importMu.Unlock()
+	if !m.isActiveRunToken(id, token) {
+		if !m.hasActiveRun(id) {
+			if current, _, readErr := m.rowByIDUnscoped(id); errors.Is(readErr, ErrNotFound) || (readErr == nil && current.Status == StatusCancelled) {
+				_ = os.RemoveAll(staging)
+			}
+		}
+		return
+	}
+	m.clearTaskCancel(id, token)
 	current, _, readErr := m.rowByIDUnscoped(id)
+	if errors.Is(readErr, ErrNotFound) {
+		_ = os.RemoveAll(staging)
+		return
+	}
 	if readErr != nil || current.Status != StatusRunning {
 		if readErr == nil && current.Status == StatusCancelled {
 			_ = os.RemoveAll(staging)
@@ -422,26 +314,53 @@ func (m *Manager) runYtDlpTask(id string) {
 	if m.ctx.Err() != nil {
 		return
 	}
+	if exceededLimit {
+		_ = os.RemoveAll(staging)
+		m.failTask(id, "download_exceeds_limit", "")
+		return
+	}
 	if runErr != nil {
-		reason := "ytdlp_failed"
-		if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
-			reason = "ytdlp_timeout"
-		} else if tail := sanitizeText(stderrTail); tail != "" && tail != "download_failed" {
-			reason = tail
-		}
+		reason := ytdlpFailureReason(runCtx, runErr, stderrTail)
+		_ = os.RemoveAll(staging)
 		m.failTask(id, reason, "")
 		return
 	}
 	removePartialYtDlpFiles(staging)
+	if task.MaxBytes > 0 && stagingTreeBytes(staging) > task.MaxBytes {
+		_ = os.RemoveAll(staging)
+		m.failTask(id, "download_exceeds_limit", "")
+		return
+	}
 	m.importDownloadLocked(id)
 	if healthy, err := m.noFailedActive(); err == nil && healthy {
 		m.lowerAlert()
 	}
 }
 
-func (m *Manager) execYtDlp(ctx context.Context, taskID, binPath, staging string, args []string) (string, error) {
-	cmd := exec.CommandContext(ctx, binPath, args...)
+func ytdlpFailureReason(runCtx context.Context, runErr error, stderrTail string) string {
+	if errors.Is(runErr, webarchive.ErrBlockedAddress) {
+		return webarchive.ErrBlockedAddress.Error()
+	}
+	if errors.Is(runCtx.Err(), context.DeadlineExceeded) {
+		return "ytdlp_timeout"
+	}
+	if tail := sanitizeText(stderrTail); tail != "" && tail != "download_failed" {
+		return tail
+	}
+	return "ytdlp_failed"
+}
+
+func (m *Manager) execYtDlp(ctx context.Context, taskID string, token uint64, binPath, staging string, args []string, maxBytes int64) (string, bool, error) {
+	finalArgs := args
+	if ffmpegPath, err := ffmpegbin.Locate(); err == nil && ffmpegPath != "" {
+		finalArgs = injectYtDlpFFmpegLocation(args, ffmpegPath)
+	}
+	execCtx, cancelExec := context.WithCancel(ctx)
+	defer cancelExec()
+
+	cmd := exec.CommandContext(execCtx, binPath, finalArgs...)
 	cmd.Dir = staging
+	cmd.Env = withTrustedHomebrewPATH(os.Environ())
 	cmd.WaitDelay = 3 * time.Second
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error {
@@ -453,14 +372,37 @@ func (m *Manager) execYtDlp(ctx context.Context, taskID, binPath, staging string
 
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	if err := cmd.Start(); err != nil {
-		return "", err
+		return "", false, err
+	}
+
+	var exceededMaxBytes atomic.Bool
+	monitorDone := make(chan struct{})
+	if maxBytes > 0 {
+		go func() {
+			ticker := time.NewTicker(ytdlpSizePollInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-monitorDone:
+					return
+				case <-execCtx.Done():
+					return
+				case <-ticker.C:
+					if stagingTreeBytes(staging) > maxBytes {
+						exceededMaxBytes.Store(true)
+						cancelExec()
+						return
+					}
+				}
+			}
+		}()
 	}
 
 	var stderrBuf boundedTail
@@ -469,21 +411,20 @@ func (m *Manager) execYtDlp(ctx context.Context, taskID, binPath, staging string
 	streamWG.Add(2)
 	go func() {
 		defer streamWG.Done()
-		m.consumeYtDlpOutput(taskID, stdout, nil)
+		m.consumeYtDlpOutput(taskID, token, stdout, nil)
 	}()
 	go func() {
 		defer streamWG.Done()
-		m.consumeYtDlpOutput(taskID, stderr, &stderrBuf)
+		m.consumeYtDlpOutput(taskID, token, stderr, &stderrBuf)
 	}()
 
 	streamWG.Wait()
 	waitErr := cmd.Wait()
-	return stderrBuf.String(), waitErr
+	close(monitorDone)
+	return stderrBuf.String(), exceededMaxBytes.Load(), waitErr
 }
 
-var ytdlpProgressRe = regexp.MustCompile(`(\d+(?:\.\d+)?)%\s+of\s+~?\s*(\d+(?:\.\d+)?)\s*([KMGTP]?i?B)`)
-
-func (m *Manager) consumeYtDlpOutput(taskID string, r io.Reader, tail *boundedTail) {
+func (m *Manager) consumeYtDlpOutput(taskID string, token uint64, r io.Reader, tail *boundedTail) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 4096), 64*1024)
 	lastUpdate := time.Time{}
@@ -501,54 +442,9 @@ func (m *Manager) consumeYtDlpOutput(taskID string, r io.Reader, tail *boundedTa
 			continue
 		}
 		lastUpdate = now
-		_ = m.updateRunnerProgress(taskID, total, completed)
-	}
-}
-
-func parseYtDlpProgress(line string) (total, completed int64, ok bool) {
-	matches := ytdlpProgressRe.FindStringSubmatch(line)
-	if len(matches) != 4 {
-		return 0, 0, false
-	}
-	pct, err1 := strconv.ParseFloat(matches[1], 64)
-	size, err2 := strconv.ParseFloat(matches[2], 64)
-	if err1 != nil || err2 != nil || pct < 0 || size <= 0 {
-		return 0, 0, false
-	}
-	mult := byteUnitMultiplier(matches[3])
-	if mult <= 0 {
-		return 0, 0, false
-	}
-	total = int64(size * mult)
-	if pct > 100 {
-		pct = 100
-	}
-	completed = int64(float64(total) * (pct / 100.0))
-	return total, completed, true
-}
-
-func byteUnitMultiplier(unit string) float64 {
-	switch unit {
-	case "B":
-		return 1
-	case "KiB":
-		return 1024
-	case "KB":
-		return 1000
-	case "MiB":
-		return 1024 * 1024
-	case "MB":
-		return 1000 * 1000
-	case "GiB":
-		return 1024 * 1024 * 1024
-	case "GB":
-		return 1000 * 1000 * 1000
-	case "TiB":
-		return 1024 * 1024 * 1024 * 1024
-	case "TB":
-		return 1000 * 1000 * 1000 * 1000
-	default:
-		return 0
+		if m.isActiveRunToken(taskID, token) {
+			_ = m.updateRunnerProgress(taskID, total, completed)
+		}
 	}
 }
 
@@ -562,33 +458,8 @@ func removePartialYtDlpFiles(staging string) {
 			continue
 		}
 		name := entry.Name()
-		if strings.HasSuffix(name, ".part") || strings.HasSuffix(name, ".ytdl") {
+		if filepath.Ext(name) == ".part" || filepath.Ext(name) == ".ytdl" {
 			_ = os.Remove(filepath.Join(staging, name))
 		}
 	}
-}
-
-type boundedTail struct {
-	mu    sync.Mutex
-	limit int
-	buf   bytes.Buffer
-}
-
-func (b *boundedTail) AppendLine(line string) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	if b.buf.Len() > 0 {
-		b.buf.WriteByte(' ')
-	}
-	b.buf.WriteString(strings.TrimSpace(line))
-	if b.buf.Len() > b.limit {
-		excess := b.buf.Len() - b.limit
-		b.buf.Next(excess)
-	}
-}
-
-func (b *boundedTail) String() string {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	return b.buf.String()
 }

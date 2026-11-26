@@ -477,7 +477,7 @@ func isFatalMediaImportError(err error, errCode string) bool {
 	}
 	switch errCode {
 	case "root_unavailable", "storage_quota_exceeded", "storage_disk_full",
-		"storage_permission_os_denied", "media_import_cancelled":
+		"storage_permission_os_denied", "media_import_cancelled", "storage_accounting_uncertain":
 		return true
 	default:
 		return false
@@ -493,6 +493,10 @@ func classifyMediaImportError(err error) string {
 		return "media_import_cancelled"
 	case errors.Is(err, context.DeadlineExceeded):
 		return "media_import_timed_out"
+	case errors.Is(err, errMediaImportAccountingUncertain):
+		return "storage_accounting_uncertain"
+	case errors.Is(err, errMediaImportSizeMismatch):
+		return "media_import_size_mismatch"
 	case errors.Is(err, auth.ErrStorageQuotaExceeded):
 		return "storage_quota_exceeded"
 	case errors.Is(err, auth.ErrForbidden):

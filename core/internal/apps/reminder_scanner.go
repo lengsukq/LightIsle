@@ -2,6 +2,8 @@ package apps
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,7 +27,7 @@ const (
 	defaultReminderWarnDays     = 7
 	maxReminderWarnDays         = 90
 	maxOverdueReminderDays      = 30
-	reminderStateRetentionDays  = 60
+	reminderStateRetentionDays  = 130
 )
 
 // AppReminderPayload is the standard JSON contract stored in kv/_reminders.json
@@ -59,6 +61,15 @@ type pendingReminderAlert struct {
 func (m *Manager) SetReminderNotifier(fn func(code, title, body, severity string)) {
 	m.mu.Lock()
 	m.reminderNotifier = fn
+	m.mu.Unlock()
+}
+
+// SetReminderReadyCheck registers an optional readiness probe (e.g.
+// notifyHub.Configured) so scans skip without consuming deduplication keys
+// when no notification channel is configured yet.
+func (m *Manager) SetReminderReadyCheck(fn func() bool) {
+	m.mu.Lock()
+	m.reminderReadyCheck = fn
 	m.mu.Unlock()
 }
 
@@ -118,6 +129,7 @@ func (m *Manager) StartReminderScanner(ctx context.Context) {
 func (m *Manager) ScanAppReminders(now time.Time) int {
 	m.mu.RLock()
 	notifier := m.reminderNotifier
+	readyCheck := m.reminderReadyCheck
 	records := make([]appRecord, 0, len(m.apps))
 	for _, rec := range m.apps {
 		if rec.valid && !rec.pendingActivation && rec.manifest.Web != nil && rec.manifest.Web.Enabled {
@@ -126,7 +138,7 @@ func (m *Manager) ScanAppReminders(now time.Time) int {
 	}
 	m.mu.RUnlock()
 
-	if notifier == nil || len(records) == 0 {
+	if notifier == nil || (readyCheck != nil && !readyCheck()) || len(records) == 0 {
 		return 0
 	}
 	sort.Slice(records, func(i, j int) bool { return records[i].id < records[j].id })
@@ -149,7 +161,7 @@ func (m *Manager) ScanAppReminders(now time.Time) int {
 		if !ok || len(payload.Items) == 0 {
 			continue
 		}
-		appName := sanitizeReminderText(rec.manifest.Name, 36)
+		appName := SanitizeReminderText(rec.manifest.Name, 36)
 		if appName == "" {
 			appName = rec.id
 		}
@@ -173,7 +185,9 @@ func (m *Manager) ScanAppReminders(now time.Time) int {
 
 	if dirty {
 		if err := m.saveReminderLedgerLocked(ledger); err != nil {
-			slog.Warn("failed to persist app reminder dedup ledger", "error", err)
+			slog.Warn("failed to persist app reminder dedup ledger; aborting push", "error", err)
+			m.reminderMu.Unlock()
+			return 0
 		}
 	}
 	m.reminderMu.Unlock()
@@ -189,7 +203,7 @@ func (m *Manager) readAppReminders(rec *appRecord) (AppReminderPayload, bool) {
 	mu.Lock()
 	defer mu.Unlock()
 
-	dataRoot, kvRoot, err := openKVRootReadOnly(rec.dataDir)
+	dataRoot, kvRoot, err := openExistingKVRoot(rec.dataDir)
 	if err != nil {
 		return AppReminderPayload{}, false
 	}
@@ -208,8 +222,8 @@ func (m *Manager) readAppReminders(rec *appRecord) (AppReminderPayload, bool) {
 }
 
 func evaluateReminderItem(appID, appName string, item AppReminderItem, now time.Time) (pendingReminderAlert, string, bool) {
-	itemID := sanitizeReminderText(item.ID, 64)
-	title := sanitizeReminderText(item.Title, 60)
+	itemID := SanitizeReminderText(item.ID, 64)
+	title := SanitizeReminderText(item.Title, 60)
 	dueDate := strings.TrimSpace(item.DueDate)
 	if itemID == "" || title == "" || len(dueDate) != 10 {
 		return pendingReminderAlert{}, "", false
@@ -277,7 +291,9 @@ func classifyReminderBucket(daysLeft, warnDays int) (bucket, code, severity stri
 	}
 }
 
-func sanitizeReminderText(input string, maxRunes int) string {
+// SanitizeReminderText strips control characters, collapses whitespace into a
+// single space, and truncates to maxRunes (if > 0) for safe single-line alerts.
+func SanitizeReminderText(input string, maxRunes int) string {
 	var b strings.Builder
 	b.Grow(len(input))
 	prevSpace := false
@@ -341,7 +357,11 @@ func (m *Manager) saveReminderLedgerLocked(ledger reminderDedupLedger) error {
 	if err != nil {
 		return err
 	}
-	tmp := fmt.Sprintf("%s.%d.tmp", path, time.Now().UnixNano())
+	var rnd [8]byte
+	if _, err := rand.Read(rnd[:]); err != nil {
+		return err
+	}
+	tmp := path + "." + hex.EncodeToString(rnd[:]) + ".tmp"
 	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {
 		return err

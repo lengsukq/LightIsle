@@ -24,6 +24,7 @@ const templateSubscriptionsHTML = `<!doctype html>
 <style>
 /*__LIGHTISLE_SHARED_CSS__*/
   :root { --accent: #5e5ce6; --accent-soft: rgba(94, 92, 230, 0.11); }
+  @media (prefers-color-scheme: dark) { :root { --accent: #a5a4ff; --accent-soft: rgba(165, 164, 255, 0.18); } }
 </style></head>
 <body><div class="wrap">
   <div class="card">
@@ -94,7 +95,8 @@ function render() {
     meta.className = 'meta';
     var datePart = '';
     if (it.nextDate) {
-      if (days < 0) datePart = ' · 已过期 ' + Math.abs(days) + ' 天 (' + it.nextDate + ')';
+      if (days === null) datePart = ' · 下次续费 ' + it.nextDate;
+      else if (days < 0) datePart = ' · 已过期 ' + Math.abs(days) + ' 天 (' + it.nextDate + ')';
       else if (days === 0) datePart = ' · 今天续费 (' + it.nextDate + ')';
       else datePart = ' · 下次续费 ' + it.nextDate + '（剩余 ' + days + ' 天）';
     }
@@ -145,6 +147,7 @@ const templateWarrantyHTML = `<!doctype html>
 <style>
 /*__LIGHTISLE_SHARED_CSS__*/
   :root { --accent: #248a3d; --accent-soft: rgba(36, 138, 61, 0.11); }
+  @media (prefers-color-scheme: dark) { :root { --accent: #5ce081; --accent-soft: rgba(92, 224, 129, 0.17); } }
 </style></head>
 <body><div class="wrap">
   <div class="card">
@@ -247,7 +250,8 @@ const templateFamilyBoardHTML = `<!doctype html>
 <head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>家庭留言板与采购清单</title>
 <style>
 /*__LIGHTISLE_SHARED_CSS__*/
-  :root { --accent: #d97706; --accent-soft: rgba(217, 119, 6, 0.12); }
+  :root { --accent: #b45309; --accent-soft: rgba(217, 119, 6, 0.12); }
+  @media (prefers-color-scheme: dark) { :root { --accent: #fbbf24; --accent-soft: rgba(251, 191, 36, 0.17); } }
   .done strong { text-decoration: line-through; opacity: 0.5; }
 </style></head>
 <body><div class="wrap">

@@ -159,3 +159,84 @@ func TestFamilyRemindersCRUDPermissionsCompleteAndScan(t *testing.T) {
 		t.Fatalf("admin delete member reminder: %v", err)
 	}
 }
+
+func TestFamilyRemindersEdgeSchedulesAndEmptyRemindDaysPatch(t *testing.T) {
+	st, adminTok, _ := openReminderTestStore(t)
+
+	// 1. Overdue monthly check-off: due Apr 25, checked off May 2 -> advances to May 25 (NOT June 25!).
+	apr1 := time.Date(2026, 4, 1, 9, 0, 0, 0, time.UTC)
+	bill, err := st.CreateFamilyReminder(adminTok, FamilyReminderInput{
+		Title:        "信用卡还款",
+		Category:     "bill",
+		CalendarType: "solar",
+		Year:         2026,
+		Month:        4,
+		Day:          25,
+		RepeatRule:   "monthly",
+		RemindDays:   []int{3, 0},
+	}, apr1)
+	if err != nil || bill.NextSolarDate != "2026-04-25" {
+		t.Fatalf("create monthly bill: %+v err=%v", bill, err)
+	}
+	may2 := time.Date(2026, 5, 2, 9, 0, 0, 0, time.UTC)
+	completed, err := st.CompleteFamilyReminder(adminTok, bill.ID, may2)
+	if err != nil || completed.NextSolarDate != "2026-05-25" {
+		t.Fatalf("overdue monthly check-off should advance to 2026-05-25, got %+v err=%v", completed, err)
+	}
+
+	// 2. once + lunar + Year==0 across solar new year (Jan 15, 2026 is still lunar year 2025):
+	// Lunar 12/25 must resolve to Feb 2026, NOT 2027!
+	jan15 := time.Date(2026, 1, 15, 9, 0, 0, 0, time.UTC)
+	lunarOnce, err := st.CreateFamilyReminder(adminTok, FamilyReminderInput{
+		Title:        "腊月扫尘",
+		Category:     "custom",
+		CalendarType: "lunar",
+		Year:         0,
+		Month:        12,
+		Day:          25,
+		RepeatRule:   "once",
+		RemindDays:   []int{1, 0},
+	}, jan15)
+	if err != nil {
+		t.Fatalf("create lunar once Year==0: %v", err)
+	}
+	if lunarOnce.NextSolarDate[:4] != "2026" || lunarOnce.DaysUntil < 0 || lunarOnce.DaysUntil > 45 {
+		t.Fatalf("expected lunar 12/25 on 2026-01-15 to fall in early 2026, got %+v", lunarOnce)
+	}
+
+	// 3. weekly & interval_days with Year==0 roll forward to >= today.
+	may1 := time.Date(2026, 5, 1, 9, 0, 0, 0, time.UTC)
+	weekly, err := st.CreateFamilyReminder(adminTok, FamilyReminderInput{
+		Title:        "每周浇花",
+		Category:     "chore",
+		CalendarType: "solar",
+		Year:         0,
+		Month:        1,
+		Day:          1,
+		RepeatRule:   "weekly",
+		RemindDays:   []int{0},
+	}, may1)
+	if err != nil || weekly.DaysUntil < 0 || weekly.DaysUntil >= 7 {
+		t.Fatalf("weekly Year==0 should roll to within [0,6] days, got %+v err=%v", weekly, err)
+	}
+	interval, err := st.CreateFamilyReminder(adminTok, FamilyReminderInput{
+		Title:        "换滤芯",
+		Category:     "chore",
+		CalendarType: "solar",
+		Year:         0,
+		Month:        1,
+		Day:          1,
+		RepeatRule:   "interval_days",
+		IntervalDays: 30,
+		RemindDays:   []int{0},
+	}, may1)
+	if err != nil || interval.DaysUntil < 0 || interval.DaysUntil >= 30 {
+		t.Fatalf("interval_days Year==0 should roll to within [0,29] days, got %+v err=%v", interval, err)
+	}
+
+	// 4. PATCH {"remindDays": []} must explicitly return ErrInput.
+	emptyDays := []int{}
+	if _, err := st.UpdateFamilyReminder(adminTok, bill.ID, FamilyReminderPatch{RemindDays: &emptyDays}, may2); !errors.Is(err, ErrInput) {
+		t.Fatalf("expected ErrInput on empty remindDays patch, got %v", err)
+	}
+}
