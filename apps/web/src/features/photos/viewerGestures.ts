@@ -75,3 +75,43 @@ export function wheelZoomFactor(deltaY: number): number {
   const magnitude = Math.min(240, Math.abs(deltaY));
   return Math.exp((-Math.sign(deltaY) * magnitude) / 480);
 }
+
+export function clampPanOffset(
+  state: ViewerTransform,
+  stageSize: { width: number; height: number },
+  mediaSize?: { width: number; height: number } | null,
+): ViewerTransform {
+  const normalized = normalizeViewerTransform(state);
+  if (normalized.scale <= viewerMinScale) return normalized;
+  const baseW = mediaSize && mediaSize.width > 0 ? mediaSize.width : stageSize.width;
+  const baseH = mediaSize && mediaSize.height > 0 ? mediaSize.height : stageSize.height;
+  const maxX = Math.max(0, (baseW * normalized.scale - stageSize.width) / 2);
+  const maxY = Math.max(0, (baseH * normalized.scale - stageSize.height) / 2);
+  return {
+    scale: normalized.scale,
+    x: Math.max(-maxX, Math.min(maxX, normalized.x)),
+    y: Math.max(-maxY, Math.min(maxY, normalized.y)),
+  };
+}
+
+export function doubleTapZoom(
+  state: ViewerTransform,
+  anchor: ViewerPoint = { x: 0, y: 0 },
+  targetScale = 2.5,
+): ViewerTransform {
+  if (state.scale > viewerMinScale + 0.01) {
+    return { scale: viewerMinScale, x: 0, y: 0 };
+  }
+  return zoomAtAnchor({ scale: viewerMinScale, x: 0, y: 0 }, targetScale, anchor);
+}
+
+export function horizontalSwipeResistance(
+  dx: number,
+  canSwipePrev: boolean,
+  canSwipeNext: boolean,
+): number {
+  if ((dx > 0 && !canSwipePrev) || (dx < 0 && !canSwipeNext)) {
+    return Math.round(dx * 0.28);
+  }
+  return Math.round(dx);
+}

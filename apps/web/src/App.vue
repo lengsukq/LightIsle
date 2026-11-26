@@ -25,6 +25,7 @@ import IsleModal from "./components/ui/IsleModal.vue";
 import IsleButton from "./components/ui/IsleButton.vue";
 import IsleBanner from "./components/ui/IsleBanner.vue";
 import IsleEmpty from "./components/ui/IsleEmpty.vue";
+import IsleSlidingIndicator from "./components/ui/IsleSlidingIndicator.vue";
 import { useFileMediaLightbox } from "./composables/useFileMediaLightbox.ts";
 import type { Movie } from "./features/cinema/cinemaTypes.ts";
 import AppleSelect from "./components/ui/AppleSelect.vue";
@@ -39,6 +40,7 @@ import { apiFetch, configureApiSessionHandler } from "./api/apiClient.ts";
 import { createJsonRootClient } from "./api/jsonRootClient.ts";
 import { useRootContextController } from "./composables/useRootContextController.ts";
 import { useAppBrowserLifecycle } from "./composables/useAppBrowserLifecycle.ts";
+import { useSlidingIndicator } from "./composables/useSlidingIndicator.ts";
 import {
   createShellLifecycleBridge,
   FILES_VIEW_CTX,
@@ -70,6 +72,7 @@ const SettingsView = defineAsyncComponent({
 const AppWorkbenchStage = defineAsyncComponent(() => import("./features/apps/AppWorkbenchStage.vue"));
 const DuplicateFilesPanel = defineAsyncComponent(() => import("./features/files/DuplicateFilesPanel.vue"));
 const FileOperationDialog = defineAsyncComponent(() => import("./features/files/FileOperationDialog.vue"));
+const FileShareModal = defineAsyncComponent(() => import("./features/files/FileShareModal.vue"));
 const PhotoViewerModal = defineAsyncComponent(() => import("./features/photos/PhotoViewerModal.vue"));
 const AppsCenterView = defineAsyncComponent(() => import("./features/apps/AppsCenterView.vue"));
 const PhotosView = defineAsyncComponent({
@@ -451,6 +454,38 @@ const {
   theme, atmosphere, atmospheres, sidebarExpanded, moreMenuOpen, fileViewMode,
   setFileViewMode, createFolderOpen, setAtmosphere, switchTheme, toggleSidebar,
 } = useShellAppearance();
+
+const spaceNavRef = ref<HTMLElement | null>(null);
+const systemNavRef = ref<HTMLElement | null>(null);
+const { indicatorStyle: spaceNavIndicatorStyle, indicatorReady: spaceNavIndicatorReady } = useSlidingIndicator({
+  containerRef: spaceNavRef,
+  activeSelector: "button.chosen",
+  watchSources: [active, sidebarExpanded, showComputerFilesNav, () => user.value?.role],
+});
+const { indicatorStyle: systemNavIndicatorStyle, indicatorReady: systemNavIndicatorReady } = useSlidingIndicator({
+  containerRef: systemNavRef,
+  activeSelector: "button.chosen",
+  watchSources: [active, sidebarExpanded, () => user.value?.role],
+});
+
+const stageEntering = ref(false);
+let stageEnterTimer = 0;
+watch(active, () => {
+  stageEntering.value = true;
+  if (typeof window !== "undefined") {
+    if (stageEnterTimer) window.clearTimeout(stageEnterTimer);
+    stageEnterTimer = window.setTimeout(() => {
+      stageEntering.value = false;
+      stageEnterTimer = 0;
+    }, 240);
+  }
+});
+onUnmounted(() => {
+  if (typeof window !== "undefined" && stageEnterTimer) {
+    window.clearTimeout(stageEnterTimer);
+    stageEnterTimer = 0;
+  }
+});
 
 watch([active, settingsGroup, () => user.value, rootFeatureContextReady], () => {
   if (!user.value) return;

@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import { inject, ref } from "vue";
-import { Download, Film, FileCode2, Play, RotateCcw, Trash2, Wand2, X } from "lucide-vue-next";
+import { computed, inject, ref } from "vue";
+import { Download, Film, FileCode2, Play, RotateCcw, Star, Trash2, Wand2, X } from "lucide-vue-next";
 import IsleBadge from "../../components/ui/IsleBadge.vue";
 import IsleButton from "../../components/ui/IsleButton.vue";
 import IsleHelpButton from "../../components/ui/IsleHelpButton.vue";
 import IsleActionMenu from "../../components/ui/IsleActionMenu.vue";
+import CinemaPosterArtwork from "./CinemaPosterArtwork.vue";
+import { formatCinemaCodec, formatCinemaResolution, resolveTmdbCandidatePosterUrl } from "./cinemaCatalogDisplay.ts";
 import { duration, metadataSourceName } from "./useCinemaMetadata.ts";
-import { formatCinemaResumeLabel } from "./cinemaSubtitles.ts";
-import { resolveTmdbCandidatePosterUrl } from "./cinemaCatalogDisplay.ts";
+import { formatCinemaEpisodeCode, formatCinemaResumeLabel } from "./cinemaSubtitles.ts";
 import CinemaOnlineSubtitlesAndCollections from "./CinemaOnlineSubtitlesAndCollections.vue";
 import { CINEMA_DETAIL_CTX } from "../../contexts/cinemaContext.ts";
 import type { TMDBCandidate } from "./cinemaTypes.ts";
@@ -37,10 +38,24 @@ function onCandidateError(c: TMDBCandidate) {
   }
   candidatePosterError(c.id);
 }
+
+const overviewSpecs = computed(() => {
+  const film = selected.value;
+  if (!film) return [];
+  const tags: string[] = [];
+  const res = formatCinemaResolution(film.width, film.height);
+  if (res) tags.push(res);
+  const vCodec = formatCinemaCodec(film.videoCodec);
+  if (vCodec) tags.push(vCodec);
+  const aCodec = formatCinemaCodec(film.audioCodec);
+  if (aCodec) tags.push(aCodec);
+  if (film.isStrm) tags.push("STRM");
+  return tags;
+});
 </script>
 
 <template>
-  <template v-if="selected">
+  <div v-if="selected" class="cinema-detail-stage-pane">
     <div class="cinema-overview">
       <div class="cinema-overview-poster">
         <img
@@ -50,13 +65,30 @@ function onCandidateError(c: TMDBCandidate) {
           decoding="async"
           @error="posterError(selected.id)"
         />
-        <Film v-else :size="56" />
+        <CinemaPosterArtwork
+          v-else
+          :title="selected.title"
+          :kind="selected.kind"
+          :year="selected.year"
+          :seed="selected.id"
+          :kicker="selected.kind === 'series' ? (formatCinemaEpisodeCode(selected.season, selected.episode) || '剧集') : undefined"
+        />
       </div>
       <div class="cinema-overview-text">
         <h3>{{ selected.title }}</h3>
+        <div
+          v-if="(selected.rating && selected.rating > 0) || overviewSpecs.length"
+          class="cinema-overview-meta-tags"
+        >
+          <span v-if="selected.rating && selected.rating > 0" class="cinema-overview-rating">
+            <Star :size="12" fill="currentColor" aria-hidden="true" />
+            <span>{{ selected.rating.toFixed(1) }}</span>
+          </span>
+          <span v-for="tag in overviewSpecs" :key="tag" class="cinema-overview-spec">{{ tag }}</span>
+        </div>
         <p v-if="selected.overview" class="cinema-synopsis">{{ selected.overview }}</p>
         <p v-else class="cinema-metadata-source">暂无影片简介。</p>
-        <p v-if="selected.position > 5 && !selected.completed" class="resume-hint">
+        <p v-if="selected.position > 5 && !selected.completed" class="resume-hint cinema-tabular-meta">
           上次播放到 {{ duration(selected.position) }}
         </p>
         <button
@@ -65,7 +97,7 @@ function onCandidateError(c: TMDBCandidate) {
           :disabled="selected.probeStatus === 'pending' && playbackMode === 'download-only'"
           @click="playSelected()"
         >
-          <Play :size="16" /> {{ selected.position > 5 && !selected.completed ? formatCinemaResumeLabel(selected) : "开始播放" }}
+          <Play :size="16" fill="currentColor" /> {{ selected.position > 5 && !selected.completed ? formatCinemaResumeLabel(selected) : "开始播放" }}
         </button>
         <p v-if="playbackMode === 'download-only'" class="cinema-metadata-source">
           {{ playbackLabelText }}：可尝试实时转码、下载原片，或
@@ -89,112 +121,115 @@ function onCandidateError(c: TMDBCandidate) {
           :disabled="leavingPlayer"
           @click="switchPlaylistFilm(item)"
         >
-          {{ item.title }}
+          <span class="cinema-episode-title" :title="item.title">{{ item.title }}</span>
           <IsleBadge v-if="item.id === selected.id" variant="accent" size="sm">当前选中</IsleBadge>
         </button>
       </div>
     </div>
 
-    <p v-if="selected.titleSource || selected.yearSource || selected.metadataSource" class="cinema-metadata-source">
+    <p v-if="selected.titleSource || selected.yearSource || selected.metadataSource" class="cinema-metadata-source cinema-tabular-meta">
       片名：{{ metadataSourceName(selected.titleSource) }} · 年份：{{ metadataSourceName(selected.yearSource) }} ·
       资料：{{ selected.metadataSource ? metadataSourceName(selected.metadataSource) : "未关联" }}
       <span v-if="selected.rating"> · 评分 {{ selected.rating.toFixed(1) }} / 10</span>
     </p>
     <p v-if="scrapeMessage" class="cinema-alert" role="status">{{ scrapeMessage }}</p>
 
-    <div v-if="admin && matchPanelOpen !== 'none'" class="cinema-match-drawer">
-      <div class="cinema-match-drawer-head">
-        <div class="cinema-match-tabs">
-          <IsleButton :variant="matchPanelOpen === 'tmdb' ? 'tonal' : 'ghost'" size="sm" @click="matchPanelOpen = 'tmdb'">
-            TMDB 匹配
-          </IsleButton>
-          <IsleButton :variant="matchPanelOpen === 'douban' ? 'tonal' : 'ghost'" size="sm" @click="matchPanelOpen = 'douban'">
-            豆瓣候选
-          </IsleButton>
-          <IsleHelpButton
-            title="影片资料匹配说明"
-            :items="[
-              { title: 'TMDB 在线匹配', body: '默认复用 Mac 端已配置的 TMDB Token，支持海报、简介与评分补全；仅在你点击选择后保存。' },
-              { title: '豆瓣候选建议', body: '用于快速核对中文片名与年份（实验性，不含海报与评分）。' },
-            ]"
-          />
+    <Transition name="cinema-drawer-pop">
+      <div v-if="admin && matchPanelOpen !== 'none'" class="cinema-match-drawer">
+        <div class="cinema-match-drawer-head">
+          <div class="cinema-match-tabs">
+            <IsleButton :variant="matchPanelOpen === 'tmdb' ? 'tonal' : 'ghost'" size="sm" @click="matchPanelOpen = 'tmdb'">
+              TMDB 匹配
+            </IsleButton>
+            <IsleButton :variant="matchPanelOpen === 'douban' ? 'tonal' : 'ghost'" size="sm" @click="matchPanelOpen = 'douban'">
+              豆瓣候选
+            </IsleButton>
+            <IsleHelpButton
+              title="影片资料匹配说明"
+              :z-index="1380"
+              :items="[
+                { title: 'TMDB 在线匹配', body: '默认复用 Mac 端已配置的 TMDB Token，支持海报、简介与评分补全；仅在你点击选择后保存。' },
+                { title: '豆瓣候选建议', body: '用于快速核对中文片名与年份（实验性，不含海报与评分）。' },
+              ]"
+            />
+          </div>
+          <IsleButton variant="ghost" size="sm" @click="matchPanelOpen = 'none'">收起</IsleButton>
         </div>
-        <IsleButton variant="ghost" size="sm" @click="matchPanelOpen = 'none'">收起</IsleButton>
+
+        <template v-if="matchPanelOpen === 'tmdb'">
+          <form class="cinema-tmdb-form" @submit.prevent="searchTmdb()">
+            <input
+              v-model="tmdbToken"
+              type="password"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="TMDB Token（留空复用 Mac 已配置凭据）"
+              aria-label="TMDB API Read Access Token"
+              :disabled="tmdbBusy || scraping"
+            />
+            <input
+              v-model="tmdbQuery"
+              type="search"
+              maxlength="120"
+              placeholder="影视名称"
+              aria-label="TMDB 搜索关键词"
+              :disabled="tmdbBusy || scraping"
+            />
+            <button type="submit" :disabled="tmdbBusy || scraping">
+              {{ tmdbBusy ? "查询中…" : scraping ? "正在导入…" : "搜索 TMDB" }}
+            </button>
+          </form>
+          <p v-if="tmdbError" class="cinema-alert" role="alert">{{ tmdbError }}</p>
+          <div v-for="candidate in tmdbMatches" :key="candidate.id" class="cinema-tmdb-match">
+            <img
+              v-if="candidate.posterURL && !candidatePosterFailed[candidate.id]"
+              :src="candidateSrc(candidate)"
+              :alt="candidate.title + '海报'"
+              loading="lazy"
+              decoding="async"
+              @error="onCandidateError(candidate)"
+            />
+            <div v-else class="cinema-tmdb-poster-placeholder" aria-hidden="true"><Film :size="22" /></div>
+            <div class="cinema-tmdb-match-text">
+              <strong>{{ candidate.title }} {{ candidate.year ? "(" + candidate.year + ")" : "" }}</strong>
+              <small class="cinema-tabular-meta">评分 {{ candidate.rating.toFixed(1) }} / 10</small>
+              <p v-if="candidate.overview">{{ candidate.overview }}</p>
+            </div>
+            <button type="button" :disabled="tmdbBusy || scraping" @click="matchTmdb(candidate)">选择匹配</button>
+          </div>
+          <p class="cinema-metadata-source">
+            This product uses the TMDB API but is not endorsed or certified by TMDB.
+            <a href="https://www.themoviedb.org/" rel="noopener noreferrer" target="_blank">TMDB</a>
+          </p>
+        </template>
+
+        <template v-else>
+          <form class="cinema-tmdb-form" @submit.prevent="searchDouban()">
+            <input
+              v-model="doubanQuery"
+              type="search"
+              maxlength="60"
+              aria-label="豆瓣影片搜索关键词"
+              placeholder="输入电影或剧集名称"
+              :disabled="doubanBusy || scraping || tmdbBusy"
+            />
+            <button type="submit" :disabled="doubanBusy || scraping || tmdbBusy">
+              {{ doubanBusy ? "正在查询…" : "搜索豆瓣候选" }}
+            </button>
+          </form>
+          <p v-if="doubanError" class="cinema-alert" role="alert">{{ doubanError }}</p>
+          <div v-for="candidate in doubanMatches" :key="candidate.id" class="cinema-tmdb-match">
+            <div class="cinema-tmdb-match-text">
+              <strong>{{ candidate.title }} {{ candidate.year ? "(" + candidate.year + ")" : "" }}</strong>
+              <small>{{ candidate.kind === "tv" ? "剧集" : "影片" }}</small>
+            </div>
+            <button type="button" :disabled="doubanBusy || tmdbBusy || scraping" @click="matchDouban(candidate)">
+              确认匹配
+            </button>
+          </div>
+        </template>
       </div>
-
-      <template v-if="matchPanelOpen === 'tmdb'">
-        <form class="cinema-tmdb-form" @submit.prevent="searchTmdb()">
-          <input
-            v-model="tmdbToken"
-            type="password"
-            autocomplete="off"
-            spellcheck="false"
-            placeholder="TMDB Token（留空复用 Mac 已配置凭据）"
-            aria-label="TMDB API Read Access Token"
-            :disabled="tmdbBusy || scraping"
-          />
-          <input
-            v-model="tmdbQuery"
-            type="search"
-            maxlength="120"
-            placeholder="影视名称"
-            aria-label="TMDB 搜索关键词"
-            :disabled="tmdbBusy || scraping"
-          />
-          <button type="submit" :disabled="tmdbBusy || scraping">
-            {{ tmdbBusy ? "查询中…" : scraping ? "正在导入…" : "搜索 TMDB" }}
-          </button>
-        </form>
-        <p v-if="tmdbError" class="cinema-alert" role="alert">{{ tmdbError }}</p>
-        <div v-for="candidate in tmdbMatches" :key="candidate.id" class="cinema-tmdb-match">
-          <img
-            v-if="candidate.posterURL && !candidatePosterFailed[candidate.id]"
-            :src="candidateSrc(candidate)"
-            :alt="candidate.title + '海报'"
-            loading="lazy"
-            decoding="async"
-            @error="onCandidateError(candidate)"
-          />
-          <div v-else class="cinema-tmdb-poster-placeholder" aria-hidden="true"><Film :size="22" /></div>
-          <div class="cinema-tmdb-match-text">
-            <strong>{{ candidate.title }} {{ candidate.year ? "(" + candidate.year + ")" : "" }}</strong>
-            <small>评分 {{ candidate.rating.toFixed(1) }} / 10</small>
-            <p v-if="candidate.overview">{{ candidate.overview }}</p>
-          </div>
-          <button type="button" :disabled="tmdbBusy || scraping" @click="matchTmdb(candidate)">选择匹配</button>
-        </div>
-        <p class="cinema-metadata-source">
-          This product uses the TMDB API but is not endorsed or certified by TMDB.
-          <a href="https://www.themoviedb.org/" rel="noopener noreferrer" target="_blank">TMDB</a>
-        </p>
-      </template>
-
-      <template v-else>
-        <form class="cinema-tmdb-form" @submit.prevent="searchDouban()">
-          <input
-            v-model="doubanQuery"
-            type="search"
-            maxlength="60"
-            aria-label="豆瓣影片搜索关键词"
-            placeholder="输入电影或剧集名称"
-            :disabled="doubanBusy || scraping || tmdbBusy"
-          />
-          <button type="submit" :disabled="doubanBusy || scraping || tmdbBusy">
-            {{ doubanBusy ? "正在查询…" : "搜索豆瓣候选" }}
-          </button>
-        </form>
-        <p v-if="doubanError" class="cinema-alert" role="alert">{{ doubanError }}</p>
-        <div v-for="candidate in doubanMatches" :key="candidate.id" class="cinema-tmdb-match">
-          <div class="cinema-tmdb-match-text">
-            <strong>{{ candidate.title }} {{ candidate.year ? "(" + candidate.year + ")" : "" }}</strong>
-            <small>{{ candidate.kind === "tv" ? "剧集" : "影片" }}</small>
-          </div>
-          <button type="button" :disabled="doubanBusy || tmdbBusy || scraping" @click="matchDouban(candidate)">
-            确认匹配
-          </button>
-        </div>
-      </template>
-    </div>
+    </Transition>
 
     <CinemaOnlineSubtitlesAndCollections :film="selected" :admin="admin" :api="api" :api-path="apiPath" />
 
@@ -231,10 +266,41 @@ function onCandidateError(c: TMDBCandidate) {
         </IsleActionMenu>
       </div>
     </footer>
-  </template>
+  </div>
 </template>
 
 <style scoped>
+.cinema-overview-meta-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin: -4px 0 10px;
+  font-variant-numeric: tabular-nums;
+}
+.cinema-overview-rating {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--brand-amber, #d97706) 14%, transparent);
+  border: 1px solid color-mix(in srgb, var(--brand-amber, #d97706) 32%, transparent);
+  color: var(--brand-amber, #d97706);
+  font-size: 11.5px;
+  font-weight: 700;
+}
+.cinema-overview-spec {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--fluid-card-item-fill);
+  border: 1px solid var(--fluid-card-border);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 600;
+}
 .cinema-match-drawer {
   padding: 12px 14px;
   border-radius: 14px;
@@ -272,5 +338,22 @@ function onCandidateError(c: TMDBCandidate) {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
+}
+.cinema-drawer-pop-enter-active {
+  transition: opacity 0.2s var(--motion-spring, cubic-bezier(0.22, 1, 0.36, 1)), transform 0.22s var(--motion-spring, cubic-bezier(0.22, 1, 0.36, 1));
+}
+.cinema-drawer-pop-leave-active {
+  transition: opacity 0.14s ease, transform 0.14s ease;
+}
+.cinema-drawer-pop-enter-from,
+.cinema-drawer-pop-leave-to {
+  opacity: 0;
+  transform: translate3d(0, -6px, 0) scale(0.985);
+}
+@media (prefers-reduced-motion: reduce) {
+  .cinema-drawer-pop-enter-active,
+  .cinema-drawer-pop-leave-active {
+    transition: none;
+  }
 }
 </style>

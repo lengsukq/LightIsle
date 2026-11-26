@@ -268,7 +268,11 @@ onMounted(() => {
   border: 1px solid var(--fluid-card-border);
   background: var(--fluid-card-fill);
 }
+.cinema-sub-row :deep(.isle-btn) {
+  flex-shrink: 0;
+}
 .cinema-sub-info {
+  flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -276,10 +280,13 @@ onMounted(() => {
 }
 .cinema-sub-info strong {
   font-size: 12.5px;
+  line-height: 1.38;
   color: var(--text-primary);
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .cinema-sub-badges,
 .cinema-col-actions {

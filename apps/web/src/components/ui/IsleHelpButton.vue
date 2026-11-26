@@ -15,6 +15,7 @@ const props = withDefaults(
     items?: HelpItem[];
     size?: "sm" | "md";
     modalSize?: "sm" | "md" | "lg";
+    zIndex?: number;
   }>(),
   {
     description: "",
@@ -23,6 +24,7 @@ const props = withDefaults(
     items: () => [],
     size: "sm",
     modalSize: "sm",
+    zIndex: undefined,
   }
 );
 
@@ -55,11 +57,11 @@ const resolvedAriaLabel = computed(
   </button>
 
   <IsleModal
-    v-if="open"
     :open="open"
     :title="title"
     :description="description"
     :size="modalSize"
+    :z-index="zIndex ?? 1360"
     @close="open = false"
   >
     <template #icon>

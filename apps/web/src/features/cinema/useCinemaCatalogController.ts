@@ -341,7 +341,7 @@ export function useCinemaCatalogController({
       : mode.value === "continue"
         ? "还没有可继续观看的影片"
         : mode.value === "unmatched"
-          ? "所有影片均已匹配资料"
+          ? "所有影片资料均已完善"
           : mode.value === "movie"
             ? "电影分类还没有内容"
             : mode.value === "series"
@@ -354,7 +354,7 @@ export function useCinemaCatalogController({
       : mode.value === "continue"
         ? "播放影片后，可从这里继续上次的观看进度。"
         : mode.value === "unmatched"
-          ? "没有尚未确认海报或简介的影片。"
+          ? "没有待完善海报或简介的影片。"
           : mode.value !== "all"
             ? "可以查看全部影片，或将此类影视文件加入共享目录后重新扫描。"
             : "将影视文件拷贝到 Mac 共享目录后，点击右上角「扫描影视库」。",

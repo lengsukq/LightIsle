@@ -1,19 +1,52 @@
 .family-board-section {
-  margin-top: 18px;
+  margin-top: 20px;
   display: flex;
   flex-direction: column;
   gap: 10px;
 }
 
+/* Smooth CSS Grid Disclosure Drawer for Composer */
+.family-board-section .board-composer-drawer {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  margin-bottom: -10px;
+  visibility: hidden;
+  transition:
+    grid-template-rows 300ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 220ms ease,
+    margin-bottom 300ms cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0s linear 300ms;
+}
+
+.family-board-section .board-composer-drawer.is-open {
+  grid-template-rows: 1fr;
+  opacity: 1;
+  margin-bottom: 0;
+  visibility: visible;
+  transition:
+    grid-template-rows 300ms cubic-bezier(0.22, 1, 0.36, 1),
+    opacity 240ms ease,
+    margin-bottom 300ms cubic-bezier(0.22, 1, 0.36, 1),
+    visibility 0s linear 0s;
+}
+
+.family-board-section .board-composer-drawer-inner {
+  min-height: 0;
+  overflow: hidden;
+}
+
 .family-board-section .board-composer-card {
-  padding: 14px 16px;
+  --board-tone: #d9912b;
+  padding: 15px 17px;
   border-radius: 16px;
-  border: 1px solid var(--fluid-card-border-strong, var(--fluid-card-border));
-  background: var(--surface-elevated);
-  box-shadow: var(--shadow-card, 0 8px 24px rgba(15, 23, 42, 0.06));
+  border: 1px solid color-mix(in srgb, var(--board-tone) 26%, var(--fluid-card-border-strong, var(--fluid-card-border)));
+  background-color: color-mix(in srgb, var(--board-tone) 8%, var(--surface-elevated));
+  box-shadow: var(--fluid-card-shadow);
   display: flex;
   flex-direction: column;
   gap: 10px;
+  transition: background-color 240ms ease, border-color 240ms ease;
 }
 
 .family-board-section .board-composer-top {
@@ -29,6 +62,11 @@
   display: flex;
   align-items: center;
   gap: 6px;
+  flex-wrap: wrap;
+}
+
+.family-board-section .board-color-row {
+  gap: 4px;
 }
 
 .family-board-section .board-pill-choice {
@@ -36,57 +74,61 @@
   background: var(--fluid-card-item-fill);
   color: var(--text-secondary);
   border-radius: 999px;
-  padding: 4px 11px;
+  min-height: 30px;
+  padding: 4px 12px;
   font-size: 12px;
   font-weight: 550;
   cursor: pointer;
-  transition: background-color 160ms ease, color 160ms ease, border-color 160ms ease;
+  transition: background-color 180ms ease, color 180ms ease, border-color 180ms ease;
 }
 
 .family-board-section .board-pill-choice.active {
-  background: var(--accent-primary);
-  border-color: var(--accent-primary);
+  background: var(--board-tone, var(--accent-primary));
+  border-color: var(--board-tone, var(--accent-primary));
   color: #ffffff;
 }
 
 .family-board-section .board-color-dot {
-  width: 18px;
-  height: 18px;
+  width: 30px;
+  height: 30px;
+  padding: 4px;
+  background-clip: content-box;
   border-radius: 999px;
   border: 2px solid transparent;
   cursor: pointer;
-  transition: transform 160ms cubic-bezier(0.22, 1, 0.36, 1), border-color 160ms ease;
+  transition: transform 180ms cubic-bezier(0.22, 1, 0.36, 1), border-color 160ms ease;
 }
 
 .family-board-section .board-color-dot.active {
-  transform: scale(1.18);
+  transform: scale(1.1);
   border-color: var(--text-primary);
 }
 
-.family-board-section .dot-amber { background: #e8a64d; }
-.family-board-section .dot-blue { background: #3b9ca8; }
-.family-board-section .dot-rose { background: #d96b85; }
-.family-board-section .dot-sage { background: #3ea377; }
-.family-board-section .dot-violet { background: #8a72c2; }
+.family-board-section .dot-amber { background-color: #e8a64d; }
+.family-board-section .dot-blue { background-color: #3b9ca8; }
+.family-board-section .dot-rose { background-color: #d96b85; }
+.family-board-section .dot-sage { background-color: #3ea377; }
+.family-board-section .dot-violet { background-color: #8a72c2; }
 
 .family-board-section .board-textarea {
   width: 100%;
   resize: vertical;
-  min-height: 76px;
+  min-height: 78px;
   padding: 10px 12px;
   border-radius: 12px;
   border: 1px solid var(--fluid-card-border);
-  background: var(--fluid-card-item-fill);
+  background: color-mix(in srgb, var(--surface-elevated) 72%, var(--fluid-card-item-fill));
   color: var(--text-primary);
   font: inherit;
-  font-size: 13.5px;
-  line-height: 1.55;
+  font-size: 14px;
+  line-height: 1.6;
   outline: none;
-  transition: border-color 160ms ease;
+  transition: border-color 160ms ease, background-color 180ms ease;
 }
 
 .family-board-section .board-textarea:focus {
-  border-color: var(--accent-primary);
+  border-color: var(--board-tone, var(--accent-primary));
+  background: var(--surface-elevated);
 }
 
 .family-board-section .board-composer-foot {
@@ -99,11 +141,12 @@
 .family-board-section .board-char-count {
   font-size: 11.5px;
   color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
 }
 
 .family-board-section .board-inline-error {
   font-size: 12px;
-  color: var(--status-error, #c93b3b);
+  color: var(--error);
 }
 
 .family-board-section .board-stage-shell {
@@ -114,17 +157,24 @@
 
 .family-board-section .board-deck-viewport {
   position: relative;
-  padding-bottom: 10px;
+  overflow: hidden;
+  padding: 4px 4px 12px;
+  margin: -4px -4px 0;
   touch-action: pan-y;
   user-select: none;
   outline: none;
 }
 
+.family-board-section .board-deck-viewport:focus-visible .board-card {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
 .family-board-section .board-deck-ghost {
   position: absolute;
-  left: 14px;
-  right: 14px;
-  bottom: 4px;
+  left: 18px;
+  right: 18px;
+  bottom: 6px;
   height: 28px;
   border-radius: 18px;
   border: 1px solid var(--fluid-card-border);
@@ -138,120 +188,84 @@
 }
 
 .family-board-section .board-deck-ghost-2 {
-  left: 26px;
-  right: 26px;
-  bottom: 0;
+  left: 30px;
+  right: 30px;
+  bottom: 2px;
   transform: translate3d(0, 0, 0) scale(0.95);
   opacity: 0.45;
 }
 
+/* Shared Tone Palette Variables for Cards & Composer Preview */
+.family-board-section .tone-amber { --board-tone: #d9912b; }
+.family-board-section .tone-blue { --board-tone: #178391; }
+.family-board-section .tone-rose { --board-tone: #d45d79; }
+.family-board-section .tone-sage { --board-tone: #1b8c61; }
+.family-board-section .tone-violet { --board-tone: #7b63b8; }
+
 .family-board-section .board-card {
   position: relative;
   z-index: 2;
-  padding: 16px 18px 14px;
+  min-height: 156px;
+  padding: 18px 20px 14px;
   border-radius: 18px;
   border: 1px solid var(--fluid-card-border-strong, var(--fluid-card-border));
-  background: var(--surface-elevated);
-  box-shadow: var(--shadow-card, 0 10px 28px rgba(20, 19, 17, 0.06));
+  background: linear-gradient(135deg, color-mix(in srgb, var(--board-tone, #d9912b) 10%, var(--surface-elevated)), var(--surface-elevated) 68%);
+  box-shadow: var(--fluid-card-shadow);
   display: flex;
   flex-direction: column;
   gap: 12px;
-  cursor: grab;
   will-change: transform, opacity;
   transition: transform 280ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 220ms ease;
 }
 
-.family-board-section .board-card.is-dragging {
+.family-board-section .board-card.is-swipeable {
+  cursor: grab;
+}
+
+.family-board-section .board-card.is-swipeable.is-dragging {
   cursor: grabbing;
 }
 
-.family-board-section .board-card.tone-amber {
-  background: linear-gradient(135deg, color-mix(in srgb, #e8a64d 11%, var(--surface-elevated)), var(--surface-elevated) 65%);
-}
-.family-board-section .board-card.tone-blue {
-  background: linear-gradient(135deg, color-mix(in srgb, #0e6b74 11%, var(--surface-elevated)), var(--surface-elevated) 65%);
-}
-.family-board-section .board-card.tone-rose {
-  background: linear-gradient(135deg, color-mix(in srgb, #d4657d 11%, var(--surface-elevated)), var(--surface-elevated) 65%);
-}
-.family-board-section .board-card.tone-sage {
-  background: linear-gradient(135deg, color-mix(in srgb, #18835b 11%, var(--surface-elevated)), var(--surface-elevated) 65%);
-}
-.family-board-section .board-card.tone-violet {
-  background: linear-gradient(135deg, color-mix(in srgb, #6b5799 12%, var(--surface-elevated)), var(--surface-elevated) 65%);
-}
-
 .family-board-section .board-card.is-pinned {
-  border-color: color-mix(in srgb, #d4891c 45%, var(--fluid-card-border));
+  border-color: color-mix(in srgb, var(--warning) 45%, var(--fluid-card-border));
 }
 
 .family-board-section .board-card-head {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
   gap: 10px;
-}
-
-.family-board-section .board-author {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 0;
-}
-
-.family-board-section .board-avatar {
-  width: 34px;
-  height: 34px;
-  border-radius: 11px;
-  background: color-mix(in srgb, var(--accent-primary) 15%, var(--fluid-card-item-fill));
-  color: var(--accent-primary);
-  display: grid;
-  place-items: center;
-  font-weight: 700;
-  font-size: 14px;
-  flex-shrink: 0;
-}
-
-.family-board-section .board-author-meta {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  min-width: 0;
-}
-
-.family-board-section .board-author-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
   flex-wrap: wrap;
 }
 
-.family-board-section .board-author-row strong {
-  font-size: 13.5px;
-  color: var(--text-primary);
+.family-board-section .board-card-badges {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
 }
 
-.family-board-section .board-author-meta small {
-  font-size: 11.5px;
-  color: var(--text-tertiary);
-}
-
-.family-board-section .board-role-tag,
 .family-board-section .board-tag-chip {
   font-size: 11px;
-  font-weight: 600;
-  padding: 1px 7px;
+  font-weight: 650;
+  padding: 2.5px 9px;
   border-radius: 999px;
+  background: color-mix(in srgb, var(--board-tone, var(--accent-primary)) 14%, transparent);
+  color: color-mix(in srgb, var(--board-tone, var(--accent-primary)) 82%, var(--text-primary));
+  border: 1px solid color-mix(in srgb, var(--board-tone, var(--accent-primary)) 22%, transparent);
 }
 
-.family-board-section .board-role-tag {
-  background: var(--fluid-card-item-fill);
-  color: var(--text-secondary);
-}
-
-.family-board-section .board-tag-chip {
-  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
-  color: var(--accent-primary);
+.family-board-section .board-pin-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2.5px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 650;
+  background: color-mix(in srgb, var(--warning) 15%, transparent);
+  color: var(--warning);
 }
 
 .family-board-section .board-card-actions {
@@ -259,24 +273,13 @@
   align-items: center;
   gap: 6px;
   flex-shrink: 0;
-}
-
-.family-board-section .board-pin-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  padding: 3px 9px;
-  border-radius: 999px;
-  font-size: 11px;
-  font-weight: 650;
-  background: color-mix(in srgb, #d4891c 16%, transparent);
-  color: #b46a06;
+  margin-left: auto;
 }
 
 .family-board-section .board-icon-btn {
-  min-width: 30px;
-  height: 30px;
-  padding: 0 7px;
+  min-width: 32px;
+  height: 32px;
+  padding: 0 8px;
   border-radius: 999px;
   border: 1px solid var(--fluid-card-border);
   background: var(--fluid-card-item-fill);
@@ -297,37 +300,154 @@
 }
 
 .family-board-section .board-icon-btn.active {
-  color: #b46a06;
-  border-color: color-mix(in srgb, #d4891c 42%, transparent);
-  background: color-mix(in srgb, #d4891c 12%, transparent);
+  color: var(--warning);
+  border-color: color-mix(in srgb, var(--warning) 42%, transparent);
+  background: color-mix(in srgb, var(--warning) 12%, transparent);
 }
 
 .family-board-section .board-icon-btn.danger:hover,
 .family-board-section .board-icon-btn.danger.confirming {
-  color: #c93b3b;
-  border-color: color-mix(in srgb, #c93b3b 40%, transparent);
-  background: color-mix(in srgb, #c93b3b 12%, transparent);
+  color: var(--error);
+  border-color: color-mix(in srgb, var(--error) 40%, transparent);
+  background: color-mix(in srgb, var(--error) 12%, transparent);
 }
 
 .family-board-section .board-card-body {
   margin: 0;
-  font-size: 14.5px;
-  line-height: 1.65;
+  font-size: 16.5px;
+  line-height: 1.68;
+  font-weight: 450;
+  letter-spacing: -0.005em;
   color: var(--text-primary);
   white-space: pre-wrap;
   word-break: break-word;
-  min-height: 44px;
+  min-height: 46px;
 }
 
 .family-board-section .board-card-foot {
+  margin-top: auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
-  padding-top: 8px;
-  border-top: 1px solid var(--fluid-divider, var(--stroke-subtle));
+  gap: 10px;
+  flex-wrap: wrap;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--fluid-divider, var(--stroke-subtle)) 70%, transparent);
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+.family-board-section .board-signature {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.family-board-section .board-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--board-tone, var(--accent-primary)) 15%, var(--fluid-card-item-fill));
+  color: color-mix(in srgb, var(--board-tone, var(--accent-primary)) 84%, var(--text-primary));
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 11px;
+  flex-shrink: 0;
+}
+
+.family-board-section .board-signature-text {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
+.family-board-section .board-signature-text strong {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+}
+
+.family-board-section .board-sig-sep {
+  opacity: 0.6;
+}
+
+.family-board-section .board-signature-text time {
+  font-size: 12px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+.family-board-section .board-pin-meta {
   font-size: 11.5px;
   color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Matched-Height Loading Skeleton */
+.family-board-section .board-skeleton-card {
+  min-height: 156px;
+  padding: 18px 20px 14px;
+  border-radius: 18px;
+  border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-fill);
+  box-shadow: var(--fluid-card-shadow);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.family-board-section .board-skeleton-head {
+  display: flex;
+  align-items: center;
+}
+
+.family-board-section .board-skeleton-pill {
+  width: 52px;
+  height: 22px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+
+.family-board-section .board-skeleton-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.family-board-section .board-skeleton-line {
+  height: 15px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+}
+
+.family-board-section .board-skeleton-line.wide { width: 84%; }
+.family-board-section .board-skeleton-line.mid { width: 56%; }
+
+.family-board-section .board-skeleton-foot {
+  margin-top: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 10px;
+  border-top: 1px solid color-mix(in srgb, var(--fluid-divider, var(--stroke-subtle)) 60%, transparent);
+}
+
+.family-board-section .board-skeleton-avatar {
+  width: 22px;
+  height: 22px;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--text-primary) 7%, transparent);
+}
+
+.family-board-section .board-skeleton-sig {
+  width: 112px;
+  height: 12px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
 }
 
 .family-board-section .board-controls {
@@ -338,8 +458,8 @@
 }
 
 .family-board-section .board-nav-btn {
-  width: 30px;
-  height: 30px;
+  width: 34px;
+  height: 34px;
   border-radius: 999px;
   border: 1px solid var(--fluid-card-border);
   background: var(--fluid-card-item-fill);
@@ -363,39 +483,57 @@
 .family-board-section .board-dots {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 2px;
+  flex-wrap: wrap;
+  justify-content: center;
 }
 
 .family-board-section .board-dot {
-  width: 7px;
-  height: 7px;
+  position: relative;
+  width: 22px;
+  height: 28px;
   padding: 0;
   border: 0;
+  background: transparent;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+}
+
+.family-board-section .board-dot::after {
+  content: "";
+  width: 7px;
+  height: 7px;
   border-radius: 999px;
   background: var(--text-disabled, rgba(128, 128, 128, 0.35));
-  cursor: pointer;
   transition: width 240ms cubic-bezier(0.22, 1, 0.36, 1), background-color 180ms ease;
 }
 
-.family-board-section .board-dot.pinned {
-  background: color-mix(in srgb, #d4891c 55%, transparent);
+.family-board-section .board-dot.pinned::after {
+  background: color-mix(in srgb, var(--warning) 55%, transparent);
 }
 
 .family-board-section .board-dot.active {
+  width: 28px;
+}
+
+.family-board-section .board-dot.active::after {
   width: 22px;
   background: var(--accent-primary);
 }
 
-.family-board-section .board-dot.active.pinned {
-  background: #d4891c;
+.family-board-section .board-dot.active.pinned::after {
+  background: var(--warning);
 }
 
 .family-board-section .board-dot-more {
   font-size: 11px;
   color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
 }
 
 .family-board-section .board-empty-card {
+  min-height: 92px;
   padding: 16px 18px;
   border-radius: 16px;
   border: 1px dashed var(--fluid-card-border-strong, var(--fluid-card-border));
@@ -434,44 +572,62 @@
   color: var(--text-tertiary);
 }
 
+/* Parallel Directional Swipe Physics (Zero mode="out-in" hole, Zero snap-back) */
 .family-board-section .board-slide-next-enter-active,
+.family-board-section .board-slide-prev-enter-active {
+  transition: transform 320ms cubic-bezier(0.22, 1, 0.36, 1), opacity 240ms ease;
+}
+
 .family-board-section .board-slide-next-leave-active,
-.family-board-section .board-slide-prev-enter-active,
 .family-board-section .board-slide-prev-leave-active {
-  transition: transform 320ms cubic-bezier(0.22, 1, 0.36, 1), opacity 260ms ease;
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  right: 4px;
+  z-index: 3;
+  pointer-events: none;
+  transition: transform 320ms cubic-bezier(0.22, 1, 0.36, 1), opacity 240ms ease;
 }
 
-.family-board-section .board-slide-next-enter-from {
-  opacity: 0;
-  transform: translate3d(38px, 0, 0) scale(0.96);
-}
-.family-board-section .board-slide-next-leave-to {
-  opacity: 0;
-  transform: translate3d(-38px, 0, 0) scale(0.96);
-}
-
+.family-board-section .board-slide-next-enter-from,
 .family-board-section .board-slide-prev-enter-from {
   opacity: 0;
-  transform: translate3d(-38px, 0, 0) scale(0.96);
-}
-.family-board-section .board-slide-prev-leave-to {
-  opacity: 0;
-  transform: translate3d(38px, 0, 0) scale(0.96);
+  transform: scale(0.95);
 }
 
-.family-board-section .board-composer-enter-active,
-.family-board-section .board-composer-leave-active {
-  transition: opacity 220ms ease, transform 240ms cubic-bezier(0.22, 1, 0.36, 1);
+.family-board-section .board-slide-next-leave-from,
+.family-board-section .board-slide-prev-leave-from {
+  opacity: 1;
+  transform: translate3d(var(--leave-from-x, 0px), 0, 0) rotate(var(--leave-from-rot, 0deg)) scale(1);
 }
-.family-board-section .board-composer-enter-from,
-.family-board-section .board-composer-leave-to {
+
+.family-board-section .board-slide-next-leave-to {
   opacity: 0;
-  transform: translate3d(0, -8px, 0);
+  transform: translate3d(calc(var(--leave-from-x, 0px) - 160px), 8px, 0) rotate(-6deg) scale(0.94);
+}
+
+.family-board-section .board-slide-prev-leave-to {
+  opacity: 0;
+  transform: translate3d(calc(var(--leave-from-x, 0px) + 160px), 8px, 0) rotate(6deg) scale(0.94);
+}
+
+@media (max-width: 640px) {
+  .family-board-section .board-icon-btn {
+    min-width: 36px;
+    height: 36px;
+  }
+  .family-board-section .board-card-body {
+    font-size: 15.5px;
+    line-height: 1.65;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
+  .family-board-section .board-composer-drawer,
+  .family-board-section .board-composer-drawer.is-open,
+  .family-board-section .board-composer-card,
   .family-board-section .board-card,
-  .family-board-section .board-dot,
+  .family-board-section .board-dot::after,
   .family-board-section .board-pill-choice,
   .family-board-section .board-color-dot,
   .family-board-section .board-textarea,
@@ -480,9 +636,7 @@
   .family-board-section .board-slide-next-enter-active,
   .family-board-section .board-slide-next-leave-active,
   .family-board-section .board-slide-prev-enter-active,
-  .family-board-section .board-slide-prev-leave-active,
-  .family-board-section .board-composer-enter-active,
-  .family-board-section .board-composer-leave-active {
+  .family-board-section .board-slide-prev-leave-active {
     transition: none;
   }
 }

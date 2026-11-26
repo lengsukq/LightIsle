@@ -66,9 +66,9 @@ const props = withDefaults(
   color: var(--text-primary);
   box-sizing: border-box;
   transition:
-    transform var(--motion-fast, 150ms) var(--motion-spring, cubic-bezier(0.22, 1, 0.36, 1)),
-    box-shadow var(--motion-fast, 150ms) ease,
-    border-color var(--motion-fast, 150ms) ease;
+    transform 220ms var(--motion-spring, cubic-bezier(0.22, 1, 0.36, 1)),
+    background-color var(--motion-fast, 160ms) ease,
+    border-color var(--motion-fast, 160ms) ease;
 }
 
 /* Variants */
@@ -142,7 +142,8 @@ const props = withDefaults(
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 10px 12px;
   flex-shrink: 0;
 }
 
@@ -151,19 +152,18 @@ const props = withDefaults(
   align-items: center;
   gap: 10px;
   min-width: 0;
-  flex: 1;
+  flex: 1 1 190px;
 }
 
 .isle-card-icon-badge {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
+  width: 30px;
+  height: 30px;
   border-radius: 9px;
-  background: color-mix(in srgb, var(--accent-primary, #1f5162) 11%, transparent);
-  color: var(--accent-primary, #1f5162);
-  border: 1px solid color-mix(in srgb, var(--accent-primary, #1f5162) 18%, transparent);
+  background: color-mix(in srgb, var(--accent-primary, #0E6B74) 10%, transparent);
+  color: var(--accent-primary, #0E6B74);
   flex-shrink: 0;
 }
 
@@ -174,9 +174,9 @@ const props = withDefaults(
 
 .isle-card-title {
   margin: 0;
-  font-size: 15px;
-  font-weight: 650;
-  letter-spacing: -0.2px;
+  font-size: 15.5px;
+  font-weight: 660;
+  letter-spacing: -0.015em;
   color: var(--text-primary);
   line-height: 1.35;
 }
@@ -191,8 +191,25 @@ const props = withDefaults(
 .isle-card-header-actions {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
+  max-width: 100%;
   flex-shrink: 0;
+}
+
+@media (max-width: 640px) {
+  .isle-card-header-actions {
+    flex: 1 1 100%;
+    justify-content: flex-start;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .isle-card.variant-glass {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: var(--surface-elevated);
+  }
 }
 
 /* Body */

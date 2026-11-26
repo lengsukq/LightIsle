@@ -71,14 +71,15 @@ function handleClick(event: MouseEvent) {
     :aria-label="ariaLabel"
     @click="handleClick"
   >
-    <span v-if="loading" class="isle-btn-spinner" aria-hidden="true">
-      <Loader2 :size="resolvedSize === 'sm' ? 13 : resolvedSize === 'lg' ? 17 : 15" class="spin-icon" />
-    </span>
-    <span v-else-if="$slots.icon" class="isle-btn-icon" aria-hidden="true">
-      <slot name="icon" />
-    </span>
-
-    <span v-if="$slots.default" class="isle-btn-content">
+    <span class="isle-btn-content">
+      <Transition name="isle-btn-glyph" mode="out-in">
+        <span v-if="loading" key="spin" class="isle-btn-spinner" aria-hidden="true">
+          <Loader2 :size="resolvedSize === 'sm' ? 13 : resolvedSize === 'lg' ? 17 : 15" class="spin-icon" />
+        </span>
+        <span v-else-if="$slots.icon" key="icon" class="isle-btn-icon" aria-hidden="true">
+          <slot name="icon" />
+        </span>
+      </Transition>
       <slot />
     </span>
 
@@ -97,19 +98,30 @@ function handleClick(event: MouseEvent) {
   border-radius: 9999px;
   font-family: inherit;
   font-weight: 550;
+  font-variant-numeric: tabular-nums;
   letter-spacing: -0.01em;
   cursor: pointer;
   border: 1px solid transparent;
   transition:
-    transform 240ms var(--motion-spring, cubic-bezier(0.22, 1, 0.36, 1)),
+    transform 240ms var(--motion-spring-snappy, cubic-bezier(0.2, 0.9, 0.22, 1.05)),
     background-color 0.16s ease,
     border-color 0.16s ease,
+    color 0.16s ease,
     opacity 0.18s ease;
   user-select: none;
   -webkit-tap-highlight-color: transparent;
   white-space: nowrap;
   text-decoration: none;
   box-sizing: border-box;
+  width: auto;
+  max-width: 100%;
+}
+
+.isle-btn-content {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
 }
 
 .isle-btn:focus-visible {
@@ -165,7 +177,10 @@ function handleClick(event: MouseEvent) {
 }
 
 .isle-btn.variant-primary:hover:not(.is-disabled) {
-  filter: brightness(1.06);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--accent-primary-solid-top, var(--accent-primary)) 86%, #ffffff) 0%, var(--accent-primary-solid-top, var(--accent-primary)) 100%);
+  box-shadow:
+    0 4px 12px color-mix(in srgb, var(--accent-primary-solid, var(--accent-primary)) 28%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.28);
 }
 
 .isle-btn.variant-tonal {
@@ -192,10 +207,12 @@ function handleClick(event: MouseEvent) {
 
 .isle-btn.variant-glass,
 .isle-btn.variant-secondary {
-  background: var(--fluid-card-fill, #ffffff);
+  background: color-mix(in srgb, var(--fluid-card-top, #ffffff) 74%, transparent);
   color: var(--text-primary, #1e293b);
   border-color: var(--fluid-card-border, rgba(15, 23, 42, 0.1));
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  box-shadow:
+    0 1px 2px rgba(20, 19, 17, 0.03),
+    inset 0 1px 0 rgba(255, 255, 255, 0.72);
 }
 
 .isle-btn.variant-glass:hover:not(.is-disabled),
@@ -235,6 +252,16 @@ function handleClick(event: MouseEvent) {
   animation: isleBtnSpin 1s linear infinite;
 }
 
+.isle-btn-glyph-enter-active,
+.isle-btn-glyph-leave-active {
+  transition: opacity 130ms ease, transform 160ms var(--motion-spring, cubic-bezier(0.22, 1, 0.36, 1));
+}
+.isle-btn-glyph-enter-from,
+.isle-btn-glyph-leave-to {
+  opacity: 0;
+  transform: scale(0.8);
+}
+
 @keyframes isleBtnSpin {
   from {
     transform: rotate(0deg);
@@ -245,7 +272,9 @@ function handleClick(event: MouseEvent) {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .isle-btn {
+  .isle-btn,
+  .isle-btn-glyph-enter-active,
+  .isle-btn-glyph-leave-active {
     transition: none;
   }
   .isle-btn-spinner,

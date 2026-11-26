@@ -1,4 +1,4 @@
-import { computed, nextTick, ref, type ComputedRef, type Ref } from "vue";
+import { computed, getCurrentScope, nextTick, onScopeDispose, ref, watch, type ComputedRef, type Ref } from "vue";
 import { describeRootOperationFailure } from "../../api/rootDiscovery.ts";
 import {
   buildTimelineYears,
@@ -48,7 +48,14 @@ export function usePhotoTimelineScrubber<TAsset extends BatchAsset>(options: {
   const jumpMonth = ref(0);
   const scrubbing = ref(false);
   const scrubPreview = ref(0);
+  const scrollSyncedIndex = ref<number | null>(null);
+  const scrubScrolling = ref(false);
+  const scrolledPastHeader = ref(false);
+  const activeStickyGroup = ref<{ startIndex: number; top: number; title: string; count: number } | null>(null);
   let scrubPointerId: number | null = null;
+  let scrollSyncRafId: number | null = null;
+  let scrollIdleTimer: number | undefined;
+  let scrollListenerAttached = false;
 
   async function refreshTimelineIndex() {
     const root = options.getRootEpoch();
@@ -171,11 +178,21 @@ export function usePhotoTimelineScrubber<TAsset extends BatchAsset>(options: {
 
   const scrubCurrentIndex = computed(() => {
     if (scrubbing.value) return scrubPreview.value;
-    const visible = options.assets.value[
-      Math.min(options.assets.value.length - 1, options.virtualWindow.value.startIndex)
+    if (
+      scrollSyncedIndex.value !== null &&
+      scrollSyncedIndex.value >= 0 &&
+      scrollSyncedIndex.value < scrubMonths.value.length
+    ) {
+      return scrollSyncedIndex.value;
+    }
+    const firstHeader = options.virtualWindow.value.headers[0];
+    const anchorAsset = options.assets.value[
+      firstHeader
+        ? Math.min(options.assets.value.length - 1, firstHeader.startIndex)
+        : Math.min(options.assets.value.length - 1, options.virtualWindow.value.startIndex)
     ];
-    if (visible && visible.takenAt > 0) {
-      const taken = new Date(visible.takenAt * 1000);
+    if (anchorAsset && anchorAsset.takenAt > 0) {
+      const taken = new Date(anchorAsset.takenAt * 1000);
       const found = scrubMonths.value.findIndex(
         (entry) => entry.year === taken.getFullYear() && entry.month === taken.getMonth() + 1,
       );
@@ -184,6 +201,126 @@ export function usePhotoTimelineScrubber<TAsset extends BatchAsset>(options: {
     const fallback = scrubMonths.value.findIndex((entry) => entry.firstIndex >= timelineCursorStart.value);
     return Math.max(0, fallback);
   });
+
+  function findActiveGroupAtGridY(
+    groups: Array<{ startIndex: number; top: number; title: string; count: number }>,
+    gridY: number,
+  ) {
+    if (!groups.length) return null;
+    let low = 0;
+    let high = groups.length - 1;
+    let chosen = 0;
+    while (low <= high) {
+      const mid = (low + high) >>> 1;
+      if (groups[mid].top <= gridY) {
+        chosen = mid;
+        low = mid + 1;
+      } else {
+        high = mid - 1;
+      }
+    }
+    return groups[chosen] ?? groups[0];
+  }
+
+  function syncActiveMonthFromScroll(markScrolling = true) {
+    const grid = options.gridElement.value;
+    const groups = options.timelineLayout.value.groups;
+    if (!grid || !groups.length) {
+      scrolledPastHeader.value = false;
+      activeStickyGroup.value = null;
+      scrollSyncedIndex.value = null;
+      return;
+    }
+    const rect = grid.getBoundingClientRect();
+    const gridOffsetY = Math.max(0, 96 - rect.top);
+    scrolledPastHeader.value = rect.top < 54 && rect.bottom > 180;
+    const group = findActiveGroupAtGridY(groups, gridOffsetY);
+    activeStickyGroup.value = group;
+    if (group) {
+      const anchor = options.assets.value[Math.min(options.assets.value.length - 1, group.startIndex)];
+      if (anchor && anchor.takenAt > 0) {
+        const taken = new Date(anchor.takenAt * 1000);
+        const found = scrubMonths.value.findIndex(
+          (entry) => entry.year === taken.getFullYear() && entry.month === taken.getMonth() + 1,
+        );
+        if (found >= 0) {
+          scrollSyncedIndex.value = found;
+        }
+      }
+    }
+    if (markScrolling && options.scrubberInView.value && !options.isDisposed()) {
+      scrubScrolling.value = true;
+      if (scrollIdleTimer !== undefined) window.clearTimeout(scrollIdleTimer);
+      scrollIdleTimer = window.setTimeout(() => {
+        scrollIdleTimer = undefined;
+        scrubScrolling.value = false;
+      }, 1150);
+    }
+  }
+
+  function scheduleScrollSync() {
+    if (typeof window === "undefined" || typeof window.requestAnimationFrame !== "function") return;
+    if (scrollSyncRafId !== null) return;
+    scrollSyncRafId = window.requestAnimationFrame(() => {
+      scrollSyncRafId = null;
+      if (!options.isDisposed()) syncActiveMonthFromScroll(true);
+    });
+  }
+
+  function cancelScrollSync() {
+    if (scrollSyncRafId !== null && typeof window !== "undefined" && typeof window.cancelAnimationFrame === "function") {
+      window.cancelAnimationFrame(scrollSyncRafId);
+    }
+    scrollSyncRafId = null;
+    if (scrollIdleTimer !== undefined && typeof window !== "undefined") {
+      window.clearTimeout(scrollIdleTimer);
+      scrollIdleTimer = undefined;
+    }
+    scrubScrolling.value = false;
+  }
+
+  function attachScrollSync() {
+    if (scrollListenerAttached || typeof window === "undefined") return;
+    scrollListenerAttached = true;
+    window.addEventListener("scroll", scheduleScrollSync, { passive: true });
+    window.addEventListener("resize", scheduleScrollSync, { passive: true });
+  }
+
+  function detachScrollSync() {
+    cancelScrollSync();
+    if (!scrollListenerAttached || typeof window === "undefined") return;
+    scrollListenerAttached = false;
+    window.removeEventListener("scroll", scheduleScrollSync);
+    window.removeEventListener("resize", scheduleScrollSync);
+  }
+
+  watch(
+    () => options.gridElement.value,
+    (grid) => {
+      if (grid) {
+        attachScrollSync();
+        syncActiveMonthFromScroll(false);
+      } else {
+        detachScrollSync();
+        scrolledPastHeader.value = false;
+        activeStickyGroup.value = null;
+        scrollSyncedIndex.value = null;
+      }
+    },
+  );
+
+  watch(
+    () => [options.timelineLayout.value.groups.length, scrubMonths.value.length],
+    () => {
+      if (options.gridElement.value) syncActiveMonthFromScroll(false);
+    },
+  );
+
+  if (getCurrentScope()) {
+    onScopeDispose(() => {
+      detachScrollSync();
+    });
+  }
 
   let scrubRailRect: DOMRect | null = null;
   let scrubRafId: number | null = null;
@@ -283,11 +420,15 @@ export function usePhotoTimelineScrubber<TAsset extends BatchAsset>(options: {
 
   function resetScrubberForRootChange() {
     cancelScrubFrame();
+    cancelScrollSync();
     scrubRailRect = null;
     timelineCursorStart.value = 0;
     fullTimelineMonths.value = [];
     scrubbing.value = false;
     scrubPointerId = null;
+    scrollSyncedIndex.value = null;
+    scrolledPastHeader.value = false;
+    activeStickyGroup.value = null;
     options.scrubberInView.value = false;
     jumpYear.value = 0;
     jumpMonth.value = 0;
@@ -307,6 +448,9 @@ export function usePhotoTimelineScrubber<TAsset extends BatchAsset>(options: {
     scrubbing,
     scrubPreview,
     scrubCurrentIndex,
+    scrubScrolling,
+    scrolledPastHeader,
+    activeStickyGroup,
     refreshTimelineIndex,
     jumpToTimeline,
     onJumpYearChange,

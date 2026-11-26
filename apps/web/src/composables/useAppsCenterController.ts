@@ -380,7 +380,7 @@ export function useAppsCenterController(
   function populateConfigForm(app: PublicAppItem) {
     webEnabled.value = app.web?.enabled ?? true;
     webMode.value = appMode(app);
-    webIdleTimeoutSeconds.value = app.web?.idleTimeoutSeconds ?? 900;
+    webIdleTimeoutSeconds.value = app.web?.idleTimeoutSeconds && app.web.idleTimeoutSeconds > 0 ? app.web.idleTimeoutSeconds : 900;
     webAutoRestart.value = app.web?.autoRestart ?? true;
     const c = app.cron;
     cronEnabled.value = c?.enabled ?? false;
@@ -399,6 +399,9 @@ export function useAppsCenterController(
     populateAccessForm(app);
     populateConfigForm(app);
     detailAppId.value = app.id;
+    if (typeof window !== "undefined") {
+      window.scrollTo({ top: 0, behavior: "auto" });
+    }
     void loadLogs(app);
   }
 
@@ -483,7 +486,7 @@ export function useAppsCenterController(
         {
           enabled: app.web?.enabled ?? true,
           mode: appMode(app),
-          idleTimeoutSeconds: app.web?.idleTimeoutSeconds ?? 900,
+          idleTimeoutSeconds: app.web?.idleTimeoutSeconds && app.web.idleTimeoutSeconds > 0 ? app.web.idleTimeoutSeconds : 900,
           autoRestart: app.web?.autoRestart ?? true,
         },
         {

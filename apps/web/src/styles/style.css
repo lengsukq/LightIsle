@@ -15,14 +15,14 @@
   --surface-glass-clear: rgba(252, 251, 249, 0.56);
   --surface-glass-fallback: #FCFBF9EB;
   --text-primary: #141413;
-  --text-secondary: #5C5A55;
-  --text-tertiary: #8F8C85;
+  --text-secondary: #5A5852;
+  --text-tertiary: #6D6A63;
   --text-disabled: #C7C4BC;
   --stroke-subtle: rgba(20, 19, 17, 0.068);
   --stroke-glass: rgba(255, 255, 255, 0.90);
   --stroke-strong: rgba(20, 19, 17, 0.14);
-  --success: #18835B;
-  --warning: #C7781A;
+  --success: #167A54;
+  --warning: #9A5506;
   --error: #C93B3B;
   --radius-xs: 7px;
   --radius-sm: 10px;
@@ -34,6 +34,8 @@
   --shadow-float: 0 6px 18px rgba(20, 19, 17, 0.07), 0 24px 48px -14px rgba(20, 19, 17, 0.14);
   --shadow-glass: 0 14px 36px rgba(20, 19, 17, 0.065), inset 0 1px 0 rgba(255, 255, 255, 0.94);
   --motion-spring: cubic-bezier(0.22, 1, 0.36, 1);
+  --motion-spring-snappy: cubic-bezier(0.2, 0.9, 0.22, 1.05);
+  --motion-exit: cubic-bezier(0.32, 0, 0.67, 0);
   --motion-fast: 160ms;
   --motion-normal: 260ms;
 
@@ -76,9 +78,9 @@
   --surface-glass-clear: rgba(22, 22, 20, 0.52);
   --surface-glass-fallback: #171715;
   --text-primary: #F5F4F0;
-  --text-secondary: #A4A199;
-  --text-tertiary: #737069;
-  --text-disabled: #4D4B46;
+  --text-secondary: #B3AFA6;
+  --text-tertiary: #8F8B83;
+  --text-disabled: #56534D;
   --stroke-subtle: rgba(245, 244, 240, 0.08);
   --stroke-glass: rgba(245, 244, 240, 0.12);
   --stroke-strong: rgba(245, 244, 240, 0.18);
@@ -375,6 +377,7 @@ button:focus-visible {
 .error-notice {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 10px;
   color: var(--error);
   background: var(--fluid-card-fill, var(--surface-raised));
@@ -383,6 +386,9 @@ button:focus-visible {
   border: 1px solid color-mix(in srgb, var(--error) 28%, var(--fluid-card-border));
   margin-bottom: 12px;
   font-size: 12.5px;
+}
+.error-notice > svg {
+  flex-shrink: 0;
 }
 @media (prefers-reduced-motion: reduce) {
   button,

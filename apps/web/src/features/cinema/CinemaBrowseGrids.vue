@@ -1,11 +1,14 @@
 <script setup lang="ts">
 import { inject, ref } from "vue";
-import { Clapperboard, Download, Film, Pencil, Play, RotateCcw, Trash2, Tv } from "lucide-vue-next";
+import { Check, Circle, Clapperboard, Download, Pencil, Play, RotateCcw, Star, Trash2, Tv } from "lucide-vue-next";
 import { formatShortDate } from "../../utils/dateTimeFormat.ts";
 import { describeUserFacingError } from "../../api/userFacingError.ts";
+import CinemaPosterArtwork from "./CinemaPosterArtwork.vue";
+import { formatCinemaResolution } from "./cinemaCatalogDisplay.ts";
 import { duration, percent } from "./useCinemaMetadata.ts";
 import { displayCinemaTitle, formatCinemaEpisodeCode } from "./cinemaSubtitles.ts";
 import { CINEMA_BROWSE_CTX } from "../../contexts/cinemaContext.ts";
+import IsleActionMenu from "../../components/ui/IsleActionMenu.vue";
 import IsleBadge from "../../components/ui/IsleBadge.vue";
 import IsleButton from "../../components/ui/IsleButton.vue";
 import IsleEmpty from "../../components/ui/IsleEmpty.vue";
@@ -62,16 +65,16 @@ function onSeriesPosterError(item: SeriesInfo) {
       >
         <span class="cinema-home-cover">
           <img v-if="!seriesFailed[item.id] && resolveSeriesSrc(item)" :src="resolveSeriesSrc(item)" :alt="item.name + '海报'" loading="lazy" decoding="async" @error="onSeriesPosterError(item)" />
-          <Tv v-else :size="32" />
+          <CinemaPosterArtwork v-else :title="item.name" kind="series" :year="item.year" :seed="'series-' + item.id" compact />
         </span>
         <strong :title="item.name">{{ item.name }}</strong>
-        <small>{{ item.episodeCount }} 集 · {{ item.year || "年份未知" }}</small>
+        <small class="cinema-tabular-meta">{{ item.episodeCount }} 集 · {{ item.year || "年份未知" }}</small>
       </button>
     </div>
     <p v-else-if="!seriesSearchLoading && !seriesSearchError" class="cinema-hint">
       没有匹配的完整剧集，可继续查看下方影片和单集。
     </p>
-    <div class="cinema-home-heading"><h3>影片与单集匹配</h3></div>
+    <div v-if="movies.length" class="cinema-home-heading"><h3>影片与单集匹配</h3></div>
   </section>
 
   <div v-if="view === 'series'" class="cinema-tools">
@@ -83,12 +86,17 @@ function onSeriesPosterError(item: SeriesInfo) {
     <span v-else-if="!seriesList.length" class="cinema-hint">
       暂无可聚合剧集；放入含剧集编号的视频并扫描后自动聚合。
     </span>
-    <span v-else class="cinema-hint">共 {{ seriesList.length }} 部剧集</span>
+    <span v-else class="cinema-hint cinema-tabular-meta">共 {{ seriesList.length }} 部剧集</span>
   </div>
 
   <div v-if="view === 'series' && seriesList.length" class="cinema-grid isle-subview-pane">
     <article v-for="item in seriesList" :key="item.id" class="cinema-tile">
-      <button class="cinema-poster" :aria-label="'查看剧集 ' + item.name" @click="openSeries(item)">
+      <button
+        class="cinema-poster"
+        :class="{ 'cinema-poster--empty': seriesFailed[item.id] || !resolveSeriesSrc(item) }"
+        :aria-label="'查看剧集 ' + item.name"
+        @click="openSeries(item)"
+      >
         <img
           v-if="!seriesFailed[item.id] && resolveSeriesSrc(item)"
           :src="resolveSeriesSrc(item)"
@@ -98,19 +106,28 @@ function onSeriesPosterError(item: SeriesInfo) {
           class="cinema-poster-image"
           @error="onSeriesPosterError(item)"
         />
-        <template v-else><Tv :size="44" /></template>
-        <span class="cinema-play"><Play v-if="item.nextFilmId" :size="18" fill="currentColor" /><Tv v-else :size="18" /></span>
-        <span class="cinema-label">{{ item.year || "剧集" }}</span>
+        <CinemaPosterArtwork v-else :title="item.name" kind="series" :year="item.year" :seed="'series-' + item.id" />
+        <span class="cinema-play" aria-hidden="true"><Play v-if="item.nextFilmId" :size="18" fill="currentColor" /><Tv v-else :size="18" /></span>
+        <span class="cinema-label cinema-tabular-meta">{{ item.year || "剧集" }}</span>
       </button>
       <div class="cinema-details">
-        <strong :title="item.name">{{ item.name }}</strong>
-        <small>已看 {{ item.watchedCount }}/{{ item.episodeCount }} 集</small>
+        <div class="cinema-details-head">
+          <strong :title="item.name">{{ item.name }}</strong>
+          <div v-if="item.nextFilmId" class="cinema-details-actions" @click.stop>
+            <IsleActionMenu size="sm" align="right" :aria-label="'剧集操作 · ' + item.name">
+              <button type="button" role="menuitem" @click="continueSeries(item)">
+                <Play :size="14" /> 继续观看
+              </button>
+              <button type="button" role="menuitem" @click="openSeries(item)">
+                <Tv :size="14" /> 查看剧集列表
+              </button>
+            </IsleActionMenu>
+          </div>
+        </div>
+        <small class="cinema-tabular-meta">已看 {{ item.watchedCount }}/{{ item.episodeCount }} 集</small>
         <p v-if="item.overview" class="cinema-card-overview" :title="item.overview">{{ item.overview }}</p>
         <IsleBadge v-if="item.inProgress && item.nextTitle" variant="accent" size="sm">继续：{{ item.nextTitle }}</IsleBadge>
         <IsleBadge v-else-if="item.watchedCount >= item.episodeCount && item.episodeCount" variant="online" size="sm">已看完</IsleBadge>
-        <button v-if="item.nextFilmId" type="button" @click="continueSeries(item)" title="继续观看" aria-label="继续观看">
-          <Play :size="14" />
-        </button>
       </div>
     </article>
   </div>
@@ -161,7 +178,7 @@ function onSeriesPosterError(item: SeriesInfo) {
       <button type="button" class="account-action" @click="reloadHistory()">重试</button>
     </span>
     <span v-else-if="!historyFilms.length" class="cinema-hint">还没有观看记录；播放过的影片和剧集会按时间出现在这里。</span>
-    <span v-else class="cinema-hint">
+    <span v-else class="cinema-hint cinema-tabular-meta">
       共 {{ historyFilms.length }} 条记录（仅当前账号可见）
       <button type="button" class="account-action" @click="clearHistory()">清空历史</button>
     </span>
@@ -171,6 +188,7 @@ function onSeriesPosterError(item: SeriesInfo) {
     <article v-for="movie in historyFilms" :key="movie.id" class="cinema-tile">
       <button
         class="cinema-poster"
+        :class="{ 'cinema-poster--empty': !((movie.posterURL || posterReady(movie)) && !posterFailed[movie.id]) }"
         :aria-label="'继续观看 ' + displayCinemaTitle(movie) + (movie.kind === 'series' && formatCinemaEpisodeCode(movie.season, movie.episode) ? ' ' + formatCinemaEpisodeCode(movie.season, movie.episode) : '')"
         @click="openFilm(movie, true)"
       >
@@ -183,20 +201,36 @@ function onSeriesPosterError(item: SeriesInfo) {
           class="cinema-poster-image"
           @error="posterError(movie.id)"
         />
-        <template v-else><Tv v-if="movie.kind === 'series'" :size="44" /><Film v-else :size="44" /></template>
-        <span class="cinema-play"><Play :size="18" fill="currentColor" /></span>
-        <span class="cinema-label">{{ formatShortDate(movie.updatedAt) }}</span>
+        <CinemaPosterArtwork
+          v-else
+          :title="displayCinemaTitle(movie)"
+          :kind="movie.kind"
+          :year="movie.year"
+          :seed="movie.id"
+          :kicker="movie.kind === 'series' ? (formatCinemaEpisodeCode(movie.season, movie.episode) || '剧集') : undefined"
+        />
+        <span class="cinema-play" aria-hidden="true"><Play :size="18" fill="currentColor" /></span>
+        <span class="cinema-label cinema-tabular-meta">{{ formatShortDate(movie.updatedAt) }}</span>
         <span class="cinema-watchbar" :style="{ width: percent(movie) + '%' }"></span>
       </button>
       <div class="cinema-details">
-        <strong :title="displayCinemaTitle(movie)">{{ displayCinemaTitle(movie) }}</strong>
-        <small>
+        <div class="cinema-details-head">
+          <strong :title="displayCinemaTitle(movie)">{{ displayCinemaTitle(movie) }}</strong>
+          <div v-if="movie.position > 5 && !movie.completed" class="cinema-details-actions" @click.stop>
+            <IsleActionMenu size="sm" align="right" :aria-label="'观看记录操作 · ' + displayCinemaTitle(movie)">
+              <button type="button" role="menuitem" @click="openFilm(movie, true)">
+                <Play :size="14" /> 继续播放
+              </button>
+              <button type="button" role="menuitem" @click="markRestart(movie)">
+                <RotateCcw :size="14" /> 从头播放
+              </button>
+            </IsleActionMenu>
+          </div>
+        </div>
+        <small class="cinema-tabular-meta">
           <template v-if="movie.kind === 'series'">{{ formatCinemaEpisodeCode(movie.season, movie.episode) || "剧集" }} · </template>{{ movie.completed ? "已看完" : "看到 " + percent(movie) + "%" }} · {{ duration(movie.durationSeconds || movie.duration) }}
         </small>
         <p v-if="movie.overview" class="cinema-card-overview" :title="movie.overview">{{ movie.overview }}</p>
-        <button v-if="movie.position > 5 && !movie.completed" type="button" @click="markRestart(movie)" title="从头播放" aria-label="从头播放">
-          <RotateCcw :size="14" />
-        </button>
       </div>
     </article>
   </div>
@@ -206,7 +240,7 @@ function onSeriesPosterError(item: SeriesInfo) {
     class="cinema-home-heading cinema-all-heading"
   >
     <h3>全部影片</h3>
-    <small class="cinema-hint-inline">共 {{ next ? movies.length + "+" : movies.length }} 部</small>
+    <small class="cinema-hint-inline cinema-tabular-meta">共 {{ next ? movies.length + "+" : movies.length }} 部</small>
   </div>
 
   <div v-if="view === 'films' && mode !== 'history'" class="cinema-grid isle-subview-pane">
@@ -215,7 +249,10 @@ function onSeriesPosterError(item: SeriesInfo) {
         class="cinema-poster"
         :aria-label="(choosingTrash ? '选择 ' : '查看影片 ') + displayCinemaTitle(movie) + (movie.kind === 'series' && formatCinemaEpisodeCode(movie.season, movie.episode) ? ' ' + formatCinemaEpisodeCode(movie.season, movie.episode) : '')"
         :aria-pressed="choosingTrash ? trashIds.has(movie.id) : undefined"
-        :class="{ 'cinema-poster--selected': choosingTrash && trashIds.has(movie.id) }"
+        :class="{
+          'cinema-poster--selected': choosingTrash && trashIds.has(movie.id),
+          'cinema-poster--empty': !((movie.posterURL || posterReady(movie)) && !posterFailed[movie.id]),
+        }"
         @click="choosingTrash ? toggleTrashFilm(movie.id) : openFilm(movie)"
       >
         <img
@@ -227,38 +264,59 @@ function onSeriesPosterError(item: SeriesInfo) {
           class="cinema-poster-image"
           @error="posterError(movie.id)"
         />
-        <template v-else><Tv v-if="movie.kind === 'series'" :size="44" /><Film v-else :size="44" /></template>
-        <span class="cinema-play">
+        <CinemaPosterArtwork
+          v-else
+          :title="displayCinemaTitle(movie)"
+          :kind="movie.kind"
+          :year="movie.year"
+          :seed="movie.id"
+          :kicker="movie.kind === 'series' ? (formatCinemaEpisodeCode(movie.season, movie.episode) || '剧集') : undefined"
+        />
+        <span v-if="!choosingTrash" class="cinema-play" aria-hidden="true">
           <Download v-if="playback(movie) === 'download-only'" :size="18" />
           <Play v-else :size="18" fill="currentColor" />
         </span>
-        <span v-if="disambiguationMap.get(movie.id)" class="cinema-scope-label">{{ disambiguationMap.get(movie.id) }}</span>
-        <span class="cinema-label">{{ movie.kind === "series" ? "S" + movie.season + "E" + movie.episode : (movie.year || (movie.isStrm ? "STRM 直链" : "电影")) }}</span>
-        <span v-if="choosingTrash" class="cinema-label cinema-label--right">{{ trashIds.has(movie.id) ? "✓" : "○" }}</span>
+        <span class="cinema-poster-badges">
+          <span v-if="disambiguationMap.get(movie.id)" class="cinema-scope-label">{{ disambiguationMap.get(movie.id) }}</span>
+          <span v-if="!choosingTrash" class="cinema-label cinema-tabular-meta">{{ movie.kind === "series" ? "S" + movie.season + "E" + movie.episode : (movie.year || (movie.isStrm ? "STRM 直链" : "电影")) }}</span>
+          <span v-if="choosingTrash" class="cinema-label cinema-label--right cinema-select-indicator" :class="{ 'is-checked': trashIds.has(movie.id) }">
+            <Check v-if="trashIds.has(movie.id)" :size="12" :stroke-width="2.6" />
+            <Circle v-else :size="12" />
+          </span>
+        </span>
         <span class="cinema-watchbar" :style="{ width: percent(movie) + '%' }"></span>
       </button>
       <div class="cinema-details">
-        <strong :title="displayCinemaTitle(movie)">{{ displayCinemaTitle(movie) }}</strong>
-        <small>
-          {{ movie.kind === "series" ? (formatCinemaEpisodeCode(movie.season, movie.episode) || "剧集") : "电影" }}<template v-if="movie.isStrm"> · STRM 直链</template> · {{ duration(movie.durationSeconds || movie.duration) }}<template v-if="disambiguationMap.get(movie.id)"> · {{ disambiguationMap.get(movie.id) }}</template><template v-if="movie.completed"> · 已看完</template><template v-else-if="movie.position > 5"> · 已看 {{ percent(movie) }}%</template>
+        <div class="cinema-details-head">
+          <strong :title="displayCinemaTitle(movie)">{{ displayCinemaTitle(movie) }}</strong>
+          <div v-if="(admin || movie.canWrite === true) && !choosingTrash" class="cinema-details-actions" @click.stop>
+            <IsleActionMenu size="sm" align="right" :aria-label="'影片操作 · ' + displayCinemaTitle(movie)">
+              <button v-if="admin" type="button" role="menuitem" @click="openRename(movie)">
+                <Pencil :size="14" /> 修改展示名称
+              </button>
+              <button v-if="movie.position > 5 && !movie.completed" type="button" role="menuitem" @click="markRestart(movie)">
+                <RotateCcw :size="14" /> 从头播放
+              </button>
+              <button v-if="admin || movie.canWrite === true" type="button" role="menuitem" class="danger" :disabled="deleting" @click="trashFilm(movie)">
+                <Trash2 :size="14" /> 移入回收站
+              </button>
+            </IsleActionMenu>
+          </div>
+        </div>
+        <small class="cinema-tabular-meta">
+          <template v-if="movie.rating && movie.rating > 0"><span class="cinema-inline-star"><Star :size="10" fill="currentColor" aria-hidden="true" /> {{ movie.rating.toFixed(1) }}</span> · </template>{{ movie.kind === "series" ? (formatCinemaEpisodeCode(movie.season, movie.episode) || "剧集") : "电影" }}<template v-if="formatCinemaResolution(movie.width, movie.height)"> · {{ formatCinemaResolution(movie.width, movie.height) }}</template><template v-if="movie.isStrm"> · STRM</template> · {{ duration(movie.durationSeconds || movie.duration) }}<template v-if="disambiguationMap.get(movie.id)"> · {{ disambiguationMap.get(movie.id) }}</template><template v-if="movie.completed"> · 已看完</template><template v-else-if="movie.position > 5"> · 已看 {{ percent(movie) }}%</template>
         </small>
         <p v-if="movie.overview" class="cinema-card-overview" :title="movie.overview">{{ movie.overview }}</p>
         <IsleBadge v-if="mode === 'unmatched' && !movie.metadataSource" variant="warning" size="sm">
-          {{ movie.scrapeState === "miss" ? "自动未命中 · 待手动匹配" : "待匹配资料" }}
+          {{ movie.scrapeState === "miss" ? "自动未命中 · 待手动完善" : "待完善资料" }}
         </IsleBadge>
-        <button v-if="admin" type="button" @click="openRename(movie)" title="修改展示名称" aria-label="修改展示名称">
-          <Pencil :size="14" />
-        </button>
-        <button v-if="(admin || movie.canWrite === true) && !choosingTrash" type="button" :disabled="deleting" @click="trashFilm(movie)" title="移入回收站" aria-label="移入回收站">
-          <Trash2 :size="14" />
-        </button>
       </div>
     </article>
   </div>
 
   <div v-if="view === 'films' && mode !== 'history'" class="cinema-more">
     <button v-if="next" :disabled="loading" @click="loadMore()">{{ loading ? "正在加载…" : "加载更多作品" }}</button>
-    <span v-else-if="movies.length">已展示全部 {{ movies.length }} 部作品</span>
+    <span v-else-if="movies.length" class="cinema-tabular-meta">已展示全部 {{ movies.length }} 部作品</span>
   </div>
 </template>
 
@@ -269,5 +327,16 @@ function onSeriesPosterError(item: SeriesInfo) {
 .cinema-label--right {
   left: auto;
   right: 8px;
+}
+.cinema-select-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px;
+  border-radius: 999px;
+}
+.cinema-select-indicator.is-checked {
+  background: var(--accent-primary-solid, var(--accent-primary));
+  color: var(--on-accent-primary, #fff);
 }
 </style>

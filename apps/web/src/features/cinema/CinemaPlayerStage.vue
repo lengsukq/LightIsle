@@ -1,14 +1,14 @@
 <script setup lang="ts">
-import { computed, inject, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, inject, nextTick, onMounted, onUnmounted, ref, watch, type Component } from "vue";
 import {
-  AudioLines, Check, ChevronDown, ChevronUp, EyeOff, GripHorizontal, ListVideo,
-  Maximize2, Minimize2, Pause, PictureInPicture2, Play, RotateCcw, RotateCw,
-  Scan, SkipBack, SkipForward, Volume2, VolumeX, X,
+  ChevronUp, EyeOff, FastForward, Gauge, GripHorizontal, ListVideo,
+  Maximize2, Minimize2, Pause, PictureInPicture2, Play, Rewind,
+  RotateCcw, RotateCw, Scan, SkipBack, SkipForward, Volume2, VolumeX,
 } from "lucide-vue-next";
-import CinemaSubtitlePopover from "./CinemaSubtitlePopover.vue";
+import CinemaPlayerMenus, { type CinemaMenuKind } from "./CinemaPlayerMenus.vue";
+import CinemaPlayerPlaylistOverlay from "./CinemaPlayerPlaylistOverlay.vue";
 import { formatCinemaClock } from "./cinemaCatalogDisplay.ts";
 import { useCinemaDockDrag } from "./useCinemaDockDrag.ts";
-import { duration } from "./useCinemaMetadata.ts";
 import { TIMINGS_MS } from "../../constants/timings.ts";
 import { CINEMA_PLAYER_CTX } from "../../contexts/cinemaContext.ts";
 
@@ -33,8 +33,7 @@ const {
   startTranscode, download, switchPlaylistFilm, prevPlaylist, nextPlaylist, reloadPlaylist,
 } = ctx;
 
-type MenuKind = "caption" | "audio" | "quality" | "rate" | "chapters" | null;
-const openMenu = ref<MenuKind>(null);
+const openMenu = ref<CinemaMenuKind>(null);
 const scrubbing = ref(false);
 const localScrub = ref<number | null>(null);
 const hoverTime = ref<number | null>(null);
@@ -50,10 +49,52 @@ const {
   isDockNearBottom,
   resetDockPosition,
   startDockDrag,
-} = useCinemaDockDrag();
+} = useCinemaDockDrag({ stageRef: stageShellRef, dockRef: dockElRef });
+const dockInUpperHalf = ref(false);
+const popoverShiftX = ref(0);
 let hideTimer: number | undefined;
 let singleClickTimer: number | undefined;
 let lastMoveRevealAt = 0;
+let closedMenuOnPointerDown = false;
+
+function updateDockUpperHalf() {
+  const stageEl = stageShellRef.value;
+  const dockEl = dockElRef.value;
+  if (!stageEl || !dockEl) {
+    dockInUpperHalf.value = false;
+    return;
+  }
+  const stageRect = stageEl.getBoundingClientRect();
+  const dockRect = dockEl.getBoundingClientRect();
+  if (stageRect.height <= 0) {
+    dockInUpperHalf.value = false;
+    return;
+  }
+  const dockCenterY = dockRect.top + dockRect.height / 2 - stageRect.top;
+  dockInUpperHalf.value =
+    dockOffset.value.y < -stageRect.height * 0.25 ||
+    dockCenterY < stageRect.height * 0.45;
+}
+
+function clampOpenPopoverHorizontal() {
+  popoverShiftX.value = 0;
+  if (openMenu.value === null || typeof window === "undefined" || window.innerWidth <= 680) return;
+  void nextTick(() => {
+    const stageEl = stageShellRef.value;
+    const dockEl = dockElRef.value;
+    if (!stageEl || !dockEl) return;
+    const menuEl = dockEl.querySelector<HTMLElement>(".cinema-popover-menu");
+    if (!menuEl) return;
+    const stageRect = stageEl.getBoundingClientRect();
+    const menuRect = menuEl.getBoundingClientRect();
+    const margin = 8;
+    if (menuRect.left < stageRect.left + margin) {
+      popoverShiftX.value = Math.round(stageRect.left + margin - menuRect.left);
+    } else if (menuRect.right > stageRect.right - margin) {
+      popoverShiftX.value = Math.round(stageRect.right - margin - menuRect.right);
+    }
+  });
+}
 
 function clearSingleClickTimer() {
   if (singleClickTimer !== undefined) {
@@ -89,7 +130,6 @@ const bufferedPercent = computed(() => {
 
 const previewBubbleTime = computed(() => (localScrub.value !== null ? localScrub.value : hoverTime.value));
 const previewBubblePct = computed(() => (localScrub.value !== null ? seekPercent.value : hoverPct.value));
-
 const volumePercent = computed(() => Math.round((isMuted.value ? 0 : volume.value) * 100));
 
 const captionPillLabel = computed(() => {
@@ -108,6 +148,20 @@ const audioPillLabel = computed(() => {
 });
 
 const ratePillLabel = computed(() => (playbackRate.value === 1 ? "1.0x" : `${playbackRate.value}x`));
+
+const osdDisplay = computed<{ icon: Component; label: string } | null>(() => {
+  if (isSpeedBoosting.value) {
+    return { icon: Gauge, label: "2.0x 倍速播放中（松开恢复）" };
+  }
+  const msg = osdMessage.value.trim();
+  if (!msg) return null;
+  if (msg.startsWith("+") || msg.includes("快进")) return { icon: FastForward, label: msg };
+  if (msg.startsWith("-") || msg.includes("快退")) return { icon: Rewind, label: msg };
+  if (msg.includes("静音")) return { icon: VolumeX, label: msg };
+  if (msg.includes("音量")) return { icon: Volume2, label: msg };
+  if (msg.includes("暂停")) return { icon: Pause, label: msg };
+  return { icon: Play, label: msg };
+});
 
 const activeSkipChapter = computed(() => {
   const pos = displayPosition.value;
@@ -203,18 +257,16 @@ watch(
 );
 
 function onStageMouseMove() {
-  if (manuallyCollapsed.value && !isPlaying.value) return;
-  if (manuallyCollapsed.value && isPlaying.value) {
-    manuallyCollapsed.value = false;
-  }
+  if (manuallyCollapsed.value) return;
   const now = performance.now();
   if (!controlsHidden.value && now - lastMoveRevealAt < 250) return;
   lastMoveRevealAt = now;
   revealChrome();
 }
 
-function toggleMenu(kind: Exclude<MenuKind, null>) {
+function toggleMenu(kind: Exclude<CinemaMenuKind, null>) {
   openMenu.value = openMenu.value === kind ? null : kind;
+  updateDockUpperHalf();
   revealChrome(true);
 }
 
@@ -226,10 +278,19 @@ watch(openMenu, (val) => {
   setMenuOpen(val !== null);
 });
 
+watch(
+  [openMenu, () => dockOffset.value.x, () => dockOffset.value.y],
+  () => {
+    updateDockUpperHalf();
+    clampOpenPopoverHorizontal();
+  },
+);
+
 defineExpose({ closeMenus });
 
 function handleStageClick(event: MouseEvent) {
-  if (openMenu.value !== null) {
+  if (closedMenuOnPointerDown || openMenu.value !== null) {
+    closedMenuOnPointerDown = false;
     openMenu.value = null;
     revealChrome();
     return;
@@ -256,6 +317,7 @@ function handleStageClick(event: MouseEvent) {
 }
 
 function handleStageDblClick(event: MouseEvent) {
+  closedMenuOnPointerDown = false;
   clearSingleClickTimer();
   if ((event.target as HTMLElement | null)?.closest(".cinema-stage-card, .cinema-player-dock, .cinema-player-inspector-backdrop")) {
     return;
@@ -296,20 +358,34 @@ function onSeekLeave() {
 }
 
 function handleGlobalPointerDown(event: PointerEvent) {
-  if (openMenu.value === null) return;
+  if (openMenu.value === null) {
+    closedMenuOnPointerDown = false;
+    return;
+  }
   const target = event.target as HTMLElement | null;
   if (!target?.closest(".cinema-menu-anchor")) {
     openMenu.value = null;
+    closedMenuOnPointerDown = true;
+  } else {
+    closedMenuOnPointerDown = false;
   }
 }
 
 function handleFullscreenChange() {
   onMediaState();
   revealChrome();
+  updateDockUpperHalf();
+  clampOpenPopoverHorizontal();
+}
+
+function handleWindowResize() {
+  updateDockUpperHalf();
+  clampOpenPopoverHorizontal();
 }
 
 onMounted(() => {
   window.addEventListener("pointerdown", handleGlobalPointerDown, true);
+  window.addEventListener("resize", handleWindowResize, { passive: true });
   document.addEventListener("fullscreenchange", handleFullscreenChange);
   revealChrome();
 });
@@ -318,6 +394,7 @@ onUnmounted(() => {
   clearHideTimer();
   clearSingleClickTimer();
   window.removeEventListener("pointerdown", handleGlobalPointerDown, true);
+  window.removeEventListener("resize", handleWindowResize);
   document.removeEventListener("fullscreenchange", handleFullscreenChange);
 });
 </script>
@@ -381,140 +458,116 @@ onUnmounted(() => {
         <track v-if="caption !== 'off'" :key="caption + ':' + trackUrl" kind="subtitles" :src="trackUrl" :srclang="captionSrclang" label="字幕" default @load="onCaptionLoad()" />
       </video>
 
-      <div v-if="isSpeedBoosting || osdMessage" class="cinema-player-osd" role="status" aria-live="polite">
-        {{ isSpeedBoosting ? "⏩ 2.0x 倍速播放中（松开恢复）" : osdMessage }}
-      </div>
-
-      <button
-        v-if="activeSkipChapter && (canDirect || hlsSession)"
-        type="button"
-        class="cinema-skip-intro-btn"
-        @click.stop="seek(activeSkipChapter.endSeconds)"
-      >
-        <SkipForward :size="15" />
-        <span>{{ activeSkipChapter.kind === 'credits' ? '跳过片尾' : '跳过片头' }}</span>
-      </button>
-
-      <button
-        v-if="!isPlaying && !hlsStarting && (canDirect || hlsSession) && !showPlayerPlaylist && !manuallyCollapsed"
-        type="button"
-        class="cinema-center-play"
-        aria-label="播放影片"
-        @click.stop="togglePlay()"
-      >
-        <Play :size="30" fill="currentColor" />
-      </button>
-
-      <div v-if="hlsStarting" class="cinema-stage-card cinema-stage-card--loading" role="status">
-        <span class="cinema-stage-spinner" aria-hidden="true"></span>
-        <span>{{ hlsSession ? "正在跳转并缓冲片段…" : "正在启动实时转码，请稍候…" }}</span>
-      </div>
-
-      <div
-        v-else-if="!canDirect && !hlsSession && selected.probeStatus !== 'pending'"
-        class="cinema-stage-card cinema-stage-card--fallback"
-      >
-        <p>{{ playError || "当前封装或编码无法在浏览器直接硬解，可开启实时转码或下载原片播放。" }}</p>
-        <div class="cinema-stage-card-actions">
-          <button type="button" class="cinema-primary-pill" @click.stop="startTranscode()">
-            <Play :size="15" fill="currentColor" /> 在线转码播放（原片不变）
-          </button>
-          <button type="button" class="cinema-ghost-pill" @click.stop="download()">下载原片文件</button>
+      <Transition name="cinema-hud-top">
+        <div v-if="osdDisplay" class="cinema-player-osd" role="status" aria-live="polite">
+          <component :is="osdDisplay.icon" :size="15" class="cinema-osd-icon" aria-hidden="true" />
+          <span>{{ osdDisplay.label }}</span>
         </div>
-      </div>
+      </Transition>
 
-      <div v-if="playError && (canDirect || hlsSession)" class="cinema-stage-toast" role="alert">
-        <span>{{ playError }}</span>
+      <Transition name="isle-pop">
         <button
-          v-if="!hlsSession && !hlsStarting"
+          v-if="activeSkipChapter && (canDirect || hlsSession)"
           type="button"
-          class="cinema-toast-action"
-          @click.stop="startTranscode()"
+          class="cinema-skip-intro-btn"
+          @click.stop="seek(activeSkipChapter.endSeconds)"
         >
-          切换转码播放
+          <SkipForward :size="15" />
+          <span>{{ activeSkipChapter.kind === 'credits' ? '跳过片尾' : '跳过片头' }}</span>
         </button>
-        <button type="button" class="cinema-toast-action" @click.stop="download()">下载原片</button>
-      </div>
+      </Transition>
 
-      <div
-        v-if="showPlayerPlaylist"
-        class="cinema-player-inspector-backdrop"
-        @click.self="togglePlaylist(false)"
-      >
-        <section class="cinema-player-playlist" role="region" aria-label="同目录播放列表">
-          <div class="cinema-inspector-header">
-            <div>
-              <strong>同目录播放列表</strong>
-              <small class="cinema-playlist-sub">{{ playlistDirLabel }} · {{ sameDirectoryFilms.length }} 个视频</small>
-            </div>
-            <button type="button" title="关闭播放列表" aria-label="关闭播放列表" @click="togglePlaylist(false)">
-              <X :size="18" />
+      <Transition name="cinema-cue-pop">
+        <button
+          v-if="!isPlaying && !hlsStarting && (canDirect || hlsSession) && !showPlayerPlaylist && !manuallyCollapsed"
+          type="button"
+          class="cinema-center-play"
+          aria-label="播放影片"
+          @click.stop="togglePlay()"
+        >
+          <Play :size="30" fill="currentColor" />
+        </button>
+      </Transition>
+
+      <Transition name="isle-pop">
+        <div v-if="hlsStarting" class="cinema-stage-card cinema-stage-card--loading" role="status">
+          <span class="cinema-stage-spinner" aria-hidden="true"></span>
+          <span>{{ hlsSession ? "正在跳转并缓冲片段…" : "正在启动实时转码，请稍候…" }}</span>
+        </div>
+        <div
+          v-else-if="!canDirect && !hlsSession && selected.probeStatus !== 'pending'"
+          class="cinema-stage-card cinema-stage-card--fallback"
+        >
+          <p>{{ playError || "当前封装或编码无法在浏览器直接硬解，可开启实时转码或下载原片播放。" }}</p>
+          <div class="cinema-stage-card-actions">
+            <button type="button" class="cinema-primary-pill" @click.stop="startTranscode()">
+              <Play :size="15" fill="currentColor" /> 在线转码播放（原片不变）
             </button>
+            <button type="button" class="cinema-ghost-pill" @click.stop="download()">下载原片文件</button>
           </div>
-          <div v-if="directoryError" class="cinema-alert" role="alert">
-            读取失败：{{ directoryError }}
-            <button type="button" class="cinema-toast-action" @click="reloadPlaylist(false)">重试加载</button>
-          </div>
-          <p v-if="directoryLoading" class="cinema-hint" role="status">正在读取当前目录…</p>
-          <div class="cinema-playlist-list">
-            <button
-              v-for="(item, index) in sameDirectoryFilms"
-              :key="item.id"
-              type="button"
-              class="cinema-playlist-item"
-              :class="{ active: item.id === selected.id }"
-              :disabled="leavingPlayer"
-              @click="switchPlaylistFilm(item)"
-            >
-              <span class="cinema-playlist-index">{{ index + 1 }}</span>
-              <span class="cinema-playlist-main">
-                <strong>{{ item.title }}</strong>
-                <small>{{ item.path.split("/").pop() }} · {{ duration(item.durationSeconds || item.duration) }}</small>
-              </span>
-              <span v-if="item.id === selected.id" class="cinema-playlist-badge">正在播放</span>
-            </button>
-          </div>
-          <div class="cinema-playlist-footer">
-            <label class="cinema-hud-check">
-              <input
-                type="checkbox"
-                :checked="autoplayNext"
-                @change="toggleAutoplay(($event.target as HTMLInputElement).checked)"
-              />
-              <span>{{ selected.kind === "series" ? "播完自动下一集" : "播完自动连播" }}</span>
-            </label>
-            <button
-              v-if="directoryNextCursor > 0"
-              type="button"
-              class="cinema-ghost-pill"
-              :disabled="directoryLoading"
-              @click="reloadPlaylist(true)"
-            >
-              加载更多
-            </button>
-          </div>
-        </section>
-      </div>
+        </div>
+      </Transition>
+
+      <Transition name="isle-hud-float">
+        <div v-if="playError && (canDirect || hlsSession)" class="cinema-stage-toast" role="alert">
+          <span>{{ playError }}</span>
+          <button
+            v-if="!hlsSession && !hlsStarting"
+            type="button"
+            class="cinema-toast-action"
+            @click.stop="startTranscode()"
+          >
+            切换转码播放
+          </button>
+          <button type="button" class="cinema-toast-action" @click.stop="download()">下载原片</button>
+        </div>
+      </Transition>
+
+      <CinemaPlayerPlaylistOverlay
+        :open="showPlayerPlaylist"
+        :selected="selected"
+        :same-directory-films="sameDirectoryFilms"
+        :playlist-dir-label="playlistDirLabel"
+        :directory-error="directoryError"
+        :directory-loading="directoryLoading"
+        :directory-next-cursor="directoryNextCursor"
+        :leaving-player="leavingPlayer"
+        :autoplay-next="autoplayNext"
+        @close="togglePlaylist(false)"
+        @reload="(append) => reloadPlaylist(append)"
+        @select-film="(item) => switchPlaylistFilm(item)"
+        @toggle-autoplay="(checked) => toggleAutoplay(checked)"
+      />
     </div>
 
-    <button
-      v-if="manuallyCollapsed && (canDirect || hlsSession || hlsStarting)"
-      type="button"
-      class="cinema-dock-restore-pill"
-      title="展开播放控制栏"
-      aria-label="展开播放控制栏"
-      @click.stop="restoreCollapsedDock"
-    >
-      <ChevronUp :size="15" />
-      <span>控制栏</span>
-    </button>
+    <Transition name="isle-pop">
+      <button
+        v-if="manuallyCollapsed && (canDirect || hlsSession || hlsStarting)"
+        type="button"
+        class="cinema-dock-restore-pill"
+        title="展开播放控制栏"
+        aria-label="展开播放控制栏"
+        @click.stop="restoreCollapsedDock"
+      >
+        <ChevronUp :size="15" />
+        <span>控制栏</span>
+      </button>
+    </Transition>
 
     <footer
       v-if="canDirect || hlsSession || hlsStarting"
       ref="dockElRef"
       class="cinema-player-dock"
-      :class="{ 'cinema-player-dock--dragging': draggingDock, 'cinema-player-dock--moved': isDockMoved }"
-      :style="{ '--dock-x': `${dockOffset.x}px`, '--dock-y': `${dockOffset.y}px` }"
+      :class="{
+        'cinema-player-dock--dragging': draggingDock,
+        'cinema-player-dock--moved': isDockMoved,
+        'cinema-dock--upper': dockInUpperHalf,
+      }"
+      :style="{
+        '--dock-x': `${dockOffset.x}px`,
+        '--dock-y': `${dockOffset.y}px`,
+        '--popover-shift-x': `${popoverShiftX}px`,
+      }"
       @click.stop
       @pointerdown="onDockPointerDown"
       @mouseenter="dockHovered = true; clearHideTimer()"
@@ -537,12 +590,14 @@ onUnmounted(() => {
         </button>
       </div>
       <div class="cinema-unified-seek" @mousemove="onSeekHover" @mouseleave="onSeekLeave">
-        <span
-          v-if="previewBubbleTime !== null && effectiveDuration > 0"
-          class="cinema-seek-tooltip"
-          :style="{ '--preview-pct': `${previewBubblePct}%` }"
-          aria-hidden="true"
-        >{{ formatCinemaClock(previewBubbleTime) }}</span>
+        <Transition name="cinema-cue-pop">
+          <span
+            v-if="previewBubbleTime !== null && effectiveDuration > 0"
+            class="cinema-seek-tooltip"
+            :style="{ '--preview-pct': `${previewBubblePct}%` }"
+            aria-hidden="true"
+          >{{ formatCinemaClock(previewBubbleTime) }}</span>
+        </Transition>
         <input
           type="range"
           class="cinema-seek-slider"
@@ -560,23 +615,23 @@ onUnmounted(() => {
 
       <div class="cinema-player-dock-row">
         <div class="cinema-player-dock-left">
-          <button type="button" class="cinema-icon-btn" :title="isPlaying ? '暂停（空格）' : '播放（空格）'" :aria-label="isPlaying ? '暂停' : '播放'" :disabled="hlsStarting" @click="togglePlay()">
-            <Pause v-if="isPlaying" :size="20" fill="currentColor" />
-            <Play v-else :size="20" fill="currentColor" />
+          <button type="button" class="cinema-icon-btn cinema-play-toggle" :title="isPlaying ? '暂停（空格）' : '播放（空格）'" :aria-label="isPlaying ? '暂停' : '播放'" :disabled="hlsStarting" @click="togglePlay()">
+            <Pause v-if="isPlaying" :size="19" fill="currentColor" />
+            <Play v-else :size="19" fill="currentColor" />
           </button>
 
           <template v-if="sameDirectoryFilms.length > 1">
-            <button type="button" class="cinema-icon-btn" title="上一部" aria-label="上一部" :disabled="hlsStarting || leavingPlayer || !hasPrevPlaylist" @click="prevPlaylist()"><SkipBack :size="18" /></button>
-            <button type="button" class="cinema-icon-btn" title="下一部" aria-label="下一部" :disabled="hlsStarting || leavingPlayer || !hasNextPlaylist" @click="nextPlaylist()"><SkipForward :size="18" /></button>
+            <button type="button" class="cinema-icon-btn" title="上一部" aria-label="上一部" :disabled="hlsStarting || leavingPlayer || !hasPrevPlaylist" @click="prevPlaylist()"><SkipBack :size="17" /></button>
+            <button type="button" class="cinema-icon-btn" title="下一部" aria-label="下一部" :disabled="hlsStarting || leavingPlayer || !hasNextPlaylist" @click="nextPlaylist()"><SkipForward :size="17" /></button>
           </template>
 
-          <button type="button" class="cinema-icon-btn" title="快退 10 秒（左方向键）" aria-label="快退 10 秒" :disabled="effectiveDuration <= 0" @click="jump(-10)"><RotateCcw :size="17" /></button>
-          <button type="button" class="cinema-icon-btn" title="快进 10 秒（右方向键）" aria-label="快进 10 秒" :disabled="effectiveDuration <= 0" @click="jump(10)"><RotateCw :size="17" /></button>
+          <button type="button" class="cinema-icon-btn cinema-skip-step" title="快退 10 秒（左方向键）" aria-label="快退 10 秒" :disabled="effectiveDuration <= 0" @click="jump(-10)"><RotateCcw :size="16" /></button>
+          <button type="button" class="cinema-icon-btn cinema-skip-step" title="快进 10 秒（右方向键）" aria-label="快进 10 秒" :disabled="effectiveDuration <= 0" @click="jump(10)"><RotateCw :size="16" /></button>
 
           <div class="cinema-volume-cluster">
             <button type="button" class="cinema-icon-btn" :title="isMuted || volume === 0 ? '取消静音' : '静音'" :aria-label="isMuted || volume === 0 ? '取消静音' : '静音'" @click="toggleMute()">
-              <VolumeX v-if="isMuted || volume === 0" :size="17" />
-              <Volume2 v-else :size="17" />
+              <VolumeX v-if="isMuted || volume === 0" :size="16" />
+              <Volume2 v-else :size="16" />
             </button>
             <input type="range" class="cinema-volume-slider" min="0" max="1" step="0.02" :value="isMuted ? 0 : volume" :style="{ '--vol-pct': `${volumePercent}%` }" aria-label="音量" @input="setVolume(Number(($event.target as HTMLInputElement).value))" />
           </div>
@@ -590,12 +645,15 @@ onUnmounted(() => {
 
         <div class="cinema-player-dock-right">
           <button type="button" class="cinema-pill-btn" :class="{ active: showPlayerPlaylist }" title="同目录播放列表" @click="closeMenus(); togglePlaylist(!showPlayerPlaylist)">
-            <ListVideo :size="15" />
-            <span>{{ sameDirectoryFilms.length > 1 ? `播放列表 ${Math.max(1, currentPlaylistIndex + 1)}/${sameDirectoryFilms.length}` : "播放列表" }}</span>
+            <ListVideo :size="14" />
+            <span class="cinema-pill-label--full">{{ sameDirectoryFilms.length > 1 ? `列表 ${Math.max(1, currentPlaylistIndex + 1)}/${sameDirectoryFilms.length}` : "列表" }}</span>
           </button>
 
-          <CinemaSubtitlePopover
-            :open="openMenu === 'caption'"
+          <CinemaPlayerMenus
+            :open-menu="openMenu"
+            :selected="selected"
+            :dock-in-upper-half="dockInUpperHalf"
+            :display-position="displayPosition"
             :caption="caption"
             :caption-pill-label="captionPillLabel"
             :caption-options="captionOptions"
@@ -603,85 +661,46 @@ onUnmounted(() => {
             :subtitle-offset="subtitleOffset"
             :local-subtitle-name="localSubtitleName"
             :local-subtitle-error="localSubtitleError"
-            @toggle="toggleMenu('caption')"
-            @close="openMenu = null"
+            :chapters="chapters"
+            :hls-session="hlsSession"
+            :hls-starting="hlsStarting"
+            :audio-track-options="audioTrackOptions"
+            :audio-pill-label="audioPillLabel"
+            :quality-options="qualityOptions"
+            :current-quality="currentQuality"
+            :quality-pill-label="qualityPillLabel"
+            :prefer-local-decode="preferLocalDecode"
+            :autoplay-next="autoplayNext"
+            :playback-rate="playbackRate"
+            :rate-pill-label="ratePillLabel"
+            :playback-rate-options="playbackRateOptions"
+            @toggle-menu="toggleMenu"
+            @close-menus="closeMenus"
             @select-caption="(val) => selectCaption(val)"
-            @select-local-file="(file) => selectLocalSubtitle(file)"
-            @clear-local-file="clearLocalSubtitle()"
+            @select-local-subtitle="(file) => selectLocalSubtitle(file)"
+            @clear-local-subtitle="clearLocalSubtitle()"
             @update:subtitle-size="(s) => setSubtitleSize(s)"
-            @adjust-offset="(d) => adjustSubtitleOffset(d)"
-            @reset-offset="resetSubtitleOffset()"
+            @adjust-subtitle-offset="(d) => adjustSubtitleOffset(d)"
+            @reset-subtitle-offset="resetSubtitleOffset()"
+            @seek="(pos) => seek(pos)"
+            @select-audio="(idx) => selectAudio(idx)"
+            @select-quality="(q) => selectQuality(q)"
+            @toggle-local-decode="(c) => toggleLocalDecode(c)"
+            @toggle-autoplay="(c) => toggleAutoplay(c)"
+            @select-rate="(r) => selectRate(r)"
           />
 
-          <div v-if="chapters.length > 0" class="cinema-menu-anchor">
-            <button type="button" class="cinema-pill-btn" :class="{ active: openMenu === 'chapters' }" title="章节快速跳转" :aria-expanded="openMenu === 'chapters'" @click="toggleMenu('chapters')">
-              <span>章节 ({{ chapters.length }})</span>
-              <ChevronDown :size="13" class="cinema-pill-chevron" />
-            </button>
-            <div v-if="openMenu === 'chapters'" class="cinema-popover-menu" role="menu">
-              <button v-for="ch in chapters" :key="ch.id" type="button" class="cinema-popover-item" :class="{ selected: displayPosition >= ch.startSeconds && displayPosition < ch.endSeconds }" role="menuitem" @click="openMenu = null; seek(ch.startSeconds)">
-                <Check :size="14" class="cinema-popover-check" />
-                <span>{{ formatCinemaClock(ch.startSeconds) }} · {{ ch.title || '章节' }}</span>
-              </button>
-            </div>
-          </div>
+          <span class="cinema-dock-sep" aria-hidden="true"></span>
 
-          <div v-if="(hlsSession || hlsStarting) && audioTrackOptions.length > 1" class="cinema-menu-anchor">
-            <button type="button" class="cinema-pill-btn" :class="{ active: openMenu === 'audio' }" title="音轨切换" :aria-expanded="openMenu === 'audio'" @click="toggleMenu('audio')">
-              <AudioLines :size="14" />
-              <span class="cinema-pill-truncate">{{ audioPillLabel }}</span>
-              <ChevronDown :size="13" class="cinema-pill-chevron" />
+          <div class="cinema-dock-util-group">
+            <button type="button" class="cinema-icon-btn" :class="{ active: fillScreen }" :title="fillScreen ? '适应屏幕' : '铺满画面'" :aria-label="fillScreen ? '适应屏幕' : '铺满画面'" @click="toggleFill()"><Scan :size="16" /></button>
+            <button v-if="canPictureInPicture" type="button" class="cinema-icon-btn" title="画中画" aria-label="画中画" @click="togglePip()"><PictureInPicture2 :size="16" /></button>
+            <button type="button" class="cinema-icon-btn" :title="isFullscreen ? '退出全屏' : '全屏播放'" :aria-label="isFullscreen ? '退出全屏' : '全屏播放'" @click="toggleFullscreen()">
+              <Minimize2 v-if="isFullscreen" :size="16" />
+              <Maximize2 v-else :size="16" />
             </button>
-            <div v-if="openMenu === 'audio'" class="cinema-popover-menu" role="menu">
-              <button v-for="opt in audioTrackOptions" :key="String(opt.value)" type="button" class="cinema-popover-item" :class="{ selected: Number(opt.value) === (hlsSession?.audioTrack ?? 0) }" role="menuitemradio" :aria-checked="Number(opt.value) === (hlsSession?.audioTrack ?? 0)" @click="openMenu = null; selectAudio(Number(opt.value))">
-                <Check :size="14" class="cinema-popover-check" />
-                <span>{{ opt.label }}</span>
-              </button>
-            </div>
+            <button type="button" class="cinema-icon-btn" title="收起控制栏（避免遮挡底部字幕）" aria-label="收起控制栏" @click="collapseDockForSubtitles"><EyeOff :size="15" /></button>
           </div>
-
-          <div class="cinema-menu-anchor">
-            <button type="button" class="cinema-pill-btn" :class="{ active: openMenu === 'quality' }" title="清晰度与解码方式" :disabled="hlsStarting" :aria-expanded="openMenu === 'quality'" @click="toggleMenu('quality')">
-              <span>{{ qualityPillLabel }}</span>
-              <ChevronDown :size="13" class="cinema-pill-chevron" />
-            </button>
-            <div v-if="openMenu === 'quality'" class="cinema-popover-menu" role="menu">
-              <button v-for="opt in qualityOptions" :key="String(opt.value)" type="button" class="cinema-popover-item" :class="{ selected: String(opt.value) === currentQuality }" role="menuitemradio" :aria-checked="String(opt.value) === currentQuality" @click="openMenu = null; selectQuality(String(opt.value))">
-                <Check :size="14" class="cinema-popover-check" />
-                <span>{{ opt.label }}</span>
-              </button>
-              <div class="cinema-popover-divider"></div>
-              <button type="button" class="cinema-popover-item" :class="{ selected: preferLocalDecode }" role="menuitemcheckbox" :aria-checked="preferLocalDecode" @click="openMenu = null; toggleLocalDecode(!preferLocalDecode)">
-                <Check :size="14" class="cinema-popover-check" />
-                <span>默认优先本地硬解</span>
-              </button>
-              <button v-if="selected.path" type="button" class="cinema-popover-item" :class="{ selected: autoplayNext }" role="menuitemcheckbox" :aria-checked="autoplayNext" @click="openMenu = null; toggleAutoplay(!autoplayNext)">
-                <Check :size="14" class="cinema-popover-check" />
-                <span>{{ selected.kind === "series" ? "播完自动下一集" : "播完自动连播" }}</span>
-              </button>
-            </div>
-          </div>
-
-          <div class="cinema-menu-anchor">
-            <button type="button" class="cinema-pill-btn" :class="{ active: playbackRate !== 1 || openMenu === 'rate' }" title="播放倍速" :aria-expanded="openMenu === 'rate'" @click="toggleMenu('rate')">
-              <span>{{ ratePillLabel }}</span>
-              <ChevronDown :size="13" class="cinema-pill-chevron" />
-            </button>
-            <div v-if="openMenu === 'rate'" class="cinema-popover-menu cinema-popover-menu--narrow" role="menu">
-              <button v-for="opt in playbackRateOptions" :key="String(opt.value)" type="button" class="cinema-popover-item" :class="{ selected: Number(opt.value) === playbackRate }" role="menuitemradio" :aria-checked="Number(opt.value) === playbackRate" @click="openMenu = null; selectRate(Number(opt.value))">
-                <Check :size="14" class="cinema-popover-check" />
-                <span>{{ Number(opt.value) === 1 ? "1.0x（正常）" : opt.label }}</span>
-              </button>
-            </div>
-          </div>
-
-          <button type="button" class="cinema-icon-btn" :class="{ active: fillScreen }" :title="fillScreen ? '适应屏幕' : '铺满画面'" :aria-label="fillScreen ? '适应屏幕' : '铺满画面'" @click="toggleFill()"><Scan :size="17" /></button>
-          <button v-if="canPictureInPicture" type="button" class="cinema-icon-btn" title="画中画" aria-label="画中画" @click="togglePip()"><PictureInPicture2 :size="17" /></button>
-          <button type="button" class="cinema-icon-btn" :title="isFullscreen ? '退出全屏' : '全屏播放'" :aria-label="isFullscreen ? '退出全屏' : '全屏播放'" @click="toggleFullscreen()">
-            <Minimize2 v-if="isFullscreen" :size="17" />
-            <Maximize2 v-else :size="17" />
-          </button>
-          <button type="button" class="cinema-icon-btn" title="收起控制栏（避免遮挡底部字幕）" aria-label="收起控制栏" @click="collapseDockForSubtitles"><EyeOff :size="16" /></button>
         </div>
       </div>
     </footer>

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref } from "vue";
 import { Check, Clapperboard, Cpu, Film, ListChecks, MonitorPlay, Play, RefreshCcw, SlidersHorizontal, Tv, Wand2 } from "lucide-vue-next";
 import AppleSelect from "../../components/ui/AppleSelect.vue";
 import IsleButton from "../../components/ui/IsleButton.vue";
@@ -7,8 +8,10 @@ import IsleHelpButton from "../../components/ui/IsleHelpButton.vue";
 import IsleActionMenu from "../../components/ui/IsleActionMenu.vue";
 import IslePageHeader from "../../components/ui/IslePageHeader.vue";
 import IsleSearchInput from "../../components/ui/IsleSearchInput.vue";
+import IsleSlidingIndicator from "../../components/ui/IsleSlidingIndicator.vue";
+import { useSlidingIndicator } from "../../composables/useSlidingIndicator.ts";
 
-defineProps<{
+const props = defineProps<{
   admin: boolean;
   query: string;
   view: "films" | "series";
@@ -35,6 +38,13 @@ const emit = defineEmits<{
   (e: "open-scraping-settings"): void;
   (e: "toggle-prefer-local-decode", checked: boolean): void;
 }>();
+
+const tabsRef = ref<HTMLElement | null>(null);
+const { indicatorStyle, indicatorReady } = useSlidingIndicator({
+  containerRef: tabsRef,
+  activeSelector: ".isle-chip.is-selected",
+  watchSources: [() => props.view, () => props.mode, () => props.admin],
+});
 
 const watchedOptions = [
   { value: "all", label: "全部状态" },
@@ -106,23 +116,29 @@ const cinemaHelpItems = [
           v-if="admin"
           type="button"
           role="menuitem"
-          title="查看待匹配影片与 TMDB 批量刮削；TMDB Token 在 Mac「设置 → 媒体服务」配置"
+          title="查看待完善资料影片与 TMDB 批量匹配；TMDB Token 在 Mac「设置 → 媒体服务」配置"
           @click="emit('open-scraping-settings')"
         >
-          <SlidersHorizontal :size="15" /> 待匹配与 TMDB 刮削
+          <SlidersHorizontal :size="15" /> 待完善资料与刮削
         </button>
       </IsleActionMenu>
     </template>
   </IslePageHeader>
 
   <div class="cinema-tools cinema-navigation">
-    <div class="cinema-tabs" role="group" aria-label="影视分类与观看记录">
+    <div ref="tabsRef" class="cinema-tabs" role="group" aria-label="影视分类与观看记录">
+      <IsleSlidingIndicator
+        class="cinema-tabs-indicator"
+        variant="segment"
+        :ready="indicatorReady"
+        :pill-rect="indicatorStyle"
+      />
       <IsleChip :selected="view==='films'&&mode==='all'" @select="emit('filter', 'all')"><template #icon><Clapperboard :size="15" /></template>首页</IsleChip>
       <IsleChip :selected="view==='films'&&mode==='movie'" @select="emit('filter', 'movie')"><template #icon><Film :size="15" /></template>电影</IsleChip>
       <IsleChip :selected="view==='series'" @select="emit('switch-view', 'series')"><template #icon><Tv :size="15" /></template>剧集</IsleChip>
       <IsleChip :selected="mode==='continue'&&view==='films'" @select="emit('filter', 'continue')"><template #icon><Play :size="15" /></template>继续观看</IsleChip>
       <IsleChip :selected="mode==='history'&&view==='films'" @select="emit('filter', 'history')">观看历史</IsleChip>
-      <IsleChip :selected="view==='films'&&mode==='unmatched'" @select="emit('filter', 'unmatched')"><template #icon><Wand2 :size="15" /></template>待匹配</IsleChip>
+      <IsleChip v-if="admin" :selected="view==='films'&&mode==='unmatched'" @select="emit('filter', 'unmatched')"><template #icon><Wand2 :size="15" /></template>待完善资料</IsleChip>
     </div>
     <div v-if="mode !== 'history'" class="cinema-nav-right">
       <div class="cinema-filter-controls" role="group" aria-label="筛选与排序">

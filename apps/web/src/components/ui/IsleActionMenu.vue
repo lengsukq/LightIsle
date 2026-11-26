@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { MoreHorizontal } from "lucide-vue-next";
+import { pushModalLayer, type ModalLayerHandle } from "../../utils/modalStack.ts";
 
 const props = withDefaults(
   defineProps<{
@@ -21,6 +22,7 @@ const open = ref(false);
 const triggerRef = ref<HTMLButtonElement | null>(null);
 const menuRef = ref<HTMLElement | null>(null);
 const isDroppingUp = ref(false);
+let escLayer: ModalLayerHandle | null = null;
 const popoverStyle = ref<Record<string, string | number>>({
   position: "fixed",
   top: "0px",
@@ -85,11 +87,51 @@ function onGlobalPointerDown(event: PointerEvent) {
   close();
 }
 
+function focusMenuItem(deltaOrBound: number | "first" | "last") {
+  const container = menuRef.value;
+  if (!container) return;
+  const items = Array.from(
+    container.querySelectorAll<HTMLElement>("button:not([disabled]), a[href]"),
+  );
+  if (!items.length) return;
+  if (deltaOrBound === "first") {
+    items[0].focus();
+    return;
+  }
+  if (deltaOrBound === "last") {
+    items[items.length - 1].focus();
+    return;
+  }
+  const currentIdx = items.indexOf(document.activeElement as HTMLElement);
+  const nextIdx =
+    currentIdx < 0
+      ? deltaOrBound > 0
+        ? 0
+        : items.length - 1
+      : (currentIdx + deltaOrBound + items.length) % items.length;
+  items[nextIdx].focus();
+}
+
 function onGlobalKeydown(event: KeyboardEvent) {
-  if (open.value && event.key === "Escape") {
+  if (!open.value) return;
+  if (event.key === "Escape") {
     event.stopPropagation();
     close();
     triggerRef.value?.focus();
+    return;
+  }
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    focusMenuItem(1);
+  } else if (event.key === "ArrowUp") {
+    event.preventDefault();
+    focusMenuItem(-1);
+  } else if (event.key === "Home") {
+    event.preventDefault();
+    focusMenuItem("first");
+  } else if (event.key === "End") {
+    event.preventDefault();
+    focusMenuItem("last");
   }
 }
 
@@ -117,7 +159,16 @@ function handleScrollOrResize() {
 }
 
 watch(open, (isOpen) => {
+  escLayer?.dispose();
+  escLayer = null;
   if (isOpen) {
+    escLayer = pushModalLayer({
+      onEsc: () => {
+        close();
+        triggerRef.value?.focus();
+      },
+      lockScroll: false,
+    });
     updatePosition();
     nextTick(updatePosition);
   } else {
@@ -133,6 +184,8 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  escLayer?.dispose();
+  escLayer = null;
   cancelPositionRaf();
   window.removeEventListener("pointerdown", onGlobalPointerDown, true);
   window.removeEventListener("keydown", onGlobalKeydown, true);
@@ -248,14 +301,12 @@ defineExpose({ close });
   min-width: 184px;
   max-width: min(280px, calc(100vw - 24px));
   padding: 5px;
-  border-radius: 13px;
-  border: 1px solid var(--fluid-card-border-strong, rgba(34, 29, 23, 0.14));
-  background: rgba(255, 253, 249, 0.97);
-  -webkit-backdrop-filter: blur(22px) saturate(145%);
-  backdrop-filter: blur(22px) saturate(145%);
-  box-shadow:
-    0 14px 32px -6px rgba(34, 29, 23, 0.16),
-    0 3px 8px rgba(34, 29, 23, 0.06);
+  border-radius: var(--radius-md, 14px);
+  border: 1px solid var(--fluid-card-border-strong, rgba(20, 19, 17, 0.14));
+  background: color-mix(in srgb, var(--surface-glass, rgba(252, 251, 249, 0.84)) 86%, var(--surface-elevated, #ffffff) 14%);
+  -webkit-backdrop-filter: blur(26px) saturate(170%);
+  backdrop-filter: blur(26px) saturate(170%);
+  box-shadow: var(--shadow-float, 0 14px 32px -6px rgba(20, 19, 17, 0.16)), var(--fluid-card-rim, inset 0 1px 0 rgba(255, 255, 255, 0.72));
   display: flex;
   flex-direction: column;
   gap: 2px;
@@ -263,11 +314,17 @@ defineExpose({ close });
 }
 
 [data-theme="dark"] .isle-action-popover {
-  background: rgba(29, 28, 26, 0.97);
-  border-color: rgba(244, 241, 234, 0.14);
-  box-shadow:
-    0 16px 36px -4px rgba(0, 0, 0, 0.54),
-    0 4px 10px rgba(0, 0, 0, 0.28);
+  background: color-mix(in srgb, var(--surface-glass, rgba(22, 22, 20, 0.80)) 84%, var(--surface-elevated, #1c1c1a) 16%);
+  border-color: var(--fluid-card-border-strong, rgba(244, 241, 234, 0.16));
+  box-shadow: var(--shadow-float, 0 16px 36px -4px rgba(0, 0, 0, 0.54)), var(--fluid-card-rim, inset 0 1px 0 rgba(255, 255, 255, 0.08));
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .isle-action-popover {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: var(--surface-elevated, #ffffff);
+  }
 }
 
 .isle-action-popover.align-left {
@@ -325,7 +382,7 @@ defineExpose({ close });
 .isle-menu-pop-enter-active {
   transition:
     opacity 180ms cubic-bezier(0.22, 1, 0.36, 1),
-    transform 180ms cubic-bezier(0.22, 1, 0.36, 1);
+    transform 210ms var(--motion-spring-snappy, cubic-bezier(0.2, 0.9, 0.22, 1.05));
 }
 
 .isle-menu-pop-leave-active {
@@ -342,6 +399,14 @@ defineExpose({ close });
 .isle-menu-pop-leave-to {
   opacity: 0;
   transform: scale(0.97) translateY(-3px);
+}
+
+.isle-action-popover.drop-up.isle-menu-pop-enter-from {
+  transform: scale(0.95) translateY(5px);
+}
+
+.isle-action-popover.drop-up.isle-menu-pop-leave-to {
+  transform: scale(0.97) translateY(3px);
 }
 
 @media (prefers-reduced-motion: reduce) {

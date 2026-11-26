@@ -1,9 +1,9 @@
 // A virtualizable calendar timeline. Headers contribute to geometry before
 // visible photo positions are calculated, so 10k+ items never require 10k
 // mounted DOM nodes. All date calculations use the viewer's local timezone.
-const minTileWidth = 160;
-const gap = 12;
-const groupHeaderHeight = 60;
+const minTileWidth = 168;
+const gap = 6;
+const groupHeaderHeight = 52;
 const monthFormatter = new Intl.DateTimeFormat("zh-CN", { year: "numeric", month: "long" });
 
 export interface PhotoTimelinePosition {
@@ -46,9 +46,10 @@ export function createPhotoTimelineLayout(
   options: { compact?: boolean } = {},
 ): PhotoTimelineLayout {
   const compact = options && options.compact === true;
-  const tileMinWidth = compact ? 114 : minTileWidth;
-  const tileGap = compact ? 8 : gap;
   const width = Math.max(0, Number(containerWidth) || 0);
+  const narrowViewport = width > 0 && width < 460;
+  const tileMinWidth = compact ? (narrowViewport ? 96 : 114) : minTileWidth;
+  const tileGap = compact ? 4 : gap;
   const columns = Math.max(1, Math.floor((width + tileGap) / (tileMinWidth + tileGap)));
   const tileSize = Math.max(0, (width - tileGap * (columns - 1)) / columns);
   const rowPitch = tileSize + tileGap;
@@ -96,7 +97,7 @@ export function getPhotoTimelineWindow(
 ): PhotoTimelineWindow {
   const first = Math.max(0, Number(viewportTop) || 0);
   const last = first + Math.max(0, Number(viewportHeight) || 0);
-  const overscan = Math.max(240, 2 * layout.rowPitch);
+  const overscan = Math.max(220, 1.5 * layout.rowPitch);
   const start = firstAfter(
     layout.positions,
     first - overscan - layout.tileSize,

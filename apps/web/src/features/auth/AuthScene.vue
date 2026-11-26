@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { Eye, EyeOff } from "lucide-vue-next";
+import IsleBanner from "../../components/ui/IsleBanner.vue";
+import IsleButton from "../../components/ui/IsleButton.vue";
 import IsleHelpButton from "../../components/ui/IsleHelpButton.vue";
 
 defineProps<{
@@ -31,101 +33,112 @@ const authHelpItems = [
     body: "首次管理员账号在 Mac 端 LightIsle.app 中创建；家庭成员账号由管理员登录后在「偏好设置 → 成员与空间」中创建与分配。",
   },
 ];
+
+const setupHelpItems = [
+  {
+    title: "为什么不能直接在网页注册？",
+    body: "为防止局域网或公网未授权抢注，首个管理员账号仅限在宿主 Mac 本机应用中初始化。",
+  },
+  {
+    title: "家庭成员如何登录？",
+    body: "管理员初始化并登录后，可在「偏好设置 → 账号与安全」中为家人创建独立账号与配额。",
+  },
+];
 </script>
 
 <template>
-  <div v-if="authChecking" class="auth-scene">
-    <div class="auth-card auth-card--status">
-      <div class="auth-logo"><img src="/brand-icon.svg" alt="轻屿 Logo" class="brand-image" /></div>
-      <h2>轻屿 LightIsle</h2>
-      <p>正在连接本机空间…</p>
-    </div>
-  </div>
-  <div v-else-if="authServiceError" class="auth-scene">
-    <div class="auth-card">
-      <div class="auth-brand-row">
+  <div class="auth-scene">
+    <Transition name="isle-auth-swap" mode="out-in">
+      <div v-if="authChecking" key="checking" class="auth-card auth-card--status">
         <div class="auth-logo"><img src="/brand-icon.svg" alt="轻屿 Logo" class="brand-image" /></div>
-        <div class="auth-brand-meta">
-          <h1>暂时无法连接轻屿</h1>
-          <p>请确认 Mac 端 LightIsle.app 正在运行</p>
-        </div>
+        <h2>轻屿 LightIsle</h2>
+        <p class="auth-status-copy">
+          <span class="auth-status-ring" aria-hidden="true"></span>
+          <span>正在连接本机空间…</span>
+        </p>
       </div>
-      <p class="form-error" role="alert">{{ authServiceError }}</p>
-      <button type="button" class="auth-submit" :disabled="authChecking" @click="emit('check-auth')">
-        {{ authChecking ? "正在重试…" : "重试连接" }}
-      </button>
-    </div>
-  </div>
-  <div v-else-if="!configured" class="auth-scene">
-    <div class="auth-card">
-      <div class="auth-brand-row">
-        <div class="auth-logo"><img src="/brand-icon.svg" alt="轻屿 Logo" class="brand-image" /></div>
-        <div class="auth-brand-meta">
-          <h1>请先在 Mac 端完成初始化</h1>
-          <p>打开 LightIsle.app 创建首个管理员账号</p>
+
+      <div v-else-if="authServiceError" key="error" class="auth-card">
+        <div class="auth-brand-row">
+          <div class="auth-logo"><img src="/brand-icon.svg" alt="轻屿 Logo" class="brand-image" /></div>
+          <div class="auth-brand-meta">
+            <h1>暂时无法连接轻屿</h1>
+            <p>请确认 Mac 端 LightIsle.app 正在运行</p>
+          </div>
         </div>
-        <IsleHelpButton
-          title="首次启用说明"
-          :items="[
-            { title: '为什么不能直接在网页注册？', body: '为防止局域网或公网未授权抢注，首个管理员账号仅限在宿主 Mac 本机应用中初始化。' },
-            { title: '家庭成员如何登录？', body: '管理员初始化并登录后，可在「偏好设置 → 账号与安全」中为家人创建独立账号与配额。' },
-          ]"
-        />
+        <IsleBanner type="error" compact :message="authServiceError" />
+        <IsleButton class="auth-submit-btn" variant="primary" size="lg" block :loading="authChecking" @click="emit('check-auth')">
+          {{ authChecking ? "正在重试…" : "重试连接" }}
+        </IsleButton>
       </div>
-      <button type="button" class="auth-submit" @click="emit('check-auth')">已完成初始化，刷新状态</button>
-    </div>
-  </div>
-  <div v-else class="auth-scene">
-    <form class="auth-card" @submit.prevent="emit('submit-auth')">
-      <div class="auth-brand-row">
-        <div class="auth-logo"><img src="/brand-icon.svg" alt="轻屿 Logo" class="brand-image" /></div>
-        <div class="auth-brand-meta">
-          <h1>轻屿</h1>
-          <p>登录本地家庭空间</p>
+
+      <div v-else-if="!configured" key="setup" class="auth-card">
+        <div class="auth-brand-row">
+          <div class="auth-logo"><img src="/brand-icon.svg" alt="轻屿 Logo" class="brand-image" /></div>
+          <div class="auth-brand-meta">
+            <h1>请先在 Mac 端完成初始化</h1>
+            <p>打开 LightIsle.app 创建首个管理员账号</p>
+          </div>
+          <IsleHelpButton title="首次启用说明" :items="setupHelpItems" />
         </div>
-        <IsleHelpButton title="登录与本地隐私说明" :items="authHelpItems" />
+        <IsleButton class="auth-submit-btn" variant="primary" size="lg" block @click="emit('check-auth')">
+          已完成初始化，刷新状态
+        </IsleButton>
       </div>
-      <label>
-        <span>用户名</span>
-        <input
-          :value="authUsername"
-          autofocus
-          required
-          maxlength="32"
-          minlength="3"
-          autocomplete="username"
-          placeholder="输入用户名"
-          @input="emit('update:authUsername', ($event.target as HTMLInputElement).value.trim())"
-        />
-      </label>
-      <label>
-        <span>密码</span>
-        <div class="password-input-wrap">
+
+      <form v-else key="login" class="auth-card" @submit.prevent="emit('submit-auth')">
+        <div class="auth-brand-row">
+          <div class="auth-logo"><img src="/brand-icon.svg" alt="轻屿 Logo" class="brand-image" /></div>
+          <div class="auth-brand-meta">
+            <h1>轻屿</h1>
+            <p>登录本地家庭空间</p>
+          </div>
+          <IsleHelpButton title="登录与本地隐私说明" :items="authHelpItems" />
+        </div>
+        <div class="auth-field">
+          <label for="auth-username-input">用户名</label>
           <input
-            :value="authPassword"
+            id="auth-username-input"
+            :value="authUsername"
+            autofocus
             required
-            :type="showAuthPassword ? 'text' : 'password'"
-            autocomplete="current-password"
-            placeholder="输入登录密码"
-            @input="emit('update:authPassword', ($event.target as HTMLInputElement).value)"
+            maxlength="32"
+            minlength="3"
+            autocomplete="username"
+            placeholder="输入用户名"
+            @input="emit('update:authUsername', ($event.target as HTMLInputElement).value.trim())"
           />
-          <button
-            type="button"
-            class="password-eye-btn"
-            :title="showAuthPassword ? '隐藏密码' : '显示密码'"
-            :aria-label="showAuthPassword ? '隐藏密码' : '显示密码'"
-            @click="emit('update:showAuthPassword', !showAuthPassword)"
-          >
-            <EyeOff v-if="showAuthPassword" :size="15" />
-            <Eye v-else :size="15" />
-          </button>
         </div>
-      </label>
-      <p v-if="authError" class="form-error" role="alert">{{ authError }}</p>
-      <button class="auth-submit" :disabled="authSubmitting" type="submit">
-        {{ authSubmitting ? "正在登录…" : "进入轻屿" }}
-      </button>
-    </form>
+        <div class="auth-field">
+          <label for="auth-password-input">密码</label>
+          <div class="password-input-wrap">
+            <input
+              id="auth-password-input"
+              :value="authPassword"
+              required
+              :type="showAuthPassword ? 'text' : 'password'"
+              autocomplete="current-password"
+              placeholder="输入登录密码"
+              @input="emit('update:authPassword', ($event.target as HTMLInputElement).value)"
+            />
+            <button
+              type="button"
+              class="password-eye-btn"
+              :title="showAuthPassword ? '隐藏密码' : '显示密码'"
+              :aria-label="showAuthPassword ? '隐藏密码' : '显示密码'"
+              @click="emit('update:showAuthPassword', !showAuthPassword)"
+            >
+              <EyeOff v-if="showAuthPassword" :size="15" />
+              <Eye v-else :size="15" />
+            </button>
+          </div>
+        </div>
+        <IsleBanner v-if="authError" type="error" compact :message="authError" />
+        <IsleButton class="auth-submit-btn" variant="primary" size="lg" block :loading="authSubmitting" type="submit">
+          {{ authSubmitting ? "正在登录…" : "进入轻屿" }}
+        </IsleButton>
+      </form>
+    </Transition>
   </div>
 </template>
 
@@ -141,21 +154,50 @@ const authHelpItems = [
   }
 }
 
+@keyframes authRingSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.isle-auth-swap-enter-active {
+  transition:
+    opacity 0.24s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.28s var(--motion-spring-snappy, cubic-bezier(0.2, 0.9, 0.22, 1.05));
+}
+.isle-auth-swap-leave-active {
+  transition:
+    opacity 0.14s var(--motion-exit, cubic-bezier(0.32, 0, 0.67, 0)),
+    transform 0.14s var(--motion-exit, cubic-bezier(0.32, 0, 0.67, 0));
+}
+.isle-auth-swap-enter-from {
+  opacity: 0;
+  transform: translate3d(0, 8px, 0) scale(0.984);
+}
+.isle-auth-swap-leave-to {
+  opacity: 0;
+  transform: translate3d(0, -6px, 0) scale(0.992);
+}
+
 .auth-card {
-  width: min(100%, 384px);
+  position: relative;
+  z-index: 1;
+  width: min(100%, 392px);
   padding: 28px 28px 24px;
   border-radius: 22px;
   border: 1px solid var(--fluid-card-border);
   background: var(--fluid-card-fill);
-  box-shadow: var(--shadow-float, var(--fluid-card-shadow));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #ffffff 32%, transparent),
+    var(--shadow-float, var(--fluid-card-shadow));
   gap: 15px;
-  animation: authCardReveal 0.28s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: authCardReveal 0.28s cubic-bezier(0.22, 1, 0.36, 1) backwards;
 }
 
 .auth-card--status {
   text-align: center;
   align-items: center;
-  padding: 32px 26px;
+  padding: 34px 26px;
 }
 
 .auth-card--status h2 {
@@ -165,10 +207,22 @@ const authHelpItems = [
   letter-spacing: -0.015em;
 }
 
-.auth-card--status p {
+.auth-status-copy {
   margin: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
   font-size: 12.5px;
   color: var(--text-secondary);
+}
+
+.auth-status-ring {
+  width: 14px;
+  height: 14px;
+  border-radius: 999px;
+  border: 2px solid color-mix(in srgb, var(--accent-primary) 24%, transparent);
+  border-top-color: var(--accent-primary);
+  animation: authRingSpin 0.8s linear infinite;
 }
 
 .auth-brand-row {
@@ -179,9 +233,9 @@ const authHelpItems = [
 }
 
 .auth-brand-row .auth-logo {
-  width: 42px;
-  height: 42px;
-  border-radius: 12px;
+  width: 44px;
+  height: 44px;
+  border-radius: 13px;
   margin-bottom: 0;
   flex-shrink: 0;
 }
@@ -195,9 +249,9 @@ const authHelpItems = [
 
 .auth-brand-meta h1 {
   margin: 0;
-  font-size: 19px;
+  font-size: 19.5px;
   font-weight: 700;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.022em;
   line-height: 1.25;
   color: var(--text-primary);
 }
@@ -209,45 +263,56 @@ const authHelpItems = [
   line-height: 1.4;
 }
 
-.auth-card label {
+.auth-field {
   display: grid;
   gap: 6px;
-  font-size: 12.5px;
+}
+
+.auth-field label {
+  font-size: 12px;
   font-weight: 600;
-  color: var(--text-primary);
+  color: var(--text-secondary);
 }
 
 .auth-card input {
-  height: 40px;
+  height: 42px;
   padding: 0 13px;
   border-radius: 11px;
   border: 1px solid var(--fluid-card-border);
   background: var(--fluid-card-item-fill);
   font-size: 13.5px;
+  transition: border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
 }
 
-.auth-submit {
-  min-height: 40px;
-  border-radius: 999px;
-  font-size: 13.5px;
-  font-weight: 600;
+.auth-card input:focus {
+  outline: none;
+  border-color: var(--accent-primary);
+  background: var(--fluid-card-top);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary) 16%, transparent);
+}
+
+.auth-submit-btn {
   margin-top: 4px;
-  transition:
-    transform 240ms var(--motion-spring, cubic-bezier(0.22, 1, 0.36, 1)),
-    filter 160ms ease,
-    opacity 160ms ease;
+  border-radius: 999px;
 }
 
-.auth-submit:active:not(:disabled) {
-  transform: scale(0.975);
-  transition-duration: 95ms;
+@media (max-width: 480px) {
+  .auth-card {
+    padding: 24px 18px 20px;
+  }
+  .auth-card input {
+    font-size: 16px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .auth-card {
+  .auth-card,
+  .auth-status-ring {
     animation: none;
   }
-  .auth-submit {
+  .isle-auth-swap-enter-active,
+  .isle-auth-swap-leave-active,
+  .auth-card input {
     transition: none;
   }
 }

@@ -1,15 +1,17 @@
 <script setup lang="ts">
-import { computed, inject, nextTick, ref, watch } from "vue";
+import { computed, inject, ref, watch } from "vue";
 import {
-  ChevronDown, ChevronLeft, ChevronRight, Download, Eye, EyeOff,
-  Film, FolderPlus, Heart, Info, Star, Trash2, X,
+  ChevronLeft, ChevronRight, Download, Eye, EyeOff,
+  FolderPlus, Heart, Info, Star, Trash2, X,
 } from "lucide-vue-next";
-import AppleSelect from "../../components/ui/AppleSelect.vue";
 import IsleVideoPlayer from "../../components/ui/IsleVideoPlayer.vue";
 import PhotoLiveOverlay from "./PhotoLiveOverlay.vue";
 import PhotoViewerInfoSidebar from "./PhotoViewerInfoSidebar.vue";
-import { dateLabel, formatDuration } from "./photoPresentation.ts";
+import PhotoViewerAlbumDrawer from "./PhotoViewerAlbumDrawer.vue";
+import PhotoViewerFilmstrip from "./PhotoViewerFilmstrip.vue";
+import { dateLabel } from "./photoPresentation.ts";
 import { PHOTO_VIEWER_CTX } from "../../contexts/photosContext.ts";
+import { PHOTO_STAGE_EXT_CTX } from "./photoStageContext.ts";
 import type { BatchAsset } from "./usePhotoBatchActions.ts";
 
 const props = defineProps<{
@@ -50,6 +52,7 @@ const emit = defineEmits<{
 }>();
 
 const ctx = inject(PHOTO_VIEWER_CTX, null);
+const stageExt = inject(PHOTO_STAGE_EXT_CTX, null);
 const fileBrowserMode = computed(() => Boolean(props.fileBrowserMode));
 
 const selected = computed(() => (ctx ? ctx.selected.value : (props.selected ?? null)));
@@ -77,30 +80,10 @@ const viewerAnimate = computed(() => (ctx ? ctx.viewerAnimate.value : Boolean(pr
 const viewerPointersSize = computed(() => (ctx ? ctx.viewerPointersSize.value : (props.viewerPointersSize ?? 0)));
 const browserDecodable = computed(() => (ctx ? ctx.browserDecodable.value : Boolean(props.browserDecodable)));
 const originalUrl = computed(() => (ctx ? ctx.originalUrl.value : (props.originalUrl ?? "")));
-const folderAlbums = computed(() => (ctx ? ctx.folderAlbums.value : []));
-const folderAlbumOptions = computed(() => (ctx ? ctx.folderAlbumOptions.value : []));
-const folderTarget = computed({
-  get: () => (ctx ? ctx.folderTarget.value : ""),
-  set: (v: string) => { if (ctx) ctx.folderTarget.value = v; },
-});
-const albums = computed(() => (ctx ? ctx.albums.value : []));
-const albumOptions = computed(() => (ctx ? ctx.albumOptions.value : []));
-const addAlbum = computed({
-  get: () => (ctx ? ctx.addAlbum.value : 0),
-  set: (v: number) => { if (ctx) ctx.addAlbum.value = v; },
-});
 const activeAlbum = computed(() => (ctx ? ctx.activeAlbum.value : 0));
 const sharedAlbumsError = computed(() => (ctx ? ctx.sharedAlbumsError.value : ""));
-const sharedAlbumsLoading = computed(() => (ctx ? ctx.sharedAlbumsLoading.value : false));
-const privateAlbums = computed(() => (ctx ? ctx.privateAlbums.value : []));
-const privateAlbumOptions = computed(() => (ctx ? ctx.privateAlbumOptions.value : []));
-const addPrivateAlbum = computed({
-  get: () => (ctx ? ctx.addPrivateAlbum.value : 0),
-  set: (v: number) => { if (ctx) ctx.addPrivateAlbum.value = v; },
-});
 const activePrivateAlbum = computed(() => (ctx ? ctx.activePrivateAlbum.value : 0));
 const privateAlbumsError = computed(() => (ctx ? ctx.privateAlbumsError.value : ""));
-const privateAlbumsLoading = computed(() => (ctx ? ctx.privateAlbumsLoading.value : false));
 const albumBusy = computed(() => (ctx ? ctx.albumBusy.value : false));
 const message = computed(() => (ctx ? ctx.message.value : ""));
 
@@ -120,49 +103,70 @@ function setCloseButtonRef(el: HTMLButtonElement | null) {
 }
 function onClose() { if (ctx) ctx.close(); else emit("close"); }
 function onShowAt(index: number) { if (ctx) ctx.showAt(index); else emit("show-at", index); }
-function onToggleZoom() { if (ctx) ctx.toggleZoom(); else emit("toggle-zoom"); }
+function onToggleZoom(event?: MouseEvent) {
+  if (ctx) {
+    if (stageExt?.toggleZoomAtPointer) stageExt.toggleZoomAtPointer(event);
+    else ctx.toggleZoom();
+  } else {
+    emit("toggle-zoom");
+  }
+}
 function onRequestOriginal() { if (ctx) ctx.requestOriginal(); else emit("request-original"); }
 function onPointerDown(e: PointerEvent) { if (ctx) ctx.pointerDown(e); else emit("pointer-down", e); }
 function onPointerMove(e: PointerEvent) { if (ctx) ctx.pointerMove(e); else emit("pointer-move", e); }
 function onPointerUp(e: PointerEvent) { if (ctx) ctx.pointerUp(e); else emit("pointer-up", e); }
 function onWheel(e: WheelEvent) { if (ctx) ctx.wheel(e); else emit("wheel", e); }
+function onDownload() {
+  if (fileBrowserMode.value) {
+    emit("download");
+    return;
+  }
+  const asset = selected.value;
+  if (!asset) return;
+  if (stageExt?.downloadAsset) {
+    stageExt.downloadAsset(asset);
+    return;
+  }
+  const link = document.createElement("a");
+  link.href = mediaPath("/api/v2/files/content?path=" + encodeURIComponent(asset.path));
+  link.download = asset.name;
+  link.rel = "noopener";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
 
 const viewerChromeVisible = ref(true);
-const filmstripRef = ref<HTMLElement | null>(null);
 
 const inAnyRemovableAlbum = computed(() =>
   Boolean((admin.value && activeAlbum.value) || activePrivateAlbum.value),
 );
 
-const filmstripWindow = computed(() => {
-  const list = modalAssets.value;
-  if (list.length <= 1) return [] as Array<{ asset: BatchAsset; index: number }>;
-  const start = Math.max(0, selectedIndex.value - 18);
-  const end = Math.min(list.length, selectedIndex.value + 19);
-  const items: Array<{ asset: BatchAsset; index: number }> = [];
-  for (let i = start; i < end; i += 1) {
-    items.push({ asset: list[i], index: i });
-  }
-  return items;
-});
+const showFilmstrip = computed(() =>
+  Boolean(
+    viewerChromeVisible.value &&
+    modalAssets.value.length > 1 &&
+    (fileBrowserMode.value || selected.value?.type !== "video"),
+  ),
+);
 
-watch(
-  selectedIndex,
-  async (idx) => {
-    if (idx < 0 || !viewerChromeVisible.value) return;
-    await nextTick();
-    const strip = filmstripRef.value;
-    if (!strip) return;
-    const activeThumb = strip.querySelector<HTMLElement>(`[data-film-index="${idx}"]`);
-    const reduced = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    activeThumb?.scrollIntoView({ inline: "center", block: "nearest", behavior: reduced ? "auto" : "smooth" });
-  },
+const showBottomChrome = computed(() =>
+  Boolean(
+    viewerChromeVisible.value &&
+    (
+      showFilmstrip.value ||
+      (!fileBrowserMode.value && (albumOrganizerOpen.value || sharedAlbumsError.value || privateAlbumsError.value)) ||
+      message.value
+    ),
+  ),
 );
 
 watch(
   selected,
   (val) => {
-    if (!val) viewerChromeVisible.value = true;
+    if (!val) {
+      viewerChromeVisible.value = true;
+    }
   },
 );
 </script>
@@ -170,10 +174,10 @@ watch(
 <template>
   <Teleport to="body">
     <Transition name="isle-overlay-fade">
-      <div v-if="selected && active" class="dialog-backdrop" @click.self="onClose()">
+      <div v-if="selected && active" class="dialog-backdrop viewer-obsidian-backdrop" @click.self="onClose()">
         <div
           :ref="(el) => setDialogRef(el as HTMLElement | null)"
-          class="gallery-modal"
+          class="gallery-modal viewer-obsidian-stage"
           :class="{ 'gallery-modal--info': viewerInfo, 'gallery-modal--bare': !viewerChromeVisible }"
           role="dialog"
           aria-modal="true"
@@ -181,10 +185,10 @@ watch(
           tabindex="-1"
         >
           <Transition name="viewer-chrome-top">
-            <div v-if="viewerChromeVisible" class="gallery-modal-toolbar">
+            <div v-if="viewerChromeVisible" class="gallery-modal-toolbar viewer-obsidian-topbar">
               <div>
                 <strong>{{ selected.name }}</strong>
-                <small>{{ fileBrowserMode ? "文件预览" : dateLabel(selected.takenAt) }} · {{ selected.type === "video" ? "视频" : "照片" }} · {{ selectedIndex + 1 }} / {{ modalAssets.length }}</small>
+                <small class="viewer-topbar-meta">{{ fileBrowserMode ? "文件预览" : dateLabel(selected.takenAt) }} · {{ selected.type === "video" ? "视频" : "照片" }} · {{ selectedIndex + 1 }} / {{ modalAssets.length }}</small>
               </div>
               <div class="gallery-modal-actions">
                 <template v-if="!fileBrowserMode">
@@ -206,9 +210,9 @@ watch(
                     title="仅从当前相册视图移出，原始照片/视频文件不会删除"
                     @click="activePrivateAlbum ? ctx?.removePrivate() : ctx?.removeShared()"
                   >
-                    从相册移出（保留原片）
+                    从相册移出<span class="viewer-pill-detail">（保留原片）</span>
                   </button>
-                  <button v-if="selected.type === 'photo' && modalAssets.length > 1" type="button" class="viewer-pill-btn" :title="slideshow ? '暂停幻灯片' : '开始幻灯片，每4秒一张'" @click="ctx?.toggleSlideshow()">
+                  <button v-if="selected.type === 'photo' && modalAssets.length > 1" type="button" class="viewer-pill-btn" :class="{ chosen: slideshow }" :title="slideshow ? '暂停幻灯片' : '开始幻灯片，每4秒一张'" @click="ctx?.toggleSlideshow()">
                     {{ slideshow ? "暂停轮播" : "幻灯片" }}
                   </button>
                   <button v-if="selected.type === 'photo'" type="button" class="viewer-pill-btn" title="全屏电子相框轮播" @click="ctx?.openPhotoFrame()">
@@ -218,7 +222,7 @@ watch(
                     <Info :size="17" />
                   </button>
                 </template>
-                <button v-else type="button" title="下载原文件" aria-label="下载原文件" @click="emit('download')">
+                <button type="button" title="下载原文件" aria-label="下载原文件" @click="onDownload()">
                   <Download :size="17" />
                 </button>
                 <button type="button" title="隐藏底栏胶片带与工具栏" aria-label="隐藏底栏胶片带与工具栏" @click="viewerChromeVisible = false">
@@ -227,12 +231,13 @@ watch(
                 <button v-if="!fileBrowserMode && canWrite" type="button" :disabled="trashBusy" title="移入回收站（删除照片原片）" aria-label="移入回收站（删除照片）" @click="ctx?.trashSelected()">
                   <Trash2 :size="17" />
                 </button>
-                <button :ref="(el) => setCloseButtonRef(el as HTMLButtonElement | null)" type="button" title="关闭（Esc）" aria-label="关闭查看器" @click="onClose()">
+                <button :ref="(el) => setCloseButtonRef(el as HTMLButtonElement | null)" type="button" class="viewer-close-btn" title="关闭（Esc）" aria-label="关闭查看器" @click="onClose()">
                   <X :size="17" />
                 </button>
               </div>
             </div>
           </Transition>
+
           <Transition name="viewer-chrome-top">
             <div v-if="!viewerChromeVisible" class="viewer-floating-restore">
               <button type="button" title="显示工具栏与胶片缩略图栏" aria-label="显示工具栏与胶片栏" @click="viewerChromeVisible = true"><Eye :size="16" /></button>
@@ -241,19 +246,6 @@ watch(
           </Transition>
 
           <div class="gallery-media-layout">
-            <PhotoViewerInfoSidebar
-              v-if="!fileBrowserMode && viewerInfo"
-              :asset="selected"
-              :ai-detail="viewerAIDetail"
-              :ai-loading="viewerAILoading"
-              :can-write="canWrite"
-              :media-path="mediaPath"
-              @close="ctx?.toggleInfo()"
-              @show-on-map="(lat, lon) => ctx?.showOnMap(lat, lon)"
-              @select-person="ctx?.selectPerson($event)"
-              @search-tag="ctx?.searchTag($event)"
-              @edit-metadata="ctx?.editMetadata()"
-            />
             <div class="gallery-stage">
               <button v-if="selected.type !== 'video' && selectedIndex > 0" type="button" class="viewer-nav prev" title="上一张（←）" aria-label="上一张" @click="onShowAt(selectedIndex - 1)">
                 <ChevronLeft :size="22" />
@@ -262,7 +254,7 @@ watch(
                 v-if="selected.type === 'photo'"
                 class="gallery-viewer"
                 :class="{ gesturing: !viewerAnimate }"
-                @dblclick="viewerPointersSize === 0 && onToggleZoom()"
+                @dblclick="viewerPointersSize === 0 && onToggleZoom($event)"
                 @pointerdown="onPointerDown($event)"
                 @pointermove="onPointerMove($event)"
                 @pointerup="onPointerUp($event)"
@@ -292,9 +284,16 @@ watch(
                 >
                   {{ viewerOriginalLoading ? "正在加载原图…" : viewerOriginalError ? "重试原始画质" : "原始画质" }}
                 </button>
-                <span class="gallery-viewer-hint">
-                  {{ viewerScale > 1 ? "拖拽平移 · Esc 复原 1x · 滚轮/双指缩放" : "双击/滚轮缩放 · ←/→ 翻页 · I 参数 · F 收藏" }}
-                  {{ viewerPreviewLoading ? " · 正在加载高清版本…" : viewerPreviewError && viewerStage !== "original" ? " · 预览加载失败，可尝试原始画质或下载原件" : "" }}
+                <span v-if="viewerChromeVisible" class="gallery-viewer-hint">
+                  <template v-if="viewerScale > 1">
+                    拖拽平移<span class="hint-desktop-only"> · Esc 复原 1x · 滚轮/双指缩放</span><span class="hint-touch-only"> · 双指缩放</span>
+                  </template>
+                  <template v-else>
+                    <span class="hint-desktop-only">{{ fileBrowserMode ? "双击/滚轮缩放 · ←/→ 翻页" : "双击/滚轮缩放 · ←/→ 翻页 · I 参数 · F 收藏" }}</span>
+                    <span class="hint-touch-only">双击/双指缩放 · 左右滑动翻页</span>
+                  </template>
+                  <template v-if="viewerPreviewLoading"> · 正在加载高清版本…</template>
+                  <template v-else-if="viewerPreviewError && viewerStage !== 'original'"> · 预览加载失败，可尝试原始画质或下载原件</template>
                 </span>
               </div>
               <IsleVideoPlayer
@@ -312,63 +311,39 @@ watch(
                 <ChevronRight :size="22" />
               </button>
             </div>
+
+            <Transition name="viewer-info-drawer">
+              <div v-if="!fileBrowserMode && viewerInfo" class="viewer-info-drawer-wrap">
+                <PhotoViewerInfoSidebar
+                  :asset="selected"
+                  :ai-detail="viewerAIDetail"
+                  :ai-loading="viewerAILoading"
+                  :can-write="canWrite"
+                  :media-path="mediaPath"
+                  @close="ctx?.toggleInfo()"
+                  @show-on-map="(lat, lon) => ctx?.showOnMap(lat, lon)"
+                  @select-person="ctx?.selectPerson($event)"
+                  @search-tag="ctx?.searchTag($event)"
+                  @edit-metadata="ctx?.editMetadata()"
+                />
+              </div>
+            </Transition>
           </div>
 
           <Transition name="viewer-chrome-bottom">
-            <nav v-if="viewerChromeVisible && filmstripWindow.length && (fileBrowserMode || selected.type !== 'video')" ref="filmstripRef" class="viewer-filmstrip" aria-label="相邻照片胶片缩略图导航">
-              <button
-                v-for="item in filmstripWindow"
-                :key="item.asset.id"
-                type="button"
-                class="viewer-filmstrip-thumb"
-                :class="{ active: item.index === selectedIndex }"
-                :data-film-index="item.index"
-                :aria-current="item.index === selectedIndex ? 'true' : undefined"
-                :title="item.asset.name"
-                @click="onShowAt(item.index)"
-              >
-                <img :src="thumbFor(item.asset)" :alt="item.asset.name" loading="lazy" decoding="async" />
-                <span v-if="item.asset.type === 'video'" class="viewer-filmstrip-badge">
-                  <Film :size="9" />
-                  <template v-if="(item.asset.durationSeconds ?? 0) > 0">{{ formatDuration(item.asset.durationSeconds!) }}</template>
-                </span>
-                <span v-else-if="(item.asset.liveVideoAssetId ?? 0) > 0" class="viewer-filmstrip-badge">实况</span>
-              </button>
-            </nav>
-          </Transition>
-
-          <Transition name="viewer-chrome-bottom">
-            <div v-if="!fileBrowserMode && viewerChromeVisible && (albumOrganizerOpen || sharedAlbumsError || privateAlbumsError)" class="gallery-modal-footer">
-              <div v-if="folderAlbums.length" class="private-album-picker">
-                <span>文件夹相册</span>
-                <AppleSelect v-model="folderTarget" :options="folderAlbumOptions" size="sm" aria-label="选择文件夹相册" />
-                <button type="button" :disabled="!folderTarget || albumBusy" @click="ctx?.folderAction('copy')">复制到相册</button>
-                <button type="button" :disabled="!folderTarget || albumBusy || !canWrite" @click="ctx?.folderAction('move')">移动到相册</button>
-              </div>
-              <span v-else class="private-album-hint">可在相册页新建「文件夹相册」，以真实目录整理照片。</span>
-              <div v-if="admin && albums.length" class="private-album-picker">
-                <span>旧版共享相册</span>
-                <AppleSelect v-model="addAlbum" :options="albumOptions" size="sm" aria-label="选择相册" />
-                <button type="button" :disabled="!addAlbum || albumBusy" @click="ctx?.addShared()">加入 <ChevronDown :size="13" /></button>
-                <button v-if="activeAlbum" type="button" class="album-remove-photo" :disabled="albumBusy" @click="ctx?.removeShared()">从相册移出（保留原片）</button>
-              </div>
-              <div v-if="sharedAlbumsError && selected" class="gallery-modal-feedback" role="alert">
-                共享相册读取失败：{{ sharedAlbumsError }}
-                <button type="button" class="refresh" :disabled="sharedAlbumsLoading" @click="ctx?.retryShared()">{{ sharedAlbumsLoading ? "正在重试…" : "重试" }}</button>
-              </div>
-              <div v-if="privateAlbums.length" class="private-album-picker">
-                <span>旧版私人相册</span>
-                <AppleSelect v-model="addPrivateAlbum" :options="privateAlbumOptions" size="sm" aria-label="选择我的私人相册" />
-                <button type="button" :disabled="!addPrivateAlbum || albumBusy" @click="ctx?.addPrivate()">加入 <ChevronDown :size="13" /></button>
-              </div>
-              <span v-else-if="privateAlbumsError && selected" class="private-album-hint" role="alert">
-                私人相册读取失败：{{ privateAlbumsError }}
-                <button type="button" class="refresh" :disabled="privateAlbumsLoading" @click="ctx?.retryPrivate()">{{ privateAlbumsLoading ? "正在重试…" : "重试" }}</button>
-              </span>
-              <button v-if="activePrivateAlbum" type="button" class="album-remove-photo" :disabled="albumBusy" @click="ctx?.removePrivate()">从相册移出（保留原片）</button>
+            <div v-if="showBottomChrome" class="viewer-obsidian-bottom">
+              <PhotoViewerFilmstrip
+                v-if="showFilmstrip"
+                :assets="modalAssets"
+                :selected-index="selectedIndex"
+                :visible="showFilmstrip"
+                :thumb-for="thumbFor"
+                @select="onShowAt($event)"
+              />
+              <PhotoViewerAlbumDrawer v-if="!fileBrowserMode && (albumOrganizerOpen || sharedAlbumsError || privateAlbumsError)" />
+              <p v-if="message" class="gallery-modal-feedback" role="status">{{ message }}</p>
             </div>
           </Transition>
-          <p v-if="message" class="gallery-modal-feedback" role="status">{{ message }}</p>
         </div>
       </div>
     </Transition>
@@ -376,271 +351,377 @@ watch(
 </template>
 
 <style scoped>
-.gallery-modal--bare {
+.dialog-backdrop.viewer-obsidian-backdrop {
+  position: fixed;
+  inset: 0;
+  padding: 0;
+  background: #050507;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+  animation: none;
+}
+.dialog-backdrop .gallery-modal.viewer-obsidian-stage {
   position: relative;
+  width: 100vw;
+  height: 100dvh;
+  max-width: 100vw;
+  max-height: 100dvh;
+  padding: 0;
+  gap: 0;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  background: #050507;
+  color: #f5f5f7;
+  animation: none;
+  overflow: hidden;
+  display: block;
+}
+.gallery-modal-toolbar.viewer-obsidian-topbar {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 20;
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: max(12px, env(safe-area-inset-top)) max(18px, env(safe-area-inset-right)) 12px max(18px, env(safe-area-inset-left));
+  background: linear-gradient(to bottom, rgba(10, 10, 12, 0.86) 0%, rgba(10, 10, 12, 0.54) 100%);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
+  backdrop-filter: blur(22px) saturate(160%);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  color: #f5f5f7;
+}
+.viewer-obsidian-topbar > div:first-child {
+  min-width: 0;
+  flex: 1 1 160px;
+}
+.viewer-obsidian-topbar strong {
+  display: block;
+  font-size: 13.5px;
+  font-weight: 650;
+  color: #f5f5f7;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.viewer-topbar-meta {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: rgba(245, 245, 247, 0.68);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.gallery-modal-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  min-width: 0;
+  max-width: 100%;
+}
+.viewer-obsidian-stage .gallery-modal-actions button {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.1);
+  color: rgba(255, 255, 255, 0.92);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+}
+.viewer-obsidian-stage .gallery-modal-actions button:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+.viewer-obsidian-stage .gallery-modal-actions button.chosen {
+  background: var(--accent-primary-solid, var(--accent-primary));
+  color: #fff;
+  border-color: transparent;
+}
+.viewer-obsidian-stage .gallery-modal-actions button.album-remove-pill,
+.viewer-obsidian-stage .gallery-modal-actions button.viewer-pill-btn {
+  width: auto;
+  padding: 0 11px;
+  white-space: nowrap;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  font-weight: 600;
+}
+.viewer-obsidian-stage .gallery-modal-actions button:disabled {
+  opacity: 0.45;
+  cursor: wait;
+}
+.gallery-readonly-favorite {
+  display: flex;
+  align-items: center;
+  color: rgba(245, 245, 247, 0.68);
+  font-size: 11px;
+  white-space: nowrap;
 }
 .viewer-floating-restore {
   position: absolute;
-  top: 12px;
-  right: 12px;
-  z-index: 20;
+  top: max(12px, env(safe-area-inset-top));
+  right: max(14px, env(safe-area-inset-right));
+  z-index: 22;
   display: inline-flex;
   gap: 6px;
 }
 .viewer-floating-restore button {
   display: grid;
   place-items: center;
-  width: 32px;
-  height: 32px;
+  width: 34px;
+  height: 34px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.2);
-  background: rgba(16, 15, 14, 0.74);
+  background: rgba(16, 16, 20, 0.76);
+  -webkit-backdrop-filter: blur(16px);
+  backdrop-filter: blur(16px);
   color: #fff;
   cursor: pointer;
 }
 .gallery-media-layout {
-  display: grid;
-  grid-template-areas: "stage";
-  grid-template-columns: minmax(0, 1fr);
-  flex: 1;
-  min-height: 0;
-  gap: 10px;
-}
-.gallery-media-layout:has(:deep(.viewer-info)) {
-  grid-template-areas: "stage info";
-  grid-template-columns: minmax(0, 1fr) clamp(236px, 25vw, 304px);
-}
-.gallery-stage {
   position: relative;
-  grid-area: stage;
-  display: grid;
-  min-width: 0;
-  min-height: 0;
-}
-.gallery-stage .gallery-viewer {
   width: 100%;
   height: 100%;
   min-height: 0;
 }
+.gallery-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+}
+.gallery-stage :deep(.isle-video-player) {
+  height: 100%;
+  max-height: 100dvh;
+  border-radius: 0;
+  box-sizing: border-box;
+  padding-top: 58px;
+}
+.gallery-modal--bare .gallery-stage :deep(.isle-video-player) {
+  padding-top: 0;
+}
+.gallery-stage :deep(.video-element) {
+  max-height: 100%;
+}
 .gallery-viewer {
+  --viewer-live-top: 72px;
   position: relative;
   display: grid;
   place-items: center;
-  min-height: 200px;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
   overflow: hidden;
-  border-radius: 14px;
-  background: #0c0c0b;
+  border-radius: 0;
+  background: #050507;
   touch-action: none;
 }
+.gallery-modal--bare .gallery-viewer {
+  --viewer-live-top: 16px;
+}
 .gallery-viewer .gallery-modal-image {
-  max-height: 70vh;
+  max-width: 100%;
+  max-height: 100%;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 0;
+  background: transparent;
   will-change: transform;
-  transition: transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+  transition: transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
   user-select: none;
 }
 .gallery-viewer.gesturing .gallery-modal-image {
   transition: none;
 }
+.gallery-original-quality {
+  position: absolute;
+  top: 72px;
+  right: max(16px, env(safe-area-inset-right));
+  z-index: 8;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  background: rgba(16, 17, 22, 0.72);
+  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(14px);
+  color: rgba(255, 255, 255, 0.92);
+  font-size: 11.5px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.gallery-modal--bare .gallery-original-quality {
+  top: 56px;
+}
 .gallery-viewer-hint {
   position: absolute;
-  left: 10px;
-  bottom: 8px;
+  left: max(16px, env(safe-area-inset-left));
+  bottom: 76px;
+  max-width: calc(100% - 32px);
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: rgba(12, 13, 18, 0.66);
+  color: rgba(255, 255, 255, 0.84);
   font-size: 11px;
-  color: rgba(244, 241, 234, 0.68);
+  line-height: 1.35;
   pointer-events: none;
+}
+.hint-touch-only { display: none; }
+@media (hover: none) {
+  .hint-desktop-only { display: none; }
+  .hint-touch-only { display: inline; }
 }
 .viewer-nav {
   position: absolute;
   top: 50%;
   transform: translateY(-50%);
-  z-index: 2;
+  z-index: 8;
   display: grid;
   place-items: center;
-  width: 36px;
-  height: 36px;
+  width: 40px;
+  height: 40px;
   border: 1px solid rgba(255, 255, 255, 0.16);
-  border-radius: 99px;
-  background: rgba(18, 17, 15, 0.58);
+  border-radius: 999px;
+  background: rgba(18, 18, 22, 0.62);
   color: #f4f1ea;
-  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(12px);
+  backdrop-filter: blur(12px);
   cursor: pointer;
 }
 .viewer-nav:hover {
-  background: rgba(18, 17, 15, 0.84);
+  background: rgba(34, 34, 42, 0.88);
 }
-.viewer-nav.prev {
-  left: 8px;
-}
-.viewer-nav.next {
-  right: 8px;
-}
-.album-remove-pill {
-  padding: 4px 10px !important;
-  border-radius: 999px !important;
-  border: 1px solid var(--fluid-card-border) !important;
-  background: var(--fluid-card-fill) !important;
-  color: var(--text-primary) !important;
-  font-size: 11.5px !important;
-  font-weight: 600;
-  white-space: nowrap;
-}
-.gallery-readonly-favorite {
-  display: flex;
-  align-items: center;
-  color: var(--text-secondary);
-  font-size: 11px;
-  white-space: nowrap;
-}
-.viewer-filmstrip {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 4px 10px 2px;
-  overflow-x: auto;
-  scrollbar-width: none;
-  flex-shrink: 0;
-}
-.viewer-filmstrip::-webkit-scrollbar {
-  display: none;
-}
-.viewer-filmstrip-thumb {
-  position: relative;
-  flex: 0 0 auto;
-  width: 44px;
-  height: 44px;
-  padding: 0;
-  border-radius: 7px;
-  overflow: hidden;
-  border: 2px solid transparent;
-  background: rgba(0, 0, 0, 0.35);
-  opacity: 0.68;
-  cursor: pointer;
-  transition:
-    transform 0.2s cubic-bezier(0.22, 1, 0.36, 1),
-    opacity 0.16s ease,
-    border-color 0.16s ease;
-}
-.viewer-filmstrip-thumb:hover {
-  opacity: 0.94;
-}
-.viewer-filmstrip-thumb.active {
-  opacity: 1;
-  border-color: var(--accent-primary);
-  transform: scale(1.06);
-}
-.viewer-filmstrip-thumb img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-.viewer-filmstrip-badge {
+.viewer-nav.prev { left: max(12px, env(safe-area-inset-left)); }
+.viewer-nav.next { right: max(12px, env(safe-area-inset-right)); }
+.viewer-info-drawer-wrap {
   position: absolute;
-  right: 2px;
-  bottom: 2px;
-  display: inline-flex;
-  align-items: center;
-  gap: 2px;
-  padding: 1px 4px;
-  border-radius: 4px;
-  background: rgba(0, 0, 0, 0.72);
-  color: #fff;
-  font-size: 9px;
-  font-weight: 650;
-  line-height: 1.2;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  width: min(340px, 90vw);
+  z-index: 26;
 }
-.gallery-modal-footer {
-  align-items: center;
-  flex-wrap: wrap;
-}
-.gallery-modal-footer .album-remove-photo {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  border: 1px solid var(--fluid-card-border);
-  border-radius: 8px;
-  background: var(--fluid-card-fill);
-  color: var(--text-secondary);
-  padding: 6px 10px;
-  font-size: 11.5px;
-  font-weight: 600;
-}
-.private-album-picker {
+.viewer-obsidian-bottom {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 20;
   display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-  color: var(--text-secondary);
-  font-size: 12px;
-}
-.private-album-picker > span {
-  font-weight: 650;
-}
-.private-album-picker button:disabled,
-.gallery-modal-actions button:disabled,
-.gallery-modal-footer button:disabled {
-  opacity: 0.55;
-  cursor: wait;
-}
-.private-album-hint {
-  color: var(--text-secondary);
-  font-size: 12px;
-  line-height: 1.5;
+  flex-direction: column;
+  background: linear-gradient(to top, rgba(10, 10, 12, 0.9) 0%, rgba(10, 10, 12, 0.62) 100%);
+  -webkit-backdrop-filter: blur(22px) saturate(160%);
+  backdrop-filter: blur(22px) saturate(160%);
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+  padding-bottom: max(8px, env(safe-area-inset-bottom));
 }
 .gallery-modal-feedback {
   margin: 0;
-  padding: 0 12px 10px;
-  color: var(--text-primary);
+  padding: 4px 18px 6px;
+  color: rgba(245, 245, 247, 0.9);
   font-size: 12px;
-  line-height: 1.5;
+  line-height: 1.45;
 }
 .viewer-chrome-top-enter-active,
-.viewer-chrome-bottom-enter-active {
-  transition:
-    opacity 0.22s cubic-bezier(0.22, 1, 0.36, 1),
-    transform 0.22s cubic-bezier(0.22, 1, 0.36, 1);
+.viewer-chrome-bottom-enter-active,
+.viewer-info-drawer-enter-active {
+  transition: opacity 0.24s cubic-bezier(0.22, 1, 0.36, 1), transform 0.24s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .viewer-chrome-top-leave-active,
-.viewer-chrome-bottom-leave-active {
-  transition:
-    opacity 0.14s cubic-bezier(0.32, 0, 0.67, 0),
-    transform 0.14s cubic-bezier(0.32, 0, 0.67, 0);
+.viewer-chrome-bottom-leave-active,
+.viewer-info-drawer-leave-active {
+  transition: opacity 0.16s cubic-bezier(0.32, 0, 0.67, 0), transform 0.16s cubic-bezier(0.32, 0, 0.67, 0);
 }
 .viewer-chrome-top-enter-from,
 .viewer-chrome-top-leave-to {
   opacity: 0;
-  transform: translate3d(0, -8px, 0);
+  transform: translate3d(0, -10px, 0);
 }
 .viewer-chrome-bottom-enter-from,
 .viewer-chrome-bottom-leave-to {
   opacity: 0;
-  transform: translate3d(0, 8px, 0);
+  transform: translate3d(0, 10px, 0);
+}
+.viewer-info-drawer-enter-from,
+.viewer-info-drawer-leave-to {
+  opacity: 0;
+  transform: translate3d(24px, 0, 0);
 }
 @media (max-width: 780px) {
-  .gallery-media-layout:has(:deep(.viewer-info)) {
-    grid-template-areas: "stage" "info";
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(140px, 1fr) minmax(110px, auto);
+  .viewer-info-drawer-wrap {
+    top: auto;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    width: 100%;
+    height: min(62dvh, 460px);
   }
-  .gallery-media-layout:has(:deep(.viewer-info)) :deep(.viewer-info) {
-    max-height: 33vh;
-    overflow: auto;
+  .viewer-info-drawer-enter-from,
+  .viewer-info-drawer-leave-to {
+    transform: translate3d(0, 28px, 0);
   }
-  .gallery-media-layout:has(:deep(.viewer-info)) .gallery-stage {
-    min-height: 140px;
+}
+@media (max-width: 767px) {
+  .gallery-modal-toolbar.viewer-obsidian-topbar {
+    flex-wrap: wrap;
+    gap: 8px;
+    padding: max(10px, env(safe-area-inset-top)) 12px 10px;
   }
-  .gallery-modal-footer {
-    max-height: min(25vh, 200px);
-    overflow: auto;
+  .viewer-obsidian-topbar > div:first-child { flex: 1 1 100%; }
+  .gallery-modal-actions {
+    width: 100%;
+    justify-content: flex-end;
+    gap: 5px;
+  }
+  .viewer-obsidian-stage .gallery-modal-actions button {
+    width: 31px;
+    height: 31px;
+    flex-shrink: 0;
+  }
+  .viewer-obsidian-stage .gallery-modal-actions button.album-remove-pill,
+  .viewer-obsidian-stage .gallery-modal-actions button.viewer-pill-btn {
+    width: auto;
+    max-width: 100%;
+    height: 31px;
+    padding: 0 9px;
+    font-size: 11.5px;
+  }
+  .viewer-pill-detail { display: none; }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .gallery-modal-toolbar.viewer-obsidian-topbar,
+  .viewer-obsidian-bottom,
+  .viewer-floating-restore button,
+  .gallery-original-quality,
+  .viewer-nav {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: rgba(12, 12, 16, 0.94);
   }
 }
 @media (prefers-reduced-motion: reduce) {
   .gallery-viewer .gallery-modal-image,
-  .viewer-filmstrip-thumb,
   .viewer-chrome-top-enter-active,
   .viewer-chrome-top-leave-active,
   .viewer-chrome-bottom-enter-active,
-  .viewer-chrome-bottom-leave-active {
+  .viewer-chrome-bottom-leave-active,
+  .viewer-info-drawer-enter-active,
+  .viewer-info-drawer-leave-active {
     transition: none;
   }
 }

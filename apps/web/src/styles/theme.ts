@@ -90,6 +90,8 @@ export function getThemeVariables(
     "--theme-heading-font": spec.headingFont,
     "--theme-heading-tracking": spec.headingTracking,
     "--motion-spring": tokens.motion.spring,
+    "--motion-spring-snappy": "cubic-bezier(0.2, 0.9, 0.22, 1.05)",
+    "--motion-exit": "cubic-bezier(0.32, 0, 0.67, 0)",
     "--motion-fast": `${tokens.motion.fastMs}ms`,
     "--motion-normal": `${tokens.motion.normalMs}ms`,
     "--motion-slow": `${tokens.motion.slowMs}ms`,
@@ -109,4 +111,10 @@ export function applyTheme(theme: Theme, preset?: ThemePresetId) {
   root.dataset.themePreset = resolvedPreset;
   root.dataset.atmosphere = resolvedPreset;
   root.style.colorScheme = theme;
+  if (typeof document !== "undefined") {
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta && vars["--fluid-canvas-top"]) {
+      meta.setAttribute("content", vars["--fluid-canvas-top"]);
+    }
+  }
 }

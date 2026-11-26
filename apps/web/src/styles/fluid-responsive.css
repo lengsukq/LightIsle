@@ -28,6 +28,7 @@ body {
   .file-view-toggle,
   .file-sort-control,
   .file-batch-bar button,
+  .file-batch-bar > span,
   .create-folder-form button,
   .refresh,
   .account-action,
@@ -109,6 +110,16 @@ body {
   }
 }
 
+@media (min-width: 768px) and (max-width: 1080px) {
+  .topbar {
+    padding: 8px 16px;
+    gap: 8px;
+  }
+  .topbar-root-control .apple-select-wrapper {
+    max-width: min(160px, 24vw);
+  }
+}
+
 @media (min-width: 768px) and (max-width: 960px) {
   .sidebar:not(.dock-collapsed) {
     width: 208px;
@@ -120,6 +131,15 @@ body {
   }
   .topbar .user-name {
     max-width: 88px;
+  }
+}
+
+@media (max-width: 1024px) {
+  .file-batch-bar {
+    flex-wrap: wrap;
+    border-radius: 16px;
+    padding: 10px 12px;
+    gap: 8px;
   }
 }
 
@@ -153,10 +173,17 @@ body {
   width: 100%;
 }
 
-.files-toolbar .file-inline-search {
-  flex: 1 1 200px;
+.files-toolbar .file-search-wrap {
+  flex: 1 1 220px;
   min-width: 160px;
-  max-width: 340px;
+  max-width: 360px;
+}
+
+.files-toolbar .file-inline-search {
+  flex: 1 1 auto;
+  width: 100%;
+  min-width: 0;
+  max-width: none;
 }
 
 .files-toolbar .file-inline-search input {
@@ -203,11 +230,17 @@ body {
     max-width: 144px;
     overflow: hidden;
   }
+  .topbar-root-control .apple-select-wrapper {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+  }
   .topbar-root-control .apple-select-trigger {
     width: 100%;
     min-width: 0;
     max-width: 100%;
   }
+  .files-toolbar .file-search-wrap,
   .files-toolbar .file-inline-search {
     flex: 1 1 100%;
     max-width: none;
@@ -247,6 +280,8 @@ body {
     padding: 22px 18px;
   }
   /* Prevent iOS Safari zoom on input focus */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):not([type="file"]),
+  textarea,
   .auth-card input,
   .account-form input,
   .create-folder-form input,

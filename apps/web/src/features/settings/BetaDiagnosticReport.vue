@@ -1,26 +1,34 @@
 <script setup lang="ts">
-import { ref } from "vue";
-import { FileText, Download, Copy, Check } from "lucide-vue-next";
+import { computed, ref } from "vue";
+import { Check, Copy, Download, FileText, RefreshCw } from "lucide-vue-next";
 import { localDiagnosticReport } from "./betaDiagnostics.ts";
 import { copyTextToClipboard } from "../../utils/clipboard.ts";
+import { formatDateTime } from "../../utils/dateTimeFormat.ts";
 import { TIMINGS_MS } from "../../constants/timings.ts";
+import IsleButton from "../../components/ui/IsleButton.vue";
 import IsleCard from "../../components/ui/IsleCard.vue";
 import IsleModal from "../../components/ui/IsleModal.vue";
-import IsleButton from "../../components/ui/IsleButton.vue";
 
 const modalOpen = ref(false);
 const preview = ref("");
 const copied = ref(false);
+const generatedAt = ref(0);
+
+const generatedLabel = computed(() =>
+  generatedAt.value ? "生成于 " + formatDateTime(generatedAt.value).replace(/^.*?\s/, "") : "",
+);
 
 function openReportModal() {
   copied.value = false;
   preview.value = localDiagnosticReport();
+  generatedAt.value = Date.now();
   modalOpen.value = true;
 }
 
 function refreshPreview() {
   copied.value = false;
   preview.value = localDiagnosticReport();
+  generatedAt.value = Date.now();
 }
 
 async function copyReport() {
@@ -65,6 +73,18 @@ function exportReport() {
     @close="modalOpen = false"
   >
     <template #icon><FileText :size="16" /></template>
+    <template #header-actions>
+      <span v-if="generatedLabel" class="settings-updated-at">{{ generatedLabel }}</span>
+      <IsleButton
+        variant="ghost"
+        size="sm"
+        aria-label="重新生成故障报告"
+        title="重新生成"
+        @click="refreshPreview"
+      >
+        <template #icon><RefreshCw :size="14" /></template>
+      </IsleButton>
+    </template>
     <textarea
       class="diag-textarea"
       :value="preview"
@@ -74,7 +94,6 @@ function exportReport() {
       spellcheck="false"
     />
     <template #footer>
-      <IsleButton variant="glass" size="sm" @click="refreshPreview">刷新</IsleButton>
       <IsleButton variant="glass" size="sm" @click="copyReport">
         <template #icon>
           <Check v-if="copied" :size="14" />
@@ -106,10 +125,12 @@ function exportReport() {
   outline: none;
   transition: border-color 0.16s ease, box-shadow 0.16s ease;
 }
+
 .diag-textarea:focus {
   border-color: var(--accent-primary);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary) 16%, transparent);
 }
+
 @media (prefers-reduced-motion: reduce) {
   .diag-textarea {
     transition: none;

@@ -1,16 +1,18 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from "vue";
-import { Sparkles, RefreshCw, Trash2, CheckCircle2 } from "lucide-vue-next";
+import { Sparkles, RefreshCw, Trash2, CheckCircle2, ZoomIn, Check } from "lucide-vue-next";
 import IsleEmpty from "../../components/ui/IsleEmpty.vue";
 import IsleButton from "../../components/ui/IsleButton.vue";
 import IsleBanner from "../../components/ui/IsleBanner.vue";
 import IsleCharts from "../../components/ui/IsleCharts.vue";
+import PhotoSimilarComparisonModal from "./PhotoSimilarComparisonModal.vue";
 import { ISLE_CHART_COLORS } from "../../components/ui/isleChartsMath.ts";
 import { formatBytes, dateLabel } from "./photoPresentation.ts";
 import { describeUserFacingError } from "../../api/userFacingError.ts";
 import { requestConfirm } from "../../composables/useConfirmDialog.ts";
 import {
   selectRecommendedWasteIds,
+  type SimilarPhotoCandidate,
   type SimilarPhotoGroup,
 } from "./usePhotoAISearchAndPeople.ts";
 
@@ -33,6 +35,34 @@ const trashingGroupId = ref("");
 const error = ref("");
 const feedback = ref("");
 const selections = ref<Record<string, number[]>>({});
+const previewState = ref<{ groupId: string; index: number } | null>(null);
+
+const activePreviewGroup = computed(() => {
+  const state = previewState.value;
+  if (!state) return null;
+  return groups.value.find((g) => g.groupId === state.groupId) ?? null;
+});
+
+function openPreview(group: SimilarPhotoGroup, item: SimilarPhotoCandidate) {
+  const idx = group.items.findIndex((candidate) => candidate.assetId === item.assetId);
+  previewState.value = { groupId: group.groupId, index: idx >= 0 ? idx : 0 };
+}
+
+function stepPreview(delta: number) {
+  const state = previewState.value;
+  const group = activePreviewGroup.value;
+  if (!state || !group || group.items.length <= 1) return;
+  const len = group.items.length;
+  previewState.value = {
+    groupId: group.groupId,
+    index: (state.index + delta + len) % len,
+  };
+}
+
+function setPreviewIndex(index: number) {
+  if (!activePreviewGroup.value) return;
+  previewState.value = { groupId: activePreviewGroup.value.groupId, index };
+}
 
 const cleanupSavingsSummary = computed(() => {
   if (!groups.value.length) return null;
@@ -107,6 +137,23 @@ function toggleCandidate(group: SimilarPhotoGroup, assetId: number, canTrash: bo
 
 function selectAutoWaste(group: SimilarPhotoGroup) {
   selections.value = { ...selections.value, [group.groupId]: selectRecommendedWasteIds(group) };
+}
+
+function onCardKeydown(event: KeyboardEvent, group: SimilarPhotoGroup, item: SimilarPhotoCandidate) {
+  if (event.key === "ArrowRight" || event.key === "ArrowLeft") {
+    const strip = (event.currentTarget as HTMLElement | null)?.parentElement;
+    if (!strip) return;
+    const cards = Array.from(strip.querySelectorAll<HTMLElement>(".similar-candidate-card"));
+    const idx = cards.indexOf(event.currentTarget as HTMLElement);
+    if (idx < 0 || cards.length <= 1) return;
+    event.preventDefault();
+    const next = cards[(idx + (event.key === "ArrowRight" ? 1 : -1) + cards.length) % cards.length];
+    next?.focus();
+  } else if (event.key === "Enter" || event.key === " ") {
+    event.preventDefault();
+    if (event.shiftKey) openPreview(group, item);
+    else toggleCandidate(group, item.assetId, item.canTrash);
+  }
 }
 
 async function trashGroupSelection(group: SimilarPhotoGroup) {
@@ -190,7 +237,7 @@ onMounted(() => {
           :aria-label="`已勾选 ${cleanupSavingsSummary.trashCount} 张待清理照片，预计可释放 ${cleanupSavingsSummary.savedPercent}% 体积`"
         />
         <div class="similar-savings-body">
-          <strong>当前已选 {{ cleanupSavingsSummary.trashCount }} 张相似冗余照片（共 {{ groups.length }} 组对比）</strong>
+          <strong class="similar-tabular">当前已选 {{ cleanupSavingsSummary.trashCount }} 张相似冗余照片（共 {{ groups.length }} 组对比）</strong>
           <IsleCharts
             kind="segmented"
             :segments="cleanupSavingsSummary.segments"
@@ -204,10 +251,10 @@ onMounted(() => {
 
       <article v-for="group in groups" :key="group.groupId" class="similar-group-card">
         <div class="similar-group-top">
-          <div>
+          <div class="similar-group-heading">
             <span class="similar-kind-pill">{{ group.kind === "burst" ? "手机连拍" : "相似构图" }}</span>
-            <strong>{{ dateLabel(group.takenAt) }} · 共 {{ group.items.length }} 张</strong>
-            <small class="similar-reason"><Sparkles :size="12" /> {{ group.recommendReason }}</small>
+            <strong class="similar-tabular">{{ dateLabel(group.takenAt) }} · 共 {{ group.items.length }} 张</strong>
+            <small class="similar-reason"><Sparkles :size="12" /> <span>{{ group.recommendReason }}</span></small>
           </div>
           <div class="similar-group-actions">
             <button type="button" class="refresh" @click="selectAutoWaste(group)">勾选非推荐项</button>
@@ -219,7 +266,7 @@ onMounted(() => {
               @click="trashGroupSelection(group)"
             >
               <Trash2 :size="13" />
-              <span>移入回收站 ({{ (selections[group.groupId] ?? []).length }})</span>
+              <span class="similar-tabular">移入回收站 ({{ (selections[group.groupId] ?? []).length }})</span>
             </IsleButton>
           </div>
         </div>
@@ -233,25 +280,55 @@ onMounted(() => {
               'is-recommended': item.recommended,
               'is-marked-trash': isSelectedForTrash(group.groupId, item.assetId),
             }"
+            tabindex="0"
+            role="button"
+            :aria-pressed="isSelectedForTrash(group.groupId, item.assetId)"
+            @keydown="onCardKeydown($event, group, item)"
             @click="toggleCandidate(group, item.assetId, item.canTrash)"
           >
             <div class="similar-thumb-wrap">
               <img :src="mediaPath('/api/v2/photos/' + item.assetId + '/thumbnail')" :alt="item.name" loading="lazy" decoding="async" />
-              <span
-                v-for="badge in item.qualityBadges ?? []"
-                :key="badge"
-                class="similar-badge"
-                :class="{ best: item.recommended }"
+              <div v-if="(item.qualityBadges ?? []).length" class="similar-badge-list">
+                <span
+                  v-for="badge in item.qualityBadges ?? []"
+                  :key="badge"
+                  class="similar-badge"
+                  :class="{ best: item.recommended }"
+                >
+                  {{ badge }}
+                </span>
+              </div>
+              <button
+                type="button"
+                class="similar-zoom-btn"
+                title="并排或放大对比查看"
+                :aria-label="'对比查看 ' + item.name"
+                @click.stop="openPreview(group, item)"
               >
-                {{ badge }}
-              </span>
-              <span class="similar-check">
-                {{ !item.canTrash ? "只读" : isSelectedForTrash(group.groupId, item.assetId) ? "待清理" : "保留" }}
+                <ZoomIn :size="13" />
+              </button>
+              <span
+                class="similar-status-pill"
+                :class="{
+                  best: item.recommended && !isSelectedForTrash(group.groupId, item.assetId),
+                  trash: item.canTrash && isSelectedForTrash(group.groupId, item.assetId),
+                }"
+              >
+                <template v-if="!item.canTrash">只读</template>
+                <template v-else-if="isSelectedForTrash(group.groupId, item.assetId)">
+                  <Trash2 :size="10" /> 可清理
+                </template>
+                <template v-else-if="item.recommended">
+                  <Sparkles :size="10" /> 最佳画质
+                </template>
+                <template v-else>
+                  <Check :size="10" /> 保留
+                </template>
               </span>
             </div>
             <div class="similar-meta">
               <strong :title="item.name">{{ item.name }}</strong>
-              <small>{{ formatBytes(item.size) }}<span v-if="item.width && item.height"> · {{ item.width }}×{{ item.height }}</span></small>
+              <small class="similar-tabular">{{ formatBytes(item.size) }}<span v-if="item.width && item.height"> · {{ item.width }}×{{ item.height }}</span></small>
             </div>
           </div>
         </div>
@@ -259,6 +336,17 @@ onMounted(() => {
     </div>
 
     <p class="footnote">{{ quotaNote }}</p>
+
+    <PhotoSimilarComparisonModal
+      :group="activePreviewGroup"
+      :active-index="previewState?.index ?? 0"
+      :selected-for-trash="activePreviewGroup ? (selections[activePreviewGroup.groupId] ?? []) : []"
+      :media-path="mediaPath"
+      @close="previewState = null"
+      @step="stepPreview($event)"
+      @select-index="setPreviewIndex($event)"
+      @toggle-candidate="(id, canTrash) => activePreviewGroup && toggleCandidate(activePreviewGroup, id, canTrash)"
+    />
   </section>
 </template>
 
@@ -328,6 +416,10 @@ onMounted(() => {
   gap: 8px;
   font-size: 13px;
 }
+.similar-group-heading {
+  min-width: 0;
+  flex: 1 1 220px;
+}
 .similar-kind-pill {
   display: inline-block;
   padding: 2px 8px;
@@ -346,6 +438,9 @@ onMounted(() => {
   font-size: 11.5px;
   color: var(--text-secondary);
 }
+.similar-reason svg {
+  flex-shrink: 0;
+}
 .similar-group-actions {
   display: flex;
   align-items: center;
@@ -353,26 +448,28 @@ onMounted(() => {
 }
 .similar-candidate-strip {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(172px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(188px, 1fr));
   gap: 10px;
 }
 .similar-candidate-card {
-  border-radius: 10px;
+  border-radius: 12px;
   overflow: hidden;
-  border: 1.5px solid var(--fluid-card-border);
+  border: 1px solid var(--fluid-card-border);
   background: var(--fluid-card-item-fill);
   cursor: pointer;
-  transition: border-color var(--motion-fast) ease, opacity 0.15s ease;
+  transition: transform var(--motion-fast) var(--motion-spring), border-color var(--motion-fast) ease, opacity 0.16s ease, box-shadow 0.18s ease;
 }
 .similar-candidate-card:hover {
+  transform: translateY(-1px);
   border-color: var(--fluid-card-border-strong, var(--accent-primary));
+  box-shadow: var(--fluid-item-card-shadow);
 }
-.similar-candidate-card.is-recommended {
-  border-color: rgba(16, 185, 129, 0.72);
+.similar-candidate-card:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
 }
 .similar-candidate-card.is-marked-trash {
-  border-color: rgba(239, 68, 68, 0.65);
-  opacity: 0.86;
+  opacity: 0.78;
 }
 .similar-thumb-wrap {
   position: relative;
@@ -383,36 +480,75 @@ onMounted(() => {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  display: block;
 }
-.similar-badge {
+.similar-badge-list {
   position: absolute;
   left: 6px;
   top: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  max-width: calc(100% - 12px);
+  pointer-events: none;
+}
+.similar-badge {
+  position: static;
   padding: 2px 7px;
   border-radius: 999px;
   font-size: 10.5px;
   font-weight: 600;
-  background: rgba(0, 0, 0, 0.62);
+  background: rgba(12, 14, 18, 0.68);
   color: #fff;
 }
 .similar-badge.best {
   background: rgba(16, 185, 129, 0.9);
 }
-.similar-check {
+.similar-zoom-btn {
   position: absolute;
-  right: 6px;
-  bottom: 6px;
-  padding: 2px 7px;
+  left: 7px;
+  bottom: 7px;
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255, 255, 255, 0.28);
+  border-radius: 999px;
+  background: rgba(12, 14, 18, 0.68);
+  color: #fff;
+  cursor: pointer;
+}
+.similar-zoom-btn:hover {
+  background: rgba(12, 14, 18, 0.88);
+}
+.similar-status-pill {
+  position: absolute;
+  right: 7px;
+  bottom: 7px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 8px;
   border-radius: 999px;
   font-size: 10.5px;
-  background: rgba(0, 0, 0, 0.65);
+  font-weight: 650;
+  background: rgba(12, 14, 18, 0.72);
   color: #fff;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+}
+.similar-status-pill.best {
+  background: rgba(5, 150, 105, 0.92);
+  border-color: rgba(110, 231, 183, 0.45);
+}
+.similar-status-pill.trash {
+  background: rgba(225, 29, 72, 0.88);
+  border-color: rgba(253, 164, 175, 0.4);
 }
 .similar-meta {
-  padding: 7px 9px;
+  padding: 8px 10px;
   display: flex;
   flex-direction: column;
-  gap: 1px;
+  gap: 2px;
 }
 .similar-meta strong {
   font-size: 12px;
@@ -423,6 +559,23 @@ onMounted(() => {
 .similar-meta small {
   font-size: 11px;
   color: var(--text-secondary);
+}
+.similar-tabular {
+  font-variant-numeric: tabular-nums;
+}
+@media (max-width: 680px) {
+  .similar-candidate-strip {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .similar-group-top {
+    align-items: flex-start;
+  }
+  .similar-reason {
+    display: flex;
+    margin-left: 0;
+    margin-top: 4px;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
   .similar-candidate-card {

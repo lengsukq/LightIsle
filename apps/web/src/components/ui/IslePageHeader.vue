@@ -11,7 +11,7 @@ withDefaults(
     subtitle: "",
     eyebrow: "",
     compact: false,
-    showAccentBar: true,
+    showAccentBar: false,
   }
 );
 </script>
@@ -95,21 +95,23 @@ withDefaults(
 
 .isle-page-header-title {
   margin: 0;
-  font-size: 17px;
+  font-size: 20px;
   font-weight: 700;
-  letter-spacing: -0.25px;
-  line-height: 1.3;
+  letter-spacing: -0.025em;
+  line-height: 1.25;
   color: var(--text-primary);
 }
 
 .isle-page-header.is-compact .isle-page-header-title {
-  font-size: 15.5px;
+  font-size: 16.5px;
+  font-weight: 680;
+  letter-spacing: -0.018em;
 }
 
 .isle-page-header-subtitle {
-  margin: 0;
-  font-size: 12.5px;
-  line-height: 1.45;
+  margin: 2px 0 0;
+  font-size: 13px;
+  line-height: 1.48;
   color: var(--text-secondary);
 }
 
@@ -119,10 +121,11 @@ withDefaults(
   justify-content: flex-end;
   gap: 8px;
   flex-wrap: wrap;
+  max-width: 100%;
   flex-shrink: 0;
 }
 
-@media (max-width: 640px) {
+@media (max-width: 820px) {
   .isle-page-header-actions {
     width: 100%;
     justify-content: flex-start;

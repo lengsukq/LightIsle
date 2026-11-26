@@ -44,14 +44,14 @@ export interface SparklineGeometry {
 }
 
 export const ISLE_CHART_COLORS = {
-  blue: "#1f5162",
-  green: "#1f7a56",
-  amber: "#b86b19",
-  purple: "#5e4b7a",
-  teal: "#28666e",
-  cyan: "#3a7d8c",
-  rose: "#b85d3b",
-  slate: "rgba(148, 141, 132, 0.38)",
+  blue: "var(--brand-blue, #0E6B74)",
+  green: "var(--success, #167A54)",
+  amber: "var(--brand-amber, #A66010)",
+  purple: "var(--brand-violet, #6B5799)",
+  teal: "var(--accent-primary, #0E6B74)",
+  cyan: "var(--brand-cyan, #0D7C86)",
+  rose: "var(--accent-secondary, #D4653E)",
+  slate: "color-mix(in srgb, var(--text-tertiary, #6D6A63) 26%, transparent)",
 } as const;
 
 export const ISLE_CHART_PALETTE = [

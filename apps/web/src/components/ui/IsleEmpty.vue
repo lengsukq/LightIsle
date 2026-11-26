@@ -84,21 +84,19 @@ defineSlots<{
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--accent-primary) 8%, var(--fluid-card-item-fill));
-  border: 1px solid var(--fluid-card-border);
+  width: 50px;
+  height: 50px;
+  border-radius: 9999px;
+  background: radial-gradient(circle, color-mix(in srgb, var(--accent-primary) 13%, transparent) 0%, color-mix(in srgb, var(--accent-primary) 3%, transparent) 72%);
   color: var(--accent-primary);
-  margin-bottom: 10px;
-  transition: transform 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+  margin-bottom: 12px;
 }
 
 .isle-empty.compact .isle-empty-icon-wrap {
-  width: 34px;
-  height: 34px;
-  border-radius: 9px;
-  margin-bottom: 6px;
+  width: 36px;
+  height: 36px;
+  border-radius: 9999px;
+  margin-bottom: 8px;
 }
 
 .isle-empty-icon {

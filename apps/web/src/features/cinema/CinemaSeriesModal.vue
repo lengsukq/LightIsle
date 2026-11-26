@@ -247,7 +247,12 @@ function seasonLabel(season: number): string {
   border: 1px solid color-mix(in srgb, var(--accent-primary) 32%, var(--fluid-card-border));
   background: color-mix(in srgb, var(--accent-primary) 8%, var(--fluid-card-fill));
 }
+.series-resume-bar :deep(.isle-btn),
+.cinema-episode-main :deep(.isle-badge) {
+  flex-shrink: 0;
+}
 .series-resume-text {
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 1px;

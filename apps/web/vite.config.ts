@@ -12,7 +12,7 @@ export default defineConfig(({ mode }) => {
         "/api": { target: coreTarget, changeOrigin: false },
         "/apps": { target: coreTarget, changeOrigin: false },
         "/dav": { target: coreTarget, changeOrigin: false },
-        "/s": { target: coreTarget, changeOrigin: false },
+        "/s/": { target: coreTarget, changeOrigin: false },
       },
     },
     build: { outDir: "dist", assetsDir: "assets", sourcemap: false },

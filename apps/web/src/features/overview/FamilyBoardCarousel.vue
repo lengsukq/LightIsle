@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from "vue";
+import { computed, onMounted, onUnmounted, ref } from "vue";
 import {
   ChevronLeft,
   ChevronRight,
@@ -12,7 +12,6 @@ import {
   X,
 } from "lucide-vue-next";
 import { apiRequest } from "../../api/apiClient.ts";
-import IsleBadge from "../../components/ui/IsleBadge.vue";
 import IsleButton from "../../components/ui/IsleButton.vue";
 import IslePageHeader from "../../components/ui/IslePageHeader.vue";
 import "./FamilyBoardCarousel.css";
@@ -54,10 +53,11 @@ const BOARD_COLORS = [
 
 const messages = ref<FamilyBoardMessage[]>([]);
 const currentUserId = ref<number>(0);
-const loading = ref(false);
+const loading = ref(true);
 const loadError = ref("");
 const activeIndex = ref(0);
 const swipeDirection = ref<"next" | "prev">("next");
+const leavingFromOffsetX = ref(0);
 
 // Composer state
 const composerOpen = ref(false);
@@ -214,14 +214,37 @@ function finishPointerDrag(event: PointerEvent) {
   const offset = dragOffsetX.value;
   const elapsed = Math.max(1, performance.now() - dragStartTime.value);
   const velocity = Math.abs(offset) / elapsed;
+  const canMoveNext = offset < 0 && activeIndex.value < messages.value.length - 1;
+  const canMovePrev = offset > 0 && activeIndex.value > 0;
+  const shouldSwipe = Math.abs(offset) >= 48 || (Math.abs(offset) >= 24 && velocity >= 0.35);
+
   dragActive.value = false;
   dragOffsetX.value = 0;
   dragAxisLocked.value = null;
   activePointerId.value = null;
-  if (Math.abs(offset) >= 48 || (Math.abs(offset) >= 24 && velocity >= 0.35)) {
-    if (offset < 0) goNext();
+
+  if (shouldSwipe && (canMoveNext || canMovePrev)) {
+    leavingFromOffsetX.value = offset;
+    if (canMoveNext) goNext();
     else goPrev();
   }
+}
+
+function onCardBeforeLeave(el: Element) {
+  const node = el as HTMLElement;
+  const startX = leavingFromOffsetX.value;
+  leavingFromOffsetX.value = 0;
+  node.style.removeProperty("transform");
+  node.style.removeProperty("transition");
+  const tilt = Math.max(-4.5, Math.min(4.5, startX * 0.022));
+  node.style.setProperty("--leave-from-x", `${startX}px`);
+  node.style.setProperty("--leave-from-rot", `${tilt}deg`);
+}
+
+function onCardAfterLeave(el: Element) {
+  const node = el as HTMLElement;
+  node.style.removeProperty("--leave-from-x");
+  node.style.removeProperty("--leave-from-rot");
 }
 
 function onDeckKeydown(event: KeyboardEvent) {
@@ -294,8 +317,29 @@ async function removeMessage(msg: FamilyBoardMessage) {
   }
 }
 
+function handleOutsidePointerDown(event: PointerEvent) {
+  if (confirmDeleteId.value === null) return;
+  const target = event.target as HTMLElement | null;
+  if (!target?.closest(".board-icon-btn.danger")) {
+    confirmDeleteId.value = null;
+  }
+}
+
+function handleWindowKeydown(event: KeyboardEvent) {
+  if (event.key === "Escape" && confirmDeleteId.value !== null) {
+    confirmDeleteId.value = null;
+  }
+}
+
 onMounted(() => {
   void fetchMessages();
+  window.addEventListener("pointerdown", handleOutsidePointerDown, true);
+  window.addEventListener("keydown", handleWindowKeydown);
+});
+
+onUnmounted(() => {
+  window.removeEventListener("pointerdown", handleOutsidePointerDown, true);
+  window.removeEventListener("keydown", handleWindowKeydown);
 });
 </script>
 
@@ -303,12 +347,10 @@ onMounted(() => {
   <section class="family-board-section" aria-label="家庭留言板">
     <IslePageHeader title="家庭留言板" compact>
       <template #actions>
-        <IsleBadge v-if="messages.length > 0" variant="neutral" size="sm">
-          {{ activeIndex + 1 }} / {{ messages.length }}
-        </IsleBadge>
         <IsleButton
           variant="glass"
           size="sm"
+          :aria-expanded="composerOpen"
           @click="composerOpen = !composerOpen; submitError = ''"
         >
           <template #icon>
@@ -320,57 +362,68 @@ onMounted(() => {
       </template>
     </IslePageHeader>
 
-    <Transition name="board-composer">
-      <form v-if="composerOpen" class="board-composer-card" @submit.prevent="submitMessage">
-        <div class="board-composer-top">
-          <div class="board-tag-row" role="radiogroup" aria-label="留言分类">
-            <button
-              v-for="tag in BOARD_TAGS"
-              :key="tag"
-              type="button"
-              class="board-pill-choice"
-              :class="{ active: draftTag === tag }"
-              @click="draftTag = tag"
+    <div
+      class="board-composer-drawer"
+      :class="{ 'is-open': composerOpen }"
+      :aria-hidden="!composerOpen"
+      :inert="!composerOpen"
+    >
+      <div class="board-composer-drawer-inner">
+        <form
+          class="board-composer-card"
+          :class="colorClass(draftColor)"
+          @submit.prevent="submitMessage"
+        >
+          <div class="board-composer-top">
+            <div class="board-tag-row" role="radiogroup" aria-label="留言分类">
+              <button
+                v-for="tag in BOARD_TAGS"
+                :key="tag"
+                type="button"
+                class="board-pill-choice"
+                :class="{ active: draftTag === tag }"
+                @click="draftTag = tag"
+              >
+                {{ tag }}
+              </button>
+            </div>
+            <div class="board-color-row" role="radiogroup" aria-label="卡片色调">
+              <button
+                v-for="c in BOARD_COLORS"
+                :key="c.id"
+                type="button"
+                class="board-color-dot"
+                :class="[`dot-${c.id}`, { active: draftColor === c.id }]"
+                :title="c.label"
+                :aria-label="`卡片色调：${c.label}`"
+                @click="draftColor = c.id"
+              />
+            </div>
+          </div>
+          <textarea
+            v-model="draftContent"
+            class="board-textarea"
+            rows="3"
+            maxlength="500"
+            placeholder="给家人留个言吧：今晚想吃什么、顺路买点东西，或者周末安排…"
+            aria-label="留言内容"
+          />
+          <div class="board-composer-foot">
+            <span class="board-char-count">{{ draftContent.trim().length }} / 500</span>
+            <span v-if="submitError" class="board-inline-error" role="alert">{{ submitError }}</span>
+            <IsleButton
+              type="submit"
+              variant="primary"
+              size="sm"
+              :disabled="submitting || draftContent.trim().length === 0"
             >
-              {{ tag }}
-            </button>
+              <template #icon><Send :size="13" /></template>
+              {{ submitting ? "发布中…" : "发布留言" }}
+            </IsleButton>
           </div>
-          <div class="board-color-row" role="radiogroup" aria-label="卡片色调">
-            <button
-              v-for="c in BOARD_COLORS"
-              :key="c.id"
-              type="button"
-              class="board-color-dot"
-              :class="[`dot-${c.id}`, { active: draftColor === c.id }]"
-              :title="c.label"
-              :aria-label="`卡片色调：${c.label}`"
-              @click="draftColor = c.id"
-            />
-          </div>
-        </div>
-        <textarea
-          v-model="draftContent"
-          class="board-textarea"
-          rows="3"
-          maxlength="500"
-          placeholder="给家人留个言吧：今晚想吃什么、顺路买点东西，或者周末安排…"
-          aria-label="留言内容"
-        />
-        <div class="board-composer-foot">
-          <span class="board-char-count">{{ draftContent.trim().length }} / 500</span>
-          <span v-if="submitError" class="board-inline-error" role="alert">{{ submitError }}</span>
-          <IsleButton
-            type="submit"
-            variant="primary"
-            size="sm"
-            :disabled="submitting || draftContent.trim().length === 0"
-          >
-            <template #icon><Send :size="13" /></template>
-            {{ submitting ? "发布中…" : "发布留言" }}
-          </IsleButton>
-        </div>
-      </form>
-    </Transition>
+        </form>
+      </div>
+    </div>
 
     <div v-if="currentMessage" class="board-stage-shell">
       <div
@@ -388,29 +441,25 @@ onMounted(() => {
         <div v-if="messages.length > 2" class="board-deck-ghost board-deck-ghost-2" aria-hidden="true" />
         <div v-if="messages.length > 1" class="board-deck-ghost board-deck-ghost-1" aria-hidden="true" />
 
-        <Transition :name="swipeTransitionName" mode="out-in">
+        <Transition
+          :name="swipeTransitionName"
+          @before-leave="onCardBeforeLeave"
+          @after-leave="onCardAfterLeave"
+        >
           <article
             :key="currentMessage.id"
             class="board-card"
-            :class="[colorClass(currentMessage.color), { 'is-pinned': currentMessage.pinned, 'is-dragging': dragActive }]"
+            :class="[colorClass(currentMessage.color), { 'is-pinned': currentMessage.pinned, 'is-swipeable': messages.length > 1, 'is-dragging': dragActive }]"
             :style="cardInlineStyle"
           >
             <div class="board-card-head">
-              <div class="board-author">
-                <span class="board-avatar">{{ avatarInitial(currentMessage.authorUsername) }}</span>
-                <div class="board-author-meta">
-                  <div class="board-author-row">
-                    <strong>{{ currentMessage.authorUsername }}</strong>
-                    <span class="board-role-tag">{{ currentMessage.authorRole === "admin" ? "管理员" : "家人" }}</span>
-                    <span class="board-tag-chip">{{ currentMessage.tag || "留言" }}</span>
-                  </div>
-                  <small>{{ formatRelativeTime(currentMessage.createdAt) }}</small>
-                </div>
+              <div class="board-card-badges">
+                <span class="board-tag-chip">{{ currentMessage.tag || "留言" }}</span>
+                <span v-if="currentMessage.pinned" class="board-pin-badge">
+                  <Pin :size="11" /> 已置顶
+                </span>
               </div>
               <div class="board-card-actions">
-                <span v-if="currentMessage.pinned" class="board-pin-badge">
-                  <Pin :size="12" /> 已置顶
-                </span>
                 <button
                   v-if="isAdmin"
                   type="button"
@@ -443,9 +492,14 @@ onMounted(() => {
             <p class="board-card-body">{{ currentMessage.content }}</p>
 
             <div class="board-card-foot">
-              <span class="board-swipe-hint">
-                {{ messages.length > 1 ? "左右滑动切换留言" : "最新家庭留言" }}
-              </span>
+              <div class="board-signature">
+                <span class="board-avatar" aria-hidden="true">{{ avatarInitial(currentMessage.authorUsername) }}</span>
+                <span class="board-signature-text">
+                  <strong>{{ currentMessage.authorUsername }}</strong>
+                  <span class="board-sig-sep" aria-hidden="true">·</span>
+                  <time>{{ formatRelativeTime(currentMessage.createdAt) }}</time>
+                </span>
+              </div>
               <span v-if="currentMessage.pinned && currentMessage.pinnedBy" class="board-pin-meta">
                 由 {{ currentMessage.pinnedBy }} 置顶
               </span>
@@ -489,7 +543,21 @@ onMounted(() => {
       </div>
     </div>
 
-    <div v-else-if="!loading" class="board-empty-card">
+    <div v-else-if="loading" class="board-skeleton-card" role="status" aria-label="正在加载家庭留言">
+      <div class="board-skeleton-head">
+        <span class="board-skeleton-pill" />
+      </div>
+      <div class="board-skeleton-lines">
+        <span class="board-skeleton-line wide" />
+        <span class="board-skeleton-line mid" />
+      </div>
+      <div class="board-skeleton-foot">
+        <span class="board-skeleton-avatar" />
+        <span class="board-skeleton-sig" />
+      </div>
+    </div>
+
+    <div v-else class="board-empty-card">
       <div class="board-empty-icon"><MessageSquareHeart :size="19" /></div>
       <div class="board-empty-copy">
         <strong>还没有家庭留言</strong>

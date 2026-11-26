@@ -69,18 +69,27 @@
 }
 [data-theme-preset="nordic_glass"] :is(
   .sidebar, .topbar, .mobile-nav, .mobile-more-sheet,
-  .hero, .sanctuary-card, .vitality-card, .overview-pending-panel,
-  .account-panel, .files-panel, .content-empty, .auth-card,
-  .isle-card.variant-card, .isle-card.variant-glass, .isle-modal, .isle-modal-card,
+  .isle-modal-card, .gallery-modal, .cinema-dialog,
   .theme-picker-popover, .file-entry-more-list, .photo-albums-menu-panel,
-  .photos-nav-bar, .photos-filter-drawer, .memory-card, .photo-batch-hud, .viewer-info,
-  .cinema-featured, .cinema-tile, .cinema-batch-hud, .cinema-dialog,
-  .apps-templates-bar, .app-card, .app-workbench, .app-detail-hero, .app-detail-card,
-  .home-app-tile, .home-apps-guide-tile, .auto-card
+  .photo-batch-hud, .cinema-batch-hud, .viewer-info
 ) {
   background: var(--surface-glass);
   -webkit-backdrop-filter: blur(28px) saturate(180%);
   backdrop-filter: blur(28px) saturate(180%);
+}
+[data-theme-preset="nordic_glass"] :is(
+  .hero, .sanctuary-card, .vitality-card, .overview-pending-panel,
+  .account-panel, .files-panel, .content-empty, .auth-card,
+  .isle-card.variant-card, .isle-card.variant-glass, .isle-grouped-list,
+  .photos-nav-bar, .photos-filter-drawer, .memory-card,
+  .cinema-featured, .cinema-tile,
+  .apps-templates-bar, .app-card, .app-workbench, .app-detail-hero, .app-detail-card,
+  .home-app-tile, .home-apps-guide-tile, .auto-card,
+  .board-card, .board-composer-card, .cache-mgmt-panel
+) {
+  background: var(--fluid-card-fill);
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
 }
 [data-theme-preset="nordic_glass"] :is(
   .hero, .auth-card, .gallery-modal, .cinema-dialog, .isle-modal, .isle-modal-card,
@@ -90,7 +99,7 @@
 }
 [data-theme-preset="nordic_glass"] :is(
   .account-panel, .files-panel, .sanctuary-card, .metric-card,
-  .isle-card.variant-card, .isle-card.variant-glass, .photos-nav-bar,
+  .isle-card.variant-card, .isle-card.variant-glass, .isle-grouped-list, .photos-nav-bar,
   .cinema-featured, .cinema-tile, .apps-templates-bar, .app-card,
   .app-detail-hero, .app-detail-card, .home-app-tile, .auto-card
 ) {
@@ -126,15 +135,15 @@
   .disk-admin-item, .alert-item, .account-panel, .files-panel, .content-empty, .auth-card,
   .gallery-modal, .cinema-dialog, .isle-modal, .isle-modal-card, .isle-card,
   .upload-activity-card, .upload-drop-area,
-  .file-batch-bar, .file-entries-container.file-grid-mode .file-entry,
+  .file-batch-bar, :where(.file-entries-container.file-grid-mode .file-entry),
   .photos-nav-bar, .photos-filter-drawer, .memory-card, .photo-batch-hud, .viewer-info, .photo-album-cover,
   .cinema-featured, .cinema-tile, .cinema-episode, .cinema-home-cover, .cinema-overview-poster,
   .cinema-overview-playlist, .cinema-batch-hud, .cinema-alert,
   .apps-templates-bar, .app-card, .apps-template-card, .app-workbench,
   .app-detail-hero, .app-detail-card, .app-option-card, .app-detail-save-bar,
   .home-app-tile, .home-apps-guide-tile, .auto-card, .auto-switch-row,
-  .download-form, .download-task-list, .settings-nav, .settings-form-subcard,
-  .grant-details-drawer, .apple-disclosure-card
+  .download-task-list, .settings-nav, .settings-form-subcard,
+  .grant-details-drawer, .board-card, .board-composer-card, .cache-mgmt-panel
 ) {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
@@ -216,7 +225,8 @@
   .theme-picker-popover, .file-entry-more-list, .photo-albums-menu-panel,
   .photos-nav-bar, .photo-batch-hud, .cinema-featured, .cinema-tile, .cinema-batch-hud,
   .apps-templates-bar, .app-card, .app-workbench, .app-detail-hero, .app-detail-card,
-  .home-app-tile, .home-apps-guide-tile, .auto-card
+  .home-app-tile, .home-apps-guide-tile, .auto-card,
+  .board-card, .board-composer-card, .cache-mgmt-panel
 ) {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
@@ -226,14 +236,21 @@
   border-radius: var(--radius-lg);
   box-shadow: var(--fluid-card-shadow);
 }
+@media (max-width: 768px) {
+  [data-theme-preset="neo_brutal_pop"] .isle-modal-card {
+    border-bottom-left-radius: 0;
+    border-bottom-right-radius: 0;
+    border-bottom-width: 0;
+  }
+}
 [data-theme-preset="neo_brutal_pop"] :is(
   .vitality-chip, .disk-admin-item, .alert-item, .isle-card.variant-item,
   .memory-card, .cinema-episode, .apps-template-card, .app-option-card,
-  .file-entries-container.file-grid-mode .file-entry, .download-form, .download-task-list,
+  :where(.file-entries-container.file-grid-mode .file-entry), .download-task-list,
   .settings-form-subcard, .grant-details-drawer, .upload-activity-card,
   .atmosphere-capsule, .circle-action, .user-capsule, .status-pill, .topbar-root-control,
   .hero-search-bar, .photo-tool-btn, .file-inline-search,
-  .isle-btn, .account-action, .refresh, .settings-nav
+  :where(.isle-btn:not(.variant-ghost)), .account-action, .refresh, .settings-nav
 ) {
   -webkit-backdrop-filter: none;
   backdrop-filter: none;
@@ -251,9 +268,14 @@
   transform: translate(-1.5px, -1.5px);
   box-shadow: var(--fluid-hover-shadow);
 }
+[data-theme-preset="neo_brutal_pop"] .side-nav-indicator,
+[data-theme-preset="neo_brutal_pop"] .mobile-nav-indicator {
+  display: none;
+}
 [data-theme-preset="neo_brutal_pop"] .side-nav button.chosen,
 [data-theme-preset="neo_brutal_pop"] .mobile-nav button.chosen,
-[data-theme-preset="neo_brutal_pop"] .settings-nav button.active {
+[data-theme-preset="neo_brutal_pop"] .settings-nav button.active,
+[data-theme="dark"][data-theme-preset="neo_brutal_pop"] .settings-nav button.active {
   border: 1.5px solid var(--fluid-rim);
   background: var(--accent-primary);
   color: var(--on-accent-primary);
@@ -313,8 +335,8 @@
   .cinema-overview-playlist, .cinema-batch-hud, .cinema-alert,
   .apps-templates-bar, .app-card, .apps-template-card, .app-workbench,
   .app-detail-hero, .app-detail-card, .app-option-card, .home-app-tile, .auto-card,
-  .download-form, .download-task-list, .settings-nav, .apple-disclosure-card,
-  .theme-picker-popover
+  .download-task-list, .settings-nav, .apple-disclosure-card,
+  .theme-picker-popover, .board-card, .board-composer-card, .cache-mgmt-panel
 ) {
   border-radius: var(--radius-lg);
 }

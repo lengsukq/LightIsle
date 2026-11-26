@@ -1,43 +1,64 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from "vue";
-import { Folder, FileText, Film, Images, HardDrive, Monitor, RefreshCcw, ChevronLeft, ChevronRight, Eye, Download } from "lucide-vue-next";
+import {
+  ArrowDown, ArrowUp, ChevronLeft, ChevronRight, Download, Eye,
+  FileArchive, FileCode2, FileText, Film, Folder, HardDrive, Images,
+  Monitor, Music, RefreshCcw, Users,
+} from "lucide-vue-next";
 import { apiFetch } from "../../api/apiClient.ts";
 import { readApiFailure } from "../../api/apiFailure.ts";
 import { describeUserFacingError } from "../../api/userFacingError.ts";
+import { formatDateTime } from "../../utils/dateTimeFormat.ts";
 import { formatBinaryBytes as formatBytes } from "../../utils/format.ts";
-import { requestConfirm } from "../../composables/useConfirmDialog.ts";
 import { useFileMediaLightbox } from "../../composables/useFileMediaLightbox.ts";
 import type { BatchAsset } from "../photos/usePhotoBatchActions.ts";
 import type { SharedFileEntry } from "./useFileShares.ts";
-import AppleSelect from "../../components/ui/AppleSelect.vue";
-import IsleModal from "../../components/ui/IsleModal.vue";
-import IsleCard from "../../components/ui/IsleCard.vue";
-import IsleButton from "../../components/ui/IsleButton.vue";
+import ComputerGrantModal, { type ComputerMember } from "./ComputerGrantModal.vue";
 import IsleBanner from "../../components/ui/IsleBanner.vue";
+import IsleButton from "../../components/ui/IsleButton.vue";
+import IsleCard from "../../components/ui/IsleCard.vue";
 import IsleEmpty from "../../components/ui/IsleEmpty.vue";
 import IsleHelpButton from "../../components/ui/IsleHelpButton.vue";
+import IsleModal from "../../components/ui/IsleModal.vue";
 import IslePageHeader from "../../components/ui/IslePageHeader.vue";
 import IsleSearchInput from "../../components/ui/IsleSearchInput.vue";
 import PhotoViewerModal from "../photos/PhotoViewerModal.vue";
 
 const props = defineProps<{ admin: boolean }>();
-type Entry = { name: string; path: string; type: "file" | "folder"; size: number };
-type Member = { id: number; username: string; role: string };
-type Grant = { mode: string; folders: { path: string }[] };
 
-const enabled = ref(false), mode = ref("none"), path = ref(""), entries = ref<Entry[]>([]);
+type Entry = {
+  name: string;
+  path: string;
+  type: "file" | "folder";
+  size: number;
+  modified?: string | number;
+};
+type SortKey = "none" | "name" | "size" | "meta";
+
+const MAX_THUMBNAIL_BYTES = 64 * 1024 * 1024;
+const enabled = ref(false);
+const mode = ref("none");
+const path = ref("");
+const entries = ref<Entry[]>([]);
 const filterQuery = ref("");
-const busy = ref(false), error = ref(""), preview = ref<Entry | null>(null);
-const previewText = ref(""), previewError = ref("");
+const sortKey = ref<SortKey>("none");
+const sortDir = ref<"asc" | "desc">("asc");
+const busy = ref(false);
+const error = ref("");
+const preview = ref<Entry | null>(null);
+const previewText = ref("");
+const previewError = ref("");
 const nextCursor = ref("");
 const history = ref<string[]>([]);
+const browsing = ref(false);
+const members = ref<ComputerMember[]>([]);
+const grantModalOpen = ref(false);
+const loadedThumbs = ref(new Set<string>());
+const failedThumbs = ref(new Set<string>());
 let browseGeneration = 0;
-let grantGeneration = 0;
-const members = ref<Member[]>([]), selected = ref(""), grantMode = ref("none"), folders = ref<string[]>([]), saving = ref(false), grantLoading = ref(false), grantReady = ref(false);
-const browsing = ref(false), grantNotice = ref("");
-const memberOptions = computed(() => members.value.map(u => ({ value: String(u.id), label: u.username })));
-const modes = [{ value: "none", label: "无权限" }, { value: "folders", label: "指定文件夹" }, { value: "all", label: "整台电脑" }];
+
 const canOpen = computed(() => enabled.value && mode.value !== "none");
+const hasModifiedColumn = computed(() => entries.value.some((e) => Boolean(e.modified)));
 const fileUrl = (action: string, p: string) => `/api/v2/computer-files/${action}?path=${encodeURIComponent(p)}`;
 
 const mediaAssets = ref<BatchAsset[]>([]);
@@ -45,21 +66,53 @@ const mediaSelected = ref<BatchAsset | null>(null);
 const mediaEntriesByPath = new Map<string, Entry>();
 const mediaIndex = computed(() => {
   const cur = mediaSelected.value;
-  if (!cur) return -1;
-  return mediaAssets.value.findIndex(item => item.path === cur.path);
+  return cur ? mediaAssets.value.findIndex((item) => item.path === cur.path) : -1;
 });
 
-function isImageFile(name: string) {
-  return /\.(jpe?g|png|gif|webp|avif|bmp|heic|heif)$/i.test(name);
+const isImageFile = (n: string) => /\.(jpe?g|png|gif|webp|avif|bmp|heic|heif)$/i.test(n);
+const isVideoFile = (n: string) => /\.(mp4|webm|m4v|mov|mkv|avi|mpe?g|m2?ts|3gp|wmv|flv)$/i.test(n);
+const isAudioFile = (n: string) => /\.(mp3|m4a|flac|wav|ogg|aac|opus)$/i.test(n);
+const isArchiveFile = (n: string) => /\.(zip|tar|gz|tgz|bz2|xz|7z|rar|dmg|pkg|iso)$/i.test(n);
+const isCodeFile = (n: string) => /\.(json|ya?ml|xml|toml|ini|conf|css|js|tsx?|jsx|vue|html?|dart|go|swift|kt|java|py|sh|sql)$/i.test(n);
+const isTextFile = (n: string) => /\.(txt|md|json|log|csv|ya?ml|xml|toml|ini|conf|properties|css|js|tsx?|jsx|vue|html?|dart|go|swift|kt|java|py|sh|sql|srt|vtt)$/i.test(n);
+const canPreview = (n: string) => isImageFile(n) || isVideoFile(n) || isTextFile(n) || /\.pdf$/i.test(n);
+const isThumbnailEligible = (e: Entry) => e.type === "file" && isImageFile(e.name) && e.size > 0 && e.size <= MAX_THUMBNAIL_BYTES;
+const thumbKey = (e: Entry) => `${e.path}:${e.size}`;
+const thumbnailUrl = (e: Entry) => `${fileUrl("thumbnail", e.path)}&size=512`;
+
+function onThumbLoad(entry: Entry, event: Event) {
+  const img = event.target as HTMLImageElement | null;
+  if (img && img.naturalWidth === 0) {
+    markThumbFailed(entry);
+    return;
+  }
+  const key = thumbKey(entry);
+  if (loadedThumbs.value.has(key)) return;
+  const next = new Set(loadedThumbs.value);
+  next.add(key);
+  loadedThumbs.value = next;
 }
-function isVideoFile(name: string) {
-  return /\.(mp4|webm|m4v|mov|mkv|avi|mpe?g|m2?ts|3gp|wmv|flv)$/i.test(name);
+
+function markThumbFailed(entry: Entry) {
+  const key = thumbKey(entry);
+  if (failedThumbs.value.has(key)) return;
+  const next = new Set(failedThumbs.value);
+  next.add(key);
+  failedThumbs.value = next;
 }
-function isTextFile(name: string) {
-  return /\.(txt|md|json|log|csv|ya?ml|xml|toml|ini|conf|properties|css|js|tsx?|jsx|vue|html?|dart|go|swift|kt|java|py|sh|sql|srt|vtt)$/i.test(name);
-}
-function canPreview(name: string) {
-  return isImageFile(name) || isVideoFile(name) || isTextFile(name) || /\.pdf$/i.test(name);
+
+function entryKindLabel(entry: Entry): string {
+  if (entry.type === "folder") return "文件夹";
+  const dot = entry.name.lastIndexOf(".");
+  const ext = dot > 0 ? entry.name.slice(dot + 1).toUpperCase() : "";
+  if (isImageFile(entry.name)) return ext ? `${ext} 图像` : "图像";
+  if (isVideoFile(entry.name)) return ext ? `${ext} 视频` : "视频";
+  if (isAudioFile(entry.name)) return ext ? `${ext} 音频` : "音频";
+  if (/\.pdf$/i.test(entry.name)) return "PDF 文档";
+  if (isArchiveFile(entry.name)) return ext ? `${ext} 归档` : "压缩包";
+  if (isCodeFile(entry.name)) return ext ? `${ext} 代码` : "源码";
+  if (isTextFile(entry.name)) return ext ? `${ext} 文档` : "文本";
+  return ext ? `${ext} 文件` : "普通文件";
 }
 
 function showMediaAt(index: number): boolean {
@@ -96,7 +149,7 @@ const { modalProps: mediaModalProps, modalEvents: mediaModalEvents } = useFileMe
   fileEntryForMediaAsset: (asset) => {
     if (!asset) return null;
     const found = mediaEntriesByPath.get(asset.path);
-    return found ? ({ ...found, modified: "" } as SharedFileEntry) : null;
+    return found ? ({ ...found, modified: found.modified ? String(found.modified) : "" } as SharedFileEntry) : null;
   },
   downloadFile: (entry) => triggerFileDownload(entry),
   previewEndpoint: "/api/v2/computer-files/preview",
@@ -106,24 +159,15 @@ const { modalProps: mediaModalProps, modalEvents: mediaModalEvents } = useFileMe
 async function openPreview(entry: Entry) {
   if (isImageFile(entry.name) || isVideoFile(entry.name)) {
     preview.value = null;
-    const siblings = entries.value.filter(item => item.type === "file" && (isImageFile(item.name) || isVideoFile(item.name)));
-    if (!siblings.some(item => item.path === entry.path)) siblings.push(entry);
+    const siblings = entries.value.filter((item) => item.type === "file" && (isImageFile(item.name) || isVideoFile(item.name)));
+    if (!siblings.some((item) => item.path === entry.path)) siblings.push(entry);
     mediaEntriesByPath.clear();
     const mapped: BatchAsset[] = siblings.map((item, idx) => {
       mediaEntriesByPath.set(item.path, item);
-      return {
-        id: -(idx + 1),
-        path: item.path,
-        name: item.name,
-        type: isVideoFile(item.name) ? "video" : "photo",
-        size: item.size,
-        takenAt: 0,
-        favorite: false,
-        canWrite: false,
-      };
+      return { id: -(idx + 1), path: item.path, name: item.name, type: isVideoFile(item.name) ? "video" : "photo", size: item.size, takenAt: 0, favorite: false, canWrite: false };
     });
     mediaAssets.value = mapped;
-    mediaSelected.value = mapped.find(item => item.path === entry.path) ?? mapped[0] ?? null;
+    mediaSelected.value = mapped.find((item) => item.path === entry.path) ?? mapped[0] ?? null;
     return;
   }
   closeMediaViewer();
@@ -136,13 +180,9 @@ async function openPreview(entry: Entry) {
       const response = await apiFetch(fileUrl("preview", entry.path));
       if (!response.ok) throw await readApiFailure(response);
       const text = await response.text();
-      if (gen === browseGeneration && preview.value?.path === entry.path) {
-        previewText.value = text;
-      }
+      if (gen === browseGeneration && preview.value?.path === entry.path) previewText.value = text;
     } catch (e) {
-      if (gen === browseGeneration && preview.value?.path === entry.path) {
-        previewError.value = describeUserFacingError(e);
-      }
+      if (gen === browseGeneration && preview.value?.path === entry.path) previewError.value = describeUserFacingError(e);
     }
   }
 }
@@ -157,49 +197,97 @@ const pathCrumbs = computed(() => {
   const crumbs: Array<{ label: string; path: string }> = [{ label: "授权起点", path: "" }];
   let acc = "";
   for (const part of parts) {
-    acc = acc ? `${acc}/${part}` : (isAbs ? `/${part}` : part);
+    acc = acc ? `${acc}/${part}` : isAbs ? `/${part}` : part;
     crumbs.push({ label: part, path: acc });
   }
   return crumbs;
 });
 
+function toggleSort(nextKey: Exclude<SortKey, "none">) {
+  if (sortKey.value === nextKey) {
+    if (sortDir.value === "asc") sortDir.value = "desc";
+    else { sortKey.value = "none"; sortDir.value = "asc"; }
+  } else {
+    sortKey.value = nextKey;
+    sortDir.value = nextKey === "size" || nextKey === "meta" ? "desc" : "asc";
+  }
+}
+
 const filteredEntries = computed(() => {
   const q = filterQuery.value.trim().toLowerCase();
-  if (!q) return entries.value;
-  return entries.value.filter(item => item.name.toLowerCase().includes(q));
+  const base = q ? entries.value.filter((item) => item.name.toLowerCase().includes(q)) : entries.value;
+  if (sortKey.value === "none") return base;
+  const dir = sortDir.value === "asc" ? 1 : -1;
+  return [...base].sort((a, b) => {
+    if (a.type !== b.type) return a.type === "folder" ? -1 : 1;
+    if (sortKey.value === "size") return (a.size - b.size) * dir || a.name.localeCompare(b.name, "zh-Hans-CN");
+    if (sortKey.value === "meta") {
+      if (hasModifiedColumn.value) {
+        const ta = a.modified ? Date.parse(String(a.modified)) || Number(a.modified) || 0 : 0;
+        const tb = b.modified ? Date.parse(String(b.modified)) || Number(b.modified) || 0 : 0;
+        if (ta !== tb) return (ta - tb) * dir;
+      }
+      return entryKindLabel(a).localeCompare(entryKindLabel(b), "zh-Hans-CN") * dir;
+    }
+    return a.name.localeCompare(b.name, "zh-Hans-CN") * dir;
+  });
 });
 
-async function request<T>(url: string, method = "GET", json?: unknown): Promise<T> {
-  const response = await apiFetch(url, { method, ...(json === undefined ? {} : { json }) });
+async function request<T>(url: string): Promise<T> {
+  const response = await apiFetch(url);
   if (!response.ok) throw await readApiFailure(response);
-  return await response.json() as T;
+  return (await response.json()) as T;
+}
+
+async function loadMembers() {
+  if (!props.admin || !enabled.value) return;
+  const data = await request<{ users: ComputerMember[] }>("/api/v2/users");
+  members.value = data.users.filter((u) => u.role === "member");
 }
 
 async function loadStatus() {
-  busy.value = true; error.value = "";
+  busy.value = true;
+  error.value = "";
   try {
     const result = await request<{ enabled: boolean; mode: string }>("/api/v2/computer-files/status");
-    enabled.value = result.enabled; mode.value = result.mode;
+    enabled.value = result.enabled;
+    mode.value = result.mode;
     if (canOpen.value) { history.value = []; await browse(""); }
-    if (props.admin && enabled.value) {
-      const data = await request<{ users: Member[] }>("/api/v2/users");
-      members.value = data.users.filter(u => u.role === "member");
-    }
-  } catch (e) { error.value = describeUserFacingError(e); } finally { busy.value = false; }
+    await loadMembers();
+  } catch (e) {
+    error.value = describeUserFacingError(e);
+  } finally {
+    busy.value = false;
+  }
 }
 
 async function browse(next: string, cursor = "", push = false) {
   const generation = ++browseGeneration;
   browsing.value = true;
-  error.value = ""; preview.value = null; closeMediaViewer();
-  if (!cursor) filterQuery.value = "";
+  error.value = "";
+  preview.value = null;
+  closeMediaViewer();
+  if (!cursor) {
+    filterQuery.value = "";
+    loadedThumbs.value = new Set();
+    failedThumbs.value = new Set();
+  }
   try {
-    const result = await request<{ path: string; entries: Entry[]; nextCursor?: string }>(`/api/v2/computer-files?path=${encodeURIComponent(next)}&cursor=${encodeURIComponent(cursor)}`);
+    const result = await request<{ path: string; entries: Entry[]; nextCursor?: string }>(
+      `/api/v2/computer-files?path=${encodeURIComponent(next)}&cursor=${encodeURIComponent(cursor)}`,
+    );
     if (generation !== browseGeneration) return;
     if (push) history.value.push(path.value);
-    path.value = result.path; entries.value = cursor ? [...entries.value, ...result.entries] : result.entries; nextCursor.value = result.nextCursor ?? "";
-  } catch (e) { if (generation === browseGeneration) error.value = `无法读取此目录：${describeUserFacingError(e)}。请检查磁盘连接及 Mac 的文件和隐私权限。`; }
-  finally { if (generation === browseGeneration) browsing.value = false; }
+    path.value = result.path;
+    entries.value = cursor ? [...entries.value, ...result.entries] : result.entries;
+    nextCursor.value = result.nextCursor ?? "";
+  } catch (e) {
+    if (generation === browseGeneration) {
+      error.value = `无法读取此目录：${describeUserFacingError(e)}。请检查磁盘连接及 Mac 的文件和隐私权限。`;
+    }
+  } finally {
+    if (generation === browseGeneration) browsing.value = false;
+  }
 }
 
 function goUp() {
@@ -213,33 +301,20 @@ async function downloadFolder(entry: Entry) {
     const target = fileUrl("archive", entry.path);
     const response = await apiFetch(target, { method: "HEAD" });
     if (!response.ok) throw await readApiFailure(response);
-    const link = document.createElement("a"); link.href = target; link.download = `${entry.name}.zip`; link.click();
-  } catch (e) { error.value = `无法打包文件夹：${describeUserFacingError(e)}。超过 2 GiB、2,000 项或 16 层时请分批下载；含符号链接或特殊文件时请单独下载普通文件。`; }
-}
-
-async function loadGrant() {
-  if (!selected.value) return;
-  const member = selected.value, generation = ++grantGeneration; grantMode.value = "none"; folders.value = []; grantLoading.value = true; grantReady.value = false; grantNotice.value = "";
-  try {
-    const grant = await request<Grant>(`/api/v2/computer-files/grants/${member}`);
-    if (generation !== grantGeneration || selected.value !== member) return;
-    grantMode.value = grant.mode; folders.value = grant.folders.map(f => f.path); grantReady.value = true;
-  } catch (e) { if (generation === grantGeneration) error.value = describeUserFacingError(e); }
-  finally { if (generation === grantGeneration && selected.value === member) grantLoading.value = false; }
-}
-
-async function saveGrant() {
-  if (!selected.value || saving.value || grantLoading.value || !grantReady.value) return;
-  const member = selected.value, generation = grantGeneration, mode = grantMode.value, paths = [...folders.value];
-  if (mode === "folders" && paths.length === 0) { error.value = "请先浏览并添加至少一个文件夹。"; return; }
-  if (mode === "all" && !await requestConfirm({ title: "授权整台电脑", message: "该成员可以查看和下载 Mac 允许轻屿读取的所有文件，包括其他成员的私人文件。确认授权？" })) return;
-  if (generation !== grantGeneration || selected.value !== member || !grantReady.value || grantLoading.value || grantMode.value !== mode || folders.value.join("\0") !== paths.join("\0")) return;
-  saving.value = true; error.value = ""; grantNotice.value = "";
-  try {
-    await request(`/api/v2/computer-files/grants/${member}`, "PUT", { mode, paths });
-    grantNotice.value = "已保存该成员的电脑文件权限。";
+    const link = document.createElement("a");
+    link.href = target;
+    link.download = `${entry.name}.zip`;
+    link.click();
+  } catch (e) {
+    error.value = `无法打包文件夹：${describeUserFacingError(e)}。超过 2 GiB、2,000 项或 16 层时请分批下载；含符号链接或特殊文件时请单独下载普通文件。`;
   }
-  catch (e) { error.value = `授权未保存：${describeUserFacingError(e)}`; } finally { saving.value = false; }
+}
+
+function openGrantModal() {
+  grantModalOpen.value = true;
+  if (!members.value.length && enabled.value) {
+    void loadMembers().catch((e) => { error.value = describeUserFacingError(e); });
+  }
 }
 
 onMounted(loadStatus);
@@ -254,11 +329,15 @@ onMounted(loadStatus);
             title="电脑文件只读访问说明"
             :items="[
               { title: '全程只读保护', body: '此页面仅提供宿主 Mac 已授权目录的浏览、预览与下载，不会改动或删除电脑上的任何原文件。' },
-              { title: '打包与权限建议', body: '文件夹 ZIP 打包上限为 2 GiB / 2,000 项；为成员分配权限时建议按需勾选「指定文件夹」，避免整机授权暴露私人资料。' },
+              { title: '打包与权限建议', body: '文件夹 ZIP 打包上限为 2 GiB / 2,000 项；管理员可通过右上角「成员授权」按需分配指定文件夹。' },
             ]"
           />
         </template>
         <template #actions>
+          <IsleButton v-if="admin && enabled" variant="tonal" size="sm" @click="openGrantModal">
+            <template #icon><Users :size="14" /></template>
+            成员授权
+          </IsleButton>
           <IsleButton variant="glass" size="sm" :loading="busy" @click="loadStatus">
             <template #icon><RefreshCcw :size="14" /></template>
             刷新状态
@@ -267,89 +346,100 @@ onMounted(loadStatus);
       </IslePageHeader>
 
       <IsleBanner v-if="error" type="error" compact role="alert" :message="error" />
+      <IsleEmpty v-if="!enabled && !busy" card :icon="Monitor" title="电脑文件访问未开启" description="请先在 Mac 的轻屿管理端「设置 → 账号与安全」中开启「允许访问电脑文件」。" />
+      <IsleEmpty v-else-if="enabled && !canOpen" card :icon="HardDrive" title="暂无访问权限" description="请联系管理员授权电脑文件或指定文件夹。" />
 
-      <IsleEmpty
-        v-if="!enabled && !busy"
-        card
-        :icon="Monitor"
-        title="电脑文件访问未开启"
-        description="请先在 Mac 的轻屿管理端「设置 → 账号与安全」中开启「允许访问电脑文件」。"
-      />
-      <IsleEmpty
-        v-else-if="enabled && !canOpen"
-        card
-        :icon="HardDrive"
-        title="暂无访问权限"
-        description="请联系管理员授权电脑文件或指定文件夹。"
-      />
+      <IsleCard v-if="canOpen" title="只读目录浏览" :subtitle="path || '宿主 Mac 已授权目录'">
+        <template #icon><Folder :size="18" /></template>
+        <template #actions>
+          <div class="computer-toolbar">
+            <IsleSearchInput v-model="filterQuery" placeholder="筛选当前目录名称…" aria-label="筛选当前目录文件名称" />
+            <IsleButton variant="glass" size="sm" :disabled="!history.length" @click="goUp">
+              <template #icon><ChevronLeft :size="14" /></template>上级
+            </IsleButton>
+            <IsleButton variant="glass" size="sm" :loading="browsing" @click="browse(path)">
+              <template #icon><RefreshCcw :size="14" /></template>刷新
+            </IsleButton>
+          </div>
+        </template>
 
-      <div v-if="canOpen" class="settings-stack">
-        <IsleCard title="只读目录浏览" :subtitle="path || '宿主 Mac 已授权目录'">
-          <template #icon><Folder :size="18" /></template>
-          <template #actions>
-            <div class="computer-toolbar">
-              <IsleSearchInput
-                v-model="filterQuery"
-                placeholder="筛选当前目录名称…"
-                aria-label="筛选当前目录文件名称"
-              />
-              <IsleButton variant="glass" size="sm" :disabled="!history.length" @click="goUp">
-                <template #icon><ChevronLeft :size="14" /></template>
-                上级
-              </IsleButton>
-              <IsleButton variant="glass" size="sm" :loading="browsing" @click="browse(path)">
-                <template #icon><RefreshCcw :size="14" /></template>
-                刷新
-              </IsleButton>
-            </div>
-          </template>
+        <div class="computer-crumbs-bar">
+          <div class="file-crumbs" aria-label="电脑文件路径">
+            <button v-for="(crumb, idx) in pathCrumbs" :key="crumb.path + ':' + idx" type="button" @click="crumb.path !== path && browse(crumb.path, '', true)">
+              <ChevronRight v-if="idx" :size="13" /><span>{{ crumb.label }}</span>
+            </button>
+          </div>
+          <span class="files-count-badge">{{ filteredEntries.length }} 项</span>
+        </div>
 
-          <div class="computer-crumbs-bar">
-            <div class="file-crumbs" aria-label="电脑文件路径">
-              <button
-                v-for="(crumb, idx) in pathCrumbs"
-                :key="crumb.path + ':' + idx"
-                type="button"
-                @click="crumb.path !== path && browse(crumb.path, '', true)"
-              >
-                <ChevronRight v-if="idx" :size="13" />
-                <span>{{ crumb.label }}</span>
-              </button>
-            </div>
-            <span class="files-count-badge">{{ filteredEntries.length }} 项</span>
+        <IsleEmpty v-if="filteredEntries.length === 0" compact :description="filterQuery.trim() ? '当前目录下没有匹配该关键词的项目。' : '此文件夹为空，或没有可显示的普通文件。'" />
+
+        <div v-else class="computer-table">
+          <div class="computer-table-head" role="row">
+            <button type="button" class="computer-col-btn is-start" @click="toggleSort('name')">
+              <span>名称</span>
+              <ArrowUp v-if="sortKey === 'name' && sortDir === 'asc'" :size="12" />
+              <ArrowDown v-else-if="sortKey === 'name' && sortDir === 'desc'" :size="12" />
+            </button>
+            <button type="button" class="computer-col-btn is-end" @click="toggleSort('size')">
+              <span>大小</span>
+              <ArrowUp v-if="sortKey === 'size' && sortDir === 'asc'" :size="12" />
+              <ArrowDown v-else-if="sortKey === 'size' && sortDir === 'desc'" :size="12" />
+            </button>
+            <button type="button" class="computer-col-btn is-end" @click="toggleSort('meta')">
+              <span>{{ hasModifiedColumn ? "修改时间" : "类型" }}</span>
+              <ArrowUp v-if="sortKey === 'meta' && sortDir === 'asc'" :size="12" />
+              <ArrowDown v-else-if="sortKey === 'meta' && sortDir === 'desc'" :size="12" />
+            </button>
+            <span class="computer-col-label">操作</span>
           </div>
 
-          <IsleEmpty
-            v-if="filteredEntries.length === 0"
-            compact
-            :description="filterQuery.trim() ? '当前目录下没有匹配该关键词的项目。' : '此文件夹为空，或没有可显示的普通文件。'"
-          />
-          <div v-else class="computer-list">
-            <div v-for="entry in filteredEntries" :key="entry.path" class="account-row computer-row">
-              <button
+          <div class="computer-list">
+            <div v-for="entry in filteredEntries" :key="entry.path" class="computer-row">
+              <component
+                :is="entry.type === 'folder' || canPreview(entry.name) ? 'button' : 'div'"
                 class="computer-name"
-                type="button"
-                @click="entry.type === 'folder' ? browse(entry.path, '', true) : canPreview(entry.name) ? openPreview(entry) : null"
+                :class="{ 'is-static': entry.type === 'file' && !canPreview(entry.name) }"
+                :type="entry.type === 'folder' || canPreview(entry.name) ? 'button' : undefined"
+                :title="entry.name"
+                @click="entry.type === 'folder' ? browse(entry.path, '', true) : canPreview(entry.name) ? openPreview(entry) : undefined"
               >
-                <span class="file-icon" :class="entry.type">
-                  <Folder v-if="entry.type === 'folder'" :size="17" />
-                  <Film v-else-if="isVideoFile(entry.name)" :size="16" />
-                  <Images v-else-if="isImageFile(entry.name)" :size="16" />
-                  <FileText v-else :size="16" />
+                <span class="computer-thumb-box" :class="entry.type">
+                  <Folder v-if="entry.type === 'folder'" :size="17" class="computer-thumb-icon" />
+                  <Film v-else-if="isVideoFile(entry.name)" :size="16" class="computer-thumb-icon" />
+                  <Images v-else-if="isImageFile(entry.name)" :size="16" class="computer-thumb-icon" />
+                  <Music v-else-if="isAudioFile(entry.name)" :size="16" class="computer-thumb-icon" />
+                  <FileArchive v-else-if="isArchiveFile(entry.name)" :size="16" class="computer-thumb-icon" />
+                  <FileCode2 v-else-if="isCodeFile(entry.name)" :size="16" class="computer-thumb-icon" />
+                  <FileText v-else :size="16" class="computer-thumb-icon" />
+                  <img
+                    v-if="isThumbnailEligible(entry) && !failedThumbs.has(thumbKey(entry))"
+                    :src="thumbnailUrl(entry)"
+                    :alt="entry.name"
+                    loading="lazy"
+                    decoding="async"
+                    class="computer-thumb-img"
+                    :class="{ 'is-loaded': loadedThumbs.has(thumbKey(entry)) }"
+                    @load="onThumbLoad(entry, $event)"
+                    @error="markThumbFailed(entry)"
+                  />
                 </span>
                 <span class="computer-entry-title">
                   <strong>{{ entry.name }}</strong>
-                  <small>{{ entry.type === 'folder' ? '文件夹' : formatBytes(entry.size) }}</small>
+                  <small>{{ entry.type === "folder" ? "文件夹" : `${formatBytes(entry.size)} · ${entryKindLabel(entry)}` }}<template v-if="entry.modified"> · {{ formatDateTime(entry.modified) }}</template></small>
                 </span>
-              </button>
+              </component>
+
+              <span class="computer-cell-size">{{ entry.type === "folder" ? "—" : formatBytes(entry.size) }}</span>
+              <span class="computer-cell-meta" :class="{ 'is-tabular': Boolean(entry.modified) }">{{ entry.modified ? formatDateTime(entry.modified) : entryKindLabel(entry) }}</span>
+
               <div class="computer-entry-actions">
-                <span class="computer-entry-size">{{ entry.type === 'folder' ? '文件夹' : formatBytes(entry.size) }}</span>
                 <template v-if="entry.type === 'file'">
                   <IsleButton v-if="canPreview(entry.name)" variant="glass" size="sm" @click="openPreview(entry)">
                     <template #icon><Eye :size="13" /></template>预览
                   </IsleButton>
                   <a class="computer-download-link" :href="fileUrl('content', entry.path)" download>
-                    <Download :size="13" /> 下载
+                    <Download :size="13" /><span>下载</span>
                   </a>
                 </template>
                 <IsleButton v-else variant="tonal" size="sm" @click="downloadFolder(entry)">
@@ -358,61 +448,21 @@ onMounted(loadStatus);
               </div>
             </div>
           </div>
-          <div v-if="nextCursor" class="gallery-load" style="margin-top: 8px">
-            <IsleButton variant="glass" size="sm" @click="browse(path, nextCursor)">加载更多</IsleButton>
-          </div>
-        </IsleCard>
+        </div>
 
-        <IsleCard
-          v-if="admin"
-          title="家庭成员只读访问授权"
-          subtitle="整机权限可能包含私人资料，推荐按需选择「指定文件夹」并添加上方浏览目录。"
-        >
-          <template #icon><Monitor :size="18" /></template>
-          <div class="computer-grants-body">
-            <div class="computer-toolbar">
-              <AppleSelect v-model="selected" :options="memberOptions" placeholder="选择家庭成员" :disabled="saving" @change="loadGrant" />
-              <AppleSelect v-model="grantMode" :options="modes" :disabled="!selected || !grantReady || grantLoading || saving" />
-              <IsleButton v-if="selected && !grantReady && !grantLoading" variant="glass" size="sm" @click="loadGrant">
-                重新读取权限
-              </IsleButton>
-              <IsleButton variant="primary" size="sm" :loading="saving" :disabled="!selected || !grantReady || saving || grantLoading" style="margin-left: auto" @click="saveGrant">
-                {{ saving ? "正在保存…" : grantLoading ? "正在读取权限…" : "保存权限" }}
-              </IsleButton>
-            </div>
-            <div v-if="grantMode === 'folders' && selected" class="computer-folders-box">
-              <div class="computer-toolbar" style="justify-content: space-between">
-                <span class="footnote" style="margin: 0">在上方打开目标文件夹后，可一键将当前路径加入该成员授权列表：</span>
-                <IsleButton variant="tonal" size="sm" :disabled="!path || folders.includes(path)" @click="folders.push(path)">
-                  添加当前目录 ({{ path || '未选定子目录' }})
-                </IsleButton>
-              </div>
-              <div v-if="folders.length" class="computer-list">
-                <div v-for="folder in folders" :key="folder" class="account-row computer-row">
-                  <code class="computer-folder-code">{{ folder }}</code>
-                  <IsleButton variant="danger" size="sm" @click="folders = folders.filter(p => p !== folder)">移除</IsleButton>
-                </div>
-              </div>
-            </div>
-            <IsleBanner v-if="grantNotice" type="success" compact role="status" :message="grantNotice" />
-          </div>
-        </IsleCard>
-      </div>
+        <div v-if="nextCursor" class="gallery-load computer-load-more">
+          <IsleButton variant="glass" size="sm" @click="browse(path, nextCursor)">加载更多</IsleButton>
+        </div>
+      </IsleCard>
     </div>
 
     <PhotoViewerModal v-bind="mediaModalProps" v-on="mediaModalEvents" />
+    <ComputerGrantModal v-if="admin" :open="grantModalOpen" :current-path="path" :members="members" @close="grantModalOpen = false" />
 
-    <IsleModal
-      :open="Boolean(preview)"
-      :title="preview?.name || ''"
-      size="wide"
-      role="dialog"
-      aria-label="文件预览"
-      @close="preview = null"
-    >
+    <IsleModal :open="Boolean(preview)" :title="preview?.name || ''" size="wide" role="dialog" aria-label="文件预览" @close="preview = null">
       <template #header-actions>
         <a v-if="preview" class="computer-download-link" :href="fileUrl('content', preview.path)" download>
-          <Download :size="13" /> 下载
+          <Download :size="13" /><span>下载</span>
         </a>
       </template>
       <IsleBanner v-if="previewError" type="error" compact :message="previewError" />
@@ -423,140 +473,92 @@ onMounted(loadStatus);
 </template>
 
 <style scoped>
-.computer-files-inner {
-  max-width: 1120px;
-  margin: 0 auto;
-  width: 100%;
-  display: flex;
-  flex-direction: column;
-  gap: 14px;
-}
-.computer-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-wrap: wrap;
-}
+.computer-files-inner { max-width: 1120px; margin: 0 auto; width: 100%; display: flex; flex-direction: column; gap: 14px; }
+.computer-toolbar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .computer-crumbs-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding-bottom: 10px;
-  margin-bottom: 10px;
-  border-bottom: 1px solid var(--fluid-divider, var(--fluid-card-border));
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px solid var(--fluid-divider, var(--fluid-card-border));
 }
-.computer-list {
-  display: flex;
-  flex-direction: column;
-  border: 1px solid var(--fluid-card-border);
-  border-radius: 12px;
-  background: var(--fluid-card-item-fill);
-  overflow: hidden;
+.computer-crumbs-bar .file-crumbs { flex: 1; min-width: 0; }
+.computer-crumbs-bar .files-count-badge { white-space: nowrap; flex-shrink: 0; }
+.computer-table {
+  display: flex; flex-direction: column; border: 1px solid var(--fluid-card-border);
+  border-radius: 12px; background: var(--fluid-card-item-fill); overflow: hidden;
 }
+.computer-table-head, .computer-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) 104px 132px 164px; align-items: center; gap: 12px; padding: 0 14px;
+}
+.computer-table-head {
+  min-height: 36px; border-bottom: 1px solid var(--fluid-divider, var(--fluid-card-border));
+  background: color-mix(in srgb, var(--fluid-card-top) 55%, transparent); font-size: 11.5px; font-weight: 600; color: var(--text-tertiary); user-select: none;
+}
+.computer-col-btn {
+  display: inline-flex; align-items: center; gap: 4px; border: 0; background: transparent;
+  padding: 4px 0; color: var(--text-secondary); font-size: 11.5px; font-weight: 600; cursor: pointer;
+}
+.computer-col-btn.is-start { justify-self: start; }
+.computer-col-btn.is-end { justify-self: end; }
+.computer-col-btn:hover { color: var(--text-primary); }
+.computer-col-label { justify-self: end; font-size: 11.5px; font-weight: 600; color: var(--text-tertiary); }
+.computer-list { display: flex; flex-direction: column; }
 .computer-row {
-  margin: 0;
-  min-height: 46px;
-  padding: 8px 12px;
-  border: 0;
-  border-bottom: 1px solid var(--fluid-divider, var(--fluid-card-border));
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-  transition: background-color 0.15s ease;
+  min-height: 50px; padding-top: 7px; padding-bottom: 7px;
+  border-bottom: 1px solid var(--fluid-divider, var(--fluid-card-border)); transition: background-color 0.15s ease;
 }
-.computer-row:last-child {
-  border-bottom: 0;
-}
-.computer-row:hover {
-  background: var(--fluid-card-hover);
-}
+.computer-row:last-child { border-bottom: 0; }
+.computer-row:hover, .computer-row:focus-within { background: var(--fluid-card-hover); }
 .computer-name {
-  flex: 1;
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  text-align: left;
-  border: 0;
-  background: transparent;
-  color: var(--text-primary);
-  padding: 0;
-  cursor: pointer;
-  font-size: 13.5px;
+  min-width: 0; display: flex; align-items: center; gap: 11px; text-align: left;
+  border: 0; background: transparent; color: var(--text-primary); padding: 0; cursor: pointer; font-size: 13.5px;
 }
-.computer-entry-title {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
+.computer-name.is-static { cursor: default; }
+.computer-thumb-box {
+  position: relative; width: 36px; height: 36px; border-radius: 9px; display: grid; place-items: center; flex-shrink: 0;
+  overflow: hidden; border: 1px solid var(--fluid-card-border);
+  background: color-mix(in srgb, var(--text-primary) 5%, var(--fluid-card-top)); color: var(--text-secondary);
 }
-.computer-entry-title strong {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.computer-thumb-box.folder {
+  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+  border-color: color-mix(in srgb, var(--accent-primary) 20%, var(--fluid-card-border)); color: var(--accent-primary);
 }
-.computer-entry-title small {
-  display: none;
-  font-size: 11.5px;
-  color: var(--text-tertiary);
+.computer-thumb-img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; opacity: 0; transition: opacity 0.24s ease; }
+.computer-thumb-img.is-loaded { opacity: 1; }
+.computer-entry-title { display: flex; flex-direction: column; min-width: 0; }
+.computer-entry-title strong { font-weight: 560; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.computer-entry-title small { display: none; font-size: 11.5px; color: var(--text-tertiary); font-variant-numeric: tabular-nums; }
+.computer-cell-size, .computer-cell-meta {
+  justify-self: end; font-size: 12px; color: var(--text-secondary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%;
 }
-.computer-entry-size {
-  font-size: 12px;
-  color: var(--text-tertiary);
-  font-variant-numeric: tabular-nums;
-  margin-right: 6px;
+.computer-cell-size, .computer-cell-meta.is-tabular { font-variant-numeric: tabular-nums; }
+.computer-cell-meta { color: var(--text-tertiary); }
+.computer-entry-actions { justify-self: end; display: flex; align-items: center; justify-content: flex-end; gap: 6px; flex-wrap: nowrap; transition: opacity 0.16s ease; }
+@media (hover: hover) and (pointer: fine) {
+  .computer-entry-actions { opacity: 0; pointer-events: none; }
+  .computer-row:hover .computer-entry-actions, .computer-row:focus-within .computer-entry-actions { opacity: 1; pointer-events: auto; }
 }
-@media (max-width: 680px) {
-  .computer-entry-size { display: none; }
-  .computer-entry-title small { display: block; }
-}
-.computer-folder-code {
-  font-size: 12px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  overflow-wrap: anywhere;
-}
-.computer-entry-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
+@media (hover: none), (pointer: coarse), (max-width: 767px) {
+  .computer-entry-actions { opacity: 1; pointer-events: auto; }
 }
 .computer-download-link {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  min-height: 30px;
-  padding: 4px 11px;
-  border-radius: 9999px;
-  border: 1px solid var(--fluid-card-border);
-  background: var(--fluid-card-fill);
-  color: var(--text-primary);
-  font-size: 12px;
-  font-weight: 550;
-  text-decoration: none;
+  display: inline-flex; align-items: center; gap: 5px; min-height: 30px; padding: 4px 11px; border-radius: 9999px;
+  border: 1px solid var(--fluid-card-border); background: var(--fluid-card-fill); color: var(--text-primary);
+  font-size: 12px; font-weight: 550; text-decoration: none; white-space: nowrap; flex-shrink: 0;
   transition: background-color 0.15s ease, border-color 0.15s ease;
 }
-.computer-download-link:hover {
-  background: var(--fluid-card-hover);
-  border-color: var(--fluid-card-border-strong, var(--accent-primary));
+.computer-download-link:hover { background: var(--fluid-card-hover); border-color: var(--fluid-card-border-strong, var(--accent-primary)); }
+.computer-load-more { margin-top: 8px; }
+.computer-preview-frame { width: 100%; height: min(72vh, 660px); border: 1px solid var(--fluid-card-border); border-radius: 10px; background: white; }
+@media (max-width: 900px) {
+  .computer-table-head, .computer-row { grid-template-columns: minmax(0, 1fr) 92px 152px; }
+  .computer-col-btn:nth-child(3), .computer-cell-meta { display: none; }
 }
-.computer-grants-body,
-.computer-folders-box {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-}
-.computer-preview-frame {
-  width: 100%;
-  height: min(72vh, 660px);
-  border: 1px solid var(--fluid-card-border);
-  border-radius: 10px;
-  background: white;
+@media (max-width: 767px) {
+  .computer-table-head { display: none; }
+  .computer-row { grid-template-columns: minmax(0, 1fr) auto; gap: 10px; padding: 8px 12px; }
+  .computer-cell-size, .computer-cell-meta { display: none; }
+  .computer-entry-title small { display: block; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .computer-row,
-  .computer-download-link {
-    transition: none;
-  }
+  .computer-row, .computer-thumb-img, .computer-entry-actions, .computer-download-link { transition: none; }
 }
 </style>

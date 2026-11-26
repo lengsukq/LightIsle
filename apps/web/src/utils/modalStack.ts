@@ -1,5 +1,6 @@
 export interface ModalLayerHandle {
   isTop: () => boolean;
+  depth: number;
   dispose: () => void;
 }
 
@@ -63,9 +64,12 @@ export function pushModalLayer(options?: {
   syncScrollLock();
   syncKeyListener();
 
+  const depth = activeLayers.length;
+
   let disposed = false;
   return {
     isTop: () => activeLayers.length > 0 && activeLayers[activeLayers.length - 1]?.id === id,
+    depth,
     dispose: () => {
       if (disposed) return;
       disposed = true;

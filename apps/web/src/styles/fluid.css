@@ -108,10 +108,10 @@ body,
   gap: 5px;
   padding: 0 11px;
   height: 32px;
-  background: var(--fluid-card-fill);
-  border: 1px solid var(--fluid-card-border);
+  background: color-mix(in srgb, var(--text-primary) 4.5%, transparent);
+  border: 1px solid transparent;
   border-radius: 999px;
-  box-shadow: var(--fluid-item-card-shadow);
+  box-shadow: none;
   cursor: pointer;
   font-size: 12px;
   font-weight: 550;
@@ -123,8 +123,8 @@ body,
     color var(--motion-fast) ease;
 }
 .atmosphere-capsule:hover {
-  background: var(--fluid-card-hover);
-  border-color: var(--fluid-card-border-strong);
+  background: color-mix(in srgb, var(--text-primary) 8%, transparent);
+  border-color: var(--fluid-card-border);
   color: var(--text-primary);
 }
 .atmosphere-capsule:active {
@@ -141,12 +141,12 @@ body,
   position: sticky;
   top: 0;
   border-radius: 0;
-  background: color-mix(in srgb, var(--fluid-chrome, var(--surface-base)) 86%, var(--fluid-card-top) 14%);
+  background: color-mix(in srgb, var(--fluid-chrome, var(--surface-base)) 84%, transparent);
   border: 0;
   border-right: 1px solid var(--fluid-card-border);
   box-shadow: none;
-  -webkit-backdrop-filter: blur(22px) saturate(140%);
-  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(24px) saturate(160%);
+  backdrop-filter: blur(24px) saturate(160%);
   display: flex;
   flex-direction: column;
   padding: 14px 12px;
@@ -244,6 +244,34 @@ body,
   box-shadow: none;
 }
 
+.side-nav {
+  position: relative;
+}
+
+.side-nav-indicator {
+  position: absolute;
+  left: 0;
+  top: 0;
+  border-radius: var(--radius-sm, 9px);
+  background: color-mix(in srgb, var(--accent-primary) 10.5%, var(--fluid-card-top));
+  border: 1px solid color-mix(in srgb, var(--accent-primary) 18%, transparent);
+  pointer-events: none;
+  z-index: 0;
+}
+
+[data-theme="dark"] .side-nav-indicator {
+  background: color-mix(in srgb, var(--accent-primary) 15%, var(--fluid-card-item-top));
+  border-color: color-mix(in srgb, var(--accent-primary) 28%, transparent);
+}
+
+.side-nav-indicator.is-ready {
+  transition:
+    transform 0.3s var(--motion-spring-snappy, cubic-bezier(0.2, 0.9, 0.22, 1.05)),
+    width 0.24s var(--motion-spring, cubic-bezier(0.22, 1, 0.36, 1)),
+    height 0.24s var(--motion-spring, cubic-bezier(0.22, 1, 0.36, 1)),
+    opacity 0.16s ease;
+}
+
 .side-nav button {
   -webkit-appearance: none;
   appearance: none;
@@ -262,6 +290,7 @@ body,
   line-height: 1.2;
   text-align: left;
   position: relative;
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: flex-start;
@@ -275,30 +304,23 @@ body,
   display: none;
 }
 .side-nav button:hover {
-  background: color-mix(in srgb, var(--text-primary) 5.5%, transparent);
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
   color: var(--text-primary);
+}
+.side-nav button.chosen:hover {
+  background: transparent;
 }
 .side-nav button:active { transform: scale(0.985); transition-duration: 95ms; }
 .side-nav button.chosen {
-  background: color-mix(in srgb, var(--accent-primary) 10%, var(--fluid-card-top));
+  background: transparent;
   color: var(--accent-primary);
   font-weight: 650;
   box-shadow: none;
-  border-color: color-mix(in srgb, var(--accent-primary) 18%, transparent);
-}
-.side-nav button.chosen::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 9px;
-  bottom: 9px;
-  width: 3px;
-  border-radius: 0 3px 3px 0;
-  background: var(--accent-primary);
+  border-color: transparent;
 }
 [data-theme="dark"] .side-nav button.chosen {
-  background: color-mix(in srgb, var(--accent-primary) 14%, var(--fluid-card-item-top));
-  border-color: color-mix(in srgb, var(--accent-primary) 28%, transparent);
+  background: transparent;
+  border-color: transparent;
   box-shadow: none;
 }
 
@@ -347,6 +369,7 @@ body,
   margin: 0 auto;
   border-radius: 10px;
 }
+.sidebar.dock-collapsed .side-nav-indicator { border-radius: 10px; }
 .sidebar.dock-collapsed .side-nav button.chosen::after { display: none; }
 .sidebar.dock-collapsed .side-nav button + button::before { display: none; }
 .sidebar.dock-collapsed .sidebar-bottom {
@@ -405,6 +428,29 @@ body,
   align-items: center;
   gap: 9px;
   flex-shrink: 0;
+  cursor: pointer;
+  transition: background var(--motion-fast) ease, color var(--motion-fast) ease;
+}
+.sidebar-bottom:hover {
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  border-radius: var(--radius-sm, 9px);
+}
+.brand-symbol:focus-visible,
+.sidebar-bottom:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+.page-status {
+  margin: 48px auto;
+  max-width: 440px;
+  padding: 18px 22px;
+  border-radius: 14px;
+  border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-fill);
+  color: var(--text-secondary);
+  font-size: 13.5px;
+  text-align: center;
+  box-shadow: var(--fluid-item-card-shadow);
 }
 .host-status-squircle {
   width: 22px;
@@ -431,19 +477,30 @@ body,
 .topbar {
   top: 0;
   z-index: 45;
-  min-height: 56px;
+  min-height: 54px;
   margin: 0;
   padding: 8px clamp(18px, 2.6vw, 32px);
   border: 0;
   border-bottom: 1px solid var(--fluid-card-border);
   border-radius: 0;
-  background: var(--surface-glass);
+  background: color-mix(in srgb, var(--surface-glass, var(--surface-base)) 86%, transparent);
   box-shadow: none;
   transition: background var(--motion-normal) ease, border-color var(--motion-fast) ease;
 }
 .topbar.glass {
-  -webkit-backdrop-filter: blur(22px) saturate(140%);
-  backdrop-filter: blur(22px) saturate(140%);
+  -webkit-backdrop-filter: blur(24px) saturate(165%);
+  backdrop-filter: blur(24px) saturate(165%);
+}
+.topbar-theme-btn {
+  border-color: transparent;
+  background: transparent;
+  box-shadow: none;
+  color: var(--text-secondary);
+}
+.topbar-theme-btn:hover {
+  background: color-mix(in srgb, var(--text-primary) 6%, transparent);
+  border-color: transparent;
+  color: var(--text-primary);
 }
 .topbar-sidebar-toggle {
   width: 30px;
@@ -644,6 +701,7 @@ body,
 
 @media (prefers-reduced-motion: reduce) {
   .sidebar, .brand-symbol, .brand-meta, .nav-item-label, .nav-chevron, .side-label,
+  .side-nav-indicator, .side-nav-indicator.is-ready,
   .host-status-text, .dock-toggle-btn, .side-nav button, .nav-squircle, .sanctuary-card, .photo-tile,
   .atmosphere-capsule, .topbar,
   .isle-stage-fade-enter-active, .isle-stage-fade-leave-active,
@@ -658,7 +716,7 @@ body,
     transition: none !important;
     animation: none !important;
   }
-  .isle-tab-pane, .isle-subview-pane, .dialog-backdrop { animation: none !important; }
+  .isle-tab-pane, .isle-tab-entering, .isle-subview-pane, .dialog-backdrop { animation: none !important; }
   .sanctuary-card:hover, .photo-tile:hover, .side-nav button:hover, .atmosphere-capsule:hover {
     transform: none !important;
   }

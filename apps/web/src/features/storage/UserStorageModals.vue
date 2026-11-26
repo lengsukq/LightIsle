@@ -131,7 +131,7 @@ const needsPasswordConfirmation = computed(() => {
         <label class="field-label">勾选要在此目录开通的空间分类</label>
         <div class="checkbox-group">
           <label v-for="cat in categories" :key="cat.id" class="checkbox-pill">
-            <input v-model="allocCategories[cat.id]" type="checkbox" />
+            <input v-model="allocCategories[cat.id]" type="checkbox" class="isle-checkbox" />
             <span>{{ cat.label }}</span>
           </label>
         </div>
@@ -154,6 +154,7 @@ const needsPasswordConfirmation = computed(() => {
               :key="preset"
               type="button"
               class="preset-chip"
+              :class="{ active: allocQuotaGiB === String(preset) }"
               @click="emit('update:allocQuotaGiB', String(preset))"
             >
               {{ preset >= 1024 ? "1024 GiB" : preset + " GiB" }}
@@ -164,7 +165,7 @@ const needsPasswordConfirmation = computed(() => {
           v-if="allocEnforcementPending !== false"
           type="info"
           compact
-          message="当前配额处于统计提示阶段（enforcement=pending）：用于统计展示与提醒，硬配额暂未对 SMB 与直接写盘强制拦截。"
+          message="用量统计持续校准中（暂未开启超额强制拦截）：当前用于统计展示与提醒，SMB 与直接写盘暂未强制拦截。"
         />
       </div>
 
@@ -306,7 +307,7 @@ const needsPasswordConfirmation = computed(() => {
           <label class="field-label">3. 勾选要一起迁移到新目录的空间分类</label>
           <div class="checkbox-group">
             <label v-for="cat in categories" :key="cat.id" class="checkbox-pill">
-              <input v-model="migrateCategories[cat.id]" type="checkbox" />
+              <input v-model="migrateCategories[cat.id]" type="checkbox" class="isle-checkbox" />
               <span>{{ cat.label }}</span>
             </label>
           </div>
@@ -315,34 +316,40 @@ const needsPasswordConfirmation = computed(() => {
         <div class="form-field">
           <label class="field-label">4. 选择迁移方式</label>
           <div class="mode-cards">
-            <label
-              class="mode-card"
-              :class="{ active: migrateMode === 'migrate' }"
-              @click="emit('update:migrateMode', 'migrate')"
-            >
-              <input :checked="migrateMode === 'migrate'" type="radio" value="migrate" />
+            <label class="mode-card" :class="{ active: migrateMode === 'migrate' }">
+              <input
+                name="migrate-mode"
+                :checked="migrateMode === 'migrate'"
+                type="radio"
+                value="migrate"
+                @change="emit('update:migrateMode', 'migrate')"
+              />
               <div>
                 <strong>复制并核验后回收旧目录（推荐）</strong>
                 <small>完整复制到新目录并逐文件核验通过后，再由你确认将旧目录源文件移入回收站。</small>
               </div>
             </label>
-            <label
-              class="mode-card"
-              :class="{ active: migrateMode === 'copy' }"
-              @click="emit('update:migrateMode', 'copy')"
-            >
-              <input :checked="migrateMode === 'copy'" type="radio" value="copy" />
+            <label class="mode-card" :class="{ active: migrateMode === 'copy' }">
+              <input
+                name="migrate-mode"
+                :checked="migrateMode === 'copy'"
+                type="radio"
+                value="copy"
+                @change="emit('update:migrateMode', 'copy')"
+              />
               <div>
                 <strong>仅复制到新目录（保留两份）</strong>
                 <small>复制到新目录并切换绑定，旧目录中的原文件保留不动。</small>
               </div>
             </label>
-            <label
-              class="mode-card"
-              :class="{ active: migrateMode === 'empty' }"
-              @click="emit('update:migrateMode', 'empty')"
-            >
-              <input :checked="migrateMode === 'empty'" type="radio" value="empty" />
+            <label class="mode-card" :class="{ active: migrateMode === 'empty' }">
+              <input
+                name="migrate-mode"
+                :checked="migrateMode === 'empty'"
+                type="radio"
+                value="empty"
+                @change="emit('update:migrateMode', 'empty')"
+              />
               <div>
                 <strong>直接启用空白新目录（旧盘已拔除或无需搬移）</strong>
                 <small>在新目录创建空白用户目录并切换绑定，不读取旧目录文件。</small>
@@ -443,7 +450,7 @@ const needsPasswordConfirmation = computed(() => {
 }
 .form-row-two {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 200px), 1fr));
   gap: 10px;
 }
 .field-label {
@@ -456,6 +463,9 @@ const needsPasswordConfirmation = computed(() => {
   font-size: 11.5px;
   color: var(--text-secondary);
 }
+.status-stats {
+  font-variant-numeric: tabular-nums;
+}
 .field-hint.warn {
   color: var(--warning, #d97706);
 }
@@ -465,9 +475,11 @@ const needsPasswordConfirmation = computed(() => {
   border-radius: 9px;
   padding: 0 11px;
   font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
   background: var(--fluid-card-item-fill);
   color: var(--text-primary);
   outline: none;
+  transition: border-color 160ms ease;
 }
 .isle-input:focus {
   border-color: var(--accent-primary, #2563eb);
@@ -486,8 +498,15 @@ const needsPasswordConfirmation = computed(() => {
   border-radius: 999px;
   padding: 3px 8px;
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
   cursor: pointer;
   color: var(--text-primary);
+  transition: border-color 140ms ease, color 140ms ease, background-color 140ms ease;
+}
+.preset-chip:hover,
+.preset-chip.active {
+  border-color: var(--accent-primary, #0e6b74);
+  color: var(--accent-primary, #0e6b74);
 }
 .checkbox-pill {
   display: inline-flex;
@@ -499,6 +518,7 @@ const needsPasswordConfirmation = computed(() => {
   background: var(--fluid-card-item-fill);
   font-size: 12px;
   cursor: pointer;
+  transition: border-color 140ms ease, background-color 140ms ease;
 }
 .migration-route-pill {
   display: flex;
@@ -514,6 +534,8 @@ const needsPasswordConfirmation = computed(() => {
   display: flex;
   flex-direction: column;
   gap: 1px;
+  min-width: 0;
+  overflow-wrap: anywhere;
   font-size: 12.5px;
 }
 .node-tag {
@@ -538,6 +560,7 @@ const needsPasswordConfirmation = computed(() => {
   border: 1px solid var(--fluid-card-border);
   background: var(--fluid-card-item-fill);
   cursor: pointer;
+  transition: border-color 160ms ease, background-color 160ms ease;
 }
 .mode-card.active {
   border-color: var(--accent-primary, #2563eb);
@@ -568,10 +591,10 @@ const needsPasswordConfirmation = computed(() => {
   font-size: 12.5px;
 }
 .status-icon.ok {
-  color: #10b981;
+  color: var(--success, #10b981);
 }
 .status-icon.err {
-  color: #ef4444;
+  color: var(--error, #ef4444);
 }
 .status-icon.spin {
   color: var(--accent-primary, #2563eb);
@@ -588,11 +611,12 @@ const needsPasswordConfirmation = computed(() => {
   height: 100%;
   border-radius: 999px;
   background: var(--accent-primary, #2563eb);
+  transition: width 260ms var(--motion-spring, cubic-bezier(0.22, 1, 0.36, 1));
 }
 .status-error-detail {
   margin: 0;
   font-size: 11.5px;
-  color: #dc2626;
+  color: var(--error);
 }
 @keyframes spin {
   to {
@@ -600,6 +624,13 @@ const needsPasswordConfirmation = computed(() => {
   }
 }
 @media (prefers-reduced-motion: reduce) {
+  .isle-input,
+  .preset-chip,
+  .checkbox-pill,
+  .mode-card,
+  .capacity-bar-fill {
+    transition: none;
+  }
   .status-icon.spin {
     animation: none;
   }

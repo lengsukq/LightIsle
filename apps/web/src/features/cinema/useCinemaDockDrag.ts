@@ -1,8 +1,13 @@
-import { computed, ref } from "vue";
+import { computed, getCurrentInstance, onUnmounted, ref, watch, type Ref } from "vue";
 
 export interface DockOffset {
   x: number;
   y: number;
+}
+
+export interface UseCinemaDockDragOptions {
+  stageRef?: Ref<HTMLElement | null>;
+  dockRef?: Ref<HTMLElement | null>;
 }
 
 export function clampDockOffset(
@@ -32,7 +37,7 @@ function isInteractiveDockTarget(target: EventTarget | null): boolean {
   );
 }
 
-export function useCinemaDockDrag() {
+export function useCinemaDockDrag(options?: UseCinemaDockDragOptions) {
   const dockOffset = ref<DockOffset>({ x: 0, y: 0 });
   const draggingDock = ref(false);
   const dockHovered = ref(false);
@@ -41,12 +46,80 @@ export function useCinemaDockDrag() {
   let startPointer: DockOffset = { x: 0, y: 0 };
   let startOffset: DockOffset = { x: 0, y: 0 };
   let activePointerId: number | null = null;
+  let reclampRafId: number | null = null;
 
   const isDockMoved = computed(() => Math.abs(dockOffset.value.x) > 2 || Math.abs(dockOffset.value.y) > 2);
   const isDockNearBottom = computed(() => dockOffset.value.y > -56);
 
   function resetDockPosition() {
     dockOffset.value = { x: 0, y: 0 };
+  }
+
+  function reclampDockOffset(stageEl: HTMLElement | null, dockEl: HTMLElement | null) {
+    if (draggingDock.value || !stageEl || !dockEl) return;
+    if (dockOffset.value.x === 0 && dockOffset.value.y === 0) return;
+    const stageRect = stageEl.getBoundingClientRect();
+    const dockRect = dockEl.getBoundingClientRect();
+    const clamped = clampDockOffset(dockOffset.value, stageRect, dockRect);
+    if (clamped.x !== dockOffset.value.x || clamped.y !== dockOffset.value.y) {
+      dockOffset.value = clamped;
+    }
+  }
+
+  function scheduleReclamp(stageEl: HTMLElement | null, dockEl: HTMLElement | null) {
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      if (reclampRafId !== null) window.cancelAnimationFrame(reclampRafId);
+      reclampRafId = window.requestAnimationFrame(() => {
+        reclampRafId = null;
+        reclampDockOffset(stageEl, dockEl);
+      });
+    } else {
+      reclampDockOffset(stageEl, dockEl);
+    }
+  }
+
+  if (options?.stageRef && getCurrentInstance()) {
+    const stageRef = options.stageRef;
+    const dockRef = options.dockRef;
+    const stopWatch = watch(
+      () => [stageRef.value, dockRef?.value ?? null] as const,
+      ([stageEl, dockEl], _prev, onCleanup) => {
+        if (!stageEl) return;
+        const onBoundsChange = () => scheduleReclamp(stageEl, dockEl);
+        let resizeObserver: ResizeObserver | null = null;
+        if (typeof ResizeObserver !== "undefined") {
+          resizeObserver = new ResizeObserver(onBoundsChange);
+          resizeObserver.observe(stageEl);
+          if (dockEl) resizeObserver.observe(dockEl);
+        }
+        if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+          window.addEventListener("resize", onBoundsChange, { passive: true });
+          window.addEventListener("orientationchange", onBoundsChange, { passive: true });
+        }
+        if (typeof document !== "undefined" && typeof document.addEventListener === "function") {
+          document.addEventListener("fullscreenchange", onBoundsChange);
+        }
+        onCleanup(() => {
+          resizeObserver?.disconnect();
+          if (typeof window !== "undefined" && typeof window.removeEventListener === "function") {
+            window.removeEventListener("resize", onBoundsChange);
+            window.removeEventListener("orientationchange", onBoundsChange);
+          }
+          if (typeof document !== "undefined" && typeof document.removeEventListener === "function") {
+            document.removeEventListener("fullscreenchange", onBoundsChange);
+          }
+        });
+      },
+      { flush: "post", immediate: true },
+    );
+
+    onUnmounted(() => {
+      stopWatch();
+      if (reclampRafId !== null && typeof window !== "undefined" && typeof window.cancelAnimationFrame === "function") {
+        window.cancelAnimationFrame(reclampRafId);
+        reclampRafId = null;
+      }
+    });
   }
 
   function startDockDrag(

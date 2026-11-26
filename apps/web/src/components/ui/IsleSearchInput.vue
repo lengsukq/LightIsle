@@ -57,6 +57,7 @@ function onEsc(event: KeyboardEvent) {
   >
     <Search :size="size === 'sm' ? 14 : 15" class="isle-search-icon" aria-hidden="true" />
     <input
+      class="isle-search-field"
       :value="modelValue"
       :maxlength="maxlength"
       :placeholder="placeholder"
@@ -69,16 +70,18 @@ function onEsc(event: KeyboardEvent) {
       @keydown.enter.prevent="emit('submit', modelValue)"
       @keydown.esc="onEsc"
     />
-    <button
-      v-if="modelValue && !disabled"
-      type="button"
-      class="isle-search-clear"
-      title="清除搜索"
-      aria-label="清除搜索"
-      @click="onClear"
-    >
-      <X :size="13" />
-    </button>
+    <Transition name="isle-clear-pop">
+      <button
+        v-if="modelValue && !disabled"
+        type="button"
+        class="isle-search-clear"
+        title="清除搜索"
+        aria-label="清除搜索"
+        @click="onClear"
+      >
+        <X :size="13" />
+      </button>
+    </Transition>
   </label>
 </template>
 
@@ -89,13 +92,12 @@ function onEsc(event: KeyboardEvent) {
   gap: 7px;
   border-radius: var(--radius-pill, 9999px);
   border: 1px solid var(--fluid-card-border);
-  background: var(--fluid-card-fill);
+  background: var(--fluid-card-item-fill, var(--fluid-card-fill));
   color: var(--text-secondary);
-  box-shadow: var(--fluid-item-card-shadow);
   padding: 0 11px;
   box-sizing: border-box;
   min-width: 0;
-  transition: border-color var(--motion-fast, 160ms) ease, box-shadow var(--motion-fast, 160ms) ease;
+  transition: border-color var(--motion-fast, 160ms) ease, background-color var(--motion-fast, 160ms) ease, box-shadow var(--motion-fast, 160ms) ease;
 }
 
 .isle-search-input.size-sm {
@@ -107,8 +109,19 @@ function onEsc(event: KeyboardEvent) {
 }
 
 .isle-search-input:focus-within {
-  border-color: var(--accent-primary, #1f5162);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary, #1f5162) 15%, transparent);
+  background: var(--fluid-card-top);
+  border-color: var(--accent-primary, #0E6B74);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary, #0E6B74) 15%, transparent);
+}
+
+.isle-clear-pop-enter-active,
+.isle-clear-pop-leave-active {
+  transition: opacity 130ms ease, transform 180ms var(--motion-spring-snappy, cubic-bezier(0.2, 0.9, 0.22, 1.05));
+}
+.isle-clear-pop-enter-from,
+.isle-clear-pop-leave-to {
+  opacity: 0;
+  transform: scale(0.7);
 }
 
 .isle-search-input.is-disabled {
@@ -123,8 +136,8 @@ function onEsc(event: KeyboardEvent) {
 
 .isle-search-input input {
   flex: 1;
-  min-width: 0;
-  width: min(196px, 36vw);
+  min-width: 120px;
+  width: min(210px, 36vw);
   border: 0;
   outline: 0;
   background: transparent;
@@ -170,7 +183,9 @@ function onEsc(event: KeyboardEvent) {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .isle-search-input {
+  .isle-search-input,
+  .isle-clear-pop-enter-active,
+  .isle-clear-pop-leave-active {
     transition: none;
   }
 }

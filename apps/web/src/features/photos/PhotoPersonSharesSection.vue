@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
 import { Share2, Trash2, Users, Eye, X } from "lucide-vue-next";
 import AppleSelect from "../../components/ui/AppleSelect.vue";
 import IsleButton from "../../components/ui/IsleButton.vue";
+import IsleDisclosure from "../../components/ui/IsleDisclosure.vue";
 import IsleModal from "../../components/ui/IsleModal.vue";
 import PhotoLiveOverlay from "./PhotoLiveOverlay.vue";
 import { describeUserFacingError } from "../../api/userFacingError.ts";
@@ -41,6 +42,8 @@ const props = defineProps<{
   mediaPath: (path: string) => string;
 }>();
 
+const drawerRef = ref<HTMLElement | null>(null);
+const drawerOpen = ref(false);
 const shares = ref<PersonShareItem[]>([]);
 const members = ref<Array<{ id: number; username: string }>>([]);
 const selectedPersonId = ref("");
@@ -73,6 +76,20 @@ const memberOptions = computed(() =>
 const incomingShares = computed(() => shares.value.filter((s) => s.direction === "incoming"));
 const outgoingShares = computed(() => shares.value.filter((s) => s.direction === "outgoing"));
 
+async function openForPerson(personId: number) {
+  selectedPersonId.value = String(personId);
+  const person = props.persons.find((item) => item.id === personId);
+  if (person && !shareLabel.value.trim()) {
+    shareLabel.value = person.name ? `${person.name}的精选相册` : "";
+  }
+  drawerOpen.value = true;
+  await nextTick();
+  const reduced = typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  drawerRef.value?.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "nearest" });
+}
+
+defineExpose({ openForPerson });
+
 async function loadShares() {
   error.value = "";
   try {
@@ -82,6 +99,9 @@ async function loadShares() {
     }>(props.apiPath("/api/v2/photos/person-shares"));
     shares.value = Array.isArray(res.shares) ? res.shares : [];
     members.value = Array.isArray(res.members) ? res.members : [];
+    if (shares.value.length > 0 && !drawerOpen.value) {
+      drawerOpen.value = true;
+    }
     if (!selectedPersonId.value && props.persons.length > 0) {
       selectedPersonId.value = String(props.persons[0].id);
     }
@@ -185,58 +205,67 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="person-shares-panel">
-    <div class="person-shares-head">
-      <div>
-        <h4><Share2 :size="14" /> 宝宝 / 家人自动只读共享视图</h4>
-        <p>将指定人物自动聚类流只读授权给家庭成员，后续备份的新照片会自动出现，无需手动挑图或复制文件。</p>
-      </div>
-    </div>
+  <div ref="drawerRef" class="person-shares-drawer">
+    <IsleDisclosure
+      v-model="drawerOpen"
+      title="宝宝 / 家人自动只读共享视图"
+      subtitle="将指定人物自动聚类流只读授权给家庭成员，后续备份的新照片会自动出现，无需手动挑图或复制文件。"
+      :icon="Share2"
+    >
+      <template #meta>
+        <span v-if="shares.length" class="person-shares-count-pill">{{ shares.length }} 个共享视图</span>
+      </template>
 
-    <p v-if="error" class="form-error" role="alert">{{ error }}</p>
-    <p v-if="notice" class="gallery-message" role="status">{{ notice }}</p>
+      <div class="person-shares-body">
+        <p v-if="error" class="form-error" role="alert">{{ error }}</p>
+        <p v-if="notice" class="gallery-message" role="status">{{ notice }}</p>
 
-    <div v-if="persons.length > 0 && members.length > 0" class="person-share-create-bar">
-      <AppleSelect v-model="selectedPersonId" :options="personOptions" size="sm" aria-label="选择要共享的人物" />
-      <AppleSelect v-model="selectedMemberId" :options="memberOptions" size="sm" aria-label="选择接收的家庭成员" />
-      <input v-model="shareLabel" class="person-share-input" maxlength="40" placeholder="共享名称（如：宝宝成长相册）" />
-      <input v-model="sinceDate" type="date" class="person-share-input" title="可选：仅共享此日期之后拍摄的照片" />
-      <IsleButton variant="primary" size="sm" :loading="busy" @click="createShare">
-        <Share2 :size="13" /> 生成只读共享
-      </IsleButton>
-    </div>
+        <div v-if="persons.length > 0 && members.length > 0" class="person-share-create-bar">
+          <AppleSelect v-model="selectedPersonId" :options="personOptions" size="sm" aria-label="选择要共享的人物" />
+          <AppleSelect v-model="selectedMemberId" :options="memberOptions" size="sm" aria-label="选择接收的家庭成员" />
+          <input v-model="shareLabel" class="person-share-input" maxlength="40" placeholder="共享名称（如：宝宝成长相册）" />
+          <label class="person-share-date-field">
+            <span>起始日期（可选）</span>
+            <input v-model="sinceDate" type="date" class="person-share-input" title="可选：仅共享此日期之后拍摄的照片" />
+          </label>
+          <IsleButton variant="primary" size="sm" :loading="busy" @click="createShare">
+            <Share2 :size="13" /> 生成只读共享
+          </IsleButton>
+        </div>
 
-    <div v-if="incomingShares.length > 0" class="person-share-group">
-      <strong>家人共享给我的人物相册</strong>
-      <div class="person-share-cards">
-        <div v-for="item in incomingShares" :key="item.id" class="person-share-card">
-          <div>
-            <strong>{{ item.label }}</strong>
-            <small>来自 {{ item.ownerUsername || "家人" }} · {{ item.photoCount }} 张</small>
+        <div v-if="incomingShares.length > 0" class="person-share-group">
+          <strong>家人共享给我的人物相册</strong>
+          <div class="person-share-cards">
+            <div v-for="item in incomingShares" :key="item.id" class="person-share-card">
+              <div>
+                <strong>{{ item.label }}</strong>
+                <small>来自 {{ item.ownerUsername || "家人" }} · {{ item.photoCount }} 张</small>
+              </div>
+              <div class="person-share-card-actions">
+                <IsleButton variant="tonal" size="sm" @click="openShareGallery(item)"><Eye :size="13" /> 浏览</IsleButton>
+                <IsleButton variant="glass" size="sm" @click="removeShare(item)">退出</IsleButton>
+              </div>
+            </div>
           </div>
-          <div class="person-share-card-actions">
-            <IsleButton variant="tonal" size="sm" @click="openShareGallery(item)"><Eye :size="13" /> 浏览</IsleButton>
-            <IsleButton variant="glass" size="sm" @click="removeShare(item)">退出</IsleButton>
+        </div>
+
+        <div v-if="outgoingShares.length > 0" class="person-share-group">
+          <strong>我共享给家人的人物视图</strong>
+          <div class="person-share-cards">
+            <div v-for="item in outgoingShares" :key="item.id" class="person-share-card">
+              <div>
+                <strong>{{ item.label }}</strong>
+                <small>共享给 {{ item.memberUsername || "成员 #" + item.memberUserId }} · {{ item.photoCount }} 张 · 只读</small>
+              </div>
+              <div class="person-share-card-actions">
+                <IsleButton variant="glass" size="sm" @click="openShareGallery(item)"><Eye :size="13" /> 预览</IsleButton>
+                <IsleButton variant="danger" size="sm" @click="removeShare(item)"><Trash2 :size="13" /> 撤销</IsleButton>
+              </div>
+            </div>
           </div>
         </div>
       </div>
-    </div>
-
-    <div v-if="outgoingShares.length > 0" class="person-share-group">
-      <strong>我共享给家人的人物视图</strong>
-      <div class="person-share-cards">
-        <div v-for="item in outgoingShares" :key="item.id" class="person-share-card">
-          <div>
-            <strong>{{ item.label }}</strong>
-            <small>共享给 {{ item.memberUsername || "成员 #" + item.memberUserId }} · {{ item.photoCount }} 张 · 只读</small>
-          </div>
-          <div class="person-share-card-actions">
-            <IsleButton variant="glass" size="sm" @click="openShareGallery(item)"><Eye :size="13" /> 预览</IsleButton>
-            <IsleButton variant="danger" size="sm" @click="removeShare(item)"><Trash2 :size="13" /> 撤销</IsleButton>
-          </div>
-        </div>
-      </div>
-    </div>
+    </IsleDisclosure>
 
     <IsleModal v-if="activeShare" :title="activeShare.label" size="wide" @close="activeShare = null">
       <template #icon><Users :size="16" /></template>
@@ -282,35 +311,38 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.person-shares-panel {
+.person-shares-drawer {
   margin-top: 6px;
-  padding: 13px 15px;
-  border-radius: 14px;
-  border: 1px solid var(--fluid-card-border);
-  background: var(--fluid-card-fill);
-  box-shadow: var(--fluid-card-shadow);
+}
+.person-shares-count-pill {
+  padding: 2px 9px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent-primary) 12%, transparent);
+  color: var(--accent-primary);
+  font-size: 11.5px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.person-shares-body {
   display: flex;
   flex-direction: column;
   gap: 10px;
-}
-.person-shares-head h4 {
-  margin: 0 0 3px;
-  font-size: 13.5px;
-  font-weight: 650;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-.person-shares-head p {
-  margin: 0;
-  font-size: 12px;
-  color: var(--text-secondary);
 }
 .person-share-create-bar {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 6px;
+}
+.person-share-date-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.person-share-date-field span {
+  white-space: nowrap;
 }
 .person-share-input {
   height: 30px;
@@ -332,7 +364,7 @@ onMounted(() => {
 }
 .person-share-cards {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 250px), 1fr));
   gap: 8px;
 }
 .person-share-card {
@@ -344,18 +376,28 @@ onMounted(() => {
   border-radius: 10px;
   border: 1px solid var(--fluid-card-border);
   background: var(--fluid-card-item-fill);
+  min-width: 0;
+}
+.person-share-card > div:first-child {
+  min-width: 0;
+  flex: 1;
 }
 .person-share-card strong {
   display: block;
   font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .person-share-card small {
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
   color: var(--text-secondary);
 }
 .person-share-card-actions {
   display: flex;
   gap: 5px;
+  flex-shrink: 0;
 }
 .shared-assets-grid {
   display: grid;
@@ -410,9 +452,18 @@ onMounted(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 8px;
   margin-bottom: 8px;
 }
+.shared-asset-preview-bar strong {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .person-mini-close {
+  flex-shrink: 0;
   display: inline-flex;
   align-items: center;
   gap: 4px;

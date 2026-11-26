@@ -1,5 +1,5 @@
 /* Buttons and Controls: Warm Editorial Gallery Surfaces */
-.account-action, .file-actions > button, .create-folder-form button,
+.account-action, .file-actions > button,
 .gallery-modal-actions button, .circle-action {
   border: 1px solid var(--fluid-card-border);
   background: var(--fluid-card-fill);
@@ -45,12 +45,12 @@
   transform: scale(0.965);
   transition-duration: 95ms;
 }
-.account-action:hover, .file-actions > button:hover, .create-folder-form button:hover,
+.account-action:hover, .file-actions > button:hover,
 .gallery-modal-actions button:hover, .circle-action:hover {
   background: var(--fluid-card-hover);
   border-color: var(--fluid-card-border-strong);
 }
-.account-action:active, .file-actions > button:active, .create-folder-form button:active,
+.account-action:active, .file-actions > button:active,
 .gallery-modal-actions button:active, .circle-action:active {
   transform: scale(0.968);
   transition-duration: 95ms;
@@ -218,7 +218,7 @@
 }
 
 /* Gallery Pill Toggle Switch */
-input[type="checkbox"]:not(.file-checkbox):not(.isle-checkbox):not(.app-apple-switch):not(.app-sr-input):not(.isle-switch) {
+input[type="checkbox"]:not(.file-checkbox):not(.isle-checkbox):not(.app-apple-switch):not(.app-sr-input):not(.isle-switch):not(.file-spotlight-checkbox) {
   -webkit-appearance: none;
   appearance: none;
   width: 36px;
@@ -233,7 +233,7 @@ input[type="checkbox"]:not(.file-checkbox):not(.isle-checkbox):not(.app-apple-sw
   flex-shrink: 0;
   transition: background var(--motion-fast) ease, border-color var(--motion-fast) ease;
 }
-input[type="checkbox"]:not(.file-checkbox):not(.isle-checkbox):not(.app-apple-switch):not(.app-sr-input):not(.isle-switch)::after {
+input[type="checkbox"]:not(.file-checkbox):not(.isle-checkbox):not(.app-apple-switch):not(.app-sr-input):not(.isle-switch):not(.file-spotlight-checkbox)::after {
   content: "";
   position: absolute;
   top: 1.5px;
@@ -245,14 +245,22 @@ input[type="checkbox"]:not(.file-checkbox):not(.isle-checkbox):not(.app-apple-sw
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.22);
   transition: transform 220ms var(--motion-spring);
 }
-input[type="checkbox"]:not(.file-checkbox):not(.isle-checkbox):not(.app-apple-switch):not(.app-sr-input):not(.isle-switch):checked {
+input[type="checkbox"]:not(.file-checkbox):not(.isle-checkbox):not(.app-apple-switch):not(.app-sr-input):not(.isle-switch):not(.file-spotlight-checkbox):checked {
   background: var(--accent-primary-solid, var(--success));
   border-color: transparent;
 }
-input[type="checkbox"]:not(.file-checkbox):not(.isle-checkbox):not(.app-apple-switch):not(.app-sr-input):not(.isle-switch):checked::after {
+input[type="checkbox"]:not(.file-checkbox):not(.isle-checkbox):not(.app-apple-switch):not(.app-sr-input):not(.isle-switch):not(.file-spotlight-checkbox):checked::after {
   transform: translateX(15px);
 }
-.account-form label:has(> input[type="checkbox"]:not(.isle-checkbox)) {
+input[type="checkbox"]:not(.file-checkbox):not(.isle-checkbox):not(.app-apple-switch):not(.app-sr-input):not(.isle-switch):not(.file-spotlight-checkbox):disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+input[type="checkbox"]:not(.file-checkbox):not(.isle-checkbox):not(.app-apple-switch):not(.app-sr-input):not(.isle-switch):not(.file-spotlight-checkbox):focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+.account-form label:has(> input[type="checkbox"]:not(.isle-checkbox):not(.file-spotlight-checkbox)) {
   flex-direction: row;
   align-items: center;
   justify-content: space-between;
@@ -326,7 +334,22 @@ input[type="checkbox"].isle-checkbox:disabled {
 }
 .isle-tab-pane,
 .isle-subview-pane {
-  animation: isleTabReveal 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation: isleTabReveal 0.22s cubic-bezier(0.22, 1, 0.36, 1) backwards;
+}
+
+@keyframes isleTabEnter {
+  from {
+    opacity: 0.25;
+    transform: translate3d(0, 5px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+.isle-tab-entering {
+  animation: isleTabEnter 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .isle-batch-bar-enter-active,
@@ -374,7 +397,7 @@ input[type="checkbox"].isle-checkbox:disabled {
   color: var(--text-tertiary);
   flex-shrink: 0;
 }
-.hero-search-bar input {
+.hero-search-bar > input[type="search"] {
   flex: 1;
   min-width: 0;
   border: 0;
@@ -383,7 +406,7 @@ input[type="checkbox"].isle-checkbox:disabled {
   font-size: 13px;
   outline: 0;
 }
-.hero-search-bar button {
+.hero-search-bar > button {
   border: 0;
   border-radius: var(--radius-pill);
   background: linear-gradient(145deg, var(--accent-primary-solid-top, var(--accent-primary)), var(--accent-primary-solid, var(--accent-primary)));
@@ -420,9 +443,33 @@ input[type="checkbox"].isle-checkbox:disabled {
   height: 32px;
   padding: 2px 5px 2px 4px;
   border-radius: var(--radius-pill);
-  background: var(--fluid-card-fill);
-  border: 1px solid var(--fluid-card-border);
-  box-shadow: var(--fluid-item-card-shadow);
+  background: color-mix(in srgb, var(--text-primary) 4.5%, transparent);
+  border: 1px solid transparent;
+  box-shadow: none;
+  transition: background var(--motion-fast) ease, border-color var(--motion-fast) ease;
+}
+.user-capsule:hover {
+  background: color-mix(in srgb, var(--text-primary) 7.5%, transparent);
+  border-color: var(--fluid-card-border);
+}
+.user-capsule.is-offline {
+  border-color: color-mix(in srgb, var(--error) 36%, transparent);
+}
+.user-avatar-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.user-offline-dot {
+  position: absolute;
+  right: -2px;
+  top: -2px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--error);
+  border: 1.5px solid var(--fluid-card-top);
 }
 .user-capsule-profile {
   display: inline-flex;
@@ -500,6 +547,7 @@ input[type="checkbox"].isle-checkbox:disabled {
     transition: none;
   }
   .isle-tab-pane,
+  .isle-tab-entering,
   .isle-subview-pane,
   .dialog-backdrop {
     animation: none;

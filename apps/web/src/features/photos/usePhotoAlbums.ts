@@ -71,7 +71,8 @@ export function usePhotoAlbums<TAsset extends BatchAsset>(options: {
 
   const {
     folderAlbums, folderCursor, folderError, folderLoading, folderName,
-    folderTarget, activeFolderAlbum, folderAlbumOptions, refreshFolderAlbums,
+    folderTarget, activeFolderAlbum, folderCovers, folderCoverStatus,
+    folderAlbumOptions, refreshFolderAlbums, requestFolderCover,
     createFolderAlbum, deleteFolderAlbum, openFolderAlbum, addSelectedToFolder,
     cancelFolderAlbumRequests, resetFolderAlbumsForRootChange,
   } = usePhotoFolderAlbums({
@@ -535,12 +536,13 @@ export function usePhotoAlbums<TAsset extends BatchAsset>(options: {
 
   return {
     albums, privateAlbums, activeAlbum, activePrivateAlbum, folderAlbums, folderCursor,
-    folderError, folderLoading, folderName, folderTarget, activeFolderAlbum, sharedAlbumsError,
+    folderError, folderLoading, folderName, folderTarget, activeFolderAlbum, folderCovers,
+    folderCoverStatus, sharedAlbumsError,
     privateAlbumsError, sharedAlbumsLoading, privateAlbumsLoading, creating, albumName,
     addAlbum, addPrivateAlbum, creatingPrivate, editingPrivate, privateAlbumName, albumBusy,
     failedAlbumCovers, editingAlbum, folderAlbumOptions, albumOptions, privateAlbumOptions,
     currentPrivateAlbum, currentAlbum, refreshAlbums, refreshPrivateAlbums, refreshFolderAlbums,
-    createFolderAlbum, deleteFolderAlbum, openFolderAlbum, addSelectedToFolder, editPrivateAlbum,
+    requestFolderCover, createFolderAlbum, deleteFolderAlbum, openFolderAlbum, addSelectedToFolder, editPrivateAlbum,
     cancelPrivateAlbum, savePrivateAlbum, deletePrivateAlbum, addSelectedPrivate,
     removeSelectedPrivate, beginAlbumRename, cancelAlbumForm, createAlbum, deleteCurrentAlbum,
     addSelected, removeSelectedFromAlbum, openAlbumFromOverview, cancelAlbumRequests,

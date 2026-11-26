@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { Film, Play, X } from "lucide-vue-next";
+import { Star, X } from "lucide-vue-next";
+import CinemaHeroBanner from "./CinemaHeroBanner.vue";
+import CinemaPosterArtwork from "./CinemaPosterArtwork.vue";
 import { duration, percent } from "./useCinemaMetadata.ts";
 import { displayCinemaTitle, formatCinemaEpisodeCode, formatCinemaResumeLabel } from "./cinemaSubtitles.ts";
 import type { Movie } from "./cinemaTypes.ts";
@@ -37,43 +39,15 @@ function cardLabel(movie: Movie, prefix: string): string {
       <button type="button" class="account-action" @click="emit('retry-shelves')">重试</button>
     </div>
 
-    <div v-if="featuredFilm" class="cinema-featured" aria-label="影视库精选">
-      <div class="cinema-featured-poster">
-        <img
-          v-if="(featuredFilm.posterURL || posterReady(featuredFilm)) && !posterFailed[featuredFilm.id]"
-          :src="posterUrl(featuredFilm)"
-          :alt="displayCinemaTitle(featuredFilm) + '海报'"
-          loading="lazy"
-          decoding="async"
-          @error="emit('poster-error', featuredFilm.id)"
-        />
-        <Film v-else :size="48" />
-      </div>
-      <div class="cinema-featured-info">
-        <span class="cinema-featured-kicker">
-          {{ featuredFilm.position > 5 && !featuredFilm.completed ? "继续观看" : "来自你的影视库" }}
-        </span>
-        <h3>{{ displayCinemaTitle(featuredFilm) }}</h3>
-        <p class="cinema-featured-meta">
-          {{
-            [
-              featuredFilm.year || "",
-              featuredFilm.kind === "series"
-                ? (formatCinemaEpisodeCode(featuredFilm.season, featuredFilm.episode) || "剧集")
-                : "电影",
-              duration(featuredFilm.durationSeconds || featuredFilm.duration),
-            ].filter(Boolean).join(" · ")
-          }}
-        </p>
-        <p v-if="featuredFilm.overview" class="cinema-featured-description">{{ featuredFilm.overview }}</p>
-        <div class="cinema-featured-actions">
-          <button type="button" class="cinema-featured-play" @click="emit('open-film', featuredFilm, true)">
-            <Play :size="18" /> {{ featuredFilm.position > 5 && !featuredFilm.completed ? formatCinemaResumeLabel(featuredFilm) : "开始播放" }}
-          </button>
-          <button type="button" class="cinema-featured-detail" @click="emit('open-film', featuredFilm, false)">影片详情</button>
-        </div>
-      </div>
-    </div>
+    <CinemaHeroBanner
+      v-if="featuredFilm"
+      :film="featuredFilm"
+      :poster-ready="Boolean(featuredFilm.posterURL || posterReady(featuredFilm))"
+      :poster-src="posterUrl(featuredFilm)"
+      :poster-failed="Boolean(posterFailed[featuredFilm.id])"
+      @open-film="(film, autoStart) => emit('open-film', film, autoStart)"
+      @poster-error="(id) => emit('poster-error', id)"
+    />
 
     <div v-if="continueShelf.length" class="cinema-home-section">
       <div class="cinema-home-heading">
@@ -101,10 +75,17 @@ function cardLabel(movie: Movie, prefix: string): string {
                 decoding="async"
                 @error="emit('poster-error', movie.id)"
               />
-              <Film v-else :size="32" />
+              <CinemaPosterArtwork
+                v-else
+                :title="displayCinemaTitle(movie)"
+                :kind="movie.kind"
+                :year="movie.year"
+                :seed="movie.id"
+                compact
+              />
             </span>
             <strong :title="displayCinemaTitle(movie)">{{ displayCinemaTitle(movie) }}</strong>
-            <small>{{ formatCinemaResumeLabel(movie).replace(/^继续播放\s*/, "") || ("已看 " + percent(movie) + "%") }}</small>
+            <small class="cinema-tabular-meta">{{ formatCinemaResumeLabel(movie).replace(/^继续播放\s*/, "") || ("已看 " + percent(movie) + "%") }}</small>
             <span v-if="movie.overview" class="cinema-home-overview" :title="movie.overview">{{ movie.overview }}</span>
             <span class="cinema-home-progress"><span :style="{ width: percent(movie) + '%' }"></span></span>
           </button>
@@ -144,10 +125,20 @@ function cardLabel(movie: Movie, prefix: string): string {
               decoding="async"
               @error="emit('poster-error', movie.id)"
             />
-            <Film v-else :size="32" />
+            <CinemaPosterArtwork
+              v-else
+              :title="displayCinemaTitle(movie)"
+              :kind="movie.kind"
+              :year="movie.year"
+              :seed="movie.id"
+              compact
+            />
           </span>
           <strong :title="displayCinemaTitle(movie)">{{ displayCinemaTitle(movie) }}</strong>
-          <small>
+          <small class="cinema-tabular-meta">
+            <template v-if="movie.rating && movie.rating > 0">
+              <span class="cinema-inline-star"><Star :size="10" fill="currentColor" aria-hidden="true" /> {{ movie.rating.toFixed(1) }}</span> ·
+            </template>
             {{
               movie.kind === "series"
                 ? [formatCinemaEpisodeCode(movie.season, movie.episode) || "剧集", movie.year || "", duration(movie.durationSeconds || movie.duration)].filter(Boolean).join(" · ")

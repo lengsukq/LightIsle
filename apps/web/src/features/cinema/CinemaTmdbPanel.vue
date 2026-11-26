@@ -61,7 +61,7 @@ const emit = defineEmits<{
   <div class="cinema-admin-scrape-zone cinema-tmdb-card">
     <div class="cinema-tmdb-head">
       <div class="cinema-tmdb-title-row">
-        <strong>待匹配影片刮削与海报补全</strong>
+        <strong>待完善资料与海报补全</strong>
         <IsleHelpButton title="TMDB 刮削与候选规则" :items="tmdbHelpItems" />
       </div>
       <div class="cinema-tmdb-head-actions">

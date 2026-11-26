@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, watch } from "vue";
+import { onBeforeUnmount, ref, watch } from "vue";
 import { Volume2, VolumeX } from "lucide-vue-next";
 
 const props = defineProps<{
@@ -7,13 +7,22 @@ const props = defineProps<{
 }>();
 
 const playing = ref(false);
+const videoReady = ref(false);
 const muted = ref(false);
 const videoRef = ref<HTMLVideoElement | null>(null);
+let fadeOutTimer: number | undefined;
+
+function clearFadeTimer() {
+  if (fadeOutTimer !== undefined) {
+    window.clearTimeout(fadeOutTimer);
+    fadeOutTimer = undefined;
+  }
+}
 
 watch(
   () => props.liveVideoSrc,
   () => {
-    stopLive();
+    stopLive(true);
   },
 );
 
@@ -26,6 +35,8 @@ function toggleLive() {
 }
 
 function startLive() {
+  clearFadeTimer();
+  videoReady.value = false;
   playing.value = true;
   requestAnimationFrame(() => {
     const el = videoRef.value;
@@ -38,21 +49,49 @@ function startLive() {
       el.muted = true;
       void el.play().catch(() => {
         playing.value = false;
+        videoReady.value = false;
       });
     });
   });
 }
 
-function stopLive() {
-  playing.value = false;
-  const el = videoRef.value;
-  if (el) {
-    el.pause();
-    try {
-      el.currentTime = 0;
-    } catch {
-      /* Ignore seek reset before metadata loads */
+function onVideoReady() {
+  if (playing.value) {
+    videoReady.value = true;
+  }
+}
+
+function onVideoEnded() {
+  videoReady.value = false;
+  clearFadeTimer();
+  fadeOutTimer = window.setTimeout(() => {
+    fadeOutTimer = undefined;
+    playing.value = false;
+  }, 240);
+}
+
+function stopLive(immediate = false) {
+  clearFadeTimer();
+  videoReady.value = false;
+  const finish = () => {
+    playing.value = false;
+    const el = videoRef.value;
+    if (el) {
+      el.pause();
+      try {
+        el.currentTime = 0;
+      } catch {
+        /* Ignore seek reset before metadata loads */
+      }
     }
+  };
+  if (immediate) {
+    finish();
+  } else {
+    fadeOutTimer = window.setTimeout(() => {
+      fadeOutTimer = undefined;
+      finish();
+    }, 200);
   }
 }
 
@@ -62,6 +101,10 @@ function toggleMute() {
     videoRef.value.muted = muted.value;
   }
 }
+
+onBeforeUnmount(() => {
+  clearFadeTimer();
+});
 </script>
 
 <template>
@@ -71,10 +114,13 @@ function toggleMute() {
       ref="videoRef"
       :src="liveVideoSrc"
       class="live-photo-video"
+      :class="{ 'is-ready': videoReady }"
       playsinline
       preload="auto"
-      @ended="playing = false"
-      @error="playing = false"
+      @loadeddata="onVideoReady"
+      @playing="onVideoReady"
+      @ended="onVideoEnded"
+      @error="stopLive(true)"
     />
     <div class="live-photo-controls">
       <button
@@ -117,13 +163,18 @@ function toggleMute() {
   width: 100%;
   height: 100%;
   object-fit: contain;
-  background: #000;
+  background: transparent;
+  opacity: 0;
   pointer-events: auto;
+  transition: opacity 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.live-photo-video.is-ready {
+  opacity: 1;
 }
 .live-photo-controls {
   position: absolute;
-  top: 14px;
-  left: 14px;
+  top: var(--viewer-live-top, 14px);
+  left: max(16px, env(safe-area-inset-left));
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -135,18 +186,18 @@ function toggleMute() {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 5px 10px;
+  padding: 5px 11px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.24);
-  background: rgba(24, 24, 28, 0.68);
+  background: rgba(18, 18, 22, 0.72);
   color: #fff;
   font-size: 11.5px;
   font-weight: 700;
   letter-spacing: 0.5px;
-  backdrop-filter: blur(14px);
-  -webkit-backdrop-filter: blur(14px);
+  backdrop-filter: blur(16px) saturate(160%);
+  -webkit-backdrop-filter: blur(16px) saturate(160%);
   cursor: pointer;
-  transition: transform 0.15s var(--motion-spring, cubic-bezier(0.22, 1, 0.36, 1)), opacity 0.15s ease;
+  transition: transform 0.15s var(--motion-spring, cubic-bezier(0.22, 1, 0.36, 1)), opacity 0.15s ease, background-color 0.15s ease;
 }
 .live-pill-btn:active,
 .live-mute-btn:active {
@@ -154,10 +205,10 @@ function toggleMute() {
 }
 .live-pill-btn:hover,
 .live-mute-btn:hover {
-  background: rgba(40, 40, 48, 0.85);
+  background: rgba(34, 34, 40, 0.88);
 }
 .live-pill-btn.is-playing {
-  background: rgba(255, 204, 0, 0.92);
+  background: rgba(255, 204, 0, 0.94);
   color: #1c1c1e;
   border-color: rgba(255, 214, 10, 0.95);
 }
@@ -169,6 +220,7 @@ function toggleMute() {
   display: inline-block;
 }
 @media (prefers-reduced-motion: reduce) {
+  .live-photo-video,
   .live-pill-btn,
   .live-mute-btn {
     transition: none;

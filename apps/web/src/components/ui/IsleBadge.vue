@@ -44,6 +44,7 @@ defineSlots<{
   display: inline-flex;
   align-items: center;
   gap: 5px;
+  max-width: 100%;
   border-radius: var(--radius-full);
   font-weight: 550;
   line-height: 1;
@@ -51,6 +52,12 @@ defineSlots<{
   vertical-align: middle;
   box-sizing: border-box;
   transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.isle-badge-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* Sizes */

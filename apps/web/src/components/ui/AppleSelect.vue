@@ -1,6 +1,7 @@
 <script setup lang="ts" generic="T extends SelectOptionValue = SelectOptionValue">
 import { computed, ref, watch, onMounted, onUnmounted, nextTick } from "vue";
 import { ChevronsUpDown, Check } from "lucide-vue-next";
+import { pushModalLayer, type ModalLayerHandle } from "../../utils/modalStack.ts";
 
 export type SelectOptionValue = string | number | boolean | null;
 
@@ -44,6 +45,7 @@ const isOpen = ref(false);
 const highlightedIndex = ref(-1);
 const triggerRef = ref<HTMLButtonElement | null>(null);
 const menuRef = ref<HTMLElement | null>(null);
+let escLayer: ModalLayerHandle | null = null;
 
 const normalizedOptions = computed<Array<SelectOption<T>>>(() => {
   return (props.options || []).map((item) => {
@@ -274,6 +276,8 @@ onMounted(() => {
 });
 
 onUnmounted(() => {
+  escLayer?.dispose();
+  escLayer = null;
   cancelPositionUpdate();
   window.removeEventListener("pointerdown", handleGlobalPointerDown, true);
   window.removeEventListener("scroll", handleScrollOrResize, { capture: true });
@@ -281,7 +285,16 @@ onUnmounted(() => {
 });
 
 watch(isOpen, (open) => {
+  escLayer?.dispose();
+  escLayer = null;
   if (open) {
+    escLayer = pushModalLayer({
+      onEsc: () => {
+        closeMenu();
+        triggerRef.value?.focus();
+      },
+      lockScroll: false,
+    });
     nextTick(updatePosition);
   } else {
     cancelPositionUpdate();
@@ -439,7 +452,14 @@ watch(isOpen, (open) => {
   justify-content: center;
   color: var(--text-secondary, #635e57);
   flex-shrink: 0;
-  transition: color 0.15s ease;
+  transition:
+    color 0.15s ease,
+    transform 220ms var(--motion-spring-snappy, cubic-bezier(0.2, 0.9, 0.22, 1.05));
+}
+
+.apple-select-wrapper.is-open .apple-select-chevron {
+  transform: scale(1.08) rotate(180deg);
+  color: var(--accent-primary, #0E6B74);
 }
 
 .apple-select-trigger:hover:not(:disabled) {
@@ -484,17 +504,15 @@ watch(isOpen, (open) => {
 .apple-select-menu {
   box-sizing: border-box;
   overflow: hidden;
-  border-radius: 12px;
-  padding: 4px;
-  background-color: rgba(255, 253, 249, 0.96);
-  backdrop-filter: blur(22px) saturate(145%);
-  -webkit-backdrop-filter: blur(22px) saturate(145%);
-  border: 1px solid rgba(34, 29, 23, 0.11);
-  box-shadow:
-    0 14px 30px -6px rgba(34, 29, 23, 0.15),
-    0 3px 8px rgba(34, 29, 23, 0.06);
+  border-radius: var(--radius-md, 14px);
+  padding: 5px;
+  background-color: color-mix(in srgb, var(--surface-glass, rgba(252, 251, 249, 0.84)) 88%, var(--surface-elevated, #ffffff) 12%);
+  backdrop-filter: blur(26px) saturate(170%);
+  -webkit-backdrop-filter: blur(26px) saturate(170%);
+  border: 1px solid var(--fluid-card-border-strong, rgba(20, 19, 17, 0.14));
+  box-shadow: var(--shadow-float, 0 14px 30px -6px rgba(20, 19, 17, 0.15)), var(--fluid-card-rim, inset 0 1px 0 rgba(255, 255, 255, 0.72));
   font-family: inherit;
-  color: var(--text-primary, #181715);
+  color: var(--text-primary, #141413);
   outline: none;
   transform-origin: top center;
 }
@@ -504,12 +522,18 @@ watch(isOpen, (open) => {
 }
 
 [data-theme="dark"] .apple-select-menu {
-  background-color: rgba(29, 28, 26, 0.96);
-  border: 1px solid rgba(244, 241, 234, 0.13);
-  box-shadow:
-    0 16px 36px -4px rgba(0, 0, 0, 0.52),
-    0 4px 10px rgba(0, 0, 0, 0.28);
+  background-color: color-mix(in srgb, var(--surface-glass, rgba(22, 22, 20, 0.80)) 86%, var(--surface-elevated, #1c1c1a) 14%);
+  border: 1px solid var(--fluid-card-border-strong, rgba(244, 241, 234, 0.16));
+  box-shadow: var(--shadow-float, 0 16px 36px -4px rgba(0, 0, 0, 0.52)), var(--fluid-card-rim, inset 0 1px 0 rgba(255, 255, 255, 0.08));
   color: var(--text-primary, #f4f1ea);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .apple-select-menu {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background-color: var(--surface-elevated, #ffffff);
+  }
 }
 
 .apple-select-scroll {
@@ -577,18 +601,18 @@ watch(isOpen, (open) => {
 }
 
 .apple-select-option.is-highlighted:not(.is-disabled) {
-  background-color: var(--accent-primary, #1f5162);
-  color: #ffffff !important;
+  background-color: var(--accent-primary-solid, var(--accent-primary, #1f5162));
+  color: var(--on-accent-primary, #ffffff) !important;
 }
 
 [data-theme="dark"] .apple-select-option.is-highlighted:not(.is-disabled) {
-  background-color: #2c6b80;
-  color: #f8f6f1 !important;
+  background-color: var(--accent-primary-solid, var(--accent-primary, #13747E));
+  color: var(--on-accent-primary, #f8f6f1) !important;
 }
 
 .apple-select-option.is-highlighted:not(.is-disabled) .apple-select-check,
 .apple-select-option.is-highlighted:not(.is-disabled) .apple-select-option-hint {
-  color: rgba(255, 255, 255, 0.92) !important;
+  color: var(--on-accent-primary, #ffffff) !important;
 }
 
 .apple-select-option.is-selected:not(.is-highlighted) {
@@ -612,7 +636,7 @@ watch(isOpen, (open) => {
 .apple-select-up-enter-active {
   transition:
     opacity 0.18s cubic-bezier(0.22, 1, 0.36, 1),
-    transform 0.2s cubic-bezier(0.22, 1, 0.36, 1);
+    transform 0.22s var(--motion-spring-snappy, cubic-bezier(0.2, 0.9, 0.22, 1.05));
 }
 .apple-select-down-leave-active,
 .apple-select-up-leave-active {

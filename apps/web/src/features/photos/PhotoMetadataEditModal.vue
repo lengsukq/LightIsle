@@ -184,6 +184,7 @@ function submitReset() {
 }
 .meta-edit-field input[type="datetime-local"],
 .meta-edit-coords input {
+  box-sizing: border-box;
   width: 100%;
   padding: 8px 11px;
   border-radius: 10px;
@@ -194,8 +195,14 @@ function submitReset() {
 }
 .meta-edit-coords {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 160px), 1fr));
   gap: 8px;
+}
+@media (max-width: 480px) {
+  .meta-edit-field input[type="datetime-local"],
+  .meta-edit-coords input {
+    font-size: 16px;
+  }
 }
 .meta-edit-presets {
   display: flex;

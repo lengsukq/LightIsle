@@ -19,6 +19,18 @@ const failureLabels = new Map<string, string>([
   ["upload_cleanup_status_unavailable", "无法记录清理状态，请检查上传和预占"],
 ]);
 
+const kindLabels = new Map<string, string>([
+  ["gallery", "图库索引"],
+  ["cinema", "影视索引"],
+  ["uploads", "上传清理"],
+  ["trash", "旧版回收站清理"],
+  ["backup", "文件备份"],
+]);
+
+export function taskKindLabel(kind: string): string {
+  return kindLabels.get(kind) ?? (kind || "后台任务");
+}
+
 export function taskOperationLabel(operation: string): string {
   if (operation === "scan") return "媒体扫描";
   if (operation === "reconcile") return "增量核对";

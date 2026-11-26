@@ -138,6 +138,7 @@ const defaultIcon = computed(() => {
 .isle-banner {
   display: flex;
   align-items: flex-start;
+  flex-wrap: wrap;
   gap: 10px;
   padding: 10px 14px;
   border-radius: 12px;
@@ -165,7 +166,7 @@ const defaultIcon = computed(() => {
 }
 
 .isle-banner-content {
-  flex: 1;
+  flex: 1 1 180px;
   min-width: 0;
   font-size: 12.5px;
   line-height: 1.5;
@@ -246,8 +247,8 @@ const defaultIcon = computed(() => {
 }
 
 .isle-banner.type-info {
-  background: color-mix(in srgb, #2563eb 7%, var(--fluid-card-top, #ffffff));
-  border-color: color-mix(in srgb, #2563eb 24%, var(--fluid-card-border));
+  background: color-mix(in srgb, var(--accent-primary, #2563eb) 7%, var(--fluid-card-top, #ffffff));
+  border-color: color-mix(in srgb, var(--accent-primary, #2563eb) 24%, var(--fluid-card-border));
   color: var(--text-primary);
 }
 .isle-banner.type-info .isle-banner-icon-col,
@@ -256,46 +257,42 @@ const defaultIcon = computed(() => {
 }
 
 .isle-banner.type-success {
-  background: color-mix(in srgb, #10b981 7%, var(--fluid-card-top, #ffffff));
-  border-color: color-mix(in srgb, #10b981 24%, var(--fluid-card-border));
+  background: color-mix(in srgb, var(--success, #10b981) 8%, var(--fluid-card-top, #ffffff));
+  border-color: color-mix(in srgb, var(--success, #10b981) 24%, var(--fluid-card-border));
   color: var(--text-primary);
 }
-.isle-banner.type-success .isle-banner-icon-col {
-  color: #10b981;
-}
+.isle-banner.type-success .isle-banner-icon-col,
 .isle-banner.type-success .isle-banner-title {
-  color: #059669;
+  color: var(--success, #059669);
 }
 
 .isle-banner.type-warning {
-  background: color-mix(in srgb, #f59e0b 8%, var(--fluid-card-top, #ffffff));
-  border-color: color-mix(in srgb, #f59e0b 26%, var(--fluid-card-border));
+  background: color-mix(in srgb, var(--warning, #f59e0b) 9%, var(--fluid-card-top, #ffffff));
+  border-color: color-mix(in srgb, var(--warning, #f59e0b) 28%, var(--fluid-card-border));
   color: var(--text-primary);
 }
 .isle-banner.type-warning .isle-banner-icon-col,
 .isle-banner.type-warning .isle-banner-title {
-  color: #d97706;
+  color: var(--warning, #d97706);
 }
 
 .isle-banner.type-error {
-  background: color-mix(in srgb, #ef4444 7%, var(--fluid-card-top, #ffffff));
-  border-color: color-mix(in srgb, #ef4444 26%, var(--fluid-card-border));
+  background: color-mix(in srgb, var(--error, #ef4444) 8%, var(--fluid-card-top, #ffffff));
+  border-color: color-mix(in srgb, var(--error, #ef4444) 28%, var(--fluid-card-border));
   color: var(--text-primary);
 }
-.isle-banner.type-error .isle-banner-icon-col {
-  color: #ef4444;
-}
+.isle-banner.type-error .isle-banner-icon-col,
 .isle-banner.type-error .isle-banner-title {
-  color: #dc2626;
+  color: var(--error, #dc2626);
 }
 
 .isle-banner.type-offline {
-  background: color-mix(in srgb, #64748b 8%, var(--fluid-card-top, #ffffff));
-  border-color: color-mix(in srgb, #64748b 26%, var(--fluid-card-border));
+  background: color-mix(in srgb, var(--text-secondary, #64748b) 8%, var(--fluid-card-top, #ffffff));
+  border-color: color-mix(in srgb, var(--text-secondary, #64748b) 26%, var(--fluid-card-border));
   color: var(--text-primary);
 }
 .isle-banner.type-offline .isle-banner-icon-col {
-  color: #64748b;
+  color: var(--text-secondary, #64748b);
 }
 .isle-banner.type-offline .isle-banner-title {
   color: var(--text-primary);

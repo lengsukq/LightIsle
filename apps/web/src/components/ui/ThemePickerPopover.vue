@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import { Check, Moon, Sun } from "lucide-vue-next";
+import { pushModalLayer, type ModalLayerHandle } from "../../utils/modalStack.ts";
 import type { Theme, ThemePresetId, ThemePresetMeta } from "../../styles/theme.ts";
 
 const props = defineProps<{
@@ -15,46 +16,127 @@ const emit = defineEmits<{
 }>();
 
 const open = ref(false);
-const rootEl = ref<HTMLElement | null>(null);
+const triggerEl = ref<HTMLButtonElement | null>(null);
+const popoverEl = ref<HTMLElement | null>(null);
+const popoverStyle = ref<Record<string, string | number>>({
+  position: "fixed",
+  top: "64px",
+  right: "12px",
+  zIndex: 99999,
+});
+let escLayer: ModalLayerHandle | null = null;
+let rafId: number | null = null;
 
 const activePreset = computed(
   () => props.presets.find((item) => item.id === props.preset) ?? props.presets[0],
 );
 
+function updatePosition() {
+  if (!open.value || !triggerEl.value || typeof window === "undefined") return;
+  const rect = triggerEl.value.getBoundingClientRect();
+  const vw = window.innerWidth;
+  const vh = window.innerHeight;
+  const width = Math.min(336, vw - 24);
+  let left = rect.right - width;
+  if (left < 12) left = 12;
+  if (left + width > vw - 12) left = Math.max(12, vw - width - 12);
+  const top = Math.min(Math.max(12, rect.bottom + 10), Math.max(12, vh - 120));
+  popoverStyle.value = {
+    position: "fixed",
+    top: `${Math.round(top)}px`,
+    left: `${Math.round(left)}px`,
+    width: `${Math.round(width)}px`,
+    maxHeight: `${Math.max(180, Math.round(vh - top - 14))}px`,
+    zIndex: 99999,
+  };
+}
+
+function closePopover(restoreFocus = false) {
+  if (!open.value) return;
+  open.value = false;
+  if (restoreFocus) {
+    void nextTick(() => triggerEl.value?.focus());
+  }
+}
+
 function selectPreset(id: ThemePresetId) {
   emit("select-preset", id);
-  open.value = false;
+  closePopover(true);
 }
 
 function handlePointerDown(event: PointerEvent) {
   if (!open.value) return;
   const target = event.target as Node | null;
-  if (target && rootEl.value && !rootEl.value.contains(target)) {
-    open.value = false;
+  if (triggerEl.value?.contains(target) || popoverEl.value?.contains(target)) return;
+  closePopover(false);
+}
+
+function schedulePosition() {
+  if (!open.value || rafId !== null) return;
+  rafId = window.requestAnimationFrame(() => {
+    rafId = null;
+    updatePosition();
+  });
+}
+
+function onPopoverKeydown(event: KeyboardEvent) {
+  if (!popoverEl.value) return;
+  const items = Array.from(
+    popoverEl.value.querySelectorAll<HTMLElement>('button[role="menuitemradio"]:not([disabled])'),
+  );
+  if (!items.length) return;
+  const idx = items.indexOf(document.activeElement as HTMLElement);
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    items[(idx + 1 + items.length) % items.length].focus();
+  } else if (event.key === "ArrowUp") {
+    event.preventDefault();
+    items[(idx <= 0 ? items.length - 1 : idx - 1)].focus();
+  } else if (event.key === "Home") {
+    event.preventDefault();
+    items[0].focus();
+  } else if (event.key === "End") {
+    event.preventDefault();
+    items[items.length - 1].focus();
   }
 }
 
-function handleKeydown(event: KeyboardEvent) {
-  if (open.value && event.key === "Escape") {
-    event.stopPropagation();
-    open.value = false;
+watch(open, (isOpen) => {
+  escLayer?.dispose();
+  escLayer = null;
+  if (isOpen) {
+    escLayer = pushModalLayer({
+      onEsc: () => closePopover(true),
+      lockScroll: false,
+    });
+    updatePosition();
+    void nextTick(updatePosition);
+  } else if (rafId !== null) {
+    window.cancelAnimationFrame(rafId);
+    rafId = null;
   }
-}
+});
 
 onMounted(() => {
   window.addEventListener("pointerdown", handlePointerDown, true);
-  window.addEventListener("keydown", handleKeydown);
+  window.addEventListener("resize", schedulePosition, { passive: true });
+  window.addEventListener("scroll", schedulePosition, { capture: true, passive: true });
 });
 
 onUnmounted(() => {
+  escLayer?.dispose();
+  escLayer = null;
+  if (rafId !== null) window.cancelAnimationFrame(rafId);
   window.removeEventListener("pointerdown", handlePointerDown, true);
-  window.removeEventListener("keydown", handleKeydown);
+  window.removeEventListener("resize", schedulePosition);
+  window.removeEventListener("scroll", schedulePosition, { capture: true });
 });
 </script>
 
 <template>
-  <div ref="rootEl" class="theme-picker-root">
+  <div class="theme-picker-root">
     <button
+      ref="triggerEl"
       class="atmosphere-capsule"
       type="button"
       :aria-expanded="open"
@@ -63,21 +145,28 @@ onUnmounted(() => {
       :title="'切换主题风格（当前：' + (activePreset?.name ?? '温润画廊') + '）'"
       @click="open = !open"
     >
-      <span class="atmosphere-icon">{{ activePreset?.icon }}</span>
+      <span class="atmosphere-swatch" aria-hidden="true">
+        <span :style="{ background: activePreset?.swatches[theme][2] }" />
+        <span :style="{ background: activePreset?.swatches[theme][3] }" />
+      </span>
       <span class="atmosphere-text">{{ activePreset?.name }}</span>
     </button>
 
-    <Transition name="isle-overlay-fade">
-      <div
-        v-if="open"
-        class="theme-picker-popover"
-        role="menu"
-        aria-label="选择主题风格"
-      >
+    <Teleport to="body">
+      <Transition name="isle-pop">
+        <div
+          v-if="open"
+          ref="popoverEl"
+          class="theme-picker-popover"
+          :style="popoverStyle"
+          role="menu"
+          aria-label="选择主题风格"
+          @keydown="onPopoverKeydown"
+        >
         <div class="theme-picker-head">
           <div>
-            <strong>主题风格</strong>
-            <small>与 Flutter 客户端 5 套主题同步</small>
+            <strong>界面氛围</strong>
+            <small>5 套空间主题与外观切换</small>
           </div>
           <button
             type="button"
@@ -86,7 +175,7 @@ onUnmounted(() => {
           >
             <Sun v-if="theme === 'dark'" :size="13" />
             <Moon v-else :size="13" />
-            <span>{{ theme === "dark" ? "切浅色" : "切深色" }}</span>
+            <span>{{ theme === "dark" ? "浅色" : "深色" }}</span>
           </button>
         </div>
 
@@ -111,8 +200,8 @@ onUnmounted(() => {
             </span>
             <span class="theme-preset-copy">
               <span class="theme-preset-title">
-                <span>{{ item.icon }} {{ item.name }}</span>
-                <span class="theme-preset-badge">{{ item.badge }}</span>
+                <span>{{ item.name }}</span>
+                <span v-if="item.id === 'warm_gallery'" class="theme-preset-badge">{{ item.badge }}</span>
               </span>
               <small>{{ item.tagline }}</small>
             </span>
@@ -124,7 +213,8 @@ onUnmounted(() => {
           </button>
         </div>
       </div>
-    </Transition>
+      </Transition>
+    </Teleport>
   </div>
 </template>
 
@@ -135,17 +225,62 @@ onUnmounted(() => {
   align-items: center;
 }
 
+.atmosphere-swatch {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.atmosphere-swatch > span {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1px solid rgba(128, 128, 128, 0.25);
+}
+
+.atmosphere-swatch > span + span {
+  margin-left: -3px;
+}
+
 .theme-picker-popover {
-  position: absolute;
-  top: calc(100% + 10px);
-  right: 0;
-  width: min(336px, calc(100vw - 28px));
+  box-sizing: border-box;
+  overflow-y: auto;
   padding: 13px;
   border-radius: var(--radius-lg, 18px);
-  background: var(--fluid-card-fill, var(--surface-elevated));
+  background: color-mix(in srgb, var(--surface-glass, rgba(252, 251, 249, 0.84)) 86%, var(--surface-elevated, #ffffff) 14%);
+  -webkit-backdrop-filter: blur(26px) saturate(170%);
+  backdrop-filter: blur(26px) saturate(170%);
   border: var(--theme-border-width, 1px) solid var(--fluid-card-border-strong, var(--stroke-strong));
-  box-shadow: var(--shadow-float, 0 20px 44px rgba(0, 0, 0, 0.16));
+  box-shadow: var(--shadow-float, 0 20px 44px rgba(0, 0, 0, 0.16)), var(--fluid-card-rim, inset 0 1px 0 rgba(255, 255, 255, 0.72));
+  transform-origin: top right;
   z-index: var(--z-dropdown, 99999);
+}
+
+.isle-pop-enter-active {
+  transition:
+    opacity 190ms cubic-bezier(0.22, 1, 0.36, 1),
+    transform 230ms var(--motion-spring-snappy, cubic-bezier(0.2, 0.9, 0.22, 1.05));
+}
+.isle-pop-leave-active {
+  transition:
+    opacity 130ms var(--motion-exit, cubic-bezier(0.32, 0, 0.67, 0)),
+    transform 130ms var(--motion-exit, cubic-bezier(0.32, 0, 0.67, 0));
+}
+.isle-pop-enter-from {
+  opacity: 0;
+  transform: scale(0.94) translate3d(0, -6px, 0);
+}
+.isle-pop-leave-to {
+  opacity: 0;
+  transform: scale(0.97) translate3d(0, -3px, 0);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .theme-picker-popover {
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+    background: var(--surface-elevated);
+  }
 }
 
 .theme-picker-head {
@@ -280,7 +415,9 @@ onUnmounted(() => {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .theme-preset-option {
+  .theme-preset-option,
+  .isle-pop-enter-active,
+  .isle-pop-leave-active {
     transition: none;
   }
 }

@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from "vue";
-import { Users, RefreshCw, Pencil, EyeOff, Eye, GitMerge } from "lucide-vue-next";
+import { computed, nextTick, onMounted, ref, watch } from "vue";
+import { Users, RefreshCw, Pencil, EyeOff, Eye, GitMerge, Share2 } from "lucide-vue-next";
+import IsleActionMenu from "../../components/ui/IsleActionMenu.vue";
 import IsleEmpty from "../../components/ui/IsleEmpty.vue";
 import IsleButton from "../../components/ui/IsleButton.vue";
+import IsleModal from "../../components/ui/IsleModal.vue";
 import AppleSelect from "../../components/ui/AppleSelect.vue";
 import PhotoPersonSharesSection from "./PhotoPersonSharesSection.vue";
 import { describeUserFacingError } from "../../api/userFacingError.ts";
@@ -24,12 +26,15 @@ const persons = ref<PersonSummary[]>([]);
 const loading = ref(false);
 const error = ref("");
 const includeHidden = ref(false);
-const editingId = ref<number | null>(null);
+const editingPerson = ref<PersonSummary | null>(null);
 const editingName = ref("");
-const mergingSourceId = ref<number | null>(null);
+const renameInputRef = ref<HTMLInputElement | null>(null);
+const mergingSource = ref<PersonSummary | null>(null);
 const mergeTargetId = ref<string>("");
 const busy = ref(false);
 const failedAvatars = ref<Record<number, boolean>>({});
+const loadedAvatars = ref<Record<number, boolean>>({});
+const sharesSectionRef = ref<{ openForPerson: (personId: number) => Promise<void> } | null>(null);
 
 async function loadPersons() {
   loading.value = true;
@@ -46,18 +51,23 @@ async function loadPersons() {
 }
 
 function beginRename(p: PersonSummary) {
-  editingId.value = p.id;
+  editingPerson.value = p;
   editingName.value = p.name;
-  mergingSourceId.value = null;
+  mergingSource.value = null;
+  void nextTick(() => {
+    renameInputRef.value?.focus();
+    renameInputRef.value?.select();
+  });
 }
 
-async function saveRename(p: PersonSummary) {
-  if (busy.value) return;
+async function saveRename() {
+  const p = editingPerson.value;
+  if (!p || busy.value) return;
   busy.value = true;
   error.value = "";
   try {
     await props.api(props.apiPath(`/api/v2/photos/persons/${p.id}`), "PATCH", { name: editingName.value.trim() });
-    editingId.value = null;
+    editingPerson.value = null;
     await loadPersons();
   } catch (e) {
     error.value = "保存姓名失败：" + describeUserFacingError(e);
@@ -82,7 +92,7 @@ async function toggleHidden(p: PersonSummary) {
 
 const mergeTargetOptions = computed(() =>
   persons.value
-    .filter((item) => item.id !== mergingSourceId.value)
+    .filter((item) => item.id !== mergingSource.value?.id)
     .map((other) => ({
       value: String(other.id),
       label: `合并到：${other.name || "未命名 #" + other.id}`,
@@ -91,26 +101,40 @@ const mergeTargetOptions = computed(() =>
 );
 
 function beginMerge(p: PersonSummary) {
-  mergingSourceId.value = mergingSourceId.value === p.id ? null : p.id;
-  editingId.value = null;
+  mergingSource.value = p;
+  editingPerson.value = null;
   const candidate = persons.value.find((other) => other.id !== p.id);
   mergeTargetId.value = candidate ? String(candidate.id) : "";
 }
 
-async function confirmMerge(source: PersonSummary) {
+async function confirmMerge() {
+  const source = mergingSource.value;
   const targetId = Number(mergeTargetId.value);
-  if (!targetId || targetId === source.id || busy.value) return;
+  if (!source || !targetId || targetId === source.id || busy.value) return;
   busy.value = true;
   error.value = "";
   try {
     await props.api(props.apiPath(`/api/v2/photos/persons/${source.id}/merge`), "POST", { targetPersonId: targetId });
-    mergingSourceId.value = null;
+    mergingSource.value = null;
     await loadPersons();
   } catch (e) {
     error.value = "合并人物失败：" + describeUserFacingError(e);
   } finally {
     busy.value = false;
   }
+}
+
+function onAvatarLoad(event: Event, id: number) {
+  const img = event.target as HTMLImageElement | null;
+  if (img && img.naturalWidth === 0) {
+    failedAvatars.value = { ...failedAvatars.value, [id]: true };
+    return;
+  }
+  loadedAvatars.value = { ...loadedAvatars.value, [id]: true };
+}
+
+function openShare(person: PersonSummary) {
+  void sharesSectionRef.value?.openForPerson(person.id);
 }
 
 watch(() => [props.active, props.rootKey, includeHidden.value], ([isActive]) => {
@@ -157,6 +181,24 @@ onMounted(() => {
         class="person-card"
         :class="{ 'is-hidden': person.hidden }"
       >
+        <div class="person-card-menu" @click.stop>
+          <IsleActionMenu size="sm" align="right" :aria-label="'管理人物：' + (person.name || '未命名人物')">
+            <button type="button" :disabled="busy" @click="beginRename(person)">
+              <Pencil :size="14" /> 命名 / 改名
+            </button>
+            <button v-if="persons.length > 1" type="button" :disabled="busy" @click="beginMerge(person)">
+              <GitMerge :size="14" /> 合并重复聚类
+            </button>
+            <button type="button" :disabled="busy" @click="openShare(person)">
+              <Share2 :size="14" /> 共享此人物视图
+            </button>
+            <button type="button" :disabled="busy" @click="toggleHidden(person)">
+              <Eye v-if="person.hidden" :size="14" /><EyeOff v-else :size="14" />
+              {{ person.hidden ? "恢复显示" : "隐藏人物" }}
+            </button>
+          </IsleActionMenu>
+        </div>
+
         <button
           type="button"
           class="person-avatar-btn"
@@ -168,67 +210,61 @@ onMounted(() => {
               v-if="person.coverFaceId && !failedAvatars[person.id]"
               :src="mediaPath('/api/v2/photos/faces/' + person.coverFaceId + '/thumbnail')"
               :alt="person.name || '人物头像'"
+              :class="{ 'is-loaded': loadedAvatars[person.id] }"
               loading="lazy"
               decoding="async"
+              @load="onAvatarLoad($event, person.id)"
               @error="failedAvatars[person.id] = true"
             />
-            <Users v-else :size="26" />
+            <Users v-else :size="28" />
           </span>
           <strong class="person-name">{{ person.name || "点击命名人物" }}</strong>
           <small class="person-count">{{ person.photoCount }} 张照片<span v-if="person.hidden"> · 已隐藏</span></small>
         </button>
+      </div>
+    </div>
 
-        <div class="person-actions">
-          <button type="button" class="person-mini-btn" :disabled="busy" title="修改姓名" @click="beginRename(person)">
-            <Pencil :size="11" /> 命名
-          </button>
-          <button
-            v-if="persons.length > 1"
-            type="button"
-            class="person-mini-btn"
-            :disabled="busy"
-            title="与同一人的其他分组聚类合并"
-            @click="beginMerge(person)"
-          >
-            <GitMerge :size="11" /> 合并
-          </button>
-          <button type="button" class="person-mini-btn" :disabled="busy" @click="toggleHidden(person)">
-            <Eye v-if="person.hidden" :size="11" /><EyeOff v-else :size="11" />
-            {{ person.hidden ? "恢复" : "隐藏" }}
-          </button>
-        </div>
-
-        <form v-if="editingId === person.id" class="person-inline-form" @submit.prevent="saveRename(person)">
+    <IsleModal v-if="editingPerson" title="命名人物" size="sm" @close="editingPerson = null">
+      <template #icon><Pencil :size="16" /></template>
+      <form class="person-modal-form" @submit.prevent="saveRename">
+        <label class="person-modal-field">
+          <span>姓名或称呼</span>
           <input
+            ref="renameInputRef"
             v-model="editingName"
             maxlength="40"
             placeholder="例如：宝宝、妈妈…"
             aria-label="人物姓名"
           />
-          <div class="person-inline-btns">
-            <button type="submit" :disabled="busy">保存</button>
-            <button type="button" class="secondary" @click="editingId = null">取消</button>
-          </div>
-        </form>
+        </label>
+        <div class="person-modal-actions">
+          <IsleButton variant="glass" size="sm" :disabled="busy" @click="editingPerson = null">取消</IsleButton>
+          <IsleButton type="submit" variant="primary" size="sm" :loading="busy">保存</IsleButton>
+        </div>
+      </form>
+    </IsleModal>
 
-        <div v-if="mergingSourceId === person.id" class="person-inline-form">
-          <AppleSelect
-            v-model="mergeTargetId"
-            :options="mergeTargetOptions"
-            :disabled="busy"
-            size="sm"
-            block
-            aria-label="选择合并目标人物"
-          />
-          <div class="person-inline-btns">
-            <button type="button" :disabled="busy || !mergeTargetId" @click="confirmMerge(person)">确认合并</button>
-            <button type="button" class="secondary" @click="mergingSourceId = null">取消</button>
-          </div>
+    <IsleModal v-if="mergingSource" :title="`合并「${mergingSource.name || '未命名人物 #' + mergingSource.id}」`" size="sm" @close="mergingSource = null">
+      <template #icon><GitMerge :size="16" /></template>
+      <div class="person-modal-form">
+        <p class="person-modal-hint">将这个聚类下的所有人脸与照片记录合并到同一人名下，原照片不会有任何移动或修改。</p>
+        <AppleSelect
+          v-model="mergeTargetId"
+          :options="mergeTargetOptions"
+          :disabled="busy"
+          size="sm"
+          block
+          aria-label="选择合并目标人物"
+        />
+        <div class="person-modal-actions">
+          <IsleButton variant="glass" size="sm" :disabled="busy" @click="mergingSource = null">取消</IsleButton>
+          <IsleButton variant="primary" size="sm" :loading="busy" :disabled="!mergeTargetId" @click="confirmMerge">确认合并</IsleButton>
         </div>
       </div>
-    </div>
+    </IsleModal>
 
     <PhotoPersonSharesSection
+      ref="sharesSectionRef"
       :active="active"
       :root-key="rootKey"
       :persons="persons"
@@ -277,35 +313,58 @@ onMounted(() => {
 }
 .people-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
-  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 144px), 1fr));
+  gap: 12px;
 }
 .person-card {
+  position: relative;
+  min-width: 0;
   display: flex;
   flex-direction: column;
   align-items: center;
-  padding: 14px 10px 11px;
-  border-radius: 14px;
+  padding: 16px 10px 14px;
+  border-radius: 16px;
   background: var(--fluid-card-fill);
   border: 1px solid var(--fluid-card-border);
   box-shadow: var(--fluid-item-card-shadow);
-  gap: 8px;
   content-visibility: auto;
-  contain-intrinsic-size: 160px 176px;
-  transition: border-color var(--motion-fast) ease, background-color var(--motion-fast) ease;
+  contain-intrinsic-size: 150px 158px;
+  transition: transform var(--motion-fast) var(--motion-spring), border-color var(--motion-fast) ease, background-color var(--motion-fast) ease;
 }
 .person-card:hover {
+  transform: translateY(-2px);
   border-color: var(--fluid-card-border-strong, var(--accent-primary));
   background: var(--fluid-card-hover);
 }
 .person-card.is-hidden {
-  opacity: 0.65;
+  opacity: 0.62;
+}
+.person-card-menu {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 3;
+  opacity: 0;
+  transform: translate3d(0, -2px, 0);
+  transition: opacity 0.16s ease, transform 0.18s ease;
+}
+.person-card:hover .person-card-menu,
+.person-card:focus-within .person-card-menu,
+.person-card-menu:has([aria-expanded="true"]) {
+  opacity: 1;
+  transform: translate3d(0, 0, 0);
+}
+@media (hover: none) {
+  .person-card-menu {
+    opacity: 1;
+    transform: none;
+  }
 }
 .person-avatar-btn {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 6px;
+  gap: 7px;
   background: none;
   border: none;
   color: inherit;
@@ -314,95 +373,81 @@ onMounted(() => {
   padding: 0;
 }
 .person-avatar-ring {
-  width: 72px;
-  height: 72px;
+  width: 84px;
+  height: 84px;
   border-radius: 50%;
   overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
   background: var(--fluid-card-item-fill);
-  border: 1px solid var(--fluid-card-border);
+  border: 1.5px solid var(--fluid-card-border-strong, var(--fluid-card-border));
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
   color: var(--text-secondary);
 }
 .person-avatar-ring img {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  opacity: 0;
+  transition: opacity 0.28s ease, transform 0.32s cubic-bezier(0.22, 1, 0.36, 1);
+}
+.person-avatar-ring img.is-loaded {
+  opacity: 1;
+}
+.person-card:hover .person-avatar-ring img.is-loaded {
+  transform: scale(1.04);
 }
 .person-name {
-  font-size: 13px;
-  font-weight: 600;
-  max-width: 140px;
+  font-size: 13.5px;
+  font-weight: 620;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .person-count {
   font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
   color: var(--text-secondary);
 }
-.person-actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 5px;
+.person-modal-form {
+  display: grid;
+  gap: 12px;
 }
-.person-mini-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
-  padding: 3px 7px;
-  font-size: 11.5px;
-  border-radius: 7px;
-  border: 1px solid var(--fluid-card-border);
-  background: var(--fluid-card-item-fill);
-  color: var(--text-secondary);
-  cursor: pointer;
-}
-.person-mini-btn:hover:not(:disabled) {
-  color: var(--text-primary);
-  border-color: var(--fluid-card-border-strong, var(--accent-primary));
-}
-.person-inline-form {
-  display: flex;
-  flex-direction: column;
+.person-modal-field {
+  display: grid;
   gap: 6px;
-  width: 100%;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text-primary);
 }
-.person-inline-form input {
+.person-modal-field input {
   width: 100%;
-  height: 30px;
-  padding: 0 8px;
-  font-size: 12px;
-  border-radius: 7px;
+  height: 36px;
+  padding: 0 11px;
+  font-size: 13px;
+  border-radius: 10px;
   border: 1px solid var(--fluid-card-border);
   background: var(--fluid-card-item-fill);
   color: inherit;
   box-sizing: border-box;
 }
-.person-inline-btns {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 5px;
+.person-modal-hint {
+  margin: 0;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-secondary);
 }
-.person-inline-form button {
-  padding: 5px 8px;
-  font-size: 11.5px;
-  font-weight: 600;
-  border-radius: 7px;
-  border: 1px solid transparent;
-  background: var(--accent-primary, #2563eb);
-  color: #fff;
-  cursor: pointer;
-}
-.person-inline-form button.secondary {
-  background: var(--fluid-card-item-fill);
-  border-color: var(--fluid-card-border);
-  color: var(--text-primary);
+.person-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 @media (prefers-reduced-motion: reduce) {
-  .person-card {
+  .person-card,
+  .person-card-menu,
+  .person-avatar-ring img {
     transition: none;
   }
 }

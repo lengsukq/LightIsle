@@ -12,6 +12,7 @@ const props = defineProps<{
   subtitleOffset: number;
   localSubtitleName: string;
   localSubtitleError: string;
+  flipDown?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -56,7 +57,7 @@ function onFileSelected(event: Event) {
       @click="emit('toggle')"
     >
       <Subtitles :size="14" />
-      <span>{{ captionPillLabel }}</span>
+      <span class="cinema-pill-truncate" :title="captionPillLabel">{{ captionPillLabel }}</span>
       <ChevronDown :size="13" class="cinema-pill-chevron" />
     </button>
 
@@ -69,78 +70,85 @@ function onFileSelected(event: Event) {
       @change="onFileSelected"
     />
 
-    <div v-if="open" class="cinema-popover-menu cinema-subtitle-popover" role="menu">
-      <button
-        v-for="opt in captionOptions"
-        :key="String(opt.value)"
-        type="button"
-        class="cinema-popover-item"
-        :class="{ selected: String(opt.value) === caption }"
-        role="menuitemradio"
-        :aria-checked="String(opt.value) === caption"
-        @click="emit('select-caption', String(opt.value)); emit('close')"
+    <Transition name="isle-pop">
+      <div
+        v-if="open"
+        class="cinema-popover-menu cinema-subtitle-popover"
+        :class="{ 'is-flipped-down': flipDown }"
+        role="menu"
       >
-        <Check :size="14" class="cinema-popover-check" />
-        <span>{{ opt.value === "off" ? "关闭字幕" : opt.label }}</span>
-      </button>
-
-      <div v-if="localSubtitleName" class="cinema-local-sub-row">
         <button
+          v-for="opt in captionOptions"
+          :key="String(opt.value)"
           type="button"
-          class="cinema-popover-item cinema-local-sub-btn"
-          :class="{ selected: caption === 'local' }"
+          class="cinema-popover-item"
+          :class="{ selected: String(opt.value) === caption }"
           role="menuitemradio"
-          :aria-checked="caption === 'local'"
-          @click="emit('select-caption', 'local'); emit('close')"
+          :aria-checked="String(opt.value) === caption"
+          @click="emit('select-caption', String(opt.value)); emit('close')"
         >
           <Check :size="14" class="cinema-popover-check" />
-          <span class="cinema-local-sub-name" :title="localSubtitleName">本地：{{ localSubtitleName }}</span>
+          <span>{{ opt.value === "off" ? "关闭字幕" : opt.label }}</span>
         </button>
-        <button
-          type="button"
-          class="cinema-sub-clear-btn"
-          title="移除本地字幕"
-          aria-label="移除本地字幕"
-          @click="emit('clear-local-file')"
-        >
-          <X :size="13" />
-        </button>
-      </div>
 
-      <button type="button" class="cinema-popover-item cinema-upload-sub-btn" @click="pickFile">
-        <Upload :size="14" />
-        <span>{{ localSubtitleName ? "更换本地字幕 (SRT/ASS/VTT)" : "加载本地字幕 (SRT/ASS/VTT)" }}</span>
-      </button>
-
-      <p v-if="localSubtitleError" class="cinema-sub-error" role="alert">{{ localSubtitleError }}</p>
-
-      <div class="cinema-popover-divider"></div>
-
-      <div class="cinema-sub-control-row">
-        <span class="cinema-sub-control-label">字号</span>
-        <div class="cinema-sub-chip-group" role="group" aria-label="字幕字号">
+        <div v-if="localSubtitleName" class="cinema-local-sub-row">
           <button
-            v-for="opt in SUBTITLE_SIZE_OPTIONS"
-            :key="opt.value"
             type="button"
-            class="cinema-sub-chip"
-            :class="{ active: subtitleSize === opt.value }"
-            @click="emit('update:subtitleSize', opt.value)"
+            class="cinema-popover-item cinema-local-sub-btn"
+            :class="{ selected: caption === 'local' }"
+            role="menuitemradio"
+            :aria-checked="caption === 'local'"
+            @click="emit('select-caption', 'local'); emit('close')"
           >
-            {{ opt.label }}
+            <Check :size="14" class="cinema-popover-check" />
+            <span class="cinema-local-sub-name" :title="localSubtitleName">本地：{{ localSubtitleName }}</span>
+          </button>
+          <button
+            type="button"
+            class="cinema-sub-clear-btn"
+            title="移除本地字幕"
+            aria-label="移除本地字幕"
+            @click="emit('clear-local-file')"
+          >
+            <X :size="13" />
           </button>
         </div>
-      </div>
 
-      <div class="cinema-sub-control-row">
-        <span class="cinema-sub-control-label">时间 {{ offsetLabel }}</span>
-        <div class="cinema-sub-chip-group" role="group" aria-label="字幕时间同步">
-          <button type="button" class="cinema-sub-chip" title="字幕提前 0.5 秒" @click="emit('adjust-offset', -0.5)">-0.5s</button>
-          <button type="button" class="cinema-sub-chip" title="复位时间偏移" @click="emit('reset-offset')"><RotateCcw :size="11" /></button>
-          <button type="button" class="cinema-sub-chip" title="字幕延后 0.5 秒" @click="emit('adjust-offset', 0.5)">+0.5s</button>
+        <button type="button" class="cinema-popover-item cinema-upload-sub-btn" @click="pickFile">
+          <Upload :size="14" />
+          <span>{{ localSubtitleName ? "更换本地字幕 (SRT/ASS/VTT)" : "加载本地字幕 (SRT/ASS/VTT)" }}</span>
+        </button>
+
+        <p v-if="localSubtitleError" class="cinema-sub-error" role="alert">{{ localSubtitleError }}</p>
+
+        <div class="cinema-popover-divider"></div>
+
+        <div class="cinema-sub-control-row">
+          <span class="cinema-sub-control-label">字号</span>
+          <div class="cinema-sub-chip-group" role="group" aria-label="字幕字号">
+            <button
+              v-for="opt in SUBTITLE_SIZE_OPTIONS"
+              :key="opt.value"
+              type="button"
+              class="cinema-sub-chip"
+              :class="{ active: subtitleSize === opt.value }"
+              @click="emit('update:subtitleSize', opt.value)"
+            >
+              {{ opt.label }}
+            </button>
+          </div>
+        </div>
+
+        <div class="cinema-sub-control-row">
+          <span class="cinema-sub-control-label cinema-sub-offset-label">时间 {{ offsetLabel }}</span>
+          <div class="cinema-sub-chip-group" role="group" aria-label="字幕时间同步">
+            <button type="button" class="cinema-sub-chip" title="字幕提前 0.5 秒" @click="emit('adjust-offset', -0.5)">-0.5s</button>
+            <button type="button" class="cinema-sub-chip" title="复位时间偏移" aria-label="复位字幕时间偏移" @click="emit('reset-offset')"><RotateCcw :size="11" /></button>
+            <button type="button" class="cinema-sub-chip" title="字幕延后 0.5 秒" @click="emit('adjust-offset', 0.5)">+0.5s</button>
+          </div>
         </div>
       </div>
-    </div>
+    </Transition>
   </div>
 </template>
 
@@ -162,42 +170,54 @@ function onFileSelected(event: Event) {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  min-height: 30px;
-  padding: 0 11px;
+  min-height: 28px;
+  height: 28px;
+  padding: 0 9px;
   border-radius: 999px;
   border: 1px solid rgba(255, 255, 255, 0.14);
-  background: rgba(255, 255, 255, 0.09);
-  color: rgba(255, 255, 255, 0.9);
-  font-size: 12px;
+  background: rgba(255, 255, 255, 0.1);
+  color: #fff;
+  font-size: 11.5px;
   font-weight: 600;
   white-space: nowrap;
+  flex-shrink: 0;
   cursor: pointer;
-  transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+  transition: background-color 0.14s ease, border-color 0.14s ease, color 0.14s ease;
 }
 .cinema-pill-btn:hover {
-  background: rgba(255, 255, 255, 0.18);
+  background: rgba(255, 255, 255, 0.2);
+  border-color: rgba(255, 255, 255, 0.28);
   color: #fff;
 }
 .cinema-pill-btn.active {
-  background: rgba(229, 9, 20, 0.24);
-  border-color: rgba(255, 92, 96, 0.55);
+  background: color-mix(in srgb, var(--accent-primary, #67d4e0) 20%, rgba(255, 255, 255, 0.08));
+  border-color: color-mix(in srgb, var(--accent-primary, #67d4e0) 52%, rgba(255, 255, 255, 0.2));
   color: #fff;
+}
+.cinema-pill-truncate {
+  max-width: 132px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .cinema-pill-chevron {
   opacity: 0.72;
+  flex-shrink: 0;
 }
-.cinema-subtitle-popover {
+.cinema-popover-menu.cinema-subtitle-popover {
   position: absolute;
   right: 0;
-  bottom: calc(100% + 10px);
-  min-width: 242px;
-  max-width: 296px;
-  max-height: 340px;
+  bottom: calc(100% + 8px);
+  min-width: 244px;
+  max-width: min(296px, calc(100vw - 24px));
+  max-height: min(340px, 50dvh);
   overflow-y: auto;
+  touch-action: pan-y;
+  transform: translate3d(var(--popover-shift-x, 0px), 0, 0);
   padding: 6px;
   border-radius: 14px;
-  background: rgba(22, 26, 36, 0.96);
-  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: rgba(18, 19, 22, 0.94);
+  border: 1px solid rgba(255, 255, 255, 0.16);
   -webkit-backdrop-filter: blur(24px) saturate(160%);
   backdrop-filter: blur(24px) saturate(160%);
   box-shadow: 0 18px 44px rgba(0, 0, 0, 0.72);
@@ -205,6 +225,10 @@ function onFileSelected(event: Event) {
   flex-direction: column;
   gap: 2px;
   z-index: 20;
+}
+.cinema-subtitle-popover.is-flipped-down {
+  top: calc(100% + 8px);
+  bottom: auto;
 }
 .cinema-popover-item {
   width: 100%;
@@ -221,12 +245,14 @@ function onFileSelected(event: Event) {
   align-items: center;
   gap: 8px;
   cursor: pointer;
+  transition: background-color 0.14s ease, color 0.14s ease;
 }
 .cinema-popover-item:hover {
   background: rgba(255, 255, 255, 0.1);
   color: #fff;
 }
 .cinema-popover-item.selected {
+  background: color-mix(in srgb, var(--accent-primary, #67d4e0) 14%, transparent);
   color: #fff;
   font-weight: 600;
 }
@@ -235,7 +261,7 @@ function onFileSelected(event: Event) {
   flex-shrink: 0;
 }
 .cinema-popover-item.selected .cinema-popover-check {
-  color: #e50914;
+  color: var(--accent-primary, #67d4e0);
 }
 .cinema-local-sub-row {
   display: flex;
@@ -268,12 +294,12 @@ function onFileSelected(event: Event) {
   color: #fff;
 }
 .cinema-upload-sub-btn {
-  color: rgba(135, 198, 255, 0.96);
+  color: var(--accent-primary, #67d4e0);
 }
 .cinema-sub-error {
   margin: 2px 8px;
   font-size: 11px;
-  color: #ff8e8e;
+  color: var(--error, #f87171);
 }
 .cinema-popover-divider {
   height: 1px;
@@ -292,6 +318,9 @@ function onFileSelected(event: Event) {
   color: rgba(255, 255, 255, 0.72);
   white-space: nowrap;
 }
+.cinema-sub-offset-label {
+  font-variant-numeric: tabular-nums;
+}
 .cinema-sub-chip-group {
   display: flex;
   align-items: center;
@@ -306,22 +335,64 @@ function onFileSelected(event: Event) {
   min-height: 24px;
   font-size: 11.5px;
   font-weight: 600;
+  font-variant-numeric: tabular-nums;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   cursor: pointer;
+  transition: background-color 0.14s ease, border-color 0.14s ease, color 0.14s ease;
 }
 .cinema-sub-chip:hover {
   background: rgba(255, 255, 255, 0.18);
   color: #fff;
 }
 .cinema-sub-chip.active {
-  background: #e50914;
-  border-color: #e50914;
+  background: var(--accent-primary-solid, #1a8e9a);
+  border-color: color-mix(in srgb, var(--accent-primary, #67d4e0) 65%, transparent);
   color: #fff;
 }
+.isle-pop-enter-active {
+  transition:
+    opacity 0.18s cubic-bezier(0.22, 1, 0.36, 1),
+    transform 0.22s var(--motion-spring, cubic-bezier(0.22, 1, 0.36, 1));
+}
+.isle-pop-leave-active {
+  transition:
+    opacity 0.12s cubic-bezier(0.32, 0, 0.67, 0),
+    transform 0.12s cubic-bezier(0.32, 0, 0.67, 0);
+}
+.isle-pop-enter-from,
+.isle-pop-leave-to {
+  opacity: 0;
+  transform: translate3d(var(--popover-shift-x, 0px), 6px, 0) scale(0.95);
+}
+.cinema-subtitle-popover.is-flipped-down.isle-pop-enter-from,
+.cinema-subtitle-popover.is-flipped-down.isle-pop-leave-to {
+  transform: translate3d(var(--popover-shift-x, 0px), -6px, 0) scale(0.95);
+}
+@media (max-width: 680px) {
+  .cinema-menu-anchor {
+    position: static;
+  }
+  .cinema-subtitle-popover {
+    left: 8px;
+    right: 8px;
+    min-width: 0;
+    max-width: calc(100vw - 24px);
+    max-height: min(300px, 46dvh);
+    transform: translate3d(0, 0, 0);
+  }
+  .isle-pop-enter-from,
+  .isle-pop-leave-to {
+    transform: translate3d(0, 6px, 0) scale(0.96);
+  }
+}
 @media (prefers-reduced-motion: reduce) {
-  .cinema-pill-btn {
+  .cinema-pill-btn,
+  .cinema-popover-item,
+  .cinema-sub-chip,
+  .isle-pop-enter-active,
+  .isle-pop-leave-active {
     transition: none;
   }
 }

@@ -138,11 +138,13 @@ export function useFileActionsAndGrants(options: {
   }
 
   const pathSegments = computed(() => {
+    const rootName = options.sharedRootName.value || "共享根目录";
     const p = options.filesPath.value;
-    if (p === ".") return [{ name: options.sharedRootName.value, path: "." }];
+    if (p === ".") return [{ name: rootName, path: "." }];
     const parts = p.split("/");
+    const rootLabel = parts[0] === rootName ? `${rootName}（根目录）` : rootName;
     return [
-      { name: options.sharedRootName.value, path: "." },
+      { name: rootLabel, path: "." },
       ...parts.map((name, index) => ({ name, path: parts.slice(0, index + 1).join("/") })),
     ];
   });

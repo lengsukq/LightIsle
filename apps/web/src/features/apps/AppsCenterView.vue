@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import {
-  RefreshCcw, ScrollText, Settings2,
-  Play, Sparkles, Cpu, ChevronDown, ChevronUp, HardDrive, Upload,
+  AlertCircle, Check, ChevronDown, ChevronRight, ChevronUp, Clock, Cpu,
+  Globe, HardDrive, Lock, Play, Plus, RefreshCcw, ScrollText, Settings2,
+  Sparkles, Upload, Users,
 } from "lucide-vue-next";
 import { describeUserFacingError } from "../../api/userFacingError.ts";
 import AppDetailPanel from "./AppDetailPanel.vue";
@@ -22,16 +23,16 @@ import {
   AVAILABLE_CHANNELS,
   DELIVERY_LABELS,
   STATE_LABELS,
-  accessBadge,
+  appMode,
   appStatus,
   categoryLabel,
-  cronSummary,
   localTime,
-  runtimeBadge,
   type AppLaunchRequest,
   useAppsCenterController,
   workbenchBadge,
 } from "../../composables/useAppsCenterController.ts";
+import type { PublicAppItem } from "../../types/appsCenter.ts";
+
 const props = defineProps<{ active?: boolean; admin?: boolean; launchRequest?: AppLaunchRequest | null }>();
 const emit = defineEmits<{ "launch-handled": [seq: number] }>();
 const {
@@ -84,6 +85,7 @@ const {
   runAction,
   activateApp,
   loadLogs,
+  openLogsModal,
   exportAppData,
   exportAppPackage,
   triggerImportAppPackage,
@@ -97,6 +99,7 @@ const {
 
 const appSearchQuery = ref("");
 const selectedCategory = ref("all");
+const storageModalOpen = ref(false);
 const templatesManualExpanded = ref<boolean | null>(null);
 const templatesExpanded = computed(() =>
   templatesManualExpanded.value !== null ? templatesManualExpanded.value : apps.value.length === 0,
@@ -129,6 +132,34 @@ const filteredApps = computed(() => {
     );
   });
 });
+
+function hasAppIssue(app: PublicAppItem): boolean {
+  return Boolean(app.diagnostic || app.lastError || app.validationError || app.web?.lastError);
+}
+
+function appIssueSummary(app: PublicAppItem): string {
+  if (app.diagnostic?.summary) return app.diagnostic.summary;
+  const raw = app.lastError || app.validationError || app.web?.lastError;
+  return raw ? describeUserFacingError(raw) : "";
+}
+
+function cardStatus(app: PublicAppItem): { variant: "warning" | "danger" | "online" | "accent" | "neutral"; label: string } {
+  if (app.pendingActivation) return { variant: "warning", label: "待首次激活" };
+  if (hasAppIssue(app)) return { variant: "danger", label: "运行异常" };
+  const status = appStatus(app);
+  const mode = appMode(app);
+  if (status === "running") return { variant: "online", label: mode === "persistent" ? "常驻运行" : "运行中" };
+  if (status === "starting") return { variant: "accent", label: "正在唤醒" };
+  if (mode === "static") return { variant: "neutral", label: "静态就绪" };
+  return { variant: "neutral", label: "休眠就绪" };
+}
+
+function accessMeta(app: PublicAppItem): { icon: typeof Lock; label: string } {
+  const policy = app.access?.policy || "admin_only";
+  if (policy === "all_members") return { icon: Globe, label: "全员" };
+  if (policy === "selected_members") return { icon: Users, label: `${(app.access?.allowedUserIDs || []).length} 人` };
+  return { icon: Lock, label: "仅管理员" };
+}
 </script>
 
 <template>
@@ -210,6 +241,10 @@ const filteredApps = computed(() => {
         </template>
         <template #actions>
           <IsleBadge v-if="apps.length > 0" variant="neutral" size="sm">已安装 {{ apps.length }}</IsleBadge>
+          <IsleButton v-if="isAdmin && appStorage" variant="glass" size="sm" :disabled="busy" @click="storageModalOpen = true">
+            <template #icon><HardDrive :size="15" /></template>
+            数据存储位置
+          </IsleButton>
           <IsleButton v-if="isAdmin" variant="glass" size="sm" :disabled="busy" @click="triggerImportAppPackage">
             <template #icon><Upload :size="15" /></template>
             导入插件包
@@ -221,21 +256,6 @@ const filteredApps = computed(() => {
         </template>
       </IslePageHeader>
 
-      <details v-if="isAdmin && appStorage" class="apps-admin-storage-disclosure" aria-label="管理员应用存储设置">
-        <summary class="apps-admin-storage-summary">
-          <HardDrive :size="15" />
-          <span>管理员应用存储设置（默认折叠）</span>
-          <small>管理轻应用在内置盘/外置盘的存放位置</small>
-        </summary>
-        <div class="apps-admin-storage-body">
-          <AppStorageLocationsCard
-            :storage="appStorage"
-            :busy="busy"
-            @mutate="mutateAppStorage"
-          />
-        </div>
-      </details>
-
       <IsleBanner v-if="launchingAppId" type="info" compact>
         <template #icon><RefreshCcw :size="16" class="spinning" /></template>
         正在唤醒轻应用...
@@ -244,13 +264,14 @@ const filteredApps = computed(() => {
       <IsleBanner v-if="notice" type="success" compact :message="notice" />
 
       <section v-if="isAdmin && templates.length > 0" class="apps-templates-bar" aria-label="官方精选家庭轻应用模板">
-        <div class="apps-templates-info" style="flex: 1 1 100%">
+        <div class="apps-templates-info">
           <div class="apps-templates-head">
             <div class="apps-templates-title">
-              <Sparkles :size="17" />
+              <Sparkles :size="16" />
               <strong>官方精选家庭轻应用模板</strong>
               <IsleBadge variant="accent" size="sm">零外部依赖</IsleBadge>
-              <small v-if="!templatesExpanded && uninstalledTemplatesCount > 0">还有 {{ uninstalledTemplatesCount }} 款精选应用可一键安装</small>
+              <small v-if="!templatesExpanded && uninstalledTemplatesCount > 0">还有 {{ uninstalledTemplatesCount }} 款未安装（共 {{ templates.length }} 款精选）</small>
+              <small v-else-if="!templatesExpanded">共 {{ templates.length }} 款精选应用（均已安装）</small>
             </div>
             <button
               v-if="apps.length > 0"
@@ -276,11 +297,18 @@ const filteredApps = computed(() => {
             </div>
             <div class="apps-template-shelf">
               <div v-for="tpl in templates" :key="tpl.id" class="apps-template-card">
-                <div>
-                  <strong>{{ tpl.name }}</strong>
+                <div class="apps-template-card-body">
+                  <div class="apps-template-card-head">
+                    <strong>{{ tpl.name }}</strong>
+                    <IsleBadge variant="category" size="sm">{{ categoryLabel(tpl.category) }}</IsleBadge>
+                  </div>
                   <p>{{ tpl.description }}</p>
                 </div>
                 <IsleButton :variant="tpl.installed ? 'glass' : 'primary'" size="sm" :disabled="busy || tpl.installed" @click="installOfficialTemplate(tpl)">
+                  <template #icon>
+                    <Check v-if="tpl.installed" :size="13" />
+                    <Plus v-else :size="13" />
+                  </template>
                   {{ tpl.installed ? '已安装' : '一键安装' }}
                 </IsleButton>
               </div>
@@ -340,51 +368,53 @@ const filteredApps = computed(() => {
           >
             <div class="app-icon-wrap">
               <img v-if="app.iconUrl && !failedIcons.has(app.id)" :src="app.iconUrl" :alt="app.name + ' 图标'" class="app-icon-img" loading="lazy" decoding="async" @error="failedIcons.add(app.id)" />
-              <Cpu v-else :size="24" />
+              <Cpu v-else :size="22" />
             </div>
             <div class="app-title-meta">
               <div class="app-title-line">
                 <strong>{{ app.name }}</strong>
                 <IsleBadge variant="category" size="sm">{{ categoryLabel(app.category) }}</IsleBadge>
               </div>
-              <small v-if="isAdmin" class="app-id-line">{{ app.id }}<template v-if="app.version"> · v{{ app.version }}</template></small>
               <p class="app-desc">{{ app.description || "轻屿本地家庭轻应用" }}</p>
             </div>
           </div>
 
-          <div v-if="isAdmin" class="app-badges">
-            <IsleBadge :variant="appStatus(app) === 'running' ? 'online' : 'neutral'" size="sm">{{ runtimeBadge(app) }}</IsleBadge>
-            <IsleBadge v-if="app.pendingActivation" variant="warning" size="sm">待首次激活</IsleBadge>
-            <IsleBadge v-if="app.locationKind === 'external'" variant="accent" size="sm">
-              其他盘 · {{ app.locationName || '外置盘' }}
-            </IsleBadge>
-            <IsleBadge variant="neutral" size="sm">{{ accessBadge(app) }}</IsleBadge>
-            <IsleBadge v-if="hasCron(app)" variant="neutral" size="sm">{{ cronSummary(app) }}</IsleBadge>
+          <div class="app-card-status">
+            <IsleBadge :variant="cardStatus(app).variant" dot size="sm">{{ cardStatus(app).label }}</IsleBadge>
+            <template v-if="isAdmin">
+              <span class="app-card-meta-tag">
+                <component :is="accessMeta(app).icon" :size="11" aria-hidden="true" />
+                <span>{{ accessMeta(app).label }}</span>
+              </span>
+              <span v-if="app.locationKind === 'external'" class="app-card-meta-tag">
+                <HardDrive :size="11" aria-hidden="true" />
+                <span>{{ app.locationName || '外置盘' }}</span>
+              </span>
+              <span v-if="hasCron(app)" class="app-card-meta-tag">
+                <Clock :size="11" aria-hidden="true" />
+                <span>{{ app.cron?.enabled ? '定时开启' : '定时暂停' }}</span>
+              </span>
+            </template>
           </div>
-          <div v-if="isAdmin && app.diagnostic" class="app-diag-box" role="alert">
-            <div class="app-diag-title">{{ app.diagnostic.summary }}</div>
-            <p class="app-diag-line"><strong>原因：</strong>{{ app.diagnostic.reason }}</p>
-            <pre v-if="app.diagnostic.logExcerpt" class="app-diag-pre">{{ app.diagnostic.logExcerpt }}</pre>
-            <p v-if="app.diagnostic.checks?.length" class="app-diag-line"><strong>排查：</strong>{{ app.diagnostic.checks[0] }}</p>
-            <p v-if="app.diagnostic.solutions?.length" class="app-diag-line"><strong>解决：</strong>{{ app.diagnostic.solutions[0] }}</p>
-            <small v-if="app.diagnostic.dataSafe" class="app-diag-safe">{{ app.diagnostic.dataSafe }}</small>
+
+          <div v-if="isAdmin && appIssueSummary(app)" class="app-card-issue" role="alert">
+            <AlertCircle :size="13" aria-hidden="true" />
+            <span class="app-card-issue-text">{{ appIssueSummary(app) }}</span>
+            <button type="button" class="app-card-issue-link" @click="openLogsModal(app)">查看日志</button>
           </div>
-          <p v-else-if="isAdmin && (app.lastError || app.validationError || app.web?.lastError)" class="apps-error">
-            {{ describeUserFacingError(app.lastError || app.validationError || app.web?.lastError) }}
-          </p>
-          <small v-if="isAdmin && app.cron?.lastRun" class="app-Subnote">
-            上次定时执行：{{ STATE_LABELS[app.cron.lastRun.state] || app.cron.lastRun.state }} · {{ localTime(app.cron.lastRun.finishedAt) }}
-          </small>
 
           <div class="app-card-actions">
-            <IsleButton v-if="app.pendingActivation && isAdmin" variant="primary" :disabled="busy" @click="activateApp(app)">
-              <Play :size="14" /> 确认激活
+            <IsleButton v-if="app.pendingActivation && isAdmin" variant="primary" size="sm" :disabled="busy" @click="activateApp(app)">
+              <template #icon><Play :size="14" /></template>
+              确认激活
             </IsleButton>
-            <IsleButton v-if="app.web?.enabled !== false" :variant="app.pendingActivation && isAdmin ? 'glass' : 'primary'" :disabled="!!launchingAppId" @click="openApp(app)">
-              <Play :size="14" /> {{ launchingAppId === app.id ? "正在唤醒轻应用..." : "立即打开" }}
+            <IsleButton v-if="app.web?.enabled !== false" :variant="app.pendingActivation && isAdmin ? 'glass' : 'primary'" size="sm" :loading="launchingAppId === app.id" :disabled="!!launchingAppId" @click="openApp(app)">
+              <template #icon><Play :size="14" /></template>
+              {{ launchingAppId === app.id ? "正在唤醒轻应用..." : "立即打开" }}
             </IsleButton>
-            <IsleButton v-if="isAdmin" variant="glass" :disabled="busy" @click="openAppDetail(app)">
-              <Settings2 :size="14" /> 详情与设置
+            <IsleButton v-if="isAdmin" variant="glass" size="sm" :disabled="busy" @click="openAppDetail(app)">
+              <template #icon><Settings2 :size="14" /></template>
+              详情与设置
             </IsleButton>
           </div>
         </article>
@@ -394,19 +424,53 @@ const filteredApps = computed(() => {
     </template>
 
     <IsleModal
-      v-if="viewingLogsApp"
-      :title="'运行日志 · ' + viewingLogsApp.name"
+      v-if="isAdmin && appStorage && storageModalOpen"
+      title="应用数据存储位置"
+      description="管理轻应用代码与独立运行数据的内置盘 / 其他盘位置"
       size="wide"
-      @close="viewingLogsApp = null; modalError = ''"
+      @close="storageModalOpen = false"
     >
+      <template #icon>
+        <HardDrive :size="17" />
+      </template>
+      <IsleBanner v-if="error" type="error" compact :message="error" class="apps-modal-banner" />
+      <IsleBanner v-if="notice" type="success" compact :message="notice" class="apps-modal-banner" />
+      <AppStorageLocationsCard
+        :storage="appStorage"
+        :busy="busy"
+        embedded
+        @mutate="mutateAppStorage"
+      />
+      <template #footer>
+        <div class="apps-modal-footer-end">
+          <IsleButton variant="glass" size="sm" @click="storageModalOpen = false">关闭</IsleButton>
+        </div>
+      </template>
+    </IsleModal>
+
+    <IsleModal v-if="viewingLogsApp" :title="'运行日志 · ' + viewingLogsApp.name" size="wide" @close="viewingLogsApp = null; modalError = ''">
       <template #icon>
         <ScrollText :size="17" />
       </template>
       <template #header-actions>
-        <IsleButton variant="glass" size="sm" :loading="logsLoading" :disabled="logsLoading" @click="loadLogs(viewingLogsApp)"><RefreshCcw :size="14" /> 刷新日志</IsleButton>
-        <IsleButton v-if="hasCron(viewingLogsApp)" variant="glass" size="sm" :loading="busy" :disabled="busy" @click="runAction(viewingLogsApp, 'run_cron')"><Play :size="14" /> 立即执行 Cron</IsleButton>
+        <IsleButton variant="glass" size="sm" :loading="logsLoading" :disabled="logsLoading" @click="loadLogs(viewingLogsApp)">
+          <template #icon><RefreshCcw :size="14" /></template>
+          刷新日志
+        </IsleButton>
+        <IsleButton v-if="hasCron(viewingLogsApp)" variant="glass" size="sm" :loading="busy" :disabled="busy" @click="runAction(viewingLogsApp, 'run_cron')">
+          <template #icon><Play :size="14" /></template>
+          立即执行 Cron
+        </IsleButton>
       </template>
-      <IsleBanner v-if="modalError" type="error" compact :message="modalError" style="margin-bottom: 12px" />
+      <IsleBanner v-if="modalError" type="error" compact :message="modalError" class="apps-modal-banner" />
+      <div v-if="viewingLogsApp.diagnostic" class="app-diag-box" role="alert">
+        <div class="app-diag-title">{{ viewingLogsApp.diagnostic.summary }}</div>
+        <p class="app-diag-line"><strong>原因：</strong>{{ viewingLogsApp.diagnostic.reason }}</p>
+        <pre v-if="viewingLogsApp.diagnostic.logExcerpt" class="app-diag-pre">{{ viewingLogsApp.diagnostic.logExcerpt }}</pre>
+        <p v-if="viewingLogsApp.diagnostic.checks?.length" class="app-diag-line"><strong>排查：</strong>{{ viewingLogsApp.diagnostic.checks[0] }}</p>
+        <p v-if="viewingLogsApp.diagnostic.solutions?.length" class="app-diag-line"><strong>解决：</strong>{{ viewingLogsApp.diagnostic.solutions[0] }}</p>
+        <small v-if="viewingLogsApp.diagnostic.dataSafe" class="app-diag-safe">{{ viewingLogsApp.diagnostic.dataSafe }}</small>
+      </div>
       <div class="apps-form-section">
         <strong>Web 进程标准输出（最近日志）</strong>
         <pre class="apps-log-pre">{{ webOutput || "（当前无 Web 进程日志输出，或应用处于休眠/静态状态）" }}</pre>
@@ -415,7 +479,12 @@ const filteredApps = computed(() => {
         <strong>定时任务（Cron）最近执行记录</strong>
         <p v-if="cronRuns.length === 0" class="apps-hint">暂无定时执行记录。</p>
         <details v-for="(run, idx) in cronRuns" :key="run.id ?? idx" class="apps-log-detail">
-          <summary>{{ localTime(run.startedAt) }} · {{ STATE_LABELS[run.state] || run.state }}<span v-if="run.exitCode >= 0"> · 退出码 {{ run.exitCode }}</span></summary>
+          <summary>
+            <ChevronRight :size="14" class="apps-log-chevron" aria-hidden="true" />
+            <IsleBadge :variant="run.state === 'success' ? 'online' : (run.state === 'failure' || run.state === 'timeout') ? 'danger' : 'warning'" dot size="sm">{{ STATE_LABELS[run.state] || run.state }}</IsleBadge>
+            <span>{{ localTime(run.startedAt) }}</span>
+            <span v-if="run.exitCode >= 0" class="apps-hint">退出码 {{ run.exitCode }}</span>
+          </summary>
           <pre class="apps-log-pre">{{ run.output || "（没有标准输出）" }}</pre>
           <p v-for="(status, channel) in run.deliveries" :key="channel" class="apps-hint">
             {{ AVAILABLE_CHANNELS.find(c => c.id === channel)?.label || channel }} · {{ DELIVERY_LABELS[status] || status }}
@@ -423,7 +492,7 @@ const filteredApps = computed(() => {
         </details>
       </div>
       <template #footer>
-        <div style="display:flex;justify-content:flex-end;width:100%">
+        <div class="apps-modal-footer-end">
           <IsleButton variant="glass" @click="viewingLogsApp = null; modalError = ''">关闭</IsleButton>
         </div>
       </template>

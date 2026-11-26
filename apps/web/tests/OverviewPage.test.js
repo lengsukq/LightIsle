@@ -20,7 +20,7 @@ const source = readFileSync(new URL("../src/features/overview/OverviewPage.vue",
 const template = parse(source, { filename: "OverviewPage.vue" }).descriptor.template.content;
 const render = new Function("Vue", compile(template, { mode: "function" }).code)(Vue);
 const iconNames = [
-  "Activity", "ArrowDownToLine", "ArrowUpRight", "Clapperboard", "CopyCheck", "Cpu", "FamilyBoardCarousel", "Folder", "HardDrive", "Images",
+  "Activity", "ArrowDownToLine", "ArrowUpRight", "ChevronDown", "Clapperboard", "CopyCheck", "Cpu", "FamilyBoardCarousel", "Folder", "HardDrive", "Images",
   "IsleCharts", "LayoutDashboard", "Monitor", "RecentSearchPopover", "RefreshCcw", "Router", "Search", "Server",
   "ShieldCheck", "Sparkles", "Trash2", "Wallet", "WifiOff", "Wrench",
 ];
@@ -110,6 +110,10 @@ const OverviewTestHarness = Vue.defineComponent({
       onSearchKeydown(event) {
         if (event.key === "Enter" && props.search.query.trim().length >= 1) emit("search");
       },
+      onSearchFocusOut() {
+        view.searchFocused = false;
+      },
+      closeMoreMenu() {},
       get query() { return props.search.query; },
       set query(value) { emit("update:query", value.trim()); },
       get spotlight() { return props.search.spotlight; },

@@ -11,7 +11,7 @@
   <div v-else class="shell">
     <aside class="sidebar" :class="{ 'dock-collapsed': !sidebarExpanded }">
       <div class="brand">
-        <span class="brand-symbol" role="button" tabindex="0" :title="sidebarExpanded ? '收起导航 (⌃⌘S)' : '展开导航 (⌃⌘S)'" @click="toggleSidebar" @keydown.enter="toggleSidebar">
+        <span class="brand-symbol" role="button" tabindex="0" :aria-label="sidebarExpanded ? '收起导航' : '展开导航'" :title="sidebarExpanded ? '收起导航 (⌃⌘S)' : '展开导航 (⌃⌘S)'" @click="toggleSidebar" @keydown.enter="toggleSidebar" @keydown.space.prevent="toggleSidebar">
           <img src="/brand-icon.svg" alt="轻屿 Logo" class="brand-image" />
         </span>
         <div class="brand-meta">
@@ -26,7 +26,8 @@
       <nav aria-label="主导航" class="side-nav-sections">
         <div class="side-section">
           <span class="side-label">生活空间</span>
-          <div class="side-nav side-group-card">
+          <div ref="spaceNavRef" class="side-nav side-group-card">
+            <IsleSlidingIndicator class="side-nav-indicator" variant="nav" :ready="spaceNavIndicatorReady" :pill-rect="spaceNavIndicatorStyle" />
             <button v-for="item in items.filter(i => i.group === 'space' && (i.key !== 'computer' || showComputerFilesNav))" :key="item.key" :class="{ chosen: active === item.key }" :title="!sidebarExpanded ? item.title : undefined" @click="active = item.key" type="button">
               <span :class="['nav-squircle', item.color]"><component :is="item.icon" :size="17" :stroke-width="1.95" /></span>
               <span class="nav-item-label">{{ item.title }}</span>
@@ -36,7 +37,8 @@
 
         <div class="side-section">
           <span class="side-label">{{ user.role === 'admin' ? '系统管理' : '个人设置' }}</span>
-          <div class="side-nav side-group-card">
+          <div ref="systemNavRef" class="side-nav side-group-card">
+            <IsleSlidingIndicator class="side-nav-indicator" variant="nav" :ready="systemNavIndicatorReady" :pill-rect="systemNavIndicatorStyle" />
             <button v-for="item in items.filter(i => i.group === 'system')" :key="item.key" :class="{ chosen: active === item.key }" :title="!sidebarExpanded ? item.title : undefined" @click="active = item.key" type="button">
               <span :class="['nav-squircle', item.color]"><component :is="item.icon" :size="17" :stroke-width="1.95" /></span>
               <span class="nav-item-label">{{ item.title }}</span>
@@ -45,7 +47,7 @@
         </div>
       </nav>
 
-      <div class="sidebar-bottom" role="button" tabindex="0" title="查看账号与安全设置" @click="active = 'settings'; settingsGroup = 'account'" @keydown.enter="active = 'settings'; settingsGroup = 'account'">
+      <div class="sidebar-bottom" role="button" tabindex="0" aria-label="查看账号与安全设置" title="查看账号与安全设置" @click="active = 'settings'; settingsGroup = 'account'" @keydown.enter="active = 'settings'; settingsGroup = 'account'" @keydown.space.prevent="active = 'settings'; settingsGroup = 'account'">
         <span class="host-status-squircle" :class="{ off: !!error }"><span class="dot" :class="{ off: !!error }"></span></span>
         <div class="host-status-text">
           <small>连接状态</small>
@@ -58,17 +60,15 @@
       <header class="topbar glass">
         <div class="breadcrumb">
           <button
+            v-if="!sidebarExpanded"
             type="button"
             class="topbar-sidebar-toggle"
-            :title="sidebarExpanded ? '收起侧边栏 (⌃⌘S)' : '展开侧边栏 (⌃⌘S)'"
-            :aria-label="sidebarExpanded ? '收起侧边栏' : '展开侧边栏'"
+            title="展开侧边栏 (⌃⌘S)"
+            aria-label="展开侧边栏"
             @click="toggleSidebar"
           >
-            <PanelLeftClose v-if="sidebarExpanded" :size="16" />
-            <PanelLeftOpen v-else :size="16" />
+            <PanelLeftOpen :size="16" />
           </button>
-          <span class="crumb-brand">轻屿</span>
-          <span class="crumb-slash">/</span>
           <strong>{{ items.find(i => i.key === active)?.title || "偏好设置" }}</strong>
         </div>
         <div class="top-actions">
@@ -76,7 +76,6 @@
             <span class="root-context-label">共享目录</span>
             <AppleSelect :model-value="rootSelectionValue" :options="rootSelectionOptions" :disabled="rootSwitching" size="sm" aria-label="选择共享目录" @change="handleRootChange" />
           </div>
-          <span class="status-pill"><span class="dot" :class="{ off: !!error }"></span>{{ error ? "连接中断" : "轻屿在线" }}</span>
           <ThemePickerPopover
             :theme="theme"
             :preset="atmosphere"
@@ -84,12 +83,15 @@
             @select-preset="setAtmosphere"
             @switch-theme="switchTheme"
           />
-          <button class="circle-action" type="button" @click="switchTheme" :aria-label="theme === 'dark' ? '切换浅色' : '切换深色'">
+          <button class="circle-action topbar-theme-btn" type="button" @click="switchTheme" :title="theme === 'dark' ? '切换浅色模式' : '切换深色模式'" :aria-label="theme === 'dark' ? '切换浅色' : '切换深色'">
             <Sun v-if="theme === 'dark'" :size="16" /><Moon v-else :size="16" />
           </button>
-          <div class="user-capsule">
-            <button type="button" class="user-capsule-profile" title="前往偏好设置" @click="active = 'settings'; settingsGroup = 'account'">
-              <span class="user-avatar">{{ (user.username || 'U').charAt(0).toUpperCase() }}</span>
+          <div class="user-capsule" :class="{ 'is-offline': !!error }">
+            <button type="button" class="user-capsule-profile" :title="error ? '服务连接中断 · 前往偏好设置' : '前往偏好设置'" @click="active = 'settings'; settingsGroup = 'account'">
+              <span class="user-avatar-wrap">
+                <span class="user-avatar">{{ (user.username || 'U').charAt(0).toUpperCase() }}</span>
+                <span v-if="error" class="user-offline-dot" aria-label="服务连接中断" title="服务连接中断"></span>
+              </span>
               <div class="user-meta">
                 <span class="user-name">{{ user.username }}</span>
                 <span class="user-role">{{ user.role === "admin" ? "管理员" : "成员" }}</span>
@@ -111,10 +113,10 @@
 
       <Transition name="ios-fade" mode="out-in">
         <div v-if="!rootSwitching">
-          <section v-if="active === 'overview' && homeWorkbenchStageProps" class="isle-tab-pane apps-center">
+          <section v-if="active === 'overview' && homeWorkbenchStageProps" class="content isle-tab-pane apps-center">
             <AppWorkbenchStage v-bind="homeWorkbenchStageProps" v-on="homeWorkbenchStageEvents" />
           </section>
-          <OverviewPage v-show="active === 'overview' && !homeWorkbenchStageProps" class="isle-tab-pane" :identity="overviewIdentity" :search="overviewSearch" :telemetry="overviewTelemetry" :personal-space="overviewPersonalSpace" :pending="overviewPending" :apps="overviewApps" @update:query="fileSearch = $event" @update:spotlight="searchViaSpotlight = $event" @update:expanded="showHardwareSpecs = $event" @search="runFileSearch" @return-to-files="clearFileSearch" @select-history="applyRecentSearch" @delete-history="deleteRecentSearch" @clear-history="clearRecentSearches" @open-duplicates="jumpToDuplicates" @open-trash="jumpToTrash" @open-similar-photos="jumpToPhotosView('similar')" @refresh="update" @navigate="active = $event" @open-account-settings="active = 'settings'; settingsGroup = 'account'" @open-pending="active = 'settings'; settingsGroup = 'ops'" @open-apps-center="active = 'apps'" @open-app="openHomeApp" @refresh-apps="refreshOverviewApps" />
+          <OverviewPage v-show="active === 'overview' && !homeWorkbenchStageProps" class="isle-tab-pane" :class="{ 'isle-tab-entering': stageEntering }" :identity="overviewIdentity" :search="overviewSearch" :telemetry="overviewTelemetry" :personal-space="overviewPersonalSpace" :pending="overviewPending" :apps="overviewApps" @update:query="fileSearch = $event" @update:spotlight="searchViaSpotlight = $event" @update:expanded="showHardwareSpecs = $event" @search="runFileSearch" @return-to-files="clearFileSearch" @select-history="applyRecentSearch" @delete-history="deleteRecentSearch" @clear-history="clearRecentSearches" @open-duplicates="jumpToDuplicates" @open-trash="jumpToTrash" @open-similar-photos="jumpToPhotosView('similar')" @refresh="update" @navigate="active = $event" @open-account-settings="active = 'settings'; settingsGroup = 'account'" @open-pending="active = 'settings'; settingsGroup = 'ops'" @open-apps-center="active = 'apps'" @open-app="openHomeApp" @refresh-apps="refreshOverviewApps" />
           <ComputerFilesView v-if="active === 'computer'" class="isle-tab-pane" :admin="user.role === 'admin'" />
           <div v-if="personalRouteError && ['files', 'photos', 'cinema'].includes(active) && !manualRootSection" class="content isle-tab-pane">
             <section class="content-empty root-state-card root-state-offline" role="alert">
@@ -138,17 +140,17 @@
               </button>
             </section>
           </div>
-          <FilesView v-if="visitedPages.files" v-show="active === 'files' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)" />
-          <div v-show="active === 'photos' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)" class="isle-tab-pane">
+          <FilesView v-if="visitedPages.files" v-show="active === 'files' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)" :class="{ 'isle-tab-entering': stageEntering }" />
+          <div v-show="active === 'photos' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)" class="isle-tab-pane" :class="{ 'isle-tab-entering': stageEntering }">
             <PhotosView v-if="visitedPages.photos" v-show="active === 'photos' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)" :key="rootViewKey" :active="active === 'photos'" :admin="user.role === 'admin'" :root-id="multiRootMode ? selectedRootID : undefined" :root-generation="selectedRootGeneration" :root-name="multiRootMode ? selectedRoot?.name : undefined" :has-other-roots="multiRootMode && sharedRoots.length > 1" :jump-target="photosJumpTarget" />
           </div>
-          <div v-show="active === 'cinema' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)" class="isle-tab-pane">
+          <div v-show="active === 'cinema' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)" class="isle-tab-pane" :class="{ 'isle-tab-entering': stageEntering }">
             <CinemaView v-if="visitedPages.cinema" v-show="active === 'cinema' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)" :key="rootViewKey" :active="active === 'cinema'" :admin="user.role === 'admin'" :root-id="multiRootMode ? selectedRootID : undefined" :root-generation="selectedRootGeneration" :launch-request="pendingCinemaLaunch" @launch-handled="pendingCinemaLaunch = null" @open-mount-guide="jumpToSettingsGroup('files')" />
           </div>
           <div v-if="active === 'downloads'" class="content isle-tab-pane">
             <DownloadsView :active="active === 'downloads'" :api="downloadsApi" />
           </div>
-          <div v-show="active === 'apps'" class="content isle-tab-pane">
+          <div v-show="active === 'apps'" class="content isle-tab-pane" :class="{ 'isle-tab-entering': stageEntering }">
             <AppsCenterView v-if="visitedPages.apps" :active="active === 'apps'" :admin="user.role === 'admin'" :launch-request="pendingAppLaunch" @launch-handled="clearPendingAppLaunch" />
           </div>
           <SettingsView v-if="active === 'settings'" />
@@ -179,49 +181,21 @@
       </IsleEmpty>
     </IsleModal>
     <PhotoViewerModal v-bind="fileMediaModalProps" v-on="fileMediaModalEvents" />
-    <IsleModal
-      :open="Boolean(sharingFile)"
-      :title="'限时分享 · ' + (sharingFile?.name || '')"
-      size="md"
-      role="dialog"
-      aria-label="文件下载分享"
-      :close-on-backdrop="!shareCreating"
-      :close-on-esc="!shareCreating"
-      :show-close="!shareCreating"
+    <FileShareModal
+      :file="sharingFile"
+      v-model:hours="shareHours"
+      v-model:password="sharePassword"
+      v-model:max-downloads="shareMaxDownloads"
+      :creating="shareCreating"
+      :created-link="shareCreatedLink"
+      :error="shareError"
+      :copied="shareCopied"
+      :hour-options="shareHourOptions"
+      @link-input="shareLinkInput = $event"
+      @submit="createFileShare"
+      @copy="copyShareLink"
       @close="sharingFile = null; shareCreatedLink = ''"
-    >
-      <p v-if="sharingFile?.type === 'folder'" class="shell-modal-lead">生成免登录临时 ZIP 下载链接；到期或授权变更后自动失效。</p>
-      <p v-else class="shell-modal-lead">生成免登录临时下载链接；到期、文件变更或撤销后自动失效。</p>
-      <form v-if="!shareCreatedLink" class="account-form" @submit.prevent="createFileShare">
-        <label>有效期
-          <AppleSelect v-model="shareHours" :options="shareHourOptions" block aria-label="有效期" />
-        </label>
-        <label>访问密码（选填，至少 4 个字符）
-          <input v-model="sharePassword" type="password" autocomplete="new-password" maxlength="128" placeholder="不设置密码则留空" />
-        </label>
-        <label>最多下载次数（0 = 不限制）
-          <input v-model.number="shareMaxDownloads" type="number" min="0" max="100000" step="1" />
-        </label>
-        <IsleButton type="submit" variant="primary" :loading="shareCreating" full-width class="shell-share-submit">
-          {{ shareCreating ? "正在生成…" : "生成分享链接" }}
-        </IsleButton>
-      </form>
-      <div v-else class="account-form">
-        <label>分享链接（仅此时显示）
-          <input ref="shareLinkInput" :value="shareCreatedLink" readonly @focus="shareLinkInput?.select()" />
-        </label>
-        <IsleButton type="button" variant="primary" full-width class="shell-share-submit" @click="copyShareLink">
-          复制分享链接
-        </IsleButton>
-        <p v-if="shareCopied" class="footnote" role="status">{{ shareCopied }}</p>
-      </div>
-      <IsleBanner v-if="shareError" type="error" compact :message="shareError" class="shell-banner-top" />
-      <template #footer>
-        <div class="shell-modal-footer-end">
-          <IsleButton variant="glass" :disabled="shareCreating" @click="sharingFile = null; shareCreatedLink = ''">完成</IsleButton>
-        </div>
-      </template>
-    </IsleModal>
+    />
     <FileOperationDialog
       v-if="fileOperationDialog"
       :key="rootViewKey + ':' + fileOperationDialog.action + ':' + fileOperationDialog.item.path + ':' + (fileOperationDialog.batchItems?.length || 1)"

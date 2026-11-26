@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import { createCinemaKeyboardController } from "./cinemaKeyboard.ts";
-import { createVisibleMediaPolling } from "../../api/visibleMediaPolling.ts";
-import { computed, ref, onMounted, onBeforeUnmount, onUnmounted, provide, watch, nextTick } from "vue";
+import { computed, ref, onMounted, provide, watch, nextTick } from "vue";
 import { describeRootOperationFailure } from "../../api/rootDiscovery.ts";
-import { describeUserFacingError } from "../../api/userFacingError.ts";
 import { createScopedRootApi } from "../../api/apiClient.ts";
 import { TIMINGS_MS } from "../../constants/timings.ts";
 import {
@@ -11,13 +9,14 @@ import {
   CINEMA_DETAIL_CTX,
   CINEMA_PLAYER_CTX,
 } from "../../contexts/cinemaContext.ts";
-import { Trash2, X } from "lucide-vue-next";
+import { ChevronLeft, Trash2, X } from "lucide-vue-next";
 import { rootApiPath, rootMediaPath } from "../../api/rootApi.ts";
 import CinemaBrowseGrids from "./CinemaBrowseGrids.vue";
 import CinemaHeaderBar from "./CinemaHeaderBar.vue";
 import CinemaPlayerStage from "./CinemaPlayerStage.vue";
 import CinemaRenameModal from "./CinemaRenameModal.vue";
 import CinemaSeriesModal from "./CinemaSeriesModal.vue";
+import CinemaStatusAlerts from "./CinemaStatusAlerts.vue";
 import CinemaTmdbPanel from "./CinemaTmdbPanel.vue";
 import CinemaHomeShelvesSection from "./CinemaHomeShelvesSection.vue";
 import CinemaDetailMetadataPanels from "./CinemaDetailMetadataPanels.vue";
@@ -26,10 +25,17 @@ import { duration, useCinemaMetadata } from "./useCinemaMetadata.ts";
 import { useCinemaSeriesAndHistory } from "./useCinemaSeriesAndHistory.ts";
 import { useCinemaDirectoryPlaylist } from "./useCinemaDirectoryPlaylist.ts";
 import { useCinemaCatalogController } from "./useCinemaCatalogController.ts";
-import { isCinemaFilmPosterReady, resolveCinemaFilmPosterUrl, resolveCinemaSeriesPosterUrl } from "./cinemaCatalogDisplay.ts";
+import { useCinemaPlayerOsd } from "./useCinemaPlayerOsd.ts";
+import { useCinemaWindowBridge } from "./useCinemaWindowBridge.ts";
+import {
+  formatCinemaPlaybackLabel,
+  isCinemaFilmPosterReady,
+  resolveCinemaFilmPosterUrl,
+  resolveCinemaSeriesPosterUrl,
+} from "./cinemaCatalogDisplay.ts";
 import { continueAfterPlaybackEnd } from "./cinemaAutoAdvance.ts";
 import { confirmCinemaExit } from "./cinemaSafeExit.ts";
-import { createBrowserMediaBackstack } from "../photos/browserMediaBackstack.ts";
+import type { createBrowserMediaBackstack } from "../photos/browserMediaBackstack.ts";
 import { pushModalLayer, type ModalLayerHandle } from "../../utils/modalStack.ts";
 import IsleButton from "../../components/ui/IsleButton.vue";
 import type { Movie } from "./cinemaTypes.ts";
@@ -53,18 +59,8 @@ let cinemaLayerHandle: ModalLayerHandle | null = null;
 const cinemaDialog = ref<HTMLElement | null>(null);
 const playerStageRef = ref<{ closeMenus: () => void } | null>(null);
 const playerMenuOpen = ref(false);
-const osdMessage = ref("");
-let osdTimer: number | undefined;
 const keyboardController = createCinemaKeyboardController();
-
-function showOsd(text: string) {
-  osdMessage.value = text;
-  if (osdTimer) window.clearTimeout(osdTimer);
-  osdTimer = window.setTimeout(() => {
-    osdTimer = undefined;
-    osdMessage.value = "";
-  }, 1100);
-}
+const { osdMessage, clearOsd, showJumpOsd, showPlayOsd, showVolumeOsd } = useCinemaPlayerOsd();
 
 watch(selected, (film) => {
   if (film) {
@@ -87,7 +83,7 @@ watch(selected, (film) => {
     });
   } else {
     keyboardController.reset();
-    osdMessage.value = "";
+    clearOsd();
     cinemaLayerHandle?.dispose();
     cinemaLayerHandle = null;
   }
@@ -278,17 +274,7 @@ function resetFilters() {
   void load(true);
 }
 
-function playbackLabel(v: Movie) {
-  const m = playback(v);
-  if (m === "verified-direct") return "已验证可播放";
-  if (m === "unverified-direct") return "可尝试播放 · 尚未验证";
-  const s = v.probeStatus;
-  if (s === "pending") return "正在识别格式";
-  if (s === "unavailable") return "格式检查器不可用";
-  if (s === "failed") return "格式识别失败";
-  if (s === "unsupported") return "浏览器暂不支持";
-  return "建议下载后播放";
-}
+const playbackLabel = (v: Movie) => formatCinemaPlaybackLabel(playback(v), v.probeStatus);
 const posterReady = (v: Movie) => isCinemaFilmPosterReady(v, posterFailed.value);
 const poster = (v: Movie) => resolveCinemaFilmPosterUrl(v, mediaPath, posterDirectFallback.value);
 const seriesPosterUrl = (id: number, rawUrl?: string) => resolveCinemaSeriesPosterUrl(id, rawUrl, mediaPath);
@@ -402,21 +388,20 @@ function cinemaKeyBindings() {
     isFullscreen: isFullscreen.value,
     showControls: () => { playerControlsHidden.value = false; },
     jump: (seconds: number) => {
-      showOsd(seconds > 0 ? `⏩ +${seconds}s` : `⏪ ${seconds}s`);
+      showJumpOsd(seconds);
       void jumpPlayback(seconds);
     },
     togglePlay: () => {
-      const willPlay = !isPlaying.value;
-      showOsd(willPlay ? "▶ 继续播放" : "⏸ 已暂停");
+      showPlayOsd(!isPlaying.value);
       void togglePlayPause();
     },
     adjustVolume: (delta: number) => {
       adjustVolume(delta);
-      showOsd(isMuted.value || volume.value === 0 ? "🔇 已静音" : `🔊 音量 ${Math.round(volume.value * 100)}%`);
+      showVolumeOsd(isMuted.value, volume.value);
     },
     toggleMute: () => {
       toggleMute();
-      showOsd(isMuted.value || volume.value === 0 ? "🔇 已静音" : `🔊 音量 ${Math.round(volume.value * 100)}%`);
+      showVolumeOsd(isMuted.value, volume.value);
     },
     toggleFullscreen: () => void toggleCinemaFullscreen(cinemaDialog.value),
     exitFullscreen: () => void exitCinemaFullscreen(),
@@ -428,56 +413,6 @@ function cinemaKeyBindings() {
   };
 }
 
-function keydown(event: KeyboardEvent) {
-  if (props.active === false || event.defaultPrevented) return;
-  if (cinemaLayerHandle && !cinemaLayerHandle.isTop()) return;
-  keyboardController.handleKeydown(event, cinemaKeyBindings());
-}
-
-function keyup(event: KeyboardEvent) {
-  if (props.active === false) return;
-  keyboardController.handleKeyup(event, cinemaKeyBindings());
-}
-
-function onWindowBlur() {
-  keyboardController.reset();
-  stopHoldSpeedBoost();
-}
-
-const setScanPolling = createVisibleMediaPolling(status, TIMINGS_MS.FAST_POLL);
-function syncCinemaActiveBindings(active: boolean) {
-  setScanPolling(active);
-  if (active) {
-    window.addEventListener("keydown", keydown);
-    window.addEventListener("keyup", keyup);
-    window.addEventListener("blur", onWindowBlur);
-  } else {
-    keyboardController.reset();
-    stopHoldSpeedBoost();
-    window.removeEventListener("keydown", keydown);
-    window.removeEventListener("keyup", keyup);
-    window.removeEventListener("blur", onWindowBlur);
-  }
-}
-
-function onVisibilityFlush() {
-  if (document.visibilityState === "hidden" && selected.value && viewerPlaying.value) void save();
-}
-function onPageHideFlush() {
-  if (selected.value && viewerPlaying.value) void save();
-}
-
-let lastHandledLaunchNonce = 0;
-function consumeLaunchRequest(req: { film: Movie; nonce: number } | null | undefined) {
-  if (!req || req.nonce === lastHandledLaunchNonce || props.active === false) return;
-  lastHandledLaunchNonce = req.nonce;
-  emit("launch-handled");
-  void open(req.film, true);
-}
-watch(() => [props.active, props.launchRequest] as const, ([activeVal, req]) => {
-  if (activeVal !== false && req) consumeLaunchRequest(req);
-});
-let initialLoadPending = false;
 function triggerInitialLoad() {
   void load(true);
   void loadHomeShelves();
@@ -489,52 +424,37 @@ function openScrapingFlow() {
   filter("unmatched");
   void refreshScrape();
 }
+function isCinemaActive() {
+  if (props.active !== false) return true;
+  return false;
+}
 onMounted(() => {
   disposed = false;
-  document.addEventListener("visibilitychange", onVisibilityFlush);
-  window.addEventListener("pagehide", onPageHideFlush);
-  mediaBackstack = createBrowserMediaBackstack(window, "lightisle-cinema", async (_old, target) => {
-    if (selected.value) {
-      const toOverview = viewerPlaying.value && target > 0 && !seriesDetail.value;
-      const saved = await leavePlayer(toOverview ? "overview" : "close");
-      if (saved && target === 0 && seriesDetail.value) finishCloseSeries();
-      return saved;
-    }
-    if (seriesDetail.value) finishCloseSeries();
-    return true;
-  });
-  if (props.active !== false) {
-    initialLoadPending = false;
-    triggerInitialLoad();
-  } else {
-    initialLoadPending = true;
-  }
-  syncCinemaActiveBindings(props.active !== false);
-  consumeLaunchRequest(props.launchRequest);
 });
-
-watch(() => props.active, (val) => {
-  const isActive = val !== false;
-  syncCinemaActiveBindings(isActive);
-  if (!isActive) {
-    if (selected.value) void leavePlayer("close", true);
-    if (seriesDetail.value) finishCloseSeries();
-  } else if (initialLoadPending) {
-    initialLoadPending = false;
-    triggerInitialLoad();
-  } else if (!document.hidden) {
-    void status();
-  }
-});
-
-onBeforeUnmount(() => { void save(); });
-onUnmounted(() => {
-  document.removeEventListener("visibilitychange", onVisibilityFlush);
-  window.removeEventListener("pagehide", onPageHideFlush);
-  cinemaLayerHandle?.dispose(); cinemaLayerHandle = null;
-  disposed = true; rootEpoch += 1; rootScopeAbort.abort(); syncCinemaActiveBindings(false); resetDirectoryPlaylist();
-  mediaBackstack?.dispose(); mediaBackstack = null; playbackGeneration += 1; disposeSeriesAndHistory();
-  if (searchTimer) clearTimeout(searchTimer); if (osdTimer) clearTimeout(osdTimer); clearLocalSubtitle(); selectedController?.abort(); disposeMetadata(); destroyHls(); disposeCatalog();
+useCinemaWindowBridge({
+  isActive: isCinemaActive,
+  getLaunchRequest: () => props.launchRequest,
+  emitLaunchHandled: () => emit("launch-handled"),
+  getSelected: () => selected.value,
+  getSeriesDetail: () => seriesDetail.value,
+  getViewerPlaying: () => viewerPlaying.value,
+  getCinemaLayerHandle: () => cinemaLayerHandle,
+  keyboardController,
+  getBindings: cinemaKeyBindings,
+  stopHoldSpeedBoost,
+  status,
+  save,
+  leavePlayer,
+  finishCloseSeries,
+  openLaunchFilm: (film) => open(film, true),
+  triggerInitialLoad,
+  setMediaBackstack: (stack) => { mediaBackstack = stack; },
+  onCleanupResources: () => {
+    cinemaLayerHandle?.dispose(); cinemaLayerHandle = null;
+    disposed = true; rootEpoch += 1; rootScopeAbort.abort(); resetDirectoryPlaylist();
+    mediaBackstack?.dispose(); mediaBackstack = null; playbackGeneration += 1; disposeSeriesAndHistory();
+    if (searchTimer) clearTimeout(searchTimer); clearOsd(); clearLocalSubtitle(); selectedController?.abort(); disposeMetadata(); destroyHls(); disposeCatalog();
+  },
 });
 
 provide(CINEMA_BROWSE_CTX, {
@@ -628,7 +548,7 @@ provide(CINEMA_PLAYER_CTX, {
   onHlsError: () => { playError.value = playError.value || "转码播放出错，可重新尝试或下载原片。"; },
   onCaptionLoad: captionLoaded,
   togglePlay: () => void togglePlayPause(),
-  jump: (d) => { showOsd(d > 0 ? `⏩ +${d}s` : `⏪ ${d}s`); void jumpPlayback(d); },
+  jump: (d) => { showJumpOsd(d); void jumpPlayback(d); },
   seek: (pos) => void seekAbsolute(pos),
   setVolume,
   toggleMute,
@@ -697,13 +617,21 @@ provide(CINEMA_PLAYER_CTX, {
       @accept-candidate="acceptBatchCandidate"
       @start-scrape="startScrape"
     />
-    <div v-if="scan.running&&!scanStatusError" class="cinema-alert">正在扫描：{{scan.visited}} 项 · 已找到 {{scan.found}} 部作品</div>
-    <div v-if="scanStatusError&&movies.length" class="cinema-alert" role="alert">扫描状态读取失败：{{scanStatusError}} <span v-if="scanStatusLoaded">显示的是最近一次成功读取的状态。</span> <button type="button" class="account-action" :disabled="scanStatusLoading" @click="status">{{scanStatusLoading?"正在重试…":"重试状态"}}</button></div>
-    <div v-if="scanStatusLoaded&&scan.lastError&&movies.length" class="cinema-alert" role="alert">扫描未完成：{{describeUserFacingError(scan.lastError)}}</div>
-    <div v-if="scanActionError&&movies.length" class="cinema-alert" role="alert">无法启动扫描：{{scanActionError}}</div>
-    <div v-if="actionError&&movies.length" class="cinema-alert" role="alert">{{actionError}}</div>
-    <div v-if="loadError&&movies.length" class="cinema-alert" role="alert">加载影视库失败：{{loadError}} 当前仍显示上次成功读取的内容。 <button type="button" class="account-action" :disabled="loading" @click="retryLoad">重试加载</button></div>
-    <div v-if="progressSaveError" class="cinema-alert" role="alert">{{progressSaveError}} <button type="button" class="account-action" @click="retryProgress">重试保存进度</button></div>
+    <CinemaStatusAlerts
+      :scan="scan"
+      :scan-status-error="scanStatusError"
+      :scan-status-loaded="scanStatusLoaded"
+      :scan-status-loading="scanStatusLoading"
+      :scan-action-error="scanActionError"
+      :action-error="actionError"
+      :load-error="loadError"
+      :loading="loading"
+      :progress-save-error="progressSaveError"
+      :movies="movies"
+      @retry-status="status"
+      @retry-load="retryLoad"
+      @retry-progress="retryProgress"
+    />
     <Transition name="isle-hud-float">
       <div v-if="choosingTrash&&view==='films'&&mode!=='history'" class="cinema-batch-hud" role="group" aria-label="已选择影片的操作">
         <span>已选 {{trashIDs.size}} 部（最多50部）</span>
@@ -767,7 +695,7 @@ provide(CINEMA_PLAYER_CTX, {
           <header :class="{'cinema-player-topbar':viewerPlaying}">
             <div><strong>{{selected.title}}</strong><small>{{selected.kind==='series'?'第 '+selected.season+' 季 · 第 '+selected.episode+' 集':'电影'}} · {{selected.year||'年份未知'}} · {{duration(selected.durationSeconds||selected.duration||playbackDuration)}}</small></div>
             <div class="cinema-actions">
-              <button v-if="viewerPlaying" type="button" class="cinema-top-pill" title="返回影片详情" aria-label="返回影片详情" :disabled="leavingPlayer" @click="returnToOverview">{{leavingPlayer?"正在保存…":"返回详情"}}</button>
+              <button v-if="viewerPlaying" type="button" class="cinema-top-pill" title="返回影片详情" aria-label="返回影片详情" :disabled="leavingPlayer" @click="returnToOverview"><ChevronLeft :size="15" /><span>{{leavingPlayer?"正在保存…":"返回详情"}}</span></button>
               <button type="button" title="关闭" aria-label="关闭影片详情" :disabled="leavingPlayer" @click="close"><X :size="19"/></button>
             </div>
           </header>
@@ -776,8 +704,12 @@ provide(CINEMA_PLAYER_CTX, {
             <button type="button" class="account-action" :disabled="leavingPlayer" @click="leavePlayer('close')">重试保存并关闭</button>
             <button type="button" class="account-action" :disabled="leavingPlayer" @click="leavePlayer('close',true)">仍然关闭（不保存）</button>
           </div>
-          <CinemaDetailMetadataPanels v-if="!viewerPlaying" />
-          <CinemaPlayerStage v-if="viewerPlaying" ref="playerStageRef" />
+          <Transition name="cinema-detail-fade">
+            <CinemaDetailMetadataPanels v-if="!viewerPlaying" />
+          </Transition>
+          <Transition name="cinema-player-fade">
+            <CinemaPlayerStage v-if="viewerPlaying" ref="playerStageRef" />
+          </Transition>
         </section>
       </div>
       </Transition>

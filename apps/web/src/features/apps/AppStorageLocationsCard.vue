@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
-import { HardDrive, FolderCog, CheckCircle2, AlertTriangle, Plus, RotateCcw, Trash2, Star } from "lucide-vue-next";
+import { HardDrive, FolderCog, AlertTriangle, Plus, RotateCcw, Trash2, Star } from "lucide-vue-next";
 import { formatBytes as formatStorageBytes } from "../../utils/format.ts";
 import IsleButton from "../../components/ui/IsleButton.vue";
 import IsleBadge from "../../components/ui/IsleBadge.vue";
@@ -13,6 +13,7 @@ import type {
 const props = defineProps<{
   storage: AppStorageSnapshot | null;
   busy?: boolean;
+  embedded?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -94,7 +95,7 @@ function submitEditor() {
 </script>
 
 <template>
-  <section v-if="storage" class="apps-storage-card" aria-label="应用数据存储位置">
+  <section v-if="storage" class="apps-storage-card" :class="{ 'is-embedded': embedded }" aria-label="应用数据存储位置">
     <div class="apps-storage-header">
       <div>
         <div class="apps-section-title-row">
@@ -148,7 +149,8 @@ function submitEditor() {
             设为默认安装位置
           </IsleButton>
           <IsleButton variant="glass" size="sm" :disabled="busy" @click="openInternalEditor(internalLocation)">
-            <FolderCog :size="13" /> 修改内置路径
+            <template #icon><FolderCog :size="13" /></template>
+            修改内置路径
           </IsleButton>
           <IsleButton
             v-if="internalLocation.isCustomPath"
@@ -157,7 +159,8 @@ function submitEditor() {
             :disabled="busy"
             @click="emit('mutate', { action: 'reset_internal' })"
           >
-            <RotateCcw :size="13" /> 恢复默认
+            <template #icon><RotateCcw :size="13" /></template>
+            恢复默认
           </IsleButton>
         </div>
       </article>
@@ -172,8 +175,9 @@ function submitEditor() {
                 <Star :size="11" /> 默认安装位置
               </IsleBadge>
               <IsleBadge :variant="externalLocation.online && externalLocation.writable ? 'online' : 'offline'" dot size="sm">
-                <CheckCircle2 v-if="externalLocation.online && externalLocation.writable" :size="11" />
-                <AlertTriangle v-else :size="11" />
+                <template v-if="!(externalLocation.online && externalLocation.writable)" #icon>
+                  <AlertTriangle :size="11" />
+                </template>
                 {{ externalLocation.online ? (externalLocation.writable ? "在线可写" : "只读") : "已离线" }}
               </IsleBadge>
             </div>
@@ -200,10 +204,12 @@ function submitEditor() {
             设为默认安装位置
           </IsleButton>
           <IsleButton variant="glass" size="sm" :disabled="busy" @click="openExternalEditor(externalLocation)">
-            <FolderCog :size="13" /> 更换路径
+            <template #icon><FolderCog :size="13" /></template>
+            更换路径
           </IsleButton>
           <IsleButton variant="danger" size="sm" :disabled="busy" @click="emit('mutate', { action: 'remove_external' })">
-            <Trash2 :size="13" /> 移除登记
+            <template #icon><Trash2 :size="13" /></template>
+            移除登记
           </IsleButton>
         </div>
       </article>
@@ -216,7 +222,8 @@ function submitEditor() {
         <small>可额外绑定 1 个外置或非系统磁盘目录（如 <code>/Volumes/磁盘名/LightIsleApps</code>），安装轻应用时即可自由选择存放在内置盘或其他盘。</small>
         <div class="apps-storage-actions">
           <IsleButton variant="primary" size="sm" :disabled="busy" @click="openExternalEditor(null)">
-            <Plus :size="13" /> 添加其他盘位置
+            <template #icon><Plus :size="13" /></template>
+            添加其他盘位置
           </IsleButton>
         </div>
       </article>
@@ -276,39 +283,52 @@ function submitEditor() {
 <style scoped>
 .apps-storage-card {
   border: 1px solid var(--fluid-card-border); border-radius: 16px; background: var(--fluid-card-fill);
-  box-shadow: var(--fluid-card-shadow); padding: 14px 16px; margin-bottom: 14px; display: grid; gap: 10px;
+  box-shadow: var(--fluid-card-shadow); padding: 14px 16px; margin-bottom: 14px; display: grid; gap: 12px; min-width: 0;
 }
-.apps-storage-header small { display: block; margin-top: 3px; font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
-.apps-storage-slots { display: grid; grid-template-columns: repeat(auto-fit, minmax(270px, 1fr)); gap: 10px; }
+.apps-storage-card.is-embedded {
+  border: 0; background: transparent; box-shadow: none; padding: 2px 0 0; margin-bottom: 0; border-radius: 0;
+}
+.apps-storage-header small { display: block; margin-top: 4px; font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
+.apps-storage-slots { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 270px), 1fr)); gap: 10px; min-width: 0; }
+.apps-storage-slots > * { min-width: 0; }
 .apps-storage-slot {
-  padding: 11px 13px; border-radius: 12px; background: var(--fluid-card-item-fill);
-  border: 1px solid var(--fluid-card-border); display: grid; gap: 7px;
+  padding: 12px 14px; border-radius: 12px; background: var(--fluid-card-item-fill);
+  border: 1px solid var(--fluid-card-border); display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; min-width: 0;
 }
 .apps-storage-slot.default { border-color: color-mix(in srgb, var(--accent-primary) 42%, var(--fluid-card-border)); }
-.apps-storage-slot.offline { border-color: color-mix(in srgb, #f59e0b 45%, var(--fluid-card-border)); }
+.apps-storage-slot.offline { border-color: color-mix(in srgb, var(--warning) 45%, var(--fluid-card-border)); }
 .apps-storage-slot-empty { background: transparent; border-style: dashed; }
 .apps-storage-slot-empty small { font-size: 12px; color: var(--text-secondary); line-height: 1.5; }
-.apps-storage-slot-top { display: flex; justify-content: space-between; gap: 8px; }
-.apps-storage-slot-title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; }
-.apps-storage-path { display: block; margin-top: 3px; font-size: 11.5px; color: var(--text-secondary); word-break: break-all; }
-.apps-storage-meta { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11.5px; color: var(--text-secondary); }
-.apps-storage-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+.apps-storage-slot-top { display: flex; justify-content: space-between; gap: 8px; min-width: 0; }
+.apps-storage-slot-top > div { min-width: 0; flex: 1; }
+.apps-storage-slot-title { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; font-size: 13px; font-variant-numeric: tabular-nums; }
+.apps-storage-path { display: block; margin-top: 4px; font-size: 11.5px; color: var(--text-secondary); word-break: break-all; }
+.apps-storage-meta { display: flex; flex-wrap: wrap; gap: 10px; font-size: 11.5px; color: var(--text-secondary); font-variant-numeric: tabular-nums; }
+.apps-storage-actions { display: flex; flex-wrap: wrap; gap: 6px; padding-top: 2px; }
 .apps-storage-editor {
-  padding: 11px 13px; border-radius: 12px; background: var(--fluid-card-item-fill);
-  border: 1px solid var(--fluid-card-border); display: grid; gap: 9px;
+  padding: 12px 14px; border-radius: 12px; background: var(--fluid-card-item-fill);
+  border: 1px solid var(--fluid-card-border); display: grid; gap: 10px; min-width: 0;
 }
-.apps-storage-editor-head { display: flex; align-items: center; justify-content: space-between; font-size: 13px; }
+.apps-storage-editor-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 13px; }
 .apps-storage-vol-picks { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; font-size: 12px; color: var(--text-secondary); }
 .apps-storage-vol-chip {
   border: 1px solid var(--fluid-card-border); background: var(--fluid-card-fill); border-radius: 999px;
-  padding: 3px 9px; font-size: 11.5px; cursor: pointer; color: var(--text-primary);
+  padding: 4px 10px; font-size: 11.5px; font-variant-numeric: tabular-nums; cursor: pointer; color: var(--text-primary);
+  transition: border-color 150ms ease, background-color 150ms ease, color 150ms ease;
+}
+.apps-storage-vol-chip:hover:not(:disabled) {
+  border-color: var(--accent-primary);
+  background: color-mix(in srgb, var(--accent-primary) 8%, var(--fluid-card-fill));
 }
 .apps-storage-vol-chip:disabled { opacity: 0.45; cursor: not-allowed; }
-.apps-storage-editor-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 8px; }
-.apps-storage-editor-fields label { display: grid; gap: 4px; font-size: 12px; color: var(--text-secondary); }
+.apps-storage-editor-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 210px), 1fr)); gap: 8px; min-width: 0; }
+.apps-storage-editor-fields label { display: grid; gap: 4px; font-size: 12px; color: var(--text-secondary); min-width: 0; }
 .apps-storage-editor-fields input {
-  height: 34px; padding: 0 10px; border-radius: 9px; border: 1px solid var(--fluid-card-border);
-  background: var(--fluid-card-fill); color: var(--text-primary); font-size: 12.5px;
+  width: 100%; box-sizing: border-box; min-width: 0; min-height: 36px; height: auto; padding: 7px 10px; border-radius: 9px;
+  border: 1px solid var(--fluid-card-border); background: var(--fluid-card-fill); color: var(--text-primary); font: inherit; font-size: 12.5px;
 }
 .apps-storage-editor-footer { display: flex; align-items: center; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
+@media (prefers-reduced-motion: reduce) {
+  .apps-storage-vol-chip { transition: none; }
+}
 </style>

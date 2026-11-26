@@ -1,5 +1,5 @@
 import { hasWebModule } from "../apps/appsCenterApi.ts";
-import { appStatus, categoryLabel, runtimeBadge } from "../../composables/useAppsCenterController.ts";
+import { appMode, appStatus, categoryLabel } from "../../composables/useAppsCenterController.ts";
 import { ISLE_CHART_COLORS, type ChartSegmentInput } from "../../components/ui/isleChartsMath.ts";
 import type { PublicAppItem } from "../../types/appsCenter.ts";
 import type { ServerStats } from "./useHostTelemetry.ts";
@@ -90,7 +90,7 @@ export function homeAppCategoryKey(category?: string): string {
   return category && HOME_APP_CATEGORY_KEYS.has(category) ? category : "default";
 }
 
-/** Resolves role-safe badge text and tone for a home-page app tile. */
+/** Resolves role-safe badge text and tone for a home-page app tile without runtime memory noise. */
 export function homeAppBadge(
   app: PublicAppItem,
   isAdmin: boolean,
@@ -98,10 +98,12 @@ export function homeAppBadge(
   if (!isAdmin) return { text: "免密即开", tone: "ready" };
   if (app.pendingActivation) return { text: "待首次激活", tone: "warn" };
   if (!isHomeAppReady(app)) return { text: "启动异常", tone: "warn" };
-  return {
-    text: runtimeBadge(app),
-    tone: appStatus(app) === "running" ? "running" : "neutral",
-  };
+  const status = appStatus(app);
+  const mode = appMode(app);
+  if (status === "running") return { text: "运行中", tone: "running" };
+  if (status === "starting") return { text: "唤醒中", tone: "running" };
+  if (mode === "persistent") return { text: "未启动", tone: "neutral" };
+  return { text: "就绪", tone: "ready" };
 }
 
 export { categoryLabel as homeAppCategoryLabel };

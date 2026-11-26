@@ -1,23 +1,36 @@
 <script setup lang="ts">
-import { watch } from "vue";
+import { onMounted, ref, watch } from "vue";
 import {
-  HardDrive, FolderGit2, ArrowRightLeft, Plus, RefreshCw, Sliders,
+  HardDrive,
+  FolderGit2,
+  ArrowRightLeft,
+  Plus,
+  RefreshCw,
+  Sliders,
+  SearchCheck,
+  Trash2,
 } from "lucide-vue-next";
+import { apiFetch } from "../../api/apiClient.ts";
 import IsleButton from "../../components/ui/IsleButton.vue";
 import IsleBanner from "../../components/ui/IsleBanner.vue";
 import IsleBadge from "../../components/ui/IsleBadge.vue";
 import IsleCard from "../../components/ui/IsleCard.vue";
+import IsleEmpty from "../../components/ui/IsleEmpty.vue";
+import IsleGroupedList from "../../components/ui/IsleGroupedList.vue";
+import IsleActionMenu from "../../components/ui/IsleActionMenu.vue";
 import IsleHelpButton from "../../components/ui/IsleHelpButton.vue";
 import UserStorageModals from "./UserStorageModals.vue";
 import IsleCharts from "../../components/ui/IsleCharts.vue";
 import { ISLE_CHART_COLORS, ISLE_CHART_PALETTE, type ChartSegmentInput } from "../../components/ui/isleChartsMath.ts";
 import { buildQuotaSegments } from "../overview/overviewPageModels.ts";
 import { bytes as formatByteSize } from "../overview/useHostTelemetry.ts";
+import { type Volume, isSystemVolume } from "./diskManagementSupport.ts";
 import {
   STORAGE_CATEGORIES as categories,
   categoryShortLabel,
   prettyBytes,
   migrationPhaseLabel,
+  type Root,
   useUserStoragePanel,
 } from "./useUserStoragePanel.ts";
 
@@ -99,13 +112,45 @@ const {
   recoverMigrationSource,
 } = useUserStoragePanel(() => props.admin);
 
+const volumesByMount = ref<Record<string, Volume>>({});
+
+async function loadVolumeInfo() {
+  if (!props.admin) return;
+  try {
+    const res = await apiFetch("/api/v2/system");
+    if (!res.ok) return;
+    const data = (await res.json()) as { volumes?: Volume[] };
+    const next: Record<string, Volume> = {};
+    for (const vol of data.volumes ?? []) {
+      if (!isSystemVolume(vol) && vol.mount) {
+        next[vol.mount] = vol;
+      }
+    }
+    volumesByMount.value = next;
+  } catch {
+    // Optional hardware volume enrichment fails silently.
+  }
+}
+
+async function refreshAll() {
+  await Promise.all([load(), loadVolumeInfo()]);
+}
+
+function volumeForRoot(root: Root & { volumeMount?: string }): Volume | undefined {
+  return root.volumeMount ? volumesByMount.value[root.volumeMount] : undefined;
+}
+
+onMounted(() => {
+  void loadVolumeInfo();
+});
+
 let lastHandledAllocSeq = 0;
 watch(
   () => props.allocRequest,
   async (req) => {
     if (!req || !props.admin || req.seq === lastHandledAllocSeq) return;
     lastHandledAllocSeq = req.seq;
-    await load();
+    await refreshAll();
     openAllocModal(req.userId);
     emit("alloc-handled", req.seq);
   },
@@ -116,7 +161,7 @@ watch(
   () => props.accountCount,
   (next, prev) => {
     if (props.admin && prev !== undefined && next !== prev && !showMigrateModal.value && !showAllocModal.value) {
-      void load();
+      void refreshAll();
     }
   },
 );
@@ -217,18 +262,36 @@ function unlimitedDiskSegments(root: {
     { key: "free", label: "磁盘剩余", value: free, color: ISLE_CHART_COLORS.green, displayValue: formatByteSize(free) },
   ];
 }
+
+function rootUsedPercent(total?: number, available?: number): number {
+  if (!total || total <= 0) return 0;
+  return Math.min(100, Math.round(((total - (available ?? 0)) / total) * 100));
+}
+
+function rootUsedBytes(total?: number, available?: number): number {
+  if (!total || total <= 0) return 0;
+  return Math.max(0, total - (available ?? 0));
+}
+
+function checkRootBoundUsage(rootID: string) {
+  const bound = usersBoundToRoot(rootID);
+  const first = bound[0];
+  if (first && policies.value[first.userId]) {
+    void checkOnlineUsage(policies.value[first.userId]!);
+  }
+}
 </script>
 
 <template>
   <div class="storage-two-blocks">
-    <IsleBanner v-if="error" type="error" compact dismissible :message="error" @close="error = ''" />
-    <IsleBanner v-if="successMessage" type="success" compact dismissible :message="successMessage" @close="successMessage = ''" />
+    <IsleBanner v-if="error" type="error" compact closable :message="error" @close="error = ''" />
+    <IsleBanner v-if="successMessage" type="success" compact closable :message="successMessage" @close="successMessage = ''" />
 
     <!-- BLOCK 1: 存储目录管理 -->
     <IsleCard
       v-if="admin && (!mode || mode === 'all' || mode === 'roots')"
       title="存储目录管理"
-      subtitle="查看默认主目录与外接存储池容量构成。"
+      subtitle="统一展示默认主目录与外接磁盘容量、在线健康状态及成员占用。"
     >
       <template #icon>
         <div class="block-header-icon"><HardDrive :size="18" /></div>
@@ -238,81 +301,129 @@ function unlimitedDiskSegments(root: {
           title="存储目录登记与权限规则"
           :items="[
             { title: '互不嵌套独立空间', body: '首次初始化设定默认主目录，后续添加的互不嵌套目录作为独立存储空间池。' },
-            { title: '本机权限管理', body: '添加新物理盘或目录、切换默认主目录及修复 macOS 整盘读写权限，请在 Mac 本机「设置 → 权限与初始化」中操作。' },
+            { title: '本机权限与离线恢复', body: '添加新物理盘、切换默认主目录及修复整盘读写权限请在 Mac 本机操作；磁盘离线时请先检查连接并重插，系统不会自动迁移或格式化原盘。' },
           ]"
         />
-        <IsleButton variant="glass" size="sm" :loading="pending" @click="load">
-          <RefreshCw :size="14" /><span>刷新目录</span>
-        </IsleButton>
+        <button
+          type="button"
+          class="storage-header-refresh"
+          :disabled="pending"
+          aria-label="刷新存储目录"
+          title="刷新存储目录"
+          @click="refreshAll"
+        >
+          <RefreshCw :size="14" :class="{ 'is-spinning': pending }" />
+        </button>
       </template>
 
-      <div v-if="!registeredRoots.length && !pending" class="empty-hint">
-        暂未读取到已登记的存储目录。请在 Mac 管理端「存储 → 存储位置」或「设置 → 权限与初始化」中检查目录登记与整盘读写授权。
-      </div>
+      <IsleEmpty
+        v-if="!registeredRoots.length && !pending"
+        compact
+        :icon="HardDrive"
+        title="暂未读取到已登记的存储目录"
+        description="请在 Mac 管理端「存储 → 存储位置」或「设置 → 权限与初始化」中检查目录登记与整盘读写授权。"
+      />
 
-      <div v-else class="directory-grid">
-        <div
-          v-for="root in registeredRoots"
-          :key="root.rootID"
-          class="directory-card"
-          :class="{ 'is-default': root.isDefault, 'is-offline': !root.online }"
-        >
-          <div class="directory-card-top">
-            <div class="directory-title-row">
-              <FolderGit2 :size="16" class="dir-icon" />
-              <strong class="dir-name">{{ root.name }}</strong>
-            </div>
-            <div class="dir-badges">
-              <IsleBadge v-if="root.isDefault" variant="accent" size="sm">默认主目录</IsleBadge>
-              <IsleBadge :variant="root.online ? 'online' : 'offline'" size="sm" dot>
-                {{ root.online ? "在线可读写" : "离线" }}
-              </IsleBadge>
-            </div>
-          </div>
-
+      <IsleGroupedList v-else variant="item" flush>
+        <TransitionGroup name="isle-list" tag="div" class="storage-group-rows">
           <div
-            v-if="root.filesystemTotalBytes !== undefined && root.filesystemAvailableBytes !== undefined && root.filesystemTotalBytes > 0"
-            class="dir-capacity dir-capacity-chart"
+            v-for="root in registeredRoots"
+            :key="root.rootID"
+            class="directory-row"
+            :class="{ 'is-default': root.isDefault, 'is-offline': !root.online }"
           >
-            <IsleCharts
-              kind="donut"
-              :size="54"
-              :stroke-width="5"
-              :percent="Math.min(100, Math.round(((root.filesystemTotalBytes - root.filesystemAvailableBytes) / root.filesystemTotalBytes) * 100))"
-              :color="((root.filesystemTotalBytes - root.filesystemAvailableBytes) / root.filesystemTotalBytes) >= 0.9 ? ISLE_CHART_COLORS.rose : ISLE_CHART_COLORS.blue"
-              :aria-label="`${root.name} 存储空间使用率`"
-            />
-            <div class="dir-capacity-bar-col">
-              <IsleCharts
-                kind="segmented"
-                :segments="rootPoolSegments(root)"
-                :total="root.filesystemTotalBytes"
-                :bar-height="10"
-                compact-legend
-                :aria-label="`${root.name} 各成员已入账、磁盘其他已用与剩余空间比例`"
-              />
-              <div class="capacity-labels">
-                <span>可用 {{ prettyBytes(root.filesystemAvailableBytes) }}</span>
-                <span>总容量 {{ prettyBytes(root.filesystemTotalBytes) }}</span>
+            <div class="directory-card-top">
+              <div class="directory-title-row">
+                <FolderGit2 :size="16" class="dir-icon" />
+                <strong class="dir-name">{{ root.name }}</strong>
+                <IsleBadge v-if="root.isDefault" variant="accent" size="sm">默认主目录</IsleBadge>
+                <IsleBadge :variant="root.online ? 'online' : 'offline'" size="sm" dot>
+                  {{ root.online ? "在线可读写" : "离线 · 请检查连接" }}
+                </IsleBadge>
+                <IsleBadge v-if="volumeForRoot(root)?.readOnly" variant="warning" size="sm">只读卷</IsleBadge>
+              </div>
+
+              <div class="directory-row-actions">
+                <IsleButton
+                  v-if="usersBoundToRoot(root.rootID).length > 0 && roots.length > 1"
+                  variant="tonal"
+                  size="sm"
+                  @click="openMigrateForRoot(root.rootID)"
+                >
+                  <template #icon><ArrowRightLeft :size="13" /></template>
+                  迁移数据
+                </IsleButton>
+                <IsleActionMenu
+                  v-if="usersBoundToRoot(root.rootID).length > 0"
+                  :aria-label="'更多目录操作：' + root.name"
+                >
+                  <button
+                    v-if="roots.length > 1"
+                    type="button"
+                    role="menuitem"
+                    @click="openMigrateForRoot(root.rootID)"
+                  >
+                    <ArrowRightLeft :size="14" />按成员迁移此目录数据
+                  </button>
+                  <button
+                    v-if="root.online"
+                    type="button"
+                    role="menuitem"
+                    @click="checkRootBoundUsage(root.rootID)"
+                  >
+                    <SearchCheck :size="14" />核对已绑定成员在线占用
+                  </button>
+                </IsleActionMenu>
               </div>
             </div>
-          </div>
 
-          <div class="directory-card-footer">
-            <span class="dir-meta">
-              当前已绑定 {{ boundCountForRoot(root.rootID) }} 项用户空间
-            </span>
-            <IsleButton
-              v-if="usersBoundToRoot(root.rootID).length > 0 && roots.length > 1"
-              variant="tonal"
-              size="sm"
-              @click="openMigrateForRoot(root.rootID)"
+            <div
+              v-if="root.filesystemTotalBytes !== undefined && root.filesystemAvailableBytes !== undefined && root.filesystemTotalBytes > 0"
+              class="dir-capacity dir-capacity-chart"
             >
-              <ArrowRightLeft :size="13" /><span>迁移此目录数据</span>
-            </IsleButton>
+              <IsleCharts
+                kind="donut"
+                :size="52"
+                :stroke-width="5"
+                :percent="rootUsedPercent(root.filesystemTotalBytes, root.filesystemAvailableBytes)"
+                :color="(rootUsedPercent(root.filesystemTotalBytes, root.filesystemAvailableBytes) / 100) >= 0.9 ? ISLE_CHART_COLORS.rose : ISLE_CHART_COLORS.blue"
+                :aria-label="`${root.name} 存储空间使用率`"
+              />
+              <div class="dir-capacity-bar-col">
+                <IsleCharts
+                  kind="segmented"
+                  :segments="rootPoolSegments(root)"
+                  :total="root.filesystemTotalBytes"
+                  :bar-height="10"
+                  compact-legend
+                  :aria-label="`${root.name} 各成员已入账、磁盘其他已用与剩余空间比例`"
+                />
+                <div class="capacity-labels storage-tabular">
+                  <span>
+                    已用 {{ prettyBytes(rootUsedBytes(root.filesystemTotalBytes, root.filesystemAvailableBytes)) }} ·
+                    可用 {{ prettyBytes(root.filesystemAvailableBytes) }} ·
+                    总计 {{ prettyBytes(root.filesystemTotalBytes) }}
+                  </span>
+                  <span class="dir-meta-inline">
+                    <template v-if="volumeForRoot(root)?.filesystem">{{ volumeForRoot(root)!.filesystem }} · </template>
+                    已绑定 {{ boundCountForRoot(root.rootID) }} 项用户空间
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div v-else class="dir-offline-guidance storage-tabular">
+              <template v-if="!root.online">
+                磁盘当前离线，请检查供电与数据线连接并重新插拔；确认不再使用原盘前，系统不会自动移除或迁移数据。
+              </template>
+              <template v-else>
+                暂未读取到容量信息 ·
+              </template>
+              已绑定 {{ boundCountForRoot(root.rootID) }} 项用户空间
+            </div>
           </div>
-        </div>
-      </div>
+        </TransitionGroup>
+      </IsleGroupedList>
     </IsleCard>
 
     <!-- BLOCK 2: 用户空间管理 -->
@@ -325,89 +436,172 @@ function unlimitedDiskSegments(root: {
         <div class="block-header-icon"><ArrowRightLeft :size="18" /></div>
       </template>
       <template #actions>
-        <IsleButton variant="glass" size="sm" :loading="pending" @click="load">
-          <RefreshCw :size="14" /><span>刷新</span>
-        </IsleButton>
+        <button
+          type="button"
+          class="storage-header-refresh"
+          :disabled="pending"
+          aria-label="刷新用户空间"
+          title="刷新用户空间"
+          @click="refreshAll"
+        >
+          <RefreshCw :size="14" :class="{ 'is-spinning': pending }" />
+        </button>
       </template>
 
       <p v-if="pending && !Object.keys(policies).length" class="loading-status" role="status">正在读取用户空间配置…</p>
 
       <div class="user-space-list">
-        <div v-for="policy in Object.values(policies)" :key="policy.userId" class="user-space-card">
-          <div class="user-space-header">
+        <IsleGroupedList
+          v-for="policy in Object.values(policies)"
+          :key="policy.userId"
+          variant="item"
+          flush
+        >
+          <template #header>
             <div class="user-identity">
               <strong class="user-name">
                 {{ admin ? users.find((u) => u.id === policy.userId)?.username ?? "账号 " + policy.userId : "我的目录与配额" }}
               </strong>
-              <IsleBadge :variant="isUserUnlimited(policy) ? 'accent' : 'neutral'" size="sm">
+              <IsleBadge :variant="isUserUnlimited(policy) ? 'accent' : 'neutral'" size="sm" class="storage-tabular">
                 {{ isUserUnlimited(policy) ? "管理员 · 无限配额" : `成员 · 已拥有 ${allocatedDiskCount(policy)} 个目录` }}
               </IsleBadge>
             </div>
+          </template>
 
-            <div v-if="admin" class="user-header-actions">
-              <IsleButton variant="tonal" size="sm" :disabled="!roots.length || pending" @click="openAllocModal(policy.userId)">
-                <Plus :size="14" /><span>分配目录</span>
-              </IsleButton>
-              <IsleButton variant="primary" size="sm" :disabled="!policy.locations.length || pending" @click="openMigrateModal(policy.userId)">
-                <ArrowRightLeft :size="14" /><span>旧目录迁移到新目录</span>
-              </IsleButton>
-              <IsleButton variant="glass" size="sm" :disabled="pending || !rootsKnown" @click="checkOnlineUsage(policy)">
-                核对占用
-              </IsleButton>
-            </div>
+          <template v-if="admin" #actions>
+            <IsleButton variant="tonal" size="sm" :disabled="!roots.length || pending" @click="openAllocModal(policy.userId)">
+              <template #icon><Plus :size="14" /></template>
+              分配目录
+            </IsleButton>
+            <IsleActionMenu
+              :aria-label="'更多成员空间操作：' + (users.find((u) => u.id === policy.userId)?.username ?? policy.userId)"
+            >
+              <button
+                type="button"
+                role="menuitem"
+                :disabled="!policy.locations.length || pending"
+                @click="openMigrateModal(policy.userId)"
+              >
+                <ArrowRightLeft :size="14" />迁移目录数据
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                :disabled="pending || !rootsKnown"
+                @click="checkOnlineUsage(policy)"
+              >
+                <SearchCheck :size="14" />核对在线占用
+              </button>
+            </IsleActionMenu>
+          </template>
+
+          <div v-if="usageChecks[policy.userId]" class="usage-check-row">
+            <IsleBanner
+              type="info"
+              compact
+              closable
+              :message="usageChecks[policy.userId]"
+              @close="delete usageChecks[policy.userId]"
+            />
           </div>
 
-          <div v-if="usageChecks[policy.userId]" class="usage-check-box">{{ usageChecks[policy.userId] }}</div>
+          <div v-if="!(policy.rootQuotas ?? []).length" class="empty-user-dirs">
+            {{
+              isUserUnlimited(policy)
+                ? "管理员默认享有无限配额（仅受所选存储目录所属磁盘的实际可用空间限制）。"
+                : admin
+                  ? "尚未分配存储目录。点击右上方「分配目录」即可为用户开通文件、照片或视频空间。"
+                  : "暂未分配存储目录，请联系家庭管理员为你开通文件、照片或视频空间。"
+            }}
+          </div>
 
-          <div class="owned-dirs-section">
-            <div v-if="!(policy.rootQuotas ?? []).length" class="empty-user-dirs">
-              {{ isUserUnlimited(policy) ? "管理员默认享有无限配额（仅受所选存储目录所属磁盘的实际可用空间限制）。" : "尚未分配存储目录。点击右上角「分配目录」即可为用户开通文件、照片或视频空间。" }}
-            </div>
-
+          <TransitionGroup v-else name="isle-list" tag="div" class="storage-group-rows">
             <div v-for="q in policy.rootQuotas ?? []" :key="q.rootID + ':' + q.rootGeneration" class="owned-dir-row">
               <div class="owned-dir-main">
                 <div class="owned-dir-title">
                   <strong>{{ rootName(q) }}</strong>
-                  <span class="quota-pill">{{ prettyBytes(q.quotaBytes) }}</span>
+                  <span class="quota-pill storage-tabular">{{ prettyBytes(q.quotaBytes) }}</span>
                   <IsleBadge
                     :variant="isActiveRoot(policy, q) ? (findRoot(q.rootID)?.online === false ? 'danger' : (diskLocations(policy, q).length ? 'online' : 'warning')) : 'neutral'"
                     size="sm"
-                    :title="isActiveRoot(policy, q) ? undefined : '历史已解绑磁盘的记录'"
+                    :title="isActiveRoot(policy, q) ? undefined : '此前已解绑磁盘的留存记录'"
                   >
                     {{ isActiveRoot(policy, q) ? (findRoot(q.rootID)?.online === false ? "离线 · 请接回原盘" : (diskLocations(policy, q).length ? "当前使用中" : "已预留配额")) : "已解绑旧记录" }}
                   </IsleBadge>
                 </div>
 
                 <div v-if="admin" class="owned-dir-actions">
-                  <IsleButton v-if="!isUserUnlimited(policy)" variant="glass" size="sm" @click="startEditQuota(policy.userId, q)">
-                    <Sliders :size="13" /><span>调整配额</span>
+                  <IsleButton
+                    v-if="!isUserUnlimited(policy)"
+                    variant="glass"
+                    size="sm"
+                    @click="startEditQuota(policy.userId, q)"
+                  >
+                    <template #icon><Sliders :size="13" /></template>
+                    调整配额
                   </IsleButton>
                   <IsleButton
-                    v-if="diskLocations(policy, q).length"
-                    variant="tonal"
+                    v-else-if="diskLocations(policy, q).length"
+                    variant="glass"
                     size="sm"
                     @click="openMigrateModal(policy.userId, q.rootID, q.rootGeneration, diskLocations(policy, q).map((l) => l.category))"
                   >
-                    <ArrowRightLeft :size="13" /><span>迁移到新目录</span>
+                    <template #icon><ArrowRightLeft :size="13" /></template>
+                    迁移到新目录
                   </IsleButton>
-                  <IsleButton v-if="!findRoot(q.rootID)" variant="danger" size="sm" @click="abandonRemovedRoot(policy.userId, q)">
+                  <IsleButton
+                    v-else-if="!findRoot(q.rootID)"
+                    variant="glass"
+                    size="sm"
+                    @click="abandonRemovedRoot(policy.userId, q)"
+                  >
                     放弃旧目录记录
                   </IsleButton>
+
+                  <IsleActionMenu
+                    v-if="(!isUserUnlimited(policy) && (diskLocations(policy, q).length > 0 || !findRoot(q.rootID))) || (isUserUnlimited(policy) && diskLocations(policy, q).length > 0 && !findRoot(q.rootID))"
+                    :aria-label="'目录操作：' + rootName(q)"
+                  >
+                    <button
+                      v-if="!isUserUnlimited(policy) && diskLocations(policy, q).length"
+                      type="button"
+                      role="menuitem"
+                      @click="openMigrateModal(policy.userId, q.rootID, q.rootGeneration, diskLocations(policy, q).map((l) => l.category))"
+                    >
+                      <ArrowRightLeft :size="14" />迁移到新目录
+                    </button>
+                    <button
+                      v-if="!findRoot(q.rootID)"
+                      type="button"
+                      role="menuitem"
+                      class="danger"
+                      @click="abandonRemovedRoot(policy.userId, q)"
+                    >
+                      <Trash2 :size="14" />放弃旧目录记录
+                    </button>
+                  </IsleActionMenu>
                 </div>
               </div>
 
               <div v-if="editingQuotaKey === `${policy.userId}:${q.rootID}:${q.rootGeneration}`" class="inline-quota-editor">
                 <span class="quota-edit-label">该目录新配额 (GiB)：</span>
                 <div class="quota-presets">
-                  <button v-for="preset in [50, 100, 200, 500, 1024]" :key="preset" type="button" class="preset-chip" @click="editingQuotaGiB = String(preset)">
+                  <button
+                    v-for="preset in [50, 100, 200, 500, 1024]"
+                    :key="preset"
+                    type="button"
+                    class="preset-chip"
+                    :class="{ active: editingQuotaGiB === String(preset) }"
+                    @click="editingQuotaGiB = String(preset)"
+                  >
                     {{ preset >= 1024 ? "1024 GiB" : preset + " GiB" }}
                   </button>
                 </div>
-                <input v-model="editingQuotaGiB" type="number" min="1" class="isle-input quota-input" />
+                <input v-model="editingQuotaGiB" type="number" min="1" class="isle-input quota-input storage-tabular" />
                 <IsleButton variant="primary" size="sm" :loading="savingQuota" @click="saveQuota(policy.userId, q)">保存</IsleButton>
                 <IsleButton variant="glass" size="sm" @click="editingQuotaKey = null">取消</IsleButton>
-                <small v-if="policy.enforcement === 'pending'" class="storage-pending-note" style="flex-basis: 100%">
-                  当前配额处于统计提示模式（enforcement=pending）：硬配额暂未对 SMB 与直接写盘强制拦截。
+                <small v-if="policy.enforcement === 'pending'" class="storage-pending-note">
+                  用量统计持续校准中（暂未开启超额强制拦截）：已统计网页与 WebDAV 写入，SMB 与直接写盘暂不强制拦截。
                 </small>
               </div>
 
@@ -437,7 +631,7 @@ function unlimitedDiskSegments(root: {
                   kind="donut"
                   :size="46"
                   :stroke-width="5"
-                  :percent="Math.min(100, Math.round((((findRoot(q.rootID)?.filesystemTotalBytes ?? 0) - (findRoot(q.rootID)?.filesystemAvailableBytes ?? 0)) / (findRoot(q.rootID)?.filesystemTotalBytes ?? 1)) * 100))"
+                  :percent="rootUsedPercent(findRoot(q.rootID)?.filesystemTotalBytes, findRoot(q.rootID)?.filesystemAvailableBytes)"
                   :color="ISLE_CHART_COLORS.teal"
                   :aria-label="`${rootName(q)} 所在磁盘空间使用率`"
                 />
@@ -451,16 +645,19 @@ function unlimitedDiskSegments(root: {
                 />
               </div>
 
-              <div class="owned-dir-stats">
+              <div class="owned-dir-stats storage-tabular">
                 <span>已用 {{ prettyBytes(q.accountedBytes) }} · 预占 {{ prettyBytes(q.reservedBytes) }} · 可用额度 {{ rootAvailable(q) }}</span>
                 <span v-if="diskLocations(policy, q).length" class="bound-cats-text">
                   包含：{{ diskLocations(policy, q).map((l) => categoryShortLabel(l.category)).join(" / ") }}
                 </span>
               </div>
+              <small v-if="isActiveRoot(policy, q) && findRoot(q.rootID)?.online === false" class="cat-offline-warn">
+                原硬盘当前离线，请检查供电或接回原盘；仅确认不再使用原盘时再迁往新目录或移除旧绑定。
+              </small>
             </div>
-          </div>
+          </TransitionGroup>
 
-          <div class="category-chips-grid">
+          <TransitionGroup name="isle-list" tag="div" class="category-chips-grid">
             <div v-for="category in categories" :key="category.id" class="category-chip-card">
               <div class="cat-chip-top">
                 <div class="cat-chip-label">
@@ -490,12 +687,14 @@ function unlimitedDiskSegments(root: {
               </div>
               <div v-else class="cat-chip-empty">尚未分配存储目录</div>
             </div>
-          </div>
+          </TransitionGroup>
 
-          <small v-if="policy.enforcement === 'pending'" class="storage-pending-note">
-            配额状态（统计提示模式 · enforcement=pending）：当前仅统计经由网页、客户端与 WebDAV 写入的容量，SMB 和直接写盘的文件暂未计入，硬配额尚未全渠道强制生效。
-          </small>
-        </div>
+          <template v-if="policy.enforcement === 'pending'" #footnote>
+            <span class="storage-pending-note">
+              用量统计持续校准中（暂未开启超额强制拦截）：当前统计经由网页、客户端与 WebDAV 写入的容量，SMB 与直接写盘暂不强制拦截。
+            </span>
+          </template>
+        </IsleGroupedList>
       </div>
     </IsleCard>
 

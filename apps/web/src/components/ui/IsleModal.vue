@@ -37,8 +37,99 @@ const emit = defineEmits<{
 }>();
 
 const cardRef = ref<HTMLElement | null>(null);
+const stackedZIndex = ref<number | undefined>(undefined);
+const dragY = ref(0);
+const dragging = ref(false);
+let dragStartY = 0;
+let dragStartTime = 0;
+let dragPointerId: number | null = null;
 let layerHandle: ModalLayerHandle | null = null;
 let previousFocus: HTMLElement | null = null;
+
+function isMobileSheetMode(): boolean {
+  return typeof window !== "undefined" && Boolean(window.matchMedia?.("(max-width: 768px)").matches);
+}
+
+function onSheetPointerDown(e: PointerEvent) {
+  if (!props.closeOnBackdrop || !isMobileSheetMode()) return;
+  const target = e.target as HTMLElement | null;
+  if (target && !target.closest(".isle-modal-grabber") && target.closest("button, a, input, select, textarea, [role='button']")) {
+    return;
+  }
+  dragging.value = true;
+  dragStartY = e.clientY;
+  dragStartTime = performance.now();
+  dragPointerId = e.pointerId;
+  try {
+    (e.currentTarget as HTMLElement | null)?.setPointerCapture?.(e.pointerId);
+  } catch {
+    // Ignore environments without pointer capture support.
+  }
+}
+
+function onSheetPointerMove(e: PointerEvent) {
+  if (!dragging.value || e.pointerId !== dragPointerId) return;
+  const delta = e.clientY - dragStartY;
+  dragY.value = delta < 0 ? Math.max(-18, delta * 0.16) : delta;
+}
+
+function onSheetPointerUp(e: PointerEvent) {
+  if (!dragging.value || e.pointerId !== dragPointerId) return;
+  const dy = Math.max(0, dragY.value);
+  const dt = Math.max(16, performance.now() - dragStartTime);
+  const velocity = dy / dt;
+  dragging.value = false;
+  dragPointerId = null;
+  dragY.value = 0;
+  if ((dy > 96 || (dy > 44 && velocity > 0.45)) && props.closeOnBackdrop) {
+    handleClose();
+  }
+}
+
+const sheetCardStyle = computed<Record<string, string> | undefined>(() => {
+  if (!dragging.value && dragY.value === 0) return undefined;
+  return {
+    transform: `translate3d(0, ${Math.round(dragY.value)}px, 0)`,
+    transition: dragging.value ? "none" : "transform 0.28s cubic-bezier(0.2, 0.9, 0.22, 1.05)",
+  };
+});
+
+const backdropStyle = computed<Record<string, string | number> | undefined>(() => {
+  const style: Record<string, string | number> = {};
+  if (resolvedZIndex.value !== undefined) {
+    style.zIndex = resolvedZIndex.value;
+  }
+  if (dragging.value && dragY.value > 0) {
+    const dim = Math.max(0.16, 0.48 - dragY.value / 560);
+    style.background = `rgba(20, 18, 16, ${dim.toFixed(3)})`;
+  }
+  return Object.keys(style).length ? style : undefined;
+});
+
+const resolvedZIndex = computed(() => props.zIndex ?? stackedZIndex.value);
+
+function onCardKeydown(event: KeyboardEvent) {
+  if (event.key !== "Tab" || !cardRef.value) return;
+  const focusables = Array.from(
+    cardRef.value.querySelectorAll<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+    )
+  ).filter((el) => el.offsetParent !== null || el === document.activeElement);
+  if (!focusables.length) {
+    event.preventDefault();
+    cardRef.value.focus();
+    return;
+  }
+  const first = focusables[0];
+  const last = focusables[focusables.length - 1];
+  if (event.shiftKey && (document.activeElement === first || document.activeElement === cardRef.value)) {
+    event.preventDefault();
+    last.focus();
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault();
+    first.focus();
+  }
+}
 
 const isOpen = computed(() => {
   if (typeof props.open === "boolean") return props.open;
@@ -77,6 +168,9 @@ function releaseLayer(restoreFocus = true) {
 watch(
   isOpen,
   (openState) => {
+    dragY.value = 0;
+    dragging.value = false;
+    dragPointerId = null;
     if (openState) {
       if (typeof document !== "undefined" && document.activeElement instanceof HTMLElement) {
         previousFocus = document.activeElement;
@@ -90,6 +184,7 @@ watch(
         },
         lockScroll: true,
       });
+      stackedZIndex.value = layerHandle.depth > 1 ? 1300 + layerHandle.depth * 20 : undefined;
       void nextTick(() => {
         const root = cardRef.value;
         if (!root) return;
@@ -118,7 +213,7 @@ onUnmounted(() => {
       <div
         v-if="isOpen"
         class="isle-modal-backdrop"
-        :style="zIndex ? { zIndex: typeof zIndex === 'number' ? zIndex : zIndex } : undefined"
+        :style="backdropStyle"
         tabindex="-1"
         @click.self="onBackdropClick"
       >
@@ -126,12 +221,32 @@ onUnmounted(() => {
           ref="cardRef"
           class="isle-modal-card"
           :class="[`size-${size}`]"
+          :style="sheetCardStyle"
           :role="role"
           aria-modal="true"
           :aria-label="title || undefined"
           tabindex="-1"
+          @keydown="onCardKeydown"
         >
-          <header v-if="$slots.header || title" class="isle-modal-header">
+          <div
+            v-if="closeOnBackdrop"
+            class="isle-modal-grabber"
+            aria-hidden="true"
+            @pointerdown="onSheetPointerDown"
+            @pointermove="onSheetPointerMove"
+            @pointerup="onSheetPointerUp"
+            @pointercancel="onSheetPointerUp"
+          >
+            <span class="isle-modal-grabber-pill"></span>
+          </div>
+          <header
+            v-if="$slots.header || title"
+            class="isle-modal-header"
+            @pointerdown="onSheetPointerDown"
+            @pointermove="onSheetPointerMove"
+            @pointerup="onSheetPointerUp"
+            @pointercancel="onSheetPointerUp"
+          >
             <slot name="header">
               <div class="isle-modal-title-wrap">
                 <span v-if="$slots.icon" class="isle-modal-icon-badge" aria-hidden="true">
@@ -193,27 +308,33 @@ onUnmounted(() => {
   background: var(--fluid-card-fill, var(--surface-elevated));
   border: 1px solid var(--fluid-card-border, var(--stroke-glass));
   border-radius: 20px;
-  box-shadow: var(--shadow-float, 0 22px 46px rgba(34, 29, 23, 0.2));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, #ffffff 30%, transparent),
+    var(--shadow-float, 0 22px 46px rgba(34, 29, 23, 0.2));
   color: var(--text-primary);
   overflow: hidden;
   outline: none;
+}
+
+.isle-modal-grabber {
+  display: none;
 }
 
 .isle-modal-enter-active {
   transition: opacity 0.24s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .isle-modal-leave-active {
-  transition: opacity 0.15s cubic-bezier(0.32, 0, 0.67, 0);
+  transition: opacity 0.16s var(--motion-exit, cubic-bezier(0.32, 0, 0.67, 0));
 }
 .isle-modal-enter-active .isle-modal-card {
   transition:
     opacity 0.24s cubic-bezier(0.22, 1, 0.36, 1),
-    transform 0.26s cubic-bezier(0.22, 1, 0.36, 1);
+    transform 0.3s var(--motion-spring-snappy, cubic-bezier(0.2, 0.9, 0.22, 1.05));
 }
 .isle-modal-leave-active .isle-modal-card {
   transition:
-    opacity 0.15s cubic-bezier(0.32, 0, 0.67, 0),
-    transform 0.15s cubic-bezier(0.32, 0, 0.67, 0);
+    opacity 0.16s var(--motion-exit, cubic-bezier(0.32, 0, 0.67, 0)),
+    transform 0.16s var(--motion-exit, cubic-bezier(0.32, 0, 0.67, 0));
 }
 .isle-modal-enter-from,
 .isle-modal-leave-to {
@@ -292,6 +413,7 @@ onUnmounted(() => {
   font-size: 12px;
   color: var(--text-secondary);
   line-height: 1.4;
+  overflow-wrap: anywhere;
 }
 
 .isle-modal-header-actions {
@@ -339,6 +461,7 @@ onUnmounted(() => {
   display: flex;
   align-items: center;
   justify-content: flex-end;
+  flex-wrap: wrap;
   gap: 8px;
   flex-shrink: 0;
 }
@@ -348,23 +471,54 @@ onUnmounted(() => {
     padding: 0;
     align-items: flex-end;
   }
-  .isle-modal-card {
-    max-height: 86vh;
-    border-radius: 18px 18px 0 0;
+  .isle-modal-card,
+  .isle-modal-card.size-sm,
+  .isle-modal-card.size-md,
+  .isle-modal-card.size-lg,
+  .isle-modal-card.size-wide {
+    max-width: 100%;
+    max-height: min(90dvh, 92svh);
+    border-radius: 22px 22px 0 0;
     border-bottom: none;
   }
   .isle-modal-enter-from .isle-modal-card,
   .isle-modal-leave-to .isle-modal-card {
     transform: translate3d(0, 100%, 0);
   }
+  .isle-modal-grabber {
+    display: flex;
+    justify-content: center;
+    padding: 9px 0 3px;
+    touch-action: none;
+    cursor: grab;
+    flex-shrink: 0;
+  }
+  .isle-modal-grabber-pill {
+    width: 36px;
+    height: 4px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--text-tertiary) 36%, transparent);
+  }
   .isle-modal-header {
-    padding: 14px 16px 10px;
+    padding: 10px 16px 10px;
+    touch-action: none;
   }
   .isle-modal-body {
     padding: 14px 16px;
   }
   .isle-modal-footer {
     padding: 10px 16px max(14px, env(safe-area-inset-bottom));
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .isle-modal-backdrop {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: rgba(16, 15, 14, 0.72);
+  }
+  .isle-modal-card {
+    background: var(--surface-elevated);
   }
 }
 

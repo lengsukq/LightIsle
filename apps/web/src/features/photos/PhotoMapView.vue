@@ -50,6 +50,7 @@ const basemapRetrying=ref(false);
 const settingsOpen=ref(false);
 const tileURLInput=ref(window.localStorage.getItem(tileSettingKey)||defaultTileURL);
 const strip=ref<MapStripAsset[]>([]);
+const stripElement=ref<HTMLElement|null>(null);
 const stripLabel=ref("");
 const stripLoading=ref(false);
 const activeCluster=ref<GeoCluster|null>(null);
@@ -164,6 +165,17 @@ function applyTileURL(){
   if(mapSource.value==="tianditu")void refreshMapStatus();
   if(map)attachTileLayer();
 }
+function switchToOsm(){
+  mapSource.value="osm";
+  mapSourceInput.value="osm";
+  geoError.value="";
+  try{
+    window.localStorage.setItem(mapSourceKey,"osm");
+  }catch{
+    // Storage failures in restricted WebViews should not block map source updates.
+  }
+  if(map)attachTileLayer();
+}
 
 function destroyMarkerLayer(){
   markerLayer?.remove();
@@ -244,6 +256,12 @@ async function openCluster(cluster:GeoCluster,key?:string){
       const assets=await props.transport.loadAssetsByIds(ids);
       strip.value=assets;
       stripLabel.value=cluster.count>120?"该位置最新 120 张（共 "+cluster.count+" 张）":"该位置 "+cluster.count+" 张照片";
+      await nextTick();
+      map?.invalidateSize();
+      if(window.innerWidth<=767){
+        const reduced=window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+        stripElement.value?.scrollIntoView({behavior:reduced?"auto":"smooth",block:"nearest"});
+      }
     }catch(error){
       geoError.value="读取位置照片失败："+describeUserFacingError(error);
     }finally{stripLoading.value=false}
@@ -255,6 +273,7 @@ function closeStrip(){
   activeCluster.value=null;
   activeClusterKey.value="";
   renderClusters(true);
+  void nextTick(()=>map?.invalidateSize());
 }
 function zoomIntoActiveCluster(){
   if(!map||!activeCluster.value)return;
@@ -315,13 +334,14 @@ async function loadGeo(){
     if(disposed||request!==geoRequest)return;
     if(result.points.length>0&&!map&&mapElement.value){
       map=L.map(mapElement.value,{
-        zoomControl:true,
+        zoomControl:false,
         attributionControl:true,
         minZoom:2,
         maxZoom:18,
         maxBounds:[[-85,-180],[85,180]],
         maxBoundsViscosity:1.0,
       });
+      L.control.zoom({position:"bottomright"}).addTo(map);
       map.setView([31,105],zoomLevel);
       attachTileLayer();
       map.on("moveend",()=>renderClusters());
@@ -367,18 +387,18 @@ onBeforeUnmount(()=>{
 
 <template>
   <div class="photo-map">
-    <div class="photo-map-toolbar">
-      <span class="photo-map-status"><MapPin :size="14"/> {{geoStatusLabel}}</span>
+    <div v-if="!(geoLoaded && total > 0)" class="photo-map-toolbar photo-map-toolbar--static">
+      <span class="photo-map-status photo-map-glass-pill"><MapPin :size="14"/> {{geoStatusLabel}}</span>
       <div class="photo-map-toolbar-actions">
-        <IsleButton variant="glass" size="sm" :loading="geoLoading" @click="loadGeo">
-          <template #icon><RefreshCw :size="13"/></template> {{ geoLoading ? "读取中…" : "刷新位置" }}
-        </IsleButton>
-        <IsleButton variant="glass" size="sm" :selected="settingsOpen" @click="settingsOpen=!settingsOpen">
-          <template #icon><Settings2 :size="13"/></template> 地图设置
-        </IsleButton>
+        <button type="button" class="photo-map-glass-btn" :disabled="geoLoading" @click="loadGeo">
+          <RefreshCw :size="13" :class="{ spinning: geoLoading }"/> {{ geoLoading ? "读取中…" : "刷新位置" }}
+        </button>
+        <button type="button" class="photo-map-glass-btn" :class="{ chosen: settingsOpen }" @click="settingsOpen=!settingsOpen">
+          <Settings2 :size="13"/> 地图设置
+        </button>
       </div>
     </div>
-    <form v-if="settingsOpen" class="photo-map-tile-form" @submit.prevent="applyTileURL">
+    <form v-if="settingsOpen && !(geoLoaded && total > 0)" class="photo-map-tile-form" @submit.prevent="applyTileURL">
       <AppleSelect v-model="mapSourceInput" size="sm" :options="mapSourceOptions" aria-label="地图来源" />
       <span v-if="mapSourceInput==='tianditu'" class="photo-map-status">
         {{ tiandituConfigured?'已在 Mac 启用天地图底图':(mapStatusError?'无法读取地图配置':'请在 Mac 端「设置 → 媒体服务」填写天地图 Key') }}
@@ -390,12 +410,14 @@ onBeforeUnmount(()=>{
     <IsleBanner v-if="mapSource==='tianditu'&&!tiandituConfigured" type="warning" compact role="status">
       {{mapStatusError?'无法获取地图设置，请检查连接。':'未配置天地图 Key，请在 Mac 端「设置 → 媒体服务」填写。'}}
       <template #action>
+        <IsleButton variant="primary" size="sm" @click="switchToOsm">改用 OpenStreetMap</IsleButton>
         <IsleButton variant="glass" size="sm" @click="refreshMapStatus">重新检查</IsleButton>
       </template>
     </IsleBanner>
     <IsleBanner v-if="basemapFailed" type="warning" compact role="status">
       地图暂时无法加载，仍可查看照片位置。请检查网络、重新加载，或更换地图来源。
       <template #action>
+        <IsleButton v-if="mapSource!=='osm'" variant="primary" size="sm" @click="switchToOsm">切换 OpenStreetMap</IsleButton>
         <IsleButton variant="glass" size="sm" :loading="basemapRetrying" @click="retryBasemap">
           <template #icon><RefreshCw :size="13"/></template> {{ basemapRetrying ? "正在重试…" : "重试底图" }}
         </IsleButton>
@@ -431,8 +453,30 @@ onBeforeUnmount(()=>{
       title="还没有带位置信息的照片"
       description="带 GPS 的照片（手机拍摄、相机开启定位）和 iPhone 视频会出现在这里。已入库的旧照片会在后台自动补齐位置信息。"
     />
-    <div v-show="geoLoaded&&total>0" ref="mapElement" class="photo-map-canvas" role="application" aria-label="按位置浏览照片"></div>
-    <div v-if="strip.length" class="photo-map-strip">
+    <div v-show="geoLoaded&&total>0" class="photo-map-stage">
+      <div class="photo-map-toolbar photo-map-toolbar--floating">
+        <span class="photo-map-status photo-map-glass-pill"><MapPin :size="14"/> {{geoStatusLabel}}</span>
+        <div class="photo-map-toolbar-actions">
+          <button type="button" class="photo-map-glass-btn" :disabled="geoLoading" @click="loadGeo">
+            <RefreshCw :size="13" :class="{ spinning: geoLoading }"/> {{ geoLoading ? "读取中…" : "刷新位置" }}
+          </button>
+          <button type="button" class="photo-map-glass-btn" :class="{ chosen: settingsOpen }" @click="settingsOpen=!settingsOpen">
+            <Settings2 :size="13"/> 地图设置
+          </button>
+        </div>
+      </div>
+      <form v-if="settingsOpen" class="photo-map-tile-form is-floating" @submit.prevent="applyTileURL">
+        <AppleSelect v-model="mapSourceInput" size="sm" :options="mapSourceOptions" aria-label="地图来源" />
+        <span v-if="mapSourceInput==='tianditu'" class="photo-map-status">
+          {{ tiandituConfigured?'已在 Mac 启用天地图底图':(mapStatusError?'无法读取地图配置':'请在 Mac 端「设置 → 媒体服务」填写天地图 Key') }}
+        </span>
+        <input v-if="mapSourceInput==='custom'" v-model="tileURLInput" placeholder="https://example.com/{z}/{x}/{y}.png" aria-label="瓦片服务地址">
+        <IsleButton type="submit" variant="primary" size="sm">保存并应用</IsleButton>
+        <IsleButton v-if="mapSourceInput==='custom'" type="button" variant="glass" size="sm" @click="tileURLInput=defaultTileURL">恢复默认</IsleButton>
+      </form>
+      <div ref="mapElement" class="photo-map-canvas" :class="{'is-strip-open':strip.length>0}" role="application" aria-label="按位置浏览照片"></div>
+    </div>
+    <div v-if="strip.length" ref="stripElement" class="photo-map-strip">
       <div class="photo-map-strip-head">
         <span class="photo-map-strip-title">{{stripLabel}}</span>
         <div class="photo-map-strip-actions">
@@ -454,31 +498,48 @@ onBeforeUnmount(()=>{
 
 <style scoped>
 .photo-map{display:flex;flex-direction:column;gap:8px;margin-bottom:14px}
-.photo-map-toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;color:var(--text-secondary);font-size:12px}
-.photo-map-toolbar-actions{display:inline-flex;align-items:center;gap:6px}
-.photo-map-status{display:inline-flex;align-items:center;gap:5px}
-.photo-map-tile-form{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:8px 12px;border-radius:12px;border:1px solid var(--fluid-card-border);background:var(--fluid-card-fill)}
+.photo-map-stage{position:relative;border-radius:16px;overflow:hidden;border:1px solid var(--fluid-card-border)}
+.photo-map-toolbar{display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap;color:var(--text-primary);font-size:12px}
+.photo-map-toolbar--static{position:relative}
+.photo-map-toolbar--floating{position:absolute;top:12px;left:12px;right:12px;z-index:420;pointer-events:none}
+.photo-map-toolbar--floating>*{pointer-events:auto}
+.photo-map-toolbar-actions{display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap}
+.photo-map-status{display:inline-flex;align-items:center;gap:6px;font-variant-numeric:tabular-nums}
+.photo-map-glass-pill,.photo-map-glass-btn{display:inline-flex;align-items:center;gap:6px;min-height:32px;padding:5px 12px;border-radius:999px;border:1px solid var(--fluid-card-border-strong,var(--fluid-card-border));background:color-mix(in srgb,var(--surface-glass,var(--surface-elevated)) 84%,transparent);-webkit-backdrop-filter:blur(22px) saturate(175%);backdrop-filter:blur(22px) saturate(175%);box-shadow:0 8px 24px -6px rgba(0,0,0,0.22);color:var(--text-primary);font-size:12px;font-weight:600}
+.photo-map-glass-btn{cursor:pointer;transition:transform var(--motion-fast) var(--motion-spring),background-color var(--motion-fast) ease,border-color var(--motion-fast) ease}
+.photo-map-glass-btn:hover:not(:disabled){background:var(--fluid-card-hover);border-color:var(--accent-primary)}
+.photo-map-glass-btn:active:not(:disabled){transform:scale(0.97)}
+.photo-map-glass-btn.chosen{background:var(--accent-primary-solid,var(--accent-primary));color:var(--on-accent-primary,#fff);border-color:transparent}
+.photo-map-tile-form{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:9px 12px;border-radius:14px;border:1px solid var(--fluid-card-border-strong,var(--fluid-card-border));background:var(--fluid-card-fill)}
+.photo-map-tile-form.is-floating{position:absolute;top:52px;left:12px;right:12px;z-index:420;background:color-mix(in srgb,var(--surface-glass,var(--surface-elevated)) 88%,transparent);-webkit-backdrop-filter:blur(24px) saturate(175%);backdrop-filter:blur(24px) saturate(175%);box-shadow:var(--shadow-float,0 14px 32px rgba(0,0,0,0.24))}
 .photo-map-tile-form input{flex:1;min-width:200px;height:30px;border:1px solid var(--fluid-card-border);border-radius:8px;background:var(--fluid-card-item-fill);color:var(--text-primary);padding:0 10px;font-size:12px}
-.photo-map-canvas{height:min(64vh,600px);border-radius:14px;border:1px solid var(--fluid-card-border);background:#0d1117;z-index:0}
+.photo-map-canvas{height:min(66vh,620px);border-radius:16px;background:#0d1117;z-index:0}
 .photo-map-strip{border:1px solid var(--fluid-card-border);border-radius:14px;background:var(--fluid-card-fill);overflow:hidden;box-shadow:var(--fluid-card-shadow)}
-.photo-map-strip-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;color:var(--text-primary);font-size:12.5px;font-weight:600;border-bottom:1px solid var(--fluid-divider,var(--fluid-card-border))}
+.photo-map-strip-head{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 12px;color:var(--text-primary);font-size:12.5px;font-weight:600;font-variant-numeric:tabular-nums;border-bottom:1px solid var(--fluid-divider,var(--fluid-card-border))}
 .photo-map-strip-title{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.photo-map-strip-actions{display:inline-flex;align-items:center;gap:5px}
-.photo-map-strip-btn{display:inline-flex;align-items:center;gap:4px;border:1px solid var(--fluid-card-border);border-radius:7px;background:var(--fluid-card-item-fill);color:var(--text-secondary);padding:4px 8px;font-size:11.5px;cursor:pointer}
+.photo-map-strip-actions{display:inline-flex;align-items:center;gap:5px;flex-shrink:0}
+.photo-map-strip-btn{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;flex-shrink:0;border:1px solid var(--fluid-card-border);border-radius:7px;background:var(--fluid-card-item-fill);color:var(--text-secondary);padding:4px 8px;font-size:11.5px;cursor:pointer}
 .photo-map-strip-btn:hover{color:var(--text-primary);background:var(--fluid-card-hover)}
+@media(max-width:767px){
+ .photo-map-canvas.is-strip-open{height:min(44vh,340px)}
+ .photo-map-tile-form.is-floating{top:90px}
+}
 .photo-map-strip-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;max-height:260px;overflow-y:auto;padding:10px}
-.photo-map-strip-tile{display:grid;gap:3px;justify-items:center;border:none;background:none;color:var(--text-secondary);font-size:11px;padding:0;cursor:pointer}
+.photo-map-strip-tile{display:grid;gap:3px;justify-items:center;border:none;background:none;color:var(--text-secondary);font-size:11px;font-variant-numeric:tabular-nums;padding:0;cursor:pointer}
 .photo-map-strip-tile img{width:100%;aspect-ratio:1/1;object-fit:cover;border-radius:8px;border:1px solid var(--fluid-card-border);display:block;background:var(--surface-raised)}
 :global(.photo-map-pin-wrapper){background:transparent;border:none}
 :global(.photo-map-pin){position:relative;width:54px;height:60px;display:flex;justify-content:center;align-items:flex-start;cursor:pointer}
 :global(.photo-map-pin-frame){width:46px;height:46px;margin-top:4px;border-radius:11px;padding:2px;background:#fff;box-shadow:0 4px 12px rgba(0,0,0,.32);overflow:hidden;transition:transform .16s ease,box-shadow .16s ease,background .16s ease}
 :global(.photo-map-pin.active .photo-map-pin-frame){transform:scale(1.08);background:var(--accent-primary,#2563eb);box-shadow:0 6px 16px rgba(37,99,235,.45)}
 :global(.photo-map-pin-frame img){width:100%;height:100%;object-fit:cover;border-radius:9px;display:block;background:#1e293b}
-:global(.photo-map-pin-badge){position:absolute;top:0;right:1px;min-width:20px;padding:1px 5px;border-radius:999px;background:#1e293b;color:#fff;font-size:10.5px;font-weight:800;line-height:1.3;text-align:center;border:1.5px solid #fff;box-shadow:0 2px 5px rgba(0,0,0,.3)}
+:global(.photo-map-pin-badge){position:absolute;top:0;right:1px;min-width:20px;padding:1px 5px;border-radius:999px;background:#1e293b;color:#fff;font-size:10.5px;font-weight:800;line-height:1.3;text-align:center;border:1.5px solid #fff;box-shadow:0 2px 5px rgba(0,0,0,.3);font-variant-numeric:tabular-nums}
 :global(.photo-map-pin.active .photo-map-pin-badge){background:var(--accent-primary,#2563eb)}
 :global(.photo-map-pin-tail){position:absolute;bottom:6px;width:10px;height:10px;background:#fff;border-radius:2px;transform:rotate(45deg);box-shadow:2px 2px 4px rgba(0,0,0,.22);z-index:-1}
 :global(.photo-map-pin.active .photo-map-pin-tail){background:var(--accent-primary,#2563eb)}
+@media(prefers-reduced-transparency:reduce){
+ .photo-map-glass-pill,.photo-map-glass-btn,.photo-map-tile-form.is-floating{backdrop-filter:none;-webkit-backdrop-filter:none;background:var(--surface-elevated)}
+}
 @media(prefers-reduced-motion:reduce){
- :global(.photo-map-pin-frame){transition:none}
+ .photo-map-glass-btn,:global(.photo-map-pin-frame){transition:none}
 }
 </style>

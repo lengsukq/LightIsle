@@ -41,10 +41,10 @@ async function copyOcrText() {
 </script>
 
 <template>
-  <div id="photo-viewer-info" class="viewer-info" role="region" aria-label="当前媒体信息">
+  <div id="photo-viewer-info" class="viewer-info viewer-info--obsidian" role="region" aria-label="当前媒体信息">
     <div class="viewer-info-heading">
       <strong>媒体与拍摄参数</strong>
-      <div style="display:inline-flex;gap:6px;align-items:center">
+      <div class="viewer-info-heading-actions">
         <button v-if="canWrite" type="button" title="修正拍摄时间或地点" aria-label="修正拍摄时间或地点" @click="emit('edit-metadata')"><Pencil :size="14" /></button>
         <button type="button" aria-label="关闭媒体信息" @click="emit('close')"><X :size="16" /></button>
       </div>
@@ -146,78 +146,91 @@ async function copyOcrText() {
 </template>
 
 <style scoped>
-.viewer-info {
-  grid-area: info;
+.viewer-info.viewer-info--obsidian {
+  position: relative;
   min-width: 0;
   min-height: 0;
+  height: 100%;
+  box-sizing: border-box;
   overflow: auto;
-  padding: 13px 14px;
-  border: 1px solid var(--fluid-card-border);
-  border-radius: 14px;
-  background: var(--fluid-card-fill);
+  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(18px, env(safe-area-inset-bottom)) 16px;
+  border: 0;
+  border-left: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 0;
+  background: rgba(15, 16, 20, 0.86);
+  -webkit-backdrop-filter: blur(28px) saturate(165%);
+  backdrop-filter: blur(28px) saturate(165%);
+  color: #f5f5f7;
+  box-shadow: -16px 0 40px rgba(0, 0, 0, 0.48);
 }
 .viewer-info-heading {
   display: flex;
   justify-content: space-between;
   align-items: center;
   gap: 8px;
-  margin-bottom: 10px;
+  margin-bottom: 12px;
   font-size: 13.5px;
-  color: var(--text-primary);
+  color: #f5f5f7;
+}
+.viewer-info-heading-actions {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
 }
 .viewer-info-heading button {
-  width: 28px;
-  height: 28px;
+  width: 30px;
+  height: 30px;
   border-radius: 999px;
-  background: var(--fluid-card-item-fill);
-  border: 1px solid var(--fluid-card-border);
-  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.1);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: rgba(255, 255, 255, 0.86);
   padding: 0;
   display: grid;
   place-items: center;
   cursor: pointer;
 }
 .viewer-info-heading button:hover {
-  color: var(--text-primary);
+  color: #fff;
+  background: rgba(255, 255, 255, 0.18);
 }
 .exif-filmstrip-card {
-  margin-bottom: 10px;
-  padding: 9px 11px;
-  border-radius: 10px;
-  border: 1px solid var(--fluid-card-border);
-  background: var(--fluid-card-item-fill);
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.06);
   display: grid;
   gap: 4px;
 }
 .exif-camera-name {
   font-size: 12.5px;
   font-weight: 650;
-  color: var(--text-primary);
+  color: #f5f5f7;
 }
 .exif-lens-name {
   font-size: 11px;
-  color: var(--text-secondary);
+  color: rgba(245, 245, 247, 0.66);
 }
 .exif-filmstrip-pills {
   display: flex;
   flex-wrap: wrap;
   gap: 5px;
-  margin-top: 2px;
+  margin-top: 3px;
 }
 .exif-pill {
   font-size: 11px;
   font-weight: 600;
   font-variant-numeric: tabular-nums;
-  padding: 2px 6px;
-  border-radius: 5px;
-  background: var(--fluid-card-fill);
-  border: 1px solid var(--fluid-card-border);
-  color: var(--text-primary);
+  padding: 2px 7px;
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  color: rgba(245, 245, 247, 0.92);
 }
 .viewer-info dl {
   display: grid;
   grid-template-columns: 1fr;
-  gap: 7px;
+  gap: 8px;
   margin: 0;
 }
 .viewer-info dl > div {
@@ -228,20 +241,21 @@ async function copyOcrText() {
 }
 .viewer-info dt {
   flex: none;
-  min-width: 52px;
-  color: var(--text-secondary);
+  min-width: 56px;
+  color: rgba(245, 245, 247, 0.6);
   font-size: 11.5px;
 }
 .viewer-info dd {
   margin: 0;
-  color: var(--text-primary);
+  color: rgba(245, 245, 247, 0.94);
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
   word-break: break-word;
 }
-.viewer-path-dd {
-  font-size: 11px !important;
+.viewer-info .viewer-path-dd {
+  font-size: 11px;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  color: var(--text-secondary) !important;
+  color: rgba(245, 245, 247, 0.64);
 }
 .viewer-location {
   display: inline-flex;
@@ -252,7 +266,7 @@ async function copyOcrText() {
 .viewer-map-link {
   border: none;
   background: none;
-  color: var(--accent-primary, #2563eb);
+  color: #60a5fa;
   font-size: 11.5px;
   font-weight: 600;
   padding: 0;
@@ -261,8 +275,8 @@ async function copyOcrText() {
 }
 .ai-sidebar-section {
   margin-top: 12px;
-  padding-top: 10px;
-  border-top: 1px solid var(--fluid-divider, var(--fluid-card-border));
+  padding-top: 11px;
+  border-top: 1px solid rgba(255, 255, 255, 0.1);
 }
 .ai-sidebar-title-row {
   display: flex;
@@ -277,7 +291,7 @@ async function copyOcrText() {
   gap: 5px;
   font-size: 11.5px;
   font-weight: 650;
-  color: var(--text-secondary);
+  color: rgba(245, 245, 247, 0.72);
   margin-bottom: 6px;
 }
 .ai-sidebar-title-row .ai-sidebar-title {
@@ -285,7 +299,7 @@ async function copyOcrText() {
 }
 .ai-sidebar-muted {
   font-size: 11.5px;
-  color: var(--text-secondary);
+  color: rgba(245, 245, 247, 0.62);
 }
 .ai-tag-list,
 .ai-face-chip-list {
@@ -294,33 +308,33 @@ async function copyOcrText() {
   gap: 5px;
 }
 .ai-tag-chip {
-  padding: 2px 8px;
+  padding: 3px 9px;
   border-radius: 999px;
   font-size: 11.5px;
-  background: var(--fluid-card-item-fill);
-  color: var(--text-primary);
-  border: 1px solid var(--fluid-card-border);
+  background: rgba(255, 255, 255, 0.08);
+  color: #f5f5f7;
+  border: 1px solid rgba(255, 255, 255, 0.12);
   cursor: pointer;
 }
 .ai-tag-chip:hover {
-  background: var(--fluid-card-hover);
-  border-color: var(--fluid-card-border-strong, var(--accent-primary));
+  background: rgba(255, 255, 255, 0.16);
+  border-color: rgba(255, 255, 255, 0.28);
 }
 .ai-face-chip {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 2px 8px 2px 3px;
+  padding: 2px 9px 2px 3px;
   border-radius: 999px;
-  background: var(--fluid-card-item-fill);
-  color: var(--text-primary);
-  border: 1px solid var(--fluid-card-border);
+  background: rgba(255, 255, 255, 0.08);
+  color: #f5f5f7;
+  border: 1px solid rgba(255, 255, 255, 0.12);
   font-size: 11.5px;
   cursor: pointer;
 }
 .ai-face-chip img {
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   border-radius: 50%;
   object-fit: cover;
 }
@@ -328,20 +342,21 @@ async function copyOcrText() {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 7px;
-  border-radius: 6px;
+  padding: 3px 8px;
+  border-radius: 7px;
   font-size: 11px;
-  background: var(--fluid-card-item-fill);
-  border: 1px solid var(--fluid-card-border);
-  color: var(--text-secondary);
+  background: rgba(255, 255, 255, 0.09);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  color: rgba(245, 245, 247, 0.86);
   cursor: pointer;
 }
 .ai-copy-btn:hover {
-  color: var(--text-primary);
+  color: #fff;
+  background: rgba(255, 255, 255, 0.16);
 }
 .ai-ocr-box {
   margin: 0;
-  padding: 8px 10px;
+  padding: 9px 11px;
   max-height: 140px;
   overflow-y: auto;
   white-space: pre-wrap;
@@ -349,10 +364,26 @@ async function copyOcrText() {
   font-family: inherit;
   font-size: 11.5px;
   line-height: 1.5;
-  border-radius: 8px;
-  border: 1px solid var(--fluid-card-border);
-  background: var(--fluid-card-item-fill);
-  color: var(--text-primary);
+  border-radius: 9px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: rgba(255, 255, 255, 0.05);
+  color: #f5f5f7;
   user-select: text;
+}
+@media (max-width: 780px) {
+  .viewer-info.viewer-info--obsidian {
+    border-left: 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.14);
+    border-radius: 18px 18px 0 0;
+    padding: 14px 16px max(18px, env(safe-area-inset-bottom));
+    box-shadow: 0 -16px 40px rgba(0, 0, 0, 0.52);
+  }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .viewer-info.viewer-info--obsidian {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    background: #141519;
+  }
 }
 </style>

@@ -42,7 +42,71 @@ export function usePhotoFolderAlbums<TAsset extends BatchAsset>(options: {
   const folderName = ref("");
   const folderTarget = ref("");
   const activeFolderAlbum = ref<FolderAlbum | null>(null);
+  const folderCovers = ref<Record<string, number>>({});
+  const folderCoverStatus = ref<Record<string, "idle" | "loading" | "done" | "empty" | "error">>({});
   const folderAlbumRequests = createLatestRequestGate();
+  const maxConcurrentCovers = 4;
+  let coverAbort = new AbortController();
+  let coverQueue: string[] = [];
+  const coverInFlight = new Set<string>();
+
+  function cancelCoverQueue() {
+    coverAbort.abort();
+    coverAbort = new AbortController();
+    coverQueue = [];
+    coverInFlight.clear();
+  }
+
+  function pumpCoverQueue() {
+    while (coverInFlight.size < maxConcurrentCovers && coverQueue.length > 0 && !options.isDisposed()) {
+      const albumPath = coverQueue.shift()!;
+      const existing = folderCoverStatus.value[albumPath];
+      if (existing === "loading" || existing === "done" || existing === "empty") continue;
+      const epoch = options.getRootEpoch();
+      const controller = coverAbort;
+      coverInFlight.add(albumPath);
+      folderCoverStatus.value = { ...folderCoverStatus.value, [albumPath]: "loading" };
+      void (async () => {
+        try {
+          const query = new URLSearchParams({ limit: "1", cursor: "0", directory: albumPath });
+          const res = await options.api<{ assets?: Array<{ id: number }> }>(
+            options.apiPath("/api/v2/photos") + "?" + query.toString(),
+            "GET",
+            undefined,
+            controller.signal,
+          );
+          if (options.isDisposed() || epoch !== options.getRootEpoch() || controller.signal.aborted) return;
+          const coverId = res.assets?.[0]?.id ?? 0;
+          if (coverId > 0) {
+            folderCovers.value = { ...folderCovers.value, [albumPath]: coverId };
+            folderCoverStatus.value = { ...folderCoverStatus.value, [albumPath]: "done" };
+          } else {
+            const nextCovers = { ...folderCovers.value };
+            delete nextCovers[albumPath];
+            folderCovers.value = nextCovers;
+            folderCoverStatus.value = { ...folderCoverStatus.value, [albumPath]: "empty" };
+          }
+        } catch (err) {
+          if (options.isDisposed() || epoch !== options.getRootEpoch() || controller.signal.aborted) return;
+          if (!(err instanceof Error && err.name === "AbortError")) {
+            folderCoverStatus.value = { ...folderCoverStatus.value, [albumPath]: "error" };
+          }
+        } finally {
+          coverInFlight.delete(albumPath);
+          pumpCoverQueue();
+        }
+      })();
+    }
+  }
+
+  function requestFolderCover(albumPath: string) {
+    if (!albumPath || options.isDisposed()) return;
+    const status = folderCoverStatus.value[albumPath];
+    if (status === "loading" || status === "done" || status === "empty") return;
+    if (coverInFlight.has(albumPath) || coverQueue.includes(albumPath)) return;
+    coverQueue.push(albumPath);
+    pumpCoverQueue();
+  }
 
   const folderAlbumOptions = computed(() => [
     { value: "", label: "选择文件夹相册…" },
@@ -72,6 +136,16 @@ export function usePhotoFolderAlbums<TAsset extends BatchAsset>(options: {
         folderAlbums.value = more ? [...folderAlbums.value, ...result.albums] : result.albums;
         if (!more && Array.isArray(result.shareTargets)) options.shareTargets.value = result.shareTargets;
         folderCursor.value = result.nextCursor;
+        if (!more) {
+          cancelCoverQueue();
+          const validPaths = new Set(result.albums.map((item) => item.path));
+          const prunedCovers: Record<string, number> = {};
+          for (const [path, id] of Object.entries(folderCovers.value)) {
+            if (validPaths.has(path)) prunedCovers[path] = id;
+          }
+          folderCovers.value = prunedCovers;
+          folderCoverStatus.value = {};
+        }
       }
     } catch (error) {
       if (!options.isDisposed() && request.isCurrent() && !(error instanceof Error && error.name === "AbortError")) {
@@ -206,16 +280,20 @@ export function usePhotoFolderAlbums<TAsset extends BatchAsset>(options: {
 
   function cancelFolderAlbumRequests() {
     folderAlbumRequests.cancel();
+    cancelCoverQueue();
   }
 
   function resetFolderAlbumsForRootChange() {
     folderAlbumRequests.cancel();
+    cancelCoverQueue();
     folderAlbums.value = [];
     folderCursor.value = "";
     folderError.value = "";
     folderLoading.value = false;
     folderTarget.value = "";
     activeFolderAlbum.value = null;
+    folderCovers.value = {};
+    folderCoverStatus.value = {};
   }
 
   return {
@@ -226,8 +304,11 @@ export function usePhotoFolderAlbums<TAsset extends BatchAsset>(options: {
     folderName,
     folderTarget,
     activeFolderAlbum,
+    folderCovers,
+    folderCoverStatus,
     folderAlbumOptions,
     refreshFolderAlbums,
+    requestFolderCover,
     createFolderAlbum,
     deleteFolderAlbum,
     openFolderAlbum,

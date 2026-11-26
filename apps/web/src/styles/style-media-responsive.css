@@ -54,6 +54,7 @@
 .album-new {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
   padding: 8px 12px;
   background: var(--fluid-card-fill);
@@ -62,8 +63,8 @@
   margin: 0 0 12px;
 }
 .album-new input {
-  min-width: 0;
-  flex: 1;
+  min-width: min(100%, 190px);
+  flex: 1 1 190px;
   border: 0;
   background: transparent;
   color: var(--text-primary);
@@ -71,13 +72,15 @@
   font-size: 13px;
 }
 .album-new button {
-  background: var(--accent-primary);
+  background: var(--accent-primary-solid, var(--accent-primary));
   border: 0;
-  color: #fff;
+  color: var(--on-accent-primary, #fff);
   border-radius: 8px;
   padding: 6px 12px;
   font-size: 12.5px;
   font-weight: 600;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .photo-grid {
@@ -216,6 +219,10 @@
   justify-content: space-between;
   gap: 12px;
 }
+.gallery-modal-toolbar > div:first-child {
+  min-width: 0;
+  flex: 1 1 160px;
+}
 .gallery-modal-toolbar strong {
   display: block;
   font-size: 13.5px;
@@ -223,13 +230,16 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-  max-width: 60vw;
+  max-width: 100%;
 }
 .gallery-modal-toolbar small {
   display: block;
   color: var(--text-secondary);
   font-size: 11px;
   margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .gallery-modal-actions {
   display: flex;
@@ -279,13 +289,31 @@
   font-size: 12px;
   padding: 7px 12px;
 }
-.gallery-modal-footer button {
+.gallery-modal-footer button:not(.refresh):not(.album-remove-photo) {
   display: flex;
   gap: 6px;
   align-items: center;
-  background: var(--accent-primary);
-  color: white;
+  background: var(--accent-primary-solid, var(--accent-primary));
+  color: var(--on-accent-primary, #ffffff);
   border-color: transparent;
+}
+@media (max-width: 767px) {
+  .gallery-modal {
+    width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    border-radius: 0;
+    padding: 10px 12px max(12px, env(safe-area-inset-bottom));
+    gap: 8px;
+  }
+  .gallery-modal-toolbar {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .gallery-modal-actions {
+    max-width: 100%;
+    justify-content: flex-end;
+  }
 }
 
 /* Cinema View Enhancements */
@@ -392,37 +420,6 @@
   .hero-text { max-width: 100%; }
   .hero-art { right: -6%; opacity: 0.18; }
   .hero h1 { font-size: 20px; }
-
-  .mobile-nav {
-    display: flex;
-    position: fixed;
-    bottom: 0;
-    left: 0;
-    right: 0;
-    z-index: var(--z-sidebar, 40);
-    justify-content: space-around;
-    padding: 7px 6px max(env(safe-area-inset-bottom), 8px);
-    background: var(--fluid-card-fill);
-    -webkit-backdrop-filter: blur(20px) saturate(165%);
-    backdrop-filter: blur(20px) saturate(165%);
-    border-top: 1px solid var(--fluid-card-border);
-  }
-  .mobile-nav button {
-    flex: 1;
-    min-width: 0;
-    border: 0;
-    background: transparent;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 3px;
-    color: var(--text-secondary);
-    font-size: 10.5px;
-    font-weight: 600;
-  }
-  .mobile-nav button.chosen {
-    color: var(--accent-primary);
-  }
 }
 
 @media (max-width: 420px) {
@@ -439,10 +436,10 @@
   }
 }
 @media (prefers-reduced-transparency: reduce) {
-  .glass, .sidebar, .topbar, .auth-card, .hero-glass, .mobile-nav {
+  .glass, .sidebar, .topbar, .auth-card, .hero-glass, .mobile-nav, .mobile-more-sheet {
     backdrop-filter: none !important;
     -webkit-backdrop-filter: none !important;
-    background: var(--surface-raised) !important;
+    background: var(--surface-elevated) !important;
   }
 }
 
@@ -554,7 +551,7 @@
 .mobile-more-backdrop {
   position: fixed;
   inset: 0;
-  z-index: var(--z-hud, 85);
+  z-index: var(--z-dialog, 99);
   background: rgba(8, 12, 20, 0.44);
   backdrop-filter: blur(8px);
   -webkit-backdrop-filter: blur(8px);
@@ -565,6 +562,8 @@
 }
 .mobile-more-sheet {
   width: min(420px, 100%);
+  max-height: calc(100dvh - 96px - env(safe-area-inset-bottom));
+  overflow-y: auto;
   border-radius: 18px;
   border: 1px solid var(--fluid-card-border);
   background: var(--fluid-card-fill);

@@ -1,7 +1,7 @@
 .storage-two-blocks {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
   margin: 0;
 }
 .block-header-icon {
@@ -14,35 +14,120 @@
   align-items: center;
   justify-content: center;
 }
-.empty-hint,
+.storage-header-refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 9999px;
+  border: 1px solid var(--fluid-card-border);
+  background: var(--fluid-card-item-fill);
+  color: var(--text-secondary);
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+  box-shadow: var(--fluid-item-card-shadow);
+  transition:
+    transform 240ms var(--motion-spring, cubic-bezier(0.22, 1, 0.36, 1)),
+    background-color 160ms ease,
+    border-color 160ms ease,
+    color 160ms ease;
+}
+.storage-header-refresh:hover:not(:disabled) {
+  color: var(--accent-primary);
+  background: var(--fluid-card-hover);
+  border-color: var(--fluid-card-border-strong);
+}
+.storage-header-refresh:active:not(:disabled) {
+  transform: scale(0.93);
+  transition-duration: 95ms;
+}
+.storage-header-refresh:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.storage-header-refresh .is-spinning {
+  animation: storageSpin 0.9s linear infinite;
+}
+@keyframes storageSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.storage-tabular {
+  font-variant-numeric: tabular-nums;
+}
+.isle-copy-swap-enter-active,
+.isle-copy-swap-leave-active {
+  transition:
+    opacity 120ms ease,
+    transform 160ms var(--motion-spring-snappy, cubic-bezier(0.2, 0.9, 0.22, 1.05));
+}
+.isle-copy-swap-enter-from,
+.isle-copy-swap-leave-to {
+  opacity: 0;
+  transform: scale(0.76);
+}
+.storage-two-blocks .isle-list-enter-active,
+.disk-panel .isle-list-enter-active,
+.dav-panel .isle-list-enter-active,
+.smb-panel .isle-list-enter-active {
+  transition: opacity 180ms ease, transform 200ms var(--motion-spring, cubic-bezier(0.22, 1, 0.36, 1));
+}
+.storage-two-blocks .isle-list-leave-active,
+.disk-panel .isle-list-leave-active,
+.dav-panel .isle-list-leave-active,
+.smb-panel .isle-list-leave-active {
+  transition: opacity 120ms ease;
+}
+.storage-two-blocks .isle-list-enter-from,
+.disk-panel .isle-list-enter-from,
+.dav-panel .isle-list-enter-from,
+.smb-panel .isle-list-enter-from {
+  opacity: 0;
+  transform: translate3d(0, 6px, 0);
+}
+.storage-two-blocks .isle-list-leave-to,
+.disk-panel .isle-list-leave-to,
+.dav-panel .isle-list-leave-to,
+.smb-panel .isle-list-leave-to {
+  opacity: 0;
+}
+.storage-two-blocks .isle-list-move,
+.disk-panel .isle-list-move,
+.dav-panel .isle-list-move,
+.smb-panel .isle-list-move {
+  transition: transform 200ms var(--motion-spring, cubic-bezier(0.22, 1, 0.36, 1));
+}
 .loading-status {
   font-size: 12.5px;
   color: var(--text-secondary);
   margin: 2px 0;
 }
-.directory-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(272px, 1fr));
-  gap: 10px;
-}
-.directory-card {
-  border: 1px solid var(--fluid-card-border);
-  border-radius: 13px;
-  padding: 12px 14px;
-  background: var(--fluid-card-item-fill);
+.storage-group-rows {
   display: flex;
   flex-direction: column;
-  gap: 8px;
-  transition: transform 0.2s var(--motion-spring), opacity 0.2s ease;
+  min-width: 0;
 }
-.directory-card.is-default {
-  border-color: color-mix(in srgb, var(--accent-primary, #2563d9) 42%, var(--fluid-card-border));
+.directory-row {
+  min-width: 0;
+  padding: 13px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  transition: background-color var(--motion-fast, 160ms) ease, opacity 0.2s ease;
 }
-.directory-card.is-offline {
-  opacity: 0.85;
+.directory-row + .directory-row {
+  border-top: 1px solid var(--fluid-divider, rgba(20, 19, 17, 0.06));
+}
+.directory-row.is-default {
+  background: color-mix(in srgb, var(--accent-primary, #0e6b74) 3.5%, transparent);
+}
+.directory-row.is-offline {
+  opacity: 0.88;
 }
 .directory-card-top,
-.directory-card-footer,
 .user-space-header,
 .owned-dir-main,
 .cat-chip-top {
@@ -53,7 +138,7 @@
   flex-wrap: wrap;
 }
 .directory-title-row,
-.dir-badges,
+.directory-row-actions,
 .user-identity,
 .user-header-actions,
 .owned-dir-title,
@@ -65,15 +150,15 @@
   flex-wrap: wrap;
 }
 .dir-icon,
-.cat-icon,
-.guard-icon,
-.route-arrow {
+.cat-icon {
   color: var(--accent-primary, #2563d9);
   flex-shrink: 0;
 }
 .dir-name {
   font-size: 13.5px;
   font-weight: 650;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .dir-capacity {
   display: flex;
@@ -85,27 +170,14 @@
   display: flex;
   flex-direction: row;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 .dir-capacity-bar-col {
   flex: 1;
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-}
-.capacity-bar-track {
-  width: 100%;
-  height: 5px;
-  border-radius: 999px;
-  background: var(--stroke-subtle, rgba(120, 120, 128, 0.16));
-  overflow: hidden;
-}
-.capacity-bar-fill {
-  height: 100%;
-  border-radius: 999px;
-  background: linear-gradient(90deg, var(--accent-primary, #2563d9), #32ade6);
-  transition: width 0.3s ease;
+  gap: 5px;
 }
 .capacity-labels,
 .owned-dir-stats {
@@ -113,74 +185,52 @@
   justify-content: space-between;
   gap: 8px;
   flex-wrap: wrap;
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-.directory-card-footer {
-  padding-top: 4px;
-  border-top: 1px solid var(--fluid-divider, var(--stroke-subtle));
-}
-.dir-meta,
-.storage-pending-note,
-.cat-chip-empty,
-.field-hint,
-.status-stats {
-  font-size: 11px;
-  color: var(--text-secondary);
-}
-.permission-guard-tip {
-  display: flex;
-  align-items: center;
-  gap: 7px;
   font-size: 11.5px;
   color: var(--text-secondary);
+}
+.dir-meta-inline,
+.storage-pending-note,
+.cat-chip-empty,
+.dir-offline-guidance {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  line-height: 1.45;
 }
 .user-space-list {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-}
-.user-space-card {
-  border: 1px solid var(--fluid-card-border);
-  border-radius: 14px;
-  padding: 13px 15px;
-  background: var(--fluid-card-item-fill);
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
+  gap: 14px;
 }
 .user-name {
-  font-size: 14px;
-  font-weight: 700;
+  font-size: 13.5px;
+  font-weight: 680;
+  color: var(--text-primary);
 }
-.usage-check-box {
-  font-size: 11.5px;
+.usage-check-row {
+  padding: 10px 14px;
+}
+.empty-user-dirs {
+  padding: 12px 16px;
+  font-size: 12px;
   color: var(--text-secondary);
-  padding: 8px 11px;
-  border-radius: 9px;
-  background: rgba(37, 99, 217, 0.06);
-  border: 1px solid rgba(37, 99, 217, 0.16);
+  line-height: 1.5;
 }
-.owned-dirs-section {
+.owned-dir-row {
+  min-width: 0;
+  padding: 12px 16px;
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
-.empty-user-dirs {
-  font-size: 12px;
-  color: var(--text-secondary);
+.owned-dir-row + .owned-dir-row {
+  border-top: 1px solid var(--fluid-divider, rgba(20, 19, 17, 0.06));
 }
-.owned-dir-row {
-  padding: 10px 12px;
-  border-radius: 11px;
-  background: var(--fluid-card-fill);
-  border: 1px solid var(--fluid-card-border);
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
+.owned-dir-title {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .quota-pill {
-  font-size: 11.5px;
+  font-size: 12px;
   font-weight: 600;
   color: var(--text-secondary);
 }
@@ -192,9 +242,12 @@
   align-items: center;
   gap: 6px;
   flex-wrap: wrap;
-  padding: 6px 9px;
-  border-radius: 9px;
-  background: rgba(120, 120, 128, 0.08);
+  padding: 8px 10px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+}
+.inline-quota-editor .storage-pending-note {
+  flex-basis: 100%;
 }
 .quota-edit-label {
   font-size: 11.5px;
@@ -213,23 +266,36 @@
   font-size: 11px;
   cursor: pointer;
   color: var(--text-primary);
+  font-variant-numeric: tabular-nums;
+  transition: border-color 140ms ease, background-color 140ms ease, color 140ms ease;
 }
-.preset-chip:hover {
-  border-color: var(--accent-primary, #2563d9);
+.preset-chip:hover,
+.preset-chip.active {
+  border-color: var(--accent-primary, #0e6b74);
+  color: var(--accent-primary, #0e6b74);
 }
 .category-chips-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(196px, 1fr));
-  gap: 8px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 .category-chip-card {
-  padding: 9px 11px;
-  border-radius: 11px;
-  border: 1px solid var(--fluid-card-border);
-  background: var(--fluid-card-fill);
+  min-width: 0;
+  padding: 11px 16px;
   display: flex;
   flex-direction: column;
   gap: 5px;
+}
+.category-chip-card:not(:last-child) {
+  border-right: 1px solid var(--fluid-divider, rgba(20, 19, 17, 0.06));
+}
+@media (max-width: 720px) {
+  .category-chips-grid {
+    grid-template-columns: 1fr;
+  }
+  .category-chip-card:not(:last-child) {
+    border-right: 0;
+    border-bottom: 1px solid var(--fluid-divider, rgba(20, 19, 17, 0.06));
+  }
 }
 .cat-chip-body {
   display: flex;
@@ -237,13 +303,13 @@
   gap: 2px;
 }
 .cat-path {
-  font-size: 11px;
+  font-size: 11.5px;
   color: var(--text-secondary);
-  word-break: break-all;
+  overflow-wrap: anywhere;
 }
 .cat-offline-warn {
-  font-size: 11px;
-  color: var(--error, #ff3b30);
+  font-size: 11.5px;
+  color: var(--error, #c93b3b);
   font-weight: 600;
 }
 .isle-input {
@@ -254,16 +320,47 @@
   background: var(--fluid-card-fill);
   color: var(--text-primary);
   outline: none;
+  transition: border-color 160ms ease;
 }
 .isle-input:focus {
-  border-color: var(--accent-primary, #2563d9);
+  border-color: var(--accent-primary, #0e6b74);
 }
 .quota-input {
-  width: 84px;
+  width: 96px;
+  padding: 6px 9px;
+}
+@media (max-width: 440px) {
+  .quota-chart-row,
+  .dir-capacity-chart {
+    flex-wrap: wrap;
+    align-items: flex-start;
+  }
+  .dir-capacity-bar-col {
+    flex: 1 1 100%;
+  }
 }
 @media (prefers-reduced-motion: reduce) {
-  .directory-card,
-  .capacity-bar-fill {
+  .storage-header-refresh,
+  .isle-copy-swap-enter-active,
+  .isle-copy-swap-leave-active,
+  .storage-two-blocks .isle-list-enter-active,
+  .disk-panel .isle-list-enter-active,
+  .dav-panel .isle-list-enter-active,
+  .smb-panel .isle-list-enter-active,
+  .storage-two-blocks .isle-list-leave-active,
+  .disk-panel .isle-list-leave-active,
+  .dav-panel .isle-list-leave-active,
+  .smb-panel .isle-list-leave-active,
+  .storage-two-blocks .isle-list-move,
+  .disk-panel .isle-list-move,
+  .dav-panel .isle-list-move,
+  .smb-panel .isle-list-move,
+  .directory-row,
+  .preset-chip,
+  .isle-input {
     transition: none;
+  }
+  .storage-header-refresh .is-spinning {
+    animation: none;
   }
 }

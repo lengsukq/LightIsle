@@ -2,7 +2,6 @@
 import { createVisibleMediaPolling } from "../../api/visibleMediaPolling.ts";
 import { usePhotoPersonalFavorite } from "./usePhotoPersonalFavorite.ts";
 import { computed, nextTick, onMounted, onUnmounted, provide, ref, watch } from "vue";
-import { describeUserFacingError } from "../../api/userFacingError.ts";
 import { createScopedRootApi } from "../../api/apiClient.ts";
 import { TIMINGS_MS } from "../../constants/timings.ts";
 import {
@@ -12,8 +11,7 @@ import {
   PHOTO_VIEWER_CTX,
 } from "../../contexts/photosContext.ts";
 import {
-  Heart, Star, RefreshCw, Images, Film,
-  Pencil, Trash2, Sparkles, LayoutList,
+  RefreshCw, Images, Sparkles, LayoutList,
   Map as MapIcon, Users, FolderPlus,
 } from "lucide-vue-next";
 import { createLatestRequestGate } from "../../api/latestRequestGate.ts";
@@ -25,18 +23,23 @@ import PhotoSimilarCleanupView from "./PhotoSimilarCleanupView.vue";
 import PhotoAlbumOverviewSection from "./PhotoAlbumOverviewSection.vue";
 import PhotosBatchBar from "./PhotosBatchBar.vue";
 import PhotosTimelineToolbar from "./PhotosTimelineToolbar.vue";
+import PhotoStickyMonthBar from "./PhotoStickyMonthBar.vue";
 import PhotoViewerModal from "./PhotoViewerModal.vue";
 import PhotoFrameOverlay from "./PhotoFrameOverlay.vue";
 import PhotoMetadataEditModal from "./PhotoMetadataEditModal.vue";
+import PhotoTimelineScrubber from "./PhotoTimelineScrubber.vue";
+import PhotoTimelineEmptyState from "./PhotoTimelineEmptyState.vue";
+import PhotoAlbumInlineManagement from "./PhotoAlbumInlineManagement.vue";
+import PhotoScanStatusBanners from "./PhotoScanStatusBanners.vue";
+import PhotoTimelineGrid from "./PhotoTimelineGrid.vue";
 import { usePhotoMetadataEditor } from "./usePhotoMetadataEditor.ts";
+import { useSlidingIndicator } from "../../composables/useSlidingIndicator.ts";
+import IsleSlidingIndicator from "../../components/ui/IsleSlidingIndicator.vue";
+import { PHOTO_STAGE_EXT_CTX } from "./photoStageContext.ts";
 import IsleButton from "../../components/ui/IsleButton.vue";
 import IsleHelpButton from "../../components/ui/IsleHelpButton.vue";
-import IsleEmpty from "../../components/ui/IsleEmpty.vue";
-import IsleCharts from "../../components/ui/IsleCharts.vue";
 import IslePageHeader from "../../components/ui/IslePageHeader.vue";
-import { ISLE_CHART_COLORS } from "../../components/ui/isleChartsMath.ts";
 import { usePhotoViewer } from "./usePhotoViewer.ts";
-import { dateLabel, formatDuration } from "./photoPresentation.ts";
 import { usePhotoFilterAndSharing } from "./usePhotoFilterAndSharing.ts";
 import { usePhotoBatchActions, type BatchAsset } from "./usePhotoBatchActions.ts";
 import { usePhotoAlbums } from "./usePhotoAlbums.ts";
@@ -74,14 +77,26 @@ const albumBusy = ref(false);
 const selected = ref<Asset | null>(null);
 const selectedIndex = ref(-1);
 const thumbnailFailed = ref<Record<number, boolean>>({});
+const thumbnailLoaded = ref<Record<number, boolean>>({});
 const pendingFavorites = ref<Record<number, boolean>>({});
 const photosPage = ref<HTMLElement | null>(null);
-const privateAlbumInputRef = ref<HTMLInputElement | null>(null);
-const sharedAlbumInputRef = ref<HTMLInputElement | null>(null);
 const albumOrganizerOpen = ref(false);
 const focusedIndex = ref(0);
 const nextCursor = ref(0);
 const viewMode = ref<PhotoViewMode>("timeline");
+const modeTabsRef = ref<HTMLElement | null>(null);
+const albumSubtabsRef = ref<HTMLElement | null>(null);
+
+const { indicatorStyle: modeIndicatorStyle, indicatorReady: modeIndicatorReady } = useSlidingIndicator({
+  containerRef: modeTabsRef,
+  activeSelector: "button.chosen",
+  watchSources: [viewMode, () => props.active],
+});
+const { indicatorStyle: subtabsIndicatorStyle, indicatorReady: subtabsIndicatorReady } = useSlidingIndicator({
+  containerRef: albumSubtabsRef,
+  activeSelector: "button.chosen",
+  watchSources: [viewMode, () => props.active],
+});
 watch(viewMode, (mode) => {
   void nextTick(() => {
     window.dispatchEvent(new Event("resize"));
@@ -107,6 +122,21 @@ const { api } = createScopedRootApi({
 function canWriteAsset(asset: Asset) { return props.admin || asset.canWrite === true; }
 function thumb(asset: Asset) { return mediaPath("/api/v2/photos/" + asset.id + "/thumbnail"); }
 function original(asset: Asset) { return mediaPath("/api/v2/files/preview?path=" + encodeURIComponent(asset.path)); }
+function markThumbnailFailed(id: number) {
+  if (!thumbnailFailed.value[id]) {
+    thumbnailFailed.value = { ...thumbnailFailed.value, [id]: true };
+  }
+}
+function onThumbnailLoad(event: Event, id: number) {
+  const img = event.target as HTMLImageElement | null;
+  if (img && img.naturalWidth === 0) {
+    markThumbnailFailed(id);
+    return;
+  }
+  if (!thumbnailLoaded.value[id]) {
+    thumbnailLoaded.value = { ...thumbnailLoaded.value, [id]: true };
+  }
+}
 
 let refreshFolderAlbumsBridge: (more?: boolean) => Promise<void> = async () => {};
 const {
@@ -125,12 +155,13 @@ const {
 
 const {
   albums, privateAlbums, activeAlbum, activePrivateAlbum, folderAlbums, folderCursor,
-  folderError, folderLoading, folderName, folderTarget, activeFolderAlbum, sharedAlbumsError,
+  folderError, folderLoading, folderName, folderTarget, activeFolderAlbum, folderCovers,
+  folderCoverStatus, sharedAlbumsError,
   privateAlbumsError, sharedAlbumsLoading, privateAlbumsLoading, creating, albumName,
   addAlbum, addPrivateAlbum, creatingPrivate, editingPrivate, privateAlbumName,
   failedAlbumCovers, editingAlbum, folderAlbumOptions, albumOptions, privateAlbumOptions,
   currentPrivateAlbum, currentAlbum, refreshAlbums, refreshPrivateAlbums, refreshFolderAlbums,
-  createFolderAlbum, deleteFolderAlbum, openFolderAlbum, addSelectedToFolder, editPrivateAlbum,
+  requestFolderCover, createFolderAlbum, deleteFolderAlbum, openFolderAlbum, addSelectedToFolder, editPrivateAlbum,
   cancelPrivateAlbum, savePrivateAlbum, deletePrivateAlbum, addSelectedPrivate,
   removeSelectedPrivate, beginAlbumRename, cancelAlbumForm, createAlbum, deleteCurrentAlbum,
   addSelected, removeSelectedFromAlbum, openAlbumFromOverview, cancelAlbumRequests,
@@ -157,11 +188,15 @@ const {
   toggleViewerZoom, viewerPointerDown, viewerPointerMove, viewerPointerUp, viewerWheel,
 } = usePhotoViewer({
   selected, mediaPath, original, thumb,
-  move(delta) {
+  move(delta): boolean {
     const index = selectedIndex.value + delta;
     if (index < 0 || index >= modalAssets.value.length) return false;
     showAssetAt(index);
     return true;
+  },
+  canMove(delta): boolean {
+    const index = selectedIndex.value + delta;
+    return index >= 0 && index < modalAssets.value.length;
   },
 });
 
@@ -214,9 +249,9 @@ function isFullTimelineView() {
 const {
   timelineCursorStart, fullTimelineMonths, timelineYears, jumpYear, jumpMonth,
   jumpMonths, yearOptions, monthOptions, browseTitle, scrubMonths, scrubbing,
-  scrubPreview, scrubCurrentIndex, refreshTimelineIndex, jumpToTimeline,
-  onJumpYearChange, startScrub, moveScrub, stopScrub, scrubKeydown, scrollToTop,
-  resetScrubberForRootChange,
+  scrubPreview, scrubCurrentIndex, scrubScrolling, scrolledPastHeader, activeStickyGroup,
+  refreshTimelineIndex, jumpToTimeline, onJumpYearChange, startScrub, moveScrub,
+  stopScrub, scrubKeydown, scrollToTop, resetScrubberForRootChange,
 } = usePhotoTimelineScrubber({
   assets, nextCursor, loading, loadError, galleryLoaded, focusedIndex,
   gridElement, scrubberInView, timelineLayout, virtualWindow, isFullTimelineView,
@@ -242,18 +277,13 @@ const {
   isDisposed: () => disposed,
   api, apiPath, appendExifFilterParams, updateViewport,
   onScanCompleted: () => {
+    thumbnailFailed.value = {};
+    thumbnailLoaded.value = {};
     void refreshAlbums(); void refreshPrivateAlbums(); void refreshTimelineIndex(); void refreshFacets(); void refreshSmartMemories();
   },
 });
 
-const aiProgressPercent = computed<number | null>(() => {
-  const ai = scan.value.aiIndexing;
-  if (!ai || !ai.total || ai.total <= 0 || ai.remaining == null) return null;
-  const done = Math.max(0, ai.total - ai.remaining);
-  return Math.min(100, Math.max(0, Math.round((done / ai.total) * 100)));
-});
-
-const { smartMemories, refreshSmartMemories, resetSmartMemories } = usePhotoMemories({
+const { smartMemories, refreshSmartMemories } = usePhotoMemories({
   api, apiPath, getRootEpoch: () => rootEpoch, isDisposed: () => disposed,
 });
 
@@ -280,19 +310,28 @@ function setTypeFilter(kind: "" | "photo" | "video" | "live") {
   void load(true);
 }
 function openSmartMemory(mem: SmartMemoryItem) {
+  viewMode.value = "timeline";
   if (mem.kind === "live") { setTypeFilter("live"); return; }
   if (mem.takenFrom) {
     const yr = new Date(mem.takenFrom * 1000).getFullYear();
     if (yr > 1970) { yearFilter.value = yr; onExifFilterChange(); }
   }
 }
+function jumpToYearMonth(year: number, month: number) {
+  jumpYear.value = year;
+  jumpMonth.value = month;
+  void jumpToTimeline();
+}
+function downloadSingleAsset(asset: Asset) {
+  const link = document.createElement("a");
+  link.href = mediaPath("/api/v2/files/content?path=" + encodeURIComponent(asset.path));
+  link.download = asset.name;
+  link.rel = "noopener";
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+}
 
-watch(creatingPrivate, (openState) => {
-  if (openState) void nextTick(() => { privateAlbumInputRef.value?.focus(); privateAlbumInputRef.value?.select(); });
-});
-watch(creating, (openState) => {
-  if (openState) void nextTick(() => { sharedAlbumInputRef.value?.focus(); sharedAlbumInputRef.value?.select(); });
-});
 watch(selected, (asset) => {
   if (!asset) albumOrganizerOpen.value = false;
   else if (activeAlbum.value || activePrivateAlbum.value) albumOrganizerOpen.value = true;
@@ -503,6 +542,16 @@ provide(PHOTO_VIEWER_CTX, {
   editMetadata: () => { if (selected.value) metadataEditor.openForAssets([selected.value]); },
 });
 
+provide(PHOTO_STAGE_EXT_CTX, {
+  mediaPath,
+  folderCovers,
+  folderCoverStatus,
+  requestFolderCover,
+  openSmartMemory,
+  downloadAsset: downloadSingleAsset,
+  toggleZoomAtPointer: toggleViewerZoom,
+});
+
 const setScanPolling = createVisibleMediaPolling(status, 4500);
 let initialLoadPending = false;
 function triggerInitialLoad() {
@@ -577,7 +626,8 @@ onUnmounted(() => {
         />
       </template>
       <template #actions>
-        <div class="photo-mode-tabs" role="tablist" aria-label="照片浏览方式">
+        <div ref="modeTabsRef" class="photo-mode-tabs" role="tablist" aria-label="照片浏览方式">
+          <IsleSlidingIndicator variant="segment" :ready="modeIndicatorReady" :pill-rect="modeIndicatorStyle" />
           <button type="button" role="tab" :aria-selected="viewMode==='timeline'" :class="{chosen:viewMode==='timeline'}" @click="viewMode='timeline'"><LayoutList :size="15"/> 照片</button>
           <button type="button" role="tab" :aria-selected="viewMode==='albums'||viewMode==='people'||viewMode==='map'" :class="{chosen:viewMode==='albums'||viewMode==='people'||viewMode==='map'}" @click="viewMode='albums';refreshFolderAlbums()"><Images :size="15"/> 相册</button>
           <button type="button" role="tab" :aria-selected="viewMode==='cleanup'" :class="{chosen:viewMode==='cleanup'}" @click="viewMode='cleanup'"><Sparkles :size="15"/> 清理</button>
@@ -589,31 +639,28 @@ onUnmounted(() => {
       </template>
     </IslePageHeader>
 
-    <div v-if="viewMode==='albums'||viewMode==='people'||viewMode==='map'" class="photos-album-subtabs" role="tablist" aria-label="相册分区">
+    <div v-if="viewMode==='albums'||viewMode==='people'||viewMode==='map'" ref="albumSubtabsRef" class="photos-album-subtabs" role="tablist" aria-label="相册分区">
+      <IsleSlidingIndicator variant="segment" :ready="subtabsIndicatorReady" :pill-rect="subtabsIndicatorStyle" />
       <button type="button" role="tab" :aria-selected="viewMode==='albums'" :class="{chosen:viewMode==='albums'}" @click="viewMode='albums';refreshFolderAlbums()"><FolderPlus :size="14"/> 文件夹与共享相册</button>
       <button type="button" role="tab" :aria-selected="viewMode==='people'" :class="{chosen:viewMode==='people'}" @click="viewMode='people'"><Users :size="14"/> 人物</button>
       <button type="button" role="tab" :aria-selected="viewMode==='map'" :class="{chosen:viewMode==='map'}" @click="viewMode='map'"><MapIcon :size="14"/> 足迹地图</button>
     </div>
 
-    <p v-if="previousRootShareWarning" class="form-error" role="alert">{{previousRootShareWarning}} <button type="button" class="refresh" @click="previousRootShareWarning=''">知道了</button></p>
-    <div v-if="scan.running&&!scanStatusError" class="scan-banner">正在后台整理媒体 · 已检查 {{scan.scanned}} 项 · 发现 {{scan.found}} 项</div>
-    <div v-else-if="scan.aiIndexing&&(scan.aiIndexing.running||scan.aiIndexing.paused||(scan.aiIndexing.remaining??0)>0)" class="scan-banner scan-banner--ai">
-      <IsleCharts
-        v-if="aiProgressPercent !== null"
-        kind="donut"
-        :size="36"
-        :stroke-width="4"
-        :percent="aiProgressPercent"
-        :color="scan.aiIndexing.paused ? ISLE_CHART_COLORS.amber : ISLE_CHART_COLORS.blue"
-        aria-label="智能识图索引完成度"
-      />
-      <span>{{ scan.aiIndexing.paused ? "智能识图与 OCR 索引已暂停" : "正在后台建立智能识图与离线 OCR 索引" }}<template v-if="scan.aiIndexing.total && scan.aiIndexing.remaining != null"> · 已索引 {{ Math.max(0, scan.aiIndexing.total - scan.aiIndexing.remaining) }}/{{ scan.aiIndexing.total }} 张</template><template v-else-if="scan.aiIndexing.remaining != null"> · 待处理 {{ scan.aiIndexing.remaining }} 张</template></span>
-      <button v-if="admin" type="button" class="refresh scan-banner-action" :disabled="aiPauseBusy" @click="toggleAIPause(scan.aiIndexing.paused)">{{ scan.aiIndexing.paused ? "恢复索引" : "暂停索引" }}</button>
-    </div>
-    <div v-if="scanStatusError&&assets.length" class="form-error" role="alert">扫描状态读取失败：{{scanStatusError}} <span v-if="scanStatusLoaded">显示的是最近一次成功读取的状态。</span><button type="button" class="refresh" :disabled="scanStatusLoading" @click="status">{{scanStatusLoading?"正在重试…":"重试状态"}}</button></div>
-    <p v-if="scanStatusLoaded&&scan.lastError&&assets.length" class="form-error">上次扫描：{{describeUserFacingError(scan.lastError)}}</p>
-    <p v-if="message" class="gallery-message">{{message}}</p>
-    <p v-if="scanActionError&&assets.length" class="gallery-message" role="alert">{{scanActionError}}</p>
+    <PhotoScanStatusBanners
+      :admin="admin"
+      :has-assets="assets.length > 0"
+      :scan="scan"
+      :scan-status-loaded="scanStatusLoaded"
+      :scan-status-loading="scanStatusLoading"
+      :scan-status-error="scanStatusError"
+      :scan-action-error="scanActionError"
+      :ai-pause-busy="aiPauseBusy"
+      :message="message"
+      :previous-root-share-warning="previousRootShareWarning"
+      @dismiss-share-warning="previousRootShareWarning = ''"
+      @toggle-ai-pause="toggleAIPause($event)"
+      @retry-status="status"
+    />
     <PhotoMapView v-if="props.active !== false && viewMode === 'map'" class="isle-subview-pane" :key="(props.rootId ?? 'legacy') + ':' + (props.rootGeneration ?? 0)" :root-id="props.rootId" :root-generation="props.rootGeneration" ref="photoMap" :transport="mapTransport" @open-asset="openMapAsset"/>
     <PhotoPeopleView v-if="props.active !== false && viewMode === 'people'" class="isle-subview-pane" :active="viewMode === 'people'" :root-key="(props.rootId ?? 'legacy') + ':' + (props.rootGeneration ?? 0)" :api="api" :api-path="apiPath" :media-path="mediaPath" @select-person="filterByPerson" />
     <PhotoSimilarCleanupView v-if="props.active !== false && viewMode === 'cleanup'" class="isle-subview-pane" :active="viewMode === 'cleanup'" :root-key="(props.rootId ?? 'legacy') + ':' + (props.rootGeneration ?? 0)" :api="api" :api-path="apiPath" :media-path="mediaPath" @trashed="load(true); status()" />
@@ -621,115 +668,105 @@ onUnmounted(() => {
     <div v-show="viewMode === 'timeline'" class="isle-subview-pane">
       <PhotosTimelineToolbar />
 
-    <div v-if="sharedAlbumsError&&!selected" class="gallery-message" role="alert">共享相册读取失败：{{sharedAlbumsError}} <button type="button" class="refresh" :disabled="sharedAlbumsLoading" @click="refreshAlbums">{{sharedAlbumsLoading?"正在重试…":"重试共享相册"}}</button></div>
-    <div v-if="privateAlbumsError&&!selected" class="gallery-message" role="alert">私人相册读取失败：{{privateAlbumsError}} <button type="button" class="refresh" :disabled="privateAlbumsLoading" @click="refreshPrivateAlbums()">{{privateAlbumsLoading?"正在重试…":"重试私人相册"}}</button></div>
-    <div v-if="activeFolderAlbum" class="album-management"><span>文件夹相册：{{activeFolderAlbum.name}}</span><button type="button" class="refresh" @click="viewMode='albums';refreshFolderAlbums()">返回相册</button></div>
-    <div v-if="currentPrivateAlbum" class="album-management">
-      <span>我的私人相册：{{currentPrivateAlbum.name}}（只有当前账号可查看）</span>
-      <button type="button" :disabled="albumBusy" @click="editPrivateAlbum(currentPrivateAlbum)"><Pencil :size="14"/> 改名</button>
-      <button type="button" :disabled="albumBusy" class="album-delete" @click="deletePrivateAlbum"><Trash2 :size="14"/> 删除</button>
-    </div>
-    <form v-if="creatingPrivate" class="album-new" @submit.prevent="savePrivateAlbum" @keydown.esc.stop="cancelPrivateAlbum">
-      <FolderPlus :size="18"/>
-      <input ref="privateAlbumInputRef" v-model="privateAlbumName" maxlength="120" aria-label="私人相册名称" placeholder="私人相册名称（最多60个字符）" required/>
-      <button type="submit" :disabled="albumBusy">{{albumBusy?"保存中…":editingPrivate?"保存修改":"创建私人相册"}}</button>
-      <button type="button" class="album-cancel" :disabled="albumBusy" @click="cancelPrivateAlbum">取消</button>
-    </form>
-    <div v-if="admin&&currentAlbum" class="album-management">
-      <span>当前相册：{{currentAlbum.name}}</span>
-      <button type="button" :disabled="albumBusy" @click="beginAlbumRename(currentAlbum)"><Pencil :size="14"/>改名</button>
-      <button type="button" class="album-delete" :disabled="albumBusy" @click="deleteCurrentAlbum"><Trash2 :size="14"/>删除相册</button>
-    </div>
-    <form v-if="admin&&creating" class="album-new" @submit.prevent="createAlbum" @keydown.esc.stop="cancelAlbumForm">
-      <FolderPlus :size="18"/><input ref="sharedAlbumInputRef" v-model="albumName" maxlength="120" aria-label="相册名称，最多60个字符" placeholder="相册名称（最多60个字符）" required/>
-      <button type="submit" :disabled="albumBusy">{{albumBusy?"保存中…":editingAlbum?"保存修改":"创建"}}</button>
-      <button type="button" class="album-cancel" :disabled="albumBusy" @click="cancelAlbumForm">取消</button>
-    </form>
-    <IsleEmpty
-      v-if="!assets.length && (loadError || scanActionError || scanStatusError || scanStatusLoaded&&scan.lastError)"
-      :icon="Images"
-      :icon-size="44"
-      :title="loadError ? '暂时无法读取图库' : scanActionError ? '扫描无法启动' : scanStatusError ? '无法确认扫描状态' : '上次扫描未完成'"
-      :description="loadError || scanActionError || (scanStatusError ? '扫描状态暂不可用：' + scanStatusError : '上次扫描未完成：' + describeUserFacingError(scan.lastError))"
-      role="alert"
-    >
-      <template #action>
-        <IsleButton v-if="loadError" variant="tonal" size="sm" :disabled="loading" @click="retryLoad">重试读取图库</IsleButton>
-        <IsleButton v-if="scanStatusError" variant="tonal" size="sm" :disabled="scanStatusLoading" @click="status">重试读取扫描状态</IsleButton>
-        <IsleButton v-if="admin && (!loadError || scanActionError || scan.lastError)" variant="tonal" size="sm" :disabled="scan.running && !scanStatusError" @click="startScan">重新扫描</IsleButton>
-      </template>
-    </IsleEmpty>
-    <IsleEmpty
-      v-else-if="!assets.length && (loading || !galleryLoaded || (!scanStatusLoaded && !scanStatusError) || scan.running && !scanStatusError)"
-      :icon="Images"
-      :icon-size="44"
-      :title="scan.running && !scanStatusError ? '正在扫描媒体…' : !scanStatusLoaded && !scanStatusError ? '正在确认媒体扫描状态…' : '正在读取媒体索引…'"
+      <PhotoAlbumInlineManagement
+        v-model:private-album-name="privateAlbumName"
+        v-model:album-name="albumName"
+        :admin="admin"
+        :album-busy="albumBusy"
+        :selected-open="Boolean(selected)"
+        :shared-albums-error="sharedAlbumsError"
+        :shared-albums-loading="sharedAlbumsLoading"
+        :private-albums-error="privateAlbumsError"
+        :private-albums-loading="privateAlbumsLoading"
+        :active-folder-album="activeFolderAlbum"
+        :current-private-album="currentPrivateAlbum"
+        :current-album="currentAlbum"
+        :creating-private="creatingPrivate"
+        :editing-private="editingPrivate"
+        :creating="creating"
+        :editing-album="editingAlbum"
+        @retry-shared="refreshAlbums"
+        @retry-private="refreshPrivateAlbums()"
+        @back-to-albums="viewMode = 'albums'; refreshFolderAlbums()"
+        @edit-private="editPrivateAlbum($event)"
+        @delete-private="deletePrivateAlbum"
+        @save-private="savePrivateAlbum"
+        @cancel-private="cancelPrivateAlbum"
+        @begin-rename="beginAlbumRename($event)"
+        @delete-album="deleteCurrentAlbum"
+        @save-album="createAlbum"
+        @cancel-album="cancelAlbumForm"
+      />
+    <PhotoTimelineEmptyState
+      v-if="!assets.length"
+      :admin="admin"
+      :loading="loading"
+      :gallery-loaded="galleryLoaded"
+      :load-error="loadError"
+      :scan-action-error="scanActionError"
+      :scan-status-error="scanStatusError"
+      :scan-status-loaded="scanStatusLoaded"
+      :scan-status-loading="scanStatusLoading"
+      :scan-running="scan.running"
+      :scan-last-error="scan.lastError"
+      :root-name="rootName"
+      :has-other-roots="hasOtherRoots"
+      @retry-load="retryLoad"
+      @retry-status="status"
+      @start-scan="startScan"
     />
-    <IsleEmpty
-      v-else-if="!assets.length"
-      :icon="Images"
-      :icon-size="44"
-      :title="searchApplied ? '没有匹配「' + searchApplied + '」的媒体' : activeFolderAlbum ? '文件夹相册还没有照片' : currentPrivateAlbum ? '私人相册还没有照片' : currentAlbum ? '此相册还没有照片' : onThisDayOnly ? '今天还没有那年今天的回忆' : personalOnly ? '还没有个人收藏' : favoritesOnly ? '还没有共享收藏' : typeFilter === 'live' ? '这里还没有实况照片' : typeFilter === 'video' ? '这里还没有视频' : typeFilter === 'photo' ? '这里还没有照片' : rootName ? `当前目录「${rootName}」还没有照片或视频` : '这里还没有照片或视频'"
-    >
-      <p v-if="activeFolderAlbum">可在文件页放入照片，或在照片预览中复制/移动到此相册。</p>
-      <p v-else-if="currentPrivateAlbum">在全部照片中打开预览，选择「加入我的相册」（仅自己可见）。</p>
-      <p v-else-if="currentAlbum">在全部照片中打开预览，选择此相册并点击「加入相册」。</p>
-      <p v-else-if="onThisDayOnly">带拍摄时间的往年同日照片与视频会自动显示在这里。</p>
-      <p v-else-if="favoritesOnly">在预览中点击心形收藏，已授权成员可共同浏览。</p>
-      <p v-else-if="personalOnly">在预览中点击星标收藏，仅自己可见。</p>
-      <p v-else>上传照片或视频后点击「扫描媒体」即可显示。<span v-if="!admin">请联系管理员执行扫描。</span><template v-if="hasOtherRoots"> 若迁移前的照片或相册保存在原存储目录（如旧盘根层或「图库 / PhonePhotos」），原数据未丢失：可在右上角切换存储目录查看，或在 Mac 访达中将原照片放入当前个人相册目录后重新扫描。</template></p>
-      <template v-if="activeFolderAlbum || currentAlbum || currentPrivateAlbum || favoritesOnly || personalOnly || onThisDayOnly" #action>
-        <IsleButton variant="tonal" size="sm" @click="changeView(0, false)">浏览全部照片</IsleButton>
-      </template>
-    </IsleEmpty>
     <p v-if="loadError&&assets.length" class="form-error" role="alert">{{loadError}} 当前仍显示上次成功读取的内容。 <button type="button" class="refresh" :disabled="loading" @click="retryLoad">重试加载</button></p>
-    <div v-if="assets.length" ref="gridElement" class="photo-grid" :class="{'photo-grid-compact':compactGrid}" role="group" aria-label="按年月排列的照片和视频" :style="{height:timelineLayout.totalHeight+'px'}">
-      <div v-for="header in visibleHeaders" :key="header.startIndex" class="photo-month-heading" :style="{top:header.top+'px'}" role="heading" aria-level="3">
-        <div class="photo-month-title">{{header.title}} <small>{{header.count}} 项<span v-if="nextCursor"> · 已加载</span></small></div>
-        <button type="button" class="photo-month-select" :class="{chosen:isMonthSelected(header)}" :disabled="trashBusy" :title="isMonthSelected(header)?'取消选择当月':'全选当月照片'" @click.stop="toggleMonthSelection(header)">
-          <span>{{ isMonthSelected(header) ? "✓ 已选当月" : "全选当月" }}</span>
-        </button>
-      </div>
-      <button v-for="(asset,visibleIndex) in visibleAssets" :key="asset.id" type="button" class="photo-tile"
-        :aria-pressed="trashSelecting?trashIDs.has(asset.id):undefined"
-        :class="{ 'photo-trash-selected': trashSelecting&&trashIDs.has(asset.id) }"
-        :data-photo-index="virtualWindow.startIndex+visibleIndex"
-        :tabindex="virtualWindow.startIndex+visibleIndex===focusedIndex?0:-1"
-        :style="tileStyle(virtualWindow.startIndex+visibleIndex)"
-        @focus="focusedIndex=virtualWindow.startIndex+visibleIndex"
-        @keydown="onTileKeydown($event,virtualWindow.startIndex+visibleIndex)"
-        @click="trashSelecting?toggleTrashID(asset.id,$event.shiftKey):openAsset(asset,virtualWindow.startIndex+visibleIndex)">
-        <img v-if="!thumbnailFailed[asset.id]" :src="thumb(asset)" loading="lazy" decoding="async" :alt="asset.name" @error="thumbnailFailed[asset.id]=true"/>
-        <div v-else class="video-placeholder"><Film v-if="asset.type==='video'" :size="26"/><Images v-else :size="26"/><small>{{asset.type==='video'?"视频":"预览暂不可用"}}</small></div>
-        <span v-if="(asset.liveVideoAssetId ?? 0) > 0 && !trashSelecting" class="photo-live-chip" title="Apple 实况照片">实况</span>
-        <span v-if="asset.favorite" class="photo-liked" title="共享收藏"><Heart :size="16" fill="currentColor"/></span>
-        <span v-if="asset.personalFavorite" class="photo-private-liked" title="我的收藏"><Star :size="14" fill="currentColor"/></span>
-        <span v-if="asset.type==='video' && !trashSelecting" class="photo-duration-chip" :title="(asset.durationSeconds ?? 0) > 0 ? '视频时长 ' + formatDuration(asset.durationSeconds!) : '视频'">
-          <Film :size="11"/>
-          <template v-if="(asset.durationSeconds ?? 0) > 0">{{ formatDuration(asset.durationSeconds!) }}</template>
-        </span>
-        <span v-if="trashSelecting" class="photo-trash-indicator">{{trashIDs.has(asset.id)?"✓":"○"}}</span>
-        <small class="photo-date">{{dateLabel(asset.takenAt)}}</small>
-      </button>
-    </div>
-    <div v-if="scrubberInView&&isFullTimelineView()&&viewMode==='timeline'&&!selected&&fullTimelineMonths.length>1&&scrubMonths.length>1"
-      class="photo-timeline-scrubber" :class="{'is-dragging':scrubbing}">
-      <div v-if="scrubbing" class="photo-scrubber-preview" aria-live="off"
-        :style="{top:(scrubPreview+.5)/scrubMonths.length*100+'%'}">{{scrubMonths[scrubPreview]?.title}}</div>
-      <div class="photo-scrubber-track" role="slider" tabindex="0" aria-label="按年月快速浏览照片"
-        aria-orientation="vertical" :aria-valuemin="0" :aria-valuemax="scrubMonths.length-1"
-        :aria-valuenow="scrubCurrentIndex" :aria-valuetext="scrubMonths[scrubCurrentIndex]?.title"
-        title="拖动选择年月，松手跳转" @pointerdown="startScrub" @pointermove="moveScrub"
-        @pointerup="stopScrub($event)" @pointercancel="stopScrub($event,false)"
-        @keydown="scrubKeydown">
-        <span class="photo-scrubber-line"></span>
-        <template v-for="(month,i) in scrubMonths" :key="month.year+'-'+month.month">
-          <span v-if="i===0||scrubMonths[i-1]?.year!==month.year" class="photo-scrubber-year-tick"
-            :style="{top:(i+.5)/scrubMonths.length*100+'%'}"></span>
-        </template>
-        <span class="photo-scrubber-thumb" :style="{top:(scrubCurrentIndex+.5)/scrubMonths.length*100+'%'}"></span>
-      </div>
-    </div>
+    <PhotoStickyMonthBar
+      v-if="assets.length"
+      :visible="scrolledPastHeader && !onThisDayOnly"
+      :group="activeStickyGroup"
+      :selected="activeStickyGroup ? isMonthSelected(activeStickyGroup) : false"
+      :busy="trashBusy"
+      :has-more="nextCursor > 0"
+      :timeline-years="timelineYears"
+      :jump-year="jumpYear"
+      :jump-month="jumpMonth"
+      @toggle-month="toggleMonthSelection($event)"
+      @jump-month="(y, m) => jumpToYearMonth(y, m)"
+      @scroll-top="scrollToTop()"
+    />
+    <PhotoTimelineGrid
+      v-if="assets.length"
+      :total-height="timelineLayout.totalHeight"
+      :compact-grid="compactGrid"
+      :trash-selecting="trashSelecting"
+      :trash-busy="trashBusy"
+      :trash-ids="trashIDs"
+      :has-more="nextCursor > 0"
+      :visible-headers="visibleHeaders"
+      :visible-assets="visibleAssets"
+      :start-index="virtualWindow.startIndex"
+      :focused-index="focusedIndex"
+      :thumbnail-loaded="thumbnailLoaded"
+      :thumbnail-failed="thumbnailFailed"
+      :thumb-for="thumb"
+      :tile-style-for="tileStyle"
+      :is-month-selected="isMonthSelected"
+      :set-grid-ref="(el) => { gridElement = el; }"
+      @toggle-month="toggleMonthSelection($event)"
+      @focus-index="focusedIndex = $event"
+      @tile-keydown="(e, i) => onTileKeydown(e, i)"
+      @tile-click="(a, i, s) => (trashSelecting ? toggleTrashID(a.id, s) : openAsset(a, i))"
+      @thumb-load="(e, id) => onThumbnailLoad(e, id)"
+      @thumb-error="markThumbnailFailed($event)"
+    />
+    <PhotoTimelineScrubber
+      :visible="props.active !== false && scrubberInView && isFullTimelineView() && viewMode === 'timeline' && !selected && fullTimelineMonths.length > 1"
+      :scrub-months="scrubMonths"
+      :scrubbing="scrubbing"
+      :scrub-preview="scrubPreview"
+      :scrub-current-index="scrubCurrentIndex"
+      :scrolling="scrubScrolling"
+      @start="startScrub"
+      @move="moveScrub"
+      @stop="stopScrub"
+      @keydown="scrubKeydown"
+    />
     <div ref="loadMarker" class="gallery-load">
       <button v-if="nextCursor" type="button" @click="load()" :disabled="loading">{{loading?"自动加载中…":"加载更多"}}</button>
       <span v-else-if="assets.length">已显示 {{assets.length}} 项</span>
@@ -738,8 +775,8 @@ onUnmounted(() => {
 
     <PhotosBatchBar />
 
-    <PhotoViewerModal />
     <PhotoFrameOverlay :open="photoFrameOpen" :assets="assets" :title="activePerson?.name || activeFolderAlbum?.name || currentAlbum?.name || '时光相册'" :media-path="mediaPath" @close="photoFrameOpen = false" />
     <PhotoMetadataEditModal :open="metadataEditor.open.value" :asset-ids="metadataEditor.targetIds.value" :initial-taken-at="metadataEditor.initialTakenAt.value" :initial-latitude="metadataEditor.initialLatitude.value" :initial-longitude="metadataEditor.initialLongitude.value" :busy="metadataEditor.busy.value" :error="metadataEditor.error.value" @close="metadataEditor.close()" @submit="metadataEditor.submit($event)" />
+    <PhotoViewerModal />
   </div>
 </template>

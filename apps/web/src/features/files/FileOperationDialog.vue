@@ -217,13 +217,14 @@ async function submit() {
       <template v-if="!isRename">
         <div class="file-operation-crumbs" aria-label="目标位置">
           <button
-            v-for="crumb in breadcrumbs"
+            v-for="(crumb, index) in breadcrumbs"
             :key="crumb.path"
             type="button"
             :disabled="loading || busy || crumb.path === dir"
             @click="dir = crumb.path"
           >
-            {{ crumb.label }} <ChevronRight :size="12" />
+            <span>{{ crumb.label }}</span>
+            <ChevronRight v-if="index < breadcrumbs.length - 1" :size="12" />
           </button>
         </div>
 
@@ -259,6 +260,12 @@ async function submit() {
       <IsleBanner v-if="!canWrite && !loading" type="warning" compact :message="isRename ? '当前目录暂无写入权限，无法原地重命名。' : '你没有当前文件夹的写入权限，可浏览其他授权文件夹。'" />
       <IsleBanner v-if="!validName" type="warning" compact message="请输入合法文件名，不能含路径分隔符或内部保留名称。" />
       <IsleBanner v-if="invalidDescendant" type="warning" compact message="不能将文件夹复制或移动到它自己的子目录。" />
+      <IsleBanner
+        v-if="unchangedDestination && canWrite && validName && !invalidDescendant"
+        type="info"
+        compact
+        :message="isRename ? '新名称与原名称相同，请修改后再确认。' : isBatch ? '所选文件已位于当前目标目录，请选择其他文件夹。' : '目标路径与原位置相同，请选择其他文件夹或修改目标名称。'"
+      />
       <IsleBanner v-if="error" type="error" compact :message="error" />
     </div>
 
@@ -295,6 +302,8 @@ async function submit() {
   display: flex;
   align-items: center;
   gap: 4px;
+  max-width: 100%;
+  min-width: 0;
   font-size: 12px;
   padding: 4px 9px;
   border-radius: 7px;
@@ -303,6 +312,15 @@ async function submit() {
   color: var(--text-primary);
   cursor: pointer;
   transition: background 0.15s ease;
+}
+.file-operation-crumbs button span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.file-operation-crumbs button svg {
+  flex-shrink: 0;
 }
 
 .file-operation-crumbs button:hover:not(:disabled) {
@@ -345,8 +363,14 @@ async function submit() {
   background: var(--fluid-card-hover);
 }
 
+.file-operation-folder svg {
+  flex-shrink: 0;
+}
+
 .file-operation-folder span {
   flex: 1;
+  min-width: 0;
+  white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
 }

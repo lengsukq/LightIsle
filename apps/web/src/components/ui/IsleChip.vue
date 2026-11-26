@@ -40,8 +40,7 @@ function handleRemove(event: MouseEvent) {
 </script>
 
 <template>
-  <button
-    type="button"
+  <div
     class="isle-chip"
     :class="{
       'is-selected': selected,
@@ -49,17 +48,23 @@ function handleRemove(event: MouseEvent) {
       'is-disabled': disabled,
       'is-removable': removable,
     }"
-    :disabled="disabled"
-    :aria-pressed="selected ? 'true' : 'false'"
-    @click="handleClick"
+    @click.self="handleClick"
   >
-    <span v-if="$slots.icon" class="isle-chip-icon" aria-hidden="true">
-      <slot name="icon" />
-    </span>
+    <button
+      type="button"
+      class="isle-chip-main"
+      :disabled="disabled"
+      :aria-pressed="selected ? 'true' : 'false'"
+      @click="handleClick"
+    >
+      <span v-if="$slots.icon" class="isle-chip-icon" aria-hidden="true">
+        <slot name="icon" />
+      </span>
 
-    <span class="isle-chip-label">
-      <slot>{{ label }}</slot>
-    </span>
+      <span class="isle-chip-label">
+        <slot>{{ label }}</slot>
+      </span>
+    </button>
 
     <button
       v-if="removable"
@@ -67,12 +72,12 @@ function handleRemove(event: MouseEvent) {
       class="isle-chip-remove-btn"
       :title="deleteTooltip"
       :aria-label="deleteTooltip"
-      tabindex="-1"
+      :disabled="disabled"
       @click="handleRemove"
     >
       <X :size="small ? 12 : 13" />
     </button>
-  </button>
+  </div>
 </template>
 
 <style scoped>
@@ -80,9 +85,10 @@ function handleRemove(event: MouseEvent) {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  gap: 5px;
+  gap: 4px;
   min-height: 32px;
   padding: 5px 12px;
+  max-width: 100%;
   border-radius: 9999px;
   background: var(--fluid-card-fill);
   border: 1px solid var(--fluid-card-border);
@@ -105,7 +111,24 @@ function handleRemove(event: MouseEvent) {
   box-sizing: border-box;
 }
 
-.isle-chip:focus-visible {
+.isle-chip-main {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 9999px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: inherit;
+  box-shadow: none;
+}
+
+.isle-chip-main:focus-visible,
+.isle-chip-remove-btn:focus-visible {
   outline: 2px solid var(--accent-primary, #1f5162);
   outline-offset: 2px;
 }

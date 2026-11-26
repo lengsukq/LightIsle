@@ -34,7 +34,7 @@ const props = withDefaults(
     segments: () => [],
     percent: null,
     total: 0,
-    color: ISLE_CHART_COLORS.blue,
+    color: "var(--accent-primary, #0E6B74)",
     trackColor: "",
     size: 68,
     strokeWidth: 7,
@@ -171,7 +171,7 @@ const sparkBuilt = computed(() =>
       <div class="isle-donut-center" :class="{ 'is-mini': size < 48 }">
         <strong
           class="isle-donut-val"
-          :style="{ fontSize: size <= 44 ? '10px' : size <= 64 ? '12px' : size < 84 ? '13px' : '15px' }"
+          :style="{ fontSize: size <= 44 ? '10px' : size <= 64 ? (resolvedCenterLabel.length >= 6 ? '10.5px' : '12px') : size < 84 ? '13px' : '15px' }"
         >
           {{ resolvedCenterLabel }}
         </strong>
@@ -289,7 +289,7 @@ const sparkBuilt = computed(() =>
 }
 .isle-donut-arc {
   fill: none;
-  transition: stroke-dasharray 0.32s var(--ease-fluid, ease-out), stroke-dashoffset 0.32s var(--ease-fluid, ease-out);
+  transition: stroke-dasharray 0.32s var(--motion-spring, ease-out), stroke-dashoffset 0.32s var(--motion-spring, ease-out);
 }
 .isle-donut-center {
   position: absolute;
@@ -307,7 +307,7 @@ const sparkBuilt = computed(() =>
   font-variant-numeric: tabular-nums;
   color: var(--text-primary);
   white-space: nowrap;
-  max-width: calc(100% - 10px);
+  max-width: calc(100% - 6px);
   overflow: hidden;
   text-overflow: ellipsis;
 }
@@ -332,13 +332,13 @@ const sparkBuilt = computed(() =>
   border-radius: 999px;
   overflow: hidden;
   background: var(--isle-chart-track, rgba(142, 142, 147, 0.16));
-  border: 1px solid color-mix(in srgb, var(--border-subtle, rgba(142, 142, 147, 0.25)) 68%, transparent);
+  border: 1px solid color-mix(in srgb, var(--fluid-card-border, rgba(142, 142, 147, 0.25)) 68%, transparent);
 }
 .isle-seg-slice {
   height: 100%;
   border-radius: 4px;
   min-width: 0;
-  transition: width 0.32s var(--ease-fluid, ease-out);
+  transition: width 0.32s var(--motion-spring, ease-out);
 }
 .isle-seg-slice:first-child {
   border-top-left-radius: 999px;
