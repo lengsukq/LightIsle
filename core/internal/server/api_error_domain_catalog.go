@@ -291,6 +291,46 @@ var apiErrorDomainCatalog = map[string]apiErrorGuidance{
 		dataSafe:   true,
 		nextAction: "请刷新下载列表后重试。",
 	},
+	"ytdlp_not_installed": {
+		message:    "尚未安装 yt-dlp 视频下载工具，未创建该视频归档任务。",
+		dataSafe:   true,
+		nextAction: "请在 Mac 上执行 brew install yt-dlp 后重试；常规下载和网页离线保存仍可正常使用。",
+	},
+	"webarchive_invalid_url": {
+		message:    "网页链接格式无效，仅支持标准的 http:// 或 https:// 网址。",
+		dataSafe:   true,
+		nextAction: "请检查并输入完整有效的网页地址后重试。",
+	},
+	"webarchive_blocked_address": {
+		message:    "为防范内网探测风险，已禁止抓取指向本机或局域网私有地址的网页。",
+		dataSafe:   true,
+		nextAction: "请填写可公开访问的外部网页地址后重试。",
+	},
+	"webarchive_too_many_redirects": {
+		message:    "目标网页跳转次数过多，已中止归档保存。",
+		dataSafe:   true,
+		nextAction: "请在浏览器打开该网页确认最终真实链接后重试。",
+	},
+	"webarchive_too_large": {
+		message:    "网页及其内嵌图片总大小超出离线保存上限，未写入目标目录。",
+		dataSafe:   true,
+		nextAction: "请调高任务大小上限，或稍后重试。",
+	},
+	"webarchive_unsupported_content_type": {
+		message:    "目标链接返回的不是 HTML 网页（可能是二进制文件或媒体流），未执行网页归档。",
+		dataSafe:   true,
+		nextAction: "若为直接下载的文件或音视频，请改用「常规下载 (aria2)」或「视频归档 (yt-dlp)」。",
+	},
+	"webarchive_http_error": {
+		message:    "目标网页服务器返回异常状态码，无法完成离线抓取。",
+		dataSafe:   true,
+		nextAction: "请确认该网页无需登录且可正常公开访问后重试。",
+	},
+	"webarchive_timeout": {
+		message:    "抓取网页或内嵌图片超时，未保存离线网页。",
+		dataSafe:   true,
+		nextAction: "请检查 Mac 网络连接后重试。",
+	},
 
 	// Disks
 	"drive_discovery_unavailable": {

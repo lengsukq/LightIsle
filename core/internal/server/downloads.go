@@ -9,8 +9,14 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/downloads"
 )
 
-// Network transfers require aria2, while the journal, cancellation and local
-// publication recovery remain usable without that optional component.
+// Network transfers require aria2 for generic/magnet downloads, while yt-dlp,
+// webarchive, the journal, cancellation and local publication recovery remain
+// usable independently.
+
+type downloadStatusResponse struct {
+	downloads.Status
+	NetworkAllowed bool `json:"networkAllowed"`
+}
 
 func (a *API) downloadStatus(w http.ResponseWriter, r *http.Request) {
 	user, ok := a.auth.Identity(token(r))
@@ -20,18 +26,24 @@ func (a *API) downloadStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	networkAllowed := user.Role == auth.RoleAdmin
 	if a.downloads == nil {
-		jsonReply(w, http.StatusOK, map[string]any{"available": false, "reason": "aria2_not_installed", "networkAllowed": networkAllowed})
+		jsonReply(w, http.StatusOK, downloadStatusResponse{
+			Status: downloads.Status{
+				Available:           false,
+				Reason:              "aria2_not_installed",
+				Aria2Available:      false,
+				Aria2Reason:         "aria2_not_installed",
+				YtDlpAvailable:      false,
+				YtDlpReason:         "ytdlp_not_installed",
+				WebArchiveAvailable: false,
+			},
+			NetworkAllowed: networkAllowed,
+		})
 		return
 	}
-	available, reason := a.downloads.Available()
-	payload := map[string]any{"available": available, "networkAllowed": networkAllowed}
-	if version := a.downloads.Version(); version != "" {
-		payload["version"] = version
-	}
-	if !available && reason != "" {
-		payload["reason"] = reason
-	}
-	jsonReply(w, http.StatusOK, payload)
+	jsonReply(w, http.StatusOK, downloadStatusResponse{
+		Status:         a.downloads.Status(),
+		NetworkAllowed: networkAllowed,
+	})
 }
 
 func (a *API) downloadsUnavailable(w http.ResponseWriter) bool {
@@ -65,7 +77,8 @@ func (a *API) downloadList(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) downloadCreate(w http.ResponseWriter, r *http.Request) {
-	if a.downloadsUnavailable(w) {
+	if a.downloads == nil {
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "download_unavailable")
 		return
 	}
 	user, ok := a.auth.Identity(token(r))
@@ -73,17 +86,27 @@ func (a *API) downloadCreate(w http.ResponseWriter, r *http.Request) {
 		writeAPIErrorCode(w, http.StatusUnauthorized, "authentication_required")
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
 	defer r.Body.Close()
 	var request struct {
-		URL         string `json:"url"`
-		Destination string `json:"destination"`
-		MaxBytes    int64  `json:"maxBytes"`
+		URL         string                   `json:"url"`
+		Destination string                   `json:"destination"`
+		MaxBytes    int64                    `json:"maxBytes"`
+		Engine      string                   `json:"engine"`
+		Options     *downloads.EngineOptions `json:"options"`
 	}
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if decoder.Decode(&request) != nil || downloads.ValidateDestination(request.Destination) != nil {
 		writeAPIErrorCode(w, http.StatusBadRequest, "download_invalid_request")
+		return
+	}
+	engine, err := downloads.NormalizeEngine(request.Engine)
+	if err != nil {
+		writeAPIErrorCode(w, http.StatusBadRequest, "download_invalid_request")
+		return
+	}
+	if engine == downloads.EngineAria2 && a.downloadsUnavailable(w) {
 		return
 	}
 	// Only members with a write grant on the destination may create tasks;
@@ -101,7 +124,11 @@ func (a *API) downloadCreate(w http.ResponseWriter, r *http.Request) {
 	} else if !a.allowFile(w, r, request.Destination, true) {
 		return
 	}
-	task, err := a.downloads.Create(user.ID, request.URL, request.Destination, request.MaxBytes)
+	var engineOpts downloads.EngineOptions
+	if request.Options != nil {
+		engineOpts = *request.Options
+	}
+	task, err := a.downloads.CreateWithEngine(user.ID, engine, request.URL, request.Destination, request.MaxBytes, engineOpts)
 	switch {
 	case err == nil:
 		jsonReply(w, http.StatusAccepted, map[string]any{"task": task})
@@ -115,6 +142,10 @@ func (a *API) downloadCreate(w http.ResponseWriter, r *http.Request) {
 		writeAPIErrorCode(w, http.StatusForbidden, "download_permission_revoked")
 	case errors.Is(err, downloads.ErrAccountingPending):
 		writeAPIErrorCode(w, http.StatusConflict, "download_storage_accounting_pending")
+	case errors.Is(err, downloads.ErrYtDlpNotAvailable):
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "ytdlp_not_installed")
+	case errors.Is(err, downloads.ErrRootChanged), errors.Is(err, downloads.ErrRootUnbound), errors.Is(err, downloads.ErrRootUnavailable):
+		downloadError(w, err)
 	default:
 		writeAPIErrorCode(w, http.StatusServiceUnavailable, "download_unavailable")
 	}
@@ -172,6 +203,8 @@ func downloadError(w http.ResponseWriter, err error) {
 		writeAPIErrorCode(w, http.StatusNotFound, "download_not_found")
 	case errors.Is(err, downloads.ErrInput):
 		writeAPIErrorCode(w, http.StatusBadRequest, "download_invalid_request")
+	case errors.Is(err, downloads.ErrYtDlpNotAvailable):
+		writeAPIErrorCode(w, http.StatusServiceUnavailable, "ytdlp_not_installed")
 	case errors.Is(err, downloads.ErrNotAvailable):
 		writeAPIErrorCode(w, http.StatusServiceUnavailable, "download_unavailable")
 	case errors.Is(err, downloads.ErrFetchForbidden):

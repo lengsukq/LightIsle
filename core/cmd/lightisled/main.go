@@ -40,6 +40,7 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/server"
 	"github.com/lengsukq/lightisle/core/internal/system"
 	"github.com/lengsukq/lightisle/core/internal/tasks"
+	"github.com/lengsukq/lightisle/core/internal/ytdlpbin"
 )
 
 // Exit codes consumed by the native supervisor. These failures require a
@@ -160,6 +161,7 @@ func main() {
 	execPath, _ := os.Executable()
 	appsManager := apps.NewManager(dataDir, execPath, automationManager)
 	appsManager.SetConfiguredChannels(notifyHub.ConfiguredChannels)
+	appsManager.SetReminderNotifier(newAppReminderNotifier(notifyHub))
 	appsManager.SetExternalVolumesProvider(func() []apps.ExternalVolumeInfo {
 		vols := system.Volumes()
 		out := make([]apps.ExternalVolumeInfo, 0, len(vols))
@@ -256,6 +258,10 @@ func main() {
 	monitors.Go(func() {
 		defer safego.Recover("monitor-root-media-maintenance")
 		newRootMediaMaintenance(rootRegistry, rootServer, taskJournal).Run(ctx)
+	})
+	monitors.Go(func() {
+		defer safego.Recover("monitor-reminders")
+		newReminderLoop(accountStore, appsManager, notifyHub).Run(ctx)
 	})
 	// Preserve any legacy LightIsle trash during the transition to the macOS
 	// Trash, including when an older installation enabled automatic purging.
@@ -487,6 +493,7 @@ func openOptionalDownloadCenter(
 		DataDir:      dataDir,
 		Binary:       aria2Path,
 		LocateBinary: aria2bin.Locate,
+		LocateYtDlp:  ytdlpbin.Locate,
 		Publisher:    publisher,
 		CanImport: func(owner int64, destination string) bool {
 			selected, ok := rootRegistry.Default()
@@ -519,7 +526,7 @@ func openOptionalDownloadCenter(
 	if aria2Err == nil {
 		slog.Info("download center ready; aria2 starts on demand", "aria2", aria2Version)
 	} else {
-		slog.Info("download center unavailable", "reason", aria2Err.Error())
+		slog.Info("download center ready without aria2; webarchive and optional yt-dlp remain available", "reason", aria2Err.Error())
 	}
 	return center
 }
