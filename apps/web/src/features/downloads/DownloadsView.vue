@@ -2,8 +2,8 @@
 import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import {
   AlertCircle, ArrowDownToLine, Ban, Check, CheckCircle2, ChevronLeft, ChevronRight,
-  Clock, Copy, Folder, Link2, ListTodo, LoaderCircle, Pause, Play, RefreshCw,
-  RotateCcw, SlidersHorizontal, Trash2, X,
+  Clock, Copy, Folder, ListTodo, LoaderCircle, Pause, Play, RefreshCw,
+  RotateCcw, Trash2, X,
 } from "lucide-vue-next";
 import { apiRequest } from "../../api/apiClient.ts";
 import { createMediaStatusPoller } from "../../api/mediaStatusPoller.ts";
@@ -14,11 +14,9 @@ import { TIMINGS_MS } from "../../constants/timings.ts";
 import { copyTextToClipboard } from "../../utils/clipboard.ts";
 import { formatDateTime } from "../../utils/dateTimeFormat.ts";
 import { formatBinaryBytes as bytes } from "../../utils/format.ts";
-import AppleSelect from "../../components/ui/AppleSelect.vue";
 import IsleBadge from "../../components/ui/IsleBadge.vue";
 import IsleBanner from "../../components/ui/IsleBanner.vue";
 import IsleButton from "../../components/ui/IsleButton.vue";
-import IsleCard from "../../components/ui/IsleCard.vue";
 import IsleChip from "../../components/ui/IsleChip.vue";
 import IsleDisclosure from "../../components/ui/IsleDisclosure.vue";
 import IsleEmpty from "../../components/ui/IsleEmpty.vue";
@@ -26,7 +24,21 @@ import IsleGroupedList from "../../components/ui/IsleGroupedList.vue";
 import IsleHelpButton from "../../components/ui/IsleHelpButton.vue";
 import IsleModal from "../../components/ui/IsleModal.vue";
 import IslePageHeader from "../../components/ui/IslePageHeader.vue";
-import { readDownloadCenter, type DownloadTask } from "./downloadCenterTransport.ts";
+import DownloadEngineIntakeCard from "./DownloadEngineIntakeCard.vue";
+import {
+  buildDownloadCreatePayload,
+  downloadEngineLabel,
+  formatVideoQualityLabel,
+  isEngineRunnable,
+  normalizeDownloadEngine,
+  readDownloadCenter,
+  resolveEngineAvailability,
+  validateDownloadUrlForEngine,
+  type DownloadEngine,
+  type DownloadStatus,
+  type DownloadTask,
+  type VideoQualityFormat,
+} from "./downloadCenterTransport.ts";
 
 type FolderItem = { name: string; path: string; type: "file" | "folder"; canWrite?: boolean };
 type FolderListReply = { entries: FolderItem[]; nextCursor?: string; canWrite?: boolean };
@@ -40,12 +52,17 @@ const requestApi = (path: string, init?: RequestInit) => (props.api ? props.api(
 
 const tasks = ref<DownloadTask[]>([]);
 const hasSnapshot = ref(false);
-const status = ref<{ available: boolean; networkAllowed?: boolean; version?: string; reason?: string }>({ available: false });
+const status = ref<DownloadStatus>({ available: false });
 const loading = ref(false), error = ref(""), busy = ref("");
+const selectedEngine = ref<DownloadEngine>("aria2");
 const newURL = ref(""), newDestination = ref("."), newMaxGB = ref("");
+const videoFormat = ref<VideoQualityFormat>("best");
+const allowPlaylist = ref(false);
+const playlistMaxItems = ref(10);
 const advancedOpen = ref(false), creating = ref(false), taskFilter = ref<TaskFilter>("all");
 const copiedTaskId = ref("");
 let copiedTimer: number | undefined;
+let autoEnginePicked = false;
 
 const folderPickerOpen = ref(false), pickerDir = ref(".");
 const pickerFolders = ref<FolderItem[]>([]), pickerNextCursor = ref("");
@@ -53,6 +70,8 @@ const pickerCanWrite = ref(true), pickerLoading = ref(false), pickerError = ref(
 let pickerGen = 0;
 
 const speedSamples = ref(new Map<string, { bytes: number; at: number; bps: number }>());
+
+const availability = computed(() => resolveEngineAvailability(status.value));
 
 function updateSpeedSamples(nextTasks: DownloadTask[]) {
   const now = Date.now();
@@ -75,27 +94,6 @@ function updateSpeedSamples(nextTasks: DownloadTask[]) {
 }
 
 const taskSpeedBps = (id: string) => speedSamples.value.get(id)?.bps ?? 0;
-const selectedDestOption = computed(() => newDestination.value.trim() || ".");
-const destinationSelectOptions = computed(() => {
-  const current = selectedDestOption.value;
-  const opts = [{ value: ".", label: "保存至：共享根目录 (.)" }, { value: "Downloads", label: "保存至：Downloads" }];
-  if (current !== "." && current !== "Downloads") opts.push({ value: current, label: `保存至：${current}` });
-  opts.push({ value: "__browse__", label: "浏览共享目录…" });
-  return opts;
-});
-
-function onDestinationSelect(val: string | number | boolean | null) {
-  if (typeof val !== "string") return;
-  if (val === "__browse__") { openFolderPicker(); return; }
-  newDestination.value = val;
-}
-
-const advancedSummary = computed(() => {
-  const parts: string[] = [];
-  if (newMaxGB.value.trim()) parts.push(`单文件上限 ${newMaxGB.value.trim()} GiB`);
-  if (selectedDestOption.value !== "." && selectedDestOption.value !== "Downloads") parts.push(`自定义目录：${selectedDestOption.value}`);
-  return parts.length ? parts.join(" · ") : "可配置单文件上限（GiB）与自定义相对路径";
-});
 
 const pickerBreadcrumbs = computed(() => {
   if (pickerDir.value === ".") return [{ label: "共享根目录", path: "." }];
@@ -166,7 +164,19 @@ const historySectionTitle = computed(() =>
 );
 
 const poller = createMediaStatusPoller((signal) => readDownloadCenter(requestApi, signal), {
-  onValue: (value) => { tasks.value = value.tasks; updateSpeedSamples(value.tasks); status.value = value.status; hasSnapshot.value = true; error.value = ""; },
+  onValue: (value) => {
+    tasks.value = value.tasks;
+    updateSpeedSamples(value.tasks);
+    status.value = value.status;
+    if (!autoEnginePicked) {
+      autoEnginePicked = true;
+      const avail = resolveEngineAvailability(value.status);
+      if (!avail.aria2 && avail.webarchive) selectedEngine.value = "webarchive";
+      else if (!avail.aria2 && avail.ytdlp) selectedEngine.value = "ytdlp";
+    }
+    hasSnapshot.value = true;
+    error.value = "";
+  },
   onError: (e) => { error.value = "读取下载任务失败：" + describeRootOperationFailure(e); },
 });
 
@@ -180,10 +190,9 @@ async function load() {
 }
 
 async function create() {
-  if (creating.value || disposed || status.value.networkAllowed === false) return;
-  const url = newURL.value.trim();
-  if (!url) { error.value = "请输入 http/https/ftp 或磁力链接。"; return; }
-  const destination = newDestination.value.trim() || ".";
+  if (creating.value || disposed || !isEngineRunnable(selectedEngine.value, status.value)) return;
+  const urlErr = validateDownloadUrlForEngine(selectedEngine.value, newURL.value);
+  if (urlErr) { error.value = urlErr; return; }
   let maxBytes = 0;
   if (newMaxGB.value.trim()) {
     const gb = Number(newMaxGB.value);
@@ -194,6 +203,15 @@ async function create() {
     }
     maxBytes = Math.round(gb * 1024 ** 3);
   }
+  const payload = buildDownloadCreatePayload({
+    engine: selectedEngine.value,
+    url: newURL.value,
+    destination: newDestination.value,
+    maxBytes,
+    format: videoFormat.value,
+    allowPlaylist: allowPlaylist.value,
+    playlistMaxItems: playlistMaxItems.value,
+  });
   creating.value = true;
   error.value = "";
   poller.invalidate();
@@ -201,7 +219,7 @@ async function create() {
     await requestApi("/api/v2/downloads", {
       method: "POST",
       headers: { "Content-Type": "application/json", "X-LightIsle-Request": "1" },
-      body: JSON.stringify({ url, destination, maxBytes }),
+      body: JSON.stringify(payload),
     });
     if (disposed) return;
     newURL.value = "";
@@ -261,15 +279,19 @@ const statusLabels: Record<DownloadTask["status"], string> = { queued: "排队�
 const statusBadgeLabel = (task: DownloadTask) => (task.phase === "publishing" && task.status === "running" ? "正在保存" : statusLabels[task.status]);
 const statusBadgeVariant = (task: DownloadTask) => (task.status === "completed" ? "online" : task.status === "failed" ? "danger" : task.status === "running" ? "accent" : task.status === "paused" ? "warning" : "neutral");
 const describeError = (task: DownloadTask) => (!task.error ? "" : describeUserFacingError(new Error(task.error)));
+const isAria2Task = (task: DownloadTask) => normalizeDownloadEngine(task.engine) === "aria2";
+const canRetryTask = (task: DownloadTask) =>
+  task.phase === "publishing" || isEngineRunnable(normalizeDownloadEngine(task.engine), status.value);
+
 const unavailableMsg = computed(() =>
-  `暂时无法新建下载：${status.value.reason === "aria2_not_installed" ? "请先在 Mac 端「设置 → 工具 → 外部依赖」中安装下载组件" : "下载服务未就绪，请稍后重试"}。以前下载的文件不会删除。`,
+  `当前所有下载与归档引擎均不可用：${availability.value.aria2Reason === "aria2_not_installed" ? "请先在 Mac 端「设置 → 工具 → 外部依赖」中安装下载组件" : "下载服务未就绪，请稍后重试"}。以前下载的文件不会删除。`,
 );
 const emptyDesc = computed(() =>
-  status.value.available && status.value.networkAllowed !== false
-    ? "在上方粘贴链接选择保存目录后点击「开始下载」，或在此查看历史下载记录。"
-    : !status.value.available
-      ? "离线下载服务当前未就绪或已暂停，暂无法新建下载；已有文件不受影响。"
-      : "当前账号暂不可新建网络下载，请联系管理员或在此查看历史下载记录。",
+  availability.value.anyAvailable && status.value.networkAllowed !== false
+    ? "在上方选择「常规/磁力」「视频归档」或「网页离线保存」，粘贴链接后点击开始即可。"
+    : !availability.value.anyAvailable
+      ? "下载与归档服务当前未就绪，暂无法新建任务；已有文件不受影响。"
+      : "当前账号暂不可新建网络下载，请联系管理员或在此查看历史记录。",
 );
 
 function pollTick() {
@@ -289,13 +311,13 @@ onUnmounted(() => { disposed = true; if (copiedTimer !== undefined) clearTimeout
 
 <template>
   <div class="downloads-page-wrap">
-    <IslePageHeader title="下载中心" subtitle="支持 HTTP / HTTPS / FTP 与磁力离线任务，下载完成安全发布且同名文件零覆盖">
+    <IslePageHeader title="下载中心" subtitle="支持常规直链与磁力（aria2）、视频归档（yt-dlp）及网页单文件离线保存，完成自动安全发布且同名零覆盖">
       <template #title-extra>
         <IsleHelpButton
-          title="离线下载与文件保护规则"
+          title="多引擎离线下载与文件保护规则"
           :items="[
-            { title: '同名文件零覆盖', body: '任务下载完成后自动发布至所选共享目录；若遇到同名文件存在变动，将进入安全核对状态而绝不自动覆盖已有文件。' },
-            { title: '组件依赖', body: '离线下载依赖宿主 Mac 上的 aria2 服务，可在轻屿 Mac 端「设置 → 工具 → 外部依赖」中一键检查。' },
+            { title: '三种归档模式', body: '常规/磁力使用本机 aria2；视频归档使用本机 yt-dlp（支持画质选择）；网页离线保存为内置引擎，将文章内联为单文件 HTML。' },
+            { title: '同名文件零覆盖', body: '任务完成后自动发布至所选共享目录；若遇到同名文件存在变动，将进入安全核对状态而绝不自动覆盖已有文件。' },
           ]"
         />
       </template>
@@ -308,47 +330,33 @@ onUnmounted(() => { disposed = true; if (copiedTimer !== undefined) clearTimeout
       </template>
     </IslePageHeader>
 
-    <IsleBanner v-if="hasSnapshot && !status.available" type="warning" compact role="note" :message="unavailableMsg" />
+    <IsleBanner v-if="hasSnapshot && !availability.anyAvailable" type="warning" compact role="note" :message="unavailableMsg" />
     <IsleBanner v-if="hasSnapshot && status.networkAllowed === false" type="info" compact message="新建或继续网络下载需要管理员权限，已有任务和已下载的文件仍可管理。" />
     <IsleBanner v-if="error" type="error" compact closable :message="error" @close="error = ''" />
 
-    <IsleCard v-if="status.available && status.networkAllowed !== false" aria-label="新建离线下载" padding="md">
-      <form class="download-intake-form" @submit.prevent="create">
-        <div class="download-quick-bar">
-          <label class="download-url-box">
-            <Link2 :size="15" class="download-url-icon" aria-hidden="true" />
-            <input v-model="newURL" type="text" placeholder="粘贴直链（HTTP / HTTPS / FTP）或磁力链接…" aria-label="下载链接" required />
-          </label>
-          <div class="download-dest-select">
-            <AppleSelect :model-value="selectedDestOption" :options="destinationSelectOptions" size="md" block aria-label="保存位置" @update:model-value="onDestinationSelect" />
-          </div>
-          <IsleButton type="submit" variant="primary" size="md" :loading="creating">
-            <template #icon><ArrowDownToLine :size="15" aria-hidden="true" /></template>
-            {{ creating ? "正在创建…" : "开始下载" }}
-          </IsleButton>
-        </div>
-
-        <IsleDisclosure v-model="advancedOpen" variant="inline" title="高级选项" :subtitle="advancedSummary">
-          <template #icon><SlidersHorizontal :size="14" /></template>
-          <template #meta><IsleBadge v-if="newMaxGB.trim()" variant="accent" size="sm">上限 {{ newMaxGB.trim() }} GiB</IsleBadge></template>
-          <div class="download-advanced-grid">
-            <label class="download-adv-field">
-              <span>单文件上限（GiB，选填）</span>
-              <input v-model="newMaxGB" type="number" min="0.1" max="1024" step="0.1" placeholder="留空使用服务端上限" />
-            </label>
-            <div class="download-adv-field">
-              <span>自定义保存相对路径</span>
-              <div class="download-adv-dest-row">
-                <input v-model="newDestination" type="text" aria-label="自定义保存位置" placeholder="例如 Downloads 或 .（根目录）" />
-                <IsleButton variant="glass" size="sm" @click="openFolderPicker">
-                  <template #icon><Folder :size="14" aria-hidden="true" /></template>浏览…
-                </IsleButton>
-              </div>
-            </div>
-          </div>
-        </IsleDisclosure>
-      </form>
-    </IsleCard>
+    <DownloadEngineIntakeCard
+      v-if="hasSnapshot && status.networkAllowed !== false"
+      :status="status"
+      :selected-engine="selectedEngine"
+      :url="newURL"
+      :destination="newDestination"
+      :max-g-b="newMaxGB"
+      :video-format="videoFormat"
+      :allow-playlist="allowPlaylist"
+      :playlist-max-items="playlistMaxItems"
+      :advanced-open="advancedOpen"
+      :creating="creating"
+      @update:selected-engine="selectedEngine = $event"
+      @update:url="newURL = $event"
+      @update:destination="newDestination = $event"
+      @update:max-g-b="newMaxGB = $event"
+      @update:video-format="videoFormat = $event"
+      @update:allow-playlist="allowPlaylist = $event"
+      @update:playlist-max-items="playlistMaxItems = $event"
+      @update:advanced-open="advancedOpen = $event"
+      @open-folder-picker="openFolderPicker"
+      @submit="create"
+    />
 
     <div v-if="tasks.length > 0" class="download-filter-bar" role="group" aria-label="按任务状态筛选">
       <IsleChip small :selected="taskFilter === 'all'" @select="taskFilter = 'all'">全部 ({{ tasks.length }})</IsleChip>
@@ -374,13 +382,15 @@ onUnmounted(() => { disposed = true; if (copiedTimer !== undefined) clearTimeout
                 <Clock v-else :size="15" />
               </span>
               <strong class="download-row-name" :title="task.filename || task.url">{{ task.filename || task.url }}</strong>
+              <IsleBadge variant="neutral" size="sm">{{ downloadEngineLabel(task.engine) }}</IsleBadge>
+              <IsleBadge v-if="formatVideoQualityLabel(task.options?.format)" variant="neutral" size="sm">{{ formatVideoQualityLabel(task.options?.format) }}</IsleBadge>
               <IsleBadge :variant="statusBadgeVariant(task)" size="sm">{{ statusBadgeLabel(task) }}</IsleBadge>
             </div>
             <div class="download-row-actions">
-              <IsleButton v-if="task.phase !== 'publishing' && (task.status === 'running' || task.status === 'queued')" variant="glass" size="sm" :disabled="busy !== '' || !status.available" @click="action(task, 'pause')">
+              <IsleButton v-if="isAria2Task(task) && task.phase !== 'publishing' && (task.status === 'running' || task.status === 'queued')" variant="glass" size="sm" :disabled="busy !== '' || !availability.aria2" @click="action(task, 'pause')">
                 <template #icon><Pause :size="13" aria-hidden="true" /></template>暂停
               </IsleButton>
-              <IsleButton v-if="task.status === 'paused'" variant="tonal" size="sm" :disabled="busy !== '' || !status.available || status.networkAllowed === false" @click="action(task, 'resume')">
+              <IsleButton v-if="isAria2Task(task) && task.status === 'paused'" variant="tonal" size="sm" :disabled="busy !== '' || !availability.aria2 || status.networkAllowed === false" @click="action(task, 'resume')">
                 <template #icon><Play :size="13" aria-hidden="true" /></template>继续
               </IsleButton>
               <IsleButton variant="glass" size="sm" :disabled="busy !== ''" @click="action(task, 'cancel')">
@@ -425,10 +435,12 @@ onUnmounted(() => { disposed = true; if (copiedTimer !== undefined) clearTimeout
                 <Ban v-else :size="15" />
               </span>
               <strong class="download-row-name" :title="task.filename || task.url">{{ task.filename || task.url }}</strong>
+              <IsleBadge variant="neutral" size="sm">{{ downloadEngineLabel(task.engine) }}</IsleBadge>
+              <IsleBadge v-if="formatVideoQualityLabel(task.options?.format)" variant="neutral" size="sm">{{ formatVideoQualityLabel(task.options?.format) }}</IsleBadge>
               <IsleBadge :variant="statusBadgeVariant(task)" size="sm">{{ statusBadgeLabel(task) }}</IsleBadge>
             </div>
             <div class="download-row-actions is-reveal">
-              <IsleButton v-if="task.status === 'failed' || task.status === 'cancelled'" variant="tonal" size="sm" :disabled="busy !== '' || ((!status.available || status.networkAllowed === false) && task.phase !== 'publishing')" @click="action(task, 'retry')">
+              <IsleButton v-if="task.status === 'failed' || task.status === 'cancelled'" variant="tonal" size="sm" :disabled="busy !== '' || !canRetryTask(task)" @click="action(task, 'retry')">
                 <template #icon><RotateCcw :size="13" aria-hidden="true" /></template>重试
               </IsleButton>
               <IsleButton variant="ghost" size="sm" aria-label="复制源链接" @click="copyTaskUrl(task)">
@@ -496,40 +508,13 @@ onUnmounted(() => { disposed = true; if (copiedTimer !== undefined) clearTimeout
 
 <style scoped>
 .downloads-page-wrap { max-width: 1120px; margin: 0 auto; width: 100%; display: flex; flex-direction: column; gap: 14px; }
-.download-intake-form { display: flex; flex-direction: column; gap: 6px; }
-.download-quick-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.download-url-box {
-  flex: 1 1 280px; min-width: 0; display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 0 12px;
-  border-radius: 10px; border: 1px solid var(--fluid-card-border); background: var(--fluid-card-item-fill);
-  transition: border-color 0.16s ease, box-shadow 0.16s ease, background-color 0.16s ease;
-}
-.download-url-box:focus-within {
-  background: var(--fluid-card-top); border-color: var(--accent-primary);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary) 16%, transparent);
-}
-.download-url-icon { color: var(--text-tertiary); flex-shrink: 0; }
-.download-url-box input {
-  flex: 1; min-width: 0; border: 0; outline: 0; background: transparent;
-  color: var(--text-primary); font: inherit; font-size: 13px; padding: 7px 0;
-}
-.download-dest-select { flex: 0 1 220px; min-width: 175px; }
-.download-advanced-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
-.download-adv-field { display: flex; flex-direction: column; gap: 5px; min-width: 0; }
-.download-adv-field > span { font-size: 12px; font-weight: 600; color: var(--text-secondary); }
-.download-adv-field input {
-  width: 100%; min-height: 34px; padding: 6px 10px; border-radius: 9px;
-  border: 1px solid var(--fluid-card-border); background: var(--fluid-card-item-fill);
-  color: var(--text-primary); font: inherit; font-size: 12.5px;
-}
-.download-adv-dest-row { display: flex; align-items: center; gap: 8px; }
-.download-adv-dest-row input { flex: 1; min-width: 0; }
 .download-filter-bar { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .download-group-rows { position: relative; display: flex; flex-direction: column; }
 .download-row { display: flex; flex-direction: column; gap: 6px; padding: 13px 16px; transition: background-color 0.15s ease; }
 .download-row + .download-row { border-top: 1px solid var(--fluid-divider, var(--fluid-card-border)); }
 .download-row:hover, .download-row:focus-within { background: var(--fluid-card-hover); }
 .download-row-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
-.download-row-heading { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 240px; }
+.download-row-heading { display: flex; align-items: center; gap: 8px; min-width: 0; flex: 1 1 240px; flex-wrap: wrap; }
 .download-row-icon {
   width: 26px; height: 26px; border-radius: 7px; display: grid; place-items: center; flex-shrink: 0;
   background: color-mix(in srgb, var(--text-primary) 6%, transparent); color: var(--text-secondary);
@@ -594,11 +579,10 @@ onUnmounted(() => { disposed = true; if (copiedTimer !== undefined) clearTimeout
 .spin-icon { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (max-width: 720px) {
-  .download-dest-select { flex: 1 1 180px; }
   .download-row-top { align-items: flex-start; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .download-url-box, .download-row, .download-row-actions, .download-progress-fill, .picker-folder-row,
+  .download-row, .download-row-actions, .download-progress-fill, .picker-folder-row,
   .isle-list-enter-active, .isle-list-leave-active, .isle-list-move { transition: none; }
   .spin-icon, .download-progress-shimmer { animation: none; }
 }

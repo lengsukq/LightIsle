@@ -12,6 +12,7 @@ export interface PhotoStageExtensionContext {
   openSmartMemory: (memory: SmartMemoryItem) => void;
   downloadAsset: (asset: BatchAsset) => void;
   toggleZoomAtPointer: (event?: MouseEvent | PointerEvent) => void;
+  openDocsArchive?: () => void;
 }
 
 export const PHOTO_STAGE_EXT_CTX: InjectionKey<PhotoStageExtensionContext> = Symbol(

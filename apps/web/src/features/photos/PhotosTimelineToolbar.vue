@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, inject, onBeforeUnmount, onMounted, ref } from "vue";
 import {
-  Check, ChevronDown, Film, FolderPlus, Grid2x2, Grid3x3, Heart, Images,
+  Check, ChevronDown, FileSearch, Film, FolderPlus, Grid2x2, Grid3x3, Heart, Images,
   Lock, Monitor, Plus, SlidersHorizontal, Sparkles, Star, Users, X,
 } from "lucide-vue-next";
 import AppleSelect from "../../components/ui/AppleSelect.vue";
@@ -112,6 +112,14 @@ onBeforeUnmount(() => {
             @select="selectFavorites()"
           >
             <template #icon><Heart :size="14" /></template>共享收藏
+          </IsleChip>
+          <IsleChip
+            small
+            :selected="false"
+            title="进入家庭档案，按票据/证件分类进行离线 OCR 秒搜"
+            @select="stageExt?.openDocsArchive?.()"
+          >
+            <template #icon><FileSearch :size="14" /></template>家庭档案
           </IsleChip>
         </div>
 
