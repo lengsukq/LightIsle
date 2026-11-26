@@ -24,30 +24,14 @@ const templateMedicineExpiryHTML = `<!doctype html>
 <html lang="zh-CN">
 <head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>家庭药箱与证件有效期</title>
 <style>
-  :root { color-scheme: light dark; }
-  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; background: #f5f5f7; color: #1d1d1f; padding: 24px; }
-  @media (prefers-color-scheme: dark) { body { background: #121214; color: #f5f5f7; } .card, input, select { background: #1c1c1e !important; color: #f5f5f7 !important; border-color: rgba(255,255,255,0.12) !important; } }
-  .wrap { max-width: 780px; margin: 0 auto; display: grid; gap: 16px; }
-  .card { background: #fff; border: 1px solid rgba(0,0,0,0.08); border-radius: 16px; padding: 20px; box-shadow: 0 4px 16px rgba(0,0,0,0.04); }
-  h1 { margin: 0 0 4px; font-size: 20px; } p.sub { margin: 0; font-size: 13px; opacity: 0.7; }
-  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 14px; }
-  .stat { padding: 12px 14px; border-radius: 12px; background: rgba(255,69,58,0.09); }
-  .stat b { display: block; font-size: 22px; color: #ff453a; margin-top: 4px; }
-  .form, .filters { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-  input, select { padding: 8px 12px; border-radius: 10px; border: 1px solid rgba(0,0,0,0.14); font-size: 13px; background: #fff; }
-  button { padding: 8px 14px; border-radius: 10px; border: none; background: #ff453a; color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; }
-  button.ghost { background: rgba(120,120,128,0.16); color: inherit; }
-  button.active { background: #1d1d1f; color: #fff; }
-  @media (prefers-color-scheme: dark) { button.active { background: #f5f5f7; color: #121214; } }
-  .list { display: grid; gap: 8px; }
-  .item { display: flex; justify-content: space-between; align-items: center; padding: 12px 14px; border-radius: 12px; border: 1px solid rgba(120,120,128,0.18); gap: 10px; flex-wrap: wrap; }
-  .expired { border-color: #ff453a; background: rgba(255,69,58,0.1); }
-  .soon { border-color: #ff9f0a; background: rgba(255,159,10,0.09); }
+/*__LIGHTISLE_SHARED_CSS__*/
+  :root { --accent: #dc2626; --accent-soft: rgba(220, 38, 38, 0.10); }
 </style></head>
 <body><div class="wrap">
   <div class="card">
     <h1>家庭药箱与证件有效期</h1>
-    <p class="sub">集中管理常备药品、护照、身份证、驾照与年检到期日，临期自动高亮预警</p>
+    <p class="sub">集中管理常备药品、护照、身份证、驾照与年检到期日 · 全家共享并自动推送 30 天临期预警</p>
+    <div id="syncBar" class="li-sync-bar">正在初始化…</div>
     <div class="stats">
       <div class="stat"><span>已过期项目</span><b id="expiredCount">0</b></div>
       <div class="stat"><span>30 天内到期</span><b id="soonCount">0</b></div>
@@ -62,111 +46,128 @@ const templateMedicineExpiryHTML = `<!doctype html>
       <button id="exportBtn" class="ghost">导出 JSON</button>
     </div>
     <div class="filters">
-      <button class="ghost active" data-filter="all">全部</button>
-      <button class="ghost" data-filter="药品">💊 药品</button>
-      <button class="ghost" data-filter="证件">🪪 证件</button>
-      <button class="ghost" data-filter="食品">🥫 食品</button>
+      <button class="ghost active sm" data-filter="all">全部</button>
+      <button class="ghost sm" data-filter="药品">💊 药品</button>
+      <button class="ghost sm" data-filter="证件">🪪 证件</button>
+      <button class="ghost sm" data-filter="食品">🥫 食品</button>
     </div>
   </div>
   <div class="card"><div id="list" class="list"></div></div>
 </div>
 <script>
-const KEY = 'lightisle_medicine_expiry_v1';
-let currentFilter = 'all';
-const load = () => { try { return JSON.parse(localStorage.getItem(KEY) || '[]'); } catch { return []; } };
-const save = (items) => { localStorage.setItem(KEY, JSON.stringify(items)); render(); };
-function daysUntil(dateStr) {
-  if (!dateStr) return null;
-  const target = new Date(dateStr + 'T00:00:00');
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return Math.ceil((target.getTime() - today.getTime()) / 86400000);
-}
+/*__LIGHTISLE_KV_JS__*/
+var stateItems = [];
+var currentFilter = 'all';
+var store = LightIsleKV.createStore({
+  legacyKey: 'lightisle_medicine_expiry_v1',
+  defaultValue: [],
+  statusEl: 'syncBar',
+  buildReminders: function (items) {
+    return (items || []).filter(function (it) { return it && it.expiry; }).map(function (it, idx) {
+      return {
+        id: it.id || ('exp-' + idx + '-' + it.name),
+        title: '[' + (it.kind || '到期') + '] ' + it.name,
+        dueDate: it.expiry,
+        warnDays: 30,
+        category: 'expiry'
+      };
+    });
+  },
+  onData: function (data) {
+    stateItems = Array.isArray(data) ? data : [];
+    render();
+  }
+});
+
 function render() {
-  const all = load().sort((a, b) => (a.expiry || '9999-99-99').localeCompare(b.expiry || '9999-99-99'));
-  let expired = 0, soon = 0;
-  all.forEach(it => {
-    const d = daysUntil(it.expiry);
+  var all = stateItems.slice().sort(function (a, b) {
+    return (a.expiry || '9999-99-99').localeCompare(b.expiry || '9999-99-99');
+  });
+  var expired = 0, soon = 0;
+  all.forEach(function (it) {
+    var d = LightIsleKV.daysUntil(it.expiry);
     if (d !== null && d < 0) expired++;
     else if (d !== null && d <= 30) soon++;
   });
   document.getElementById('expiredCount').textContent = String(expired);
   document.getElementById('soonCount').textContent = String(soon);
   document.getElementById('totalCount').textContent = String(all.length);
-  const items = currentFilter === 'all' ? all : all.filter(it => it.kind === currentFilter);
-  const box = document.getElementById('list');
+  var items = currentFilter === 'all' ? all : all.filter(function (it) { return it.kind === currentFilter; });
+  var box = document.getElementById('list');
   box.textContent = '';
-  if (!items.length) { box.textContent = '暂无到期记录，可在上方登记家中常备药或重要证件有效期。'; return; }
-  items.forEach(it => {
-    const d = daysUntil(it.expiry);
-    const row = document.createElement('div');
+  if (!items.length) {
+    var empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = '暂无到期记录，可在上方登记家中常备药或重要证件有效期。';
+    box.appendChild(empty);
+    return;
+  }
+  items.forEach(function (it) {
+    var d = LightIsleKV.daysUntil(it.expiry);
+    var row = document.createElement('div');
     row.className = 'item' + (d !== null && d < 0 ? ' expired' : (d !== null && d <= 30 ? ' soon' : ''));
-    const left = document.createElement('div');
-    const title = document.createElement('strong');
+    var left = document.createElement('div');
+    var title = document.createElement('strong');
     title.textContent = '[' + it.kind + '] ' + it.name;
-    const meta = document.createElement('div');
-    meta.style.cssText = 'font-size:12px;opacity:.75;margin-top:3px';
-    const status = d === null ? '未设置日期' : (d < 0 ? '已过期 ' + Math.abs(d) + ' 天 (' + it.expiry + ')' : (d === 0 ? '今天到期' : '剩余 ' + d + ' 天 (' + it.expiry + ')'));
+    var meta = document.createElement('div');
+    meta.className = 'meta';
+    var status = d === null ? '未设置日期' : (d < 0 ? '已过期 ' + Math.abs(d) + ' 天 (' + it.expiry + ')' : (d === 0 ? '今天到期' : '剩余 ' + d + ' 天 (' + it.expiry + ')'));
     meta.textContent = status + (it.place ? ' · ' + it.place : '');
     left.append(title, meta);
-    const del = document.createElement('button');
-    del.className = 'ghost';
+    var del = document.createElement('button');
+    del.className = 'ghost sm';
     del.textContent = '移除';
-    del.onclick = () => { const next = load().filter(x => x.id !== it.id); save(next); };
+    del.onclick = function () {
+      var next = stateItems.filter(function (x) { return x.id !== it.id; });
+      store.save(next);
+    };
     row.append(left, del);
     box.appendChild(row);
   });
 }
-document.querySelectorAll('[data-filter]').forEach(btn => {
-  btn.onclick = () => {
+
+document.querySelectorAll('[data-filter]').forEach(function (btn) {
+  btn.onclick = function () {
     currentFilter = btn.dataset.filter;
-    document.querySelectorAll('[data-filter]').forEach(b => b.classList.toggle('active', b === btn));
+    document.querySelectorAll('[data-filter]').forEach(function (b) { b.classList.toggle('active', b === btn); });
     render();
   };
 });
-document.getElementById('addBtn').onclick = () => {
-  const name = document.getElementById('name').value.trim();
+document.getElementById('addBtn').onclick = function () {
+  var name = document.getElementById('name').value.trim();
   if (!name) return;
-  const items = load();
-  items.push({ id: Date.now() + '-' + Math.random().toString(36).slice(2, 6), kind: document.getElementById('kind').value, name, expiry: document.getElementById('expiry').value, place: document.getElementById('place').value.trim() });
-  ['name', 'expiry', 'place'].forEach(id => document.getElementById(id).value = '');
-  save(items);
+  var next = stateItems.concat([{
+    id: LightIsleKV.genId(),
+    kind: document.getElementById('kind').value,
+    name: name,
+    expiry: document.getElementById('expiry').value,
+    place: document.getElementById('place').value.trim()
+  }]);
+  store.save(next).then(function (res) {
+    if (res && res.ok) {
+      ['name', 'expiry', 'place'].forEach(function (id) { document.getElementById(id).value = ''; });
+    }
+  });
 };
-document.getElementById('exportBtn').onclick = () => {
-  const blob = new Blob([JSON.stringify(load(), null, 2)], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'medicine-expiry.json';
-  a.click();
+document.getElementById('exportBtn').onclick = function () {
+  LightIsleKV.exportJSON('medicine-expiry.json', stateItems);
 };
-render();
+store.init();
 </script></body></html>`
 
 const templateUtilityLedgerHTML = `<!doctype html>
 <html lang="zh-CN">
 <head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>水电燃气与月度账本</title>
 <style>
-  :root { color-scheme: light dark; }
-  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; background: #f5f5f7; color: #1d1d1f; padding: 24px; }
-  @media (prefers-color-scheme: dark) { body { background: #121214; color: #f5f5f7; } .card, input, select { background: #1c1c1e !important; color: #f5f5f7 !important; border-color: rgba(255,255,255,0.12) !important; } }
-  .wrap { max-width: 780px; margin: 0 auto; display: grid; gap: 16px; }
-  .card { background: #fff; border: 1px solid rgba(0,0,0,0.08); border-radius: 16px; padding: 20px; box-shadow: 0 4px 16px rgba(0,0,0,0.04); }
-  h1 { margin: 0 0 4px; font-size: 20px; } p.sub { margin: 0; font-size: 13px; opacity: 0.7; }
-  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 14px; }
-  .stat { padding: 12px 14px; border-radius: 12px; background: rgba(10,132,255,0.1); }
-  .stat b { display: block; font-size: 22px; color: #0a84ff; margin-top: 4px; }
-  .form { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-  input, select { padding: 8px 12px; border-radius: 10px; border: 1px solid rgba(0,0,0,0.14); font-size: 13px; background: #fff; }
-  button { padding: 8px 14px; border-radius: 10px; border: none; background: #0a84ff; color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; }
-  button.ghost { background: rgba(120,120,128,0.16); color: inherit; }
+/*__LIGHTISLE_SHARED_CSS__*/
+  :root { --accent: #0a84ff; --accent-soft: rgba(10, 132, 255, 0.11); }
   .chart { width: 100%; height: 150px; margin-top: 8px; }
-  .list { display: grid; gap: 8px; }
-  .item { display: flex; justify-content: space-between; align-items: center; padding: 11px 14px; border-radius: 12px; border: 1px solid rgba(120,120,128,0.18); gap: 10px; flex-wrap: wrap; }
 </style></head>
 <body><div class="wrap">
   <div class="card">
     <h1>水电燃气与月度账本</h1>
-    <p class="sub">记录每月电费、水费、燃气与物业账单，自动绘制近 6 个月趋势柱状图</p>
+    <p class="sub">记录每月电费、水费、燃气与物业账单，自动绘制近 6 个月趋势柱状图 · 全家共享存储</p>
+    <div id="syncBar" class="li-sync-bar">正在初始化…</div>
     <div class="stats">
       <div class="stat"><span>最近一月合计</span><b id="latestMonth">¥0.00</b></div>
       <div class="stat"><span>累计总支出</span><b id="grandTotal">¥0.00</b></div>
@@ -182,119 +183,134 @@ const templateUtilityLedgerHTML = `<!doctype html>
     </div>
   </div>
   <div class="card">
-    <strong style="font-size:14px">近 6 个月月度走势</strong>
+    <h2>近 6 个月月度走势</h2>
     <svg id="chart" class="chart" viewBox="0 0 600 150" preserveAspectRatio="none"></svg>
   </div>
   <div class="card"><div id="list" class="list"></div></div>
 </div>
 <script>
-const KEY = 'lightisle_utility_ledger_v1';
-document.getElementById('month').value = new Date().toISOString().slice(0, 7);
-const load = () => { try { return JSON.parse(localStorage.getItem(KEY) || '[]'); } catch { return []; } };
-const save = (items) => { localStorage.setItem(KEY, JSON.stringify(items)); render(); };
+/*__LIGHTISLE_KV_JS__*/
+var stateItems = [];
+document.getElementById('month').value = LightIsleKV.todayISO().slice(0, 7);
+var store = LightIsleKV.createStore({
+  legacyKey: 'lightisle_utility_ledger_v1',
+  defaultValue: [],
+  statusEl: 'syncBar',
+  onData: function (data) {
+    stateItems = Array.isArray(data) ? data : [];
+    render();
+  }
+});
+
 function renderChart(byMonth) {
-  const svg = document.getElementById('chart');
+  var svg = document.getElementById('chart');
   svg.textContent = '';
-  const keys = Object.keys(byMonth).sort().slice(-6);
+  var keys = Object.keys(byMonth).sort().slice(-6);
   if (!keys.length) return;
-  const max = Math.max(...keys.map(k => byMonth[k]), 1);
-  const w = 600 / keys.length;
-  keys.forEach((k, i) => {
-    const val = byMonth[k];
-    const h = Math.max(8, (val / max) * 100);
-    const x = i * w + w * 0.2;
-    const bw = w * 0.6;
-    const y = 122 - h;
-    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+  var max = Math.max.apply(null, keys.map(function (k) { return byMonth[k]; }).concat([1]));
+  var w = 600 / keys.length;
+  keys.forEach(function (k, i) {
+    var val = byMonth[k];
+    var h = Math.max(8, (val / max) * 100);
+    var x = i * w + w * 0.2;
+    var bw = w * 0.6;
+    var y = 122 - h;
+    var rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
     rect.setAttribute('x', x); rect.setAttribute('y', y); rect.setAttribute('width', bw); rect.setAttribute('height', h); rect.setAttribute('rx', '6'); rect.setAttribute('fill', '#0a84ff');
-    const lbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    var lbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     lbl.setAttribute('x', x + bw / 2); lbl.setAttribute('y', 142); lbl.setAttribute('text-anchor', 'middle'); lbl.setAttribute('font-size', '11'); lbl.setAttribute('fill', 'currentColor'); lbl.textContent = k;
-    const top = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    var top = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     top.setAttribute('x', x + bw / 2); top.setAttribute('y', Math.max(12, y - 4)); top.setAttribute('text-anchor', 'middle'); top.setAttribute('font-size', '11'); top.setAttribute('fill', 'currentColor'); top.textContent = '¥' + val.toFixed(0);
     svg.append(rect, lbl, top);
   });
 }
+
 function render() {
-  const items = load().sort((a, b) => (b.month || '').localeCompare(a.month || ''));
-  const byMonth = {};
-  let total = 0;
-  items.forEach(it => {
-    const amt = Number(it.amount) || 0;
-    total += amt;
-    if (it.month) byMonth[it.month] = (byMonth[it.month] || 0) + amt;
+  var items = stateItems.map(function (it, idx) { return { it: it, idx: idx }; }).sort(function (a, b) {
+    return (b.it.month || '').localeCompare(a.it.month || '');
   });
-  const sortedMonths = Object.keys(byMonth).sort();
-  const latest = sortedMonths.length ? byMonth[sortedMonths[sortedMonths.length - 1]] : 0;
+  var byMonth = {};
+  var total = 0;
+  items.forEach(function (entry) {
+    var amt = Number(entry.it.amount) || 0;
+    total += amt;
+    if (entry.it.month) byMonth[entry.it.month] = (byMonth[entry.it.month] || 0) + amt;
+  });
+  var sortedMonths = Object.keys(byMonth).sort();
+  var latest = sortedMonths.length ? byMonth[sortedMonths[sortedMonths.length - 1]] : 0;
   document.getElementById('latestMonth').textContent = '¥' + latest.toFixed(2);
   document.getElementById('grandTotal').textContent = '¥' + total.toFixed(2);
   document.getElementById('entryCount').textContent = String(items.length);
   renderChart(byMonth);
-  const box = document.getElementById('list');
+  var box = document.getElementById('list');
   box.textContent = '';
-  if (!items.length) { box.textContent = '暂无水电燃气记录，在上方添加本月账单吧。'; return; }
-  items.forEach((it, idx) => {
-    const row = document.createElement('div');
+  if (!items.length) {
+    var empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = '暂无水电燃气记录，在上方添加本月账单吧。';
+    box.appendChild(empty);
+    return;
+  }
+  items.forEach(function (entry) {
+    var it = entry.it;
+    var row = document.createElement('div');
     row.className = 'item';
-    const left = document.createElement('div');
-    const title = document.createElement('strong');
+    var left = document.createElement('div');
+    var title = document.createElement('strong');
     title.textContent = it.month + ' · ' + it.type + ' ¥' + (Number(it.amount) || 0).toFixed(2);
-    const meta = document.createElement('div');
-    meta.style.cssText = 'font-size:12px;opacity:.72;margin-top:2px';
+    var meta = document.createElement('div');
+    meta.className = 'meta';
     meta.textContent = it.usage || '未填写用量备注';
     left.append(title, meta);
-    const del = document.createElement('button');
-    del.className = 'ghost';
+    var del = document.createElement('button');
+    del.className = 'ghost sm';
     del.textContent = '删除';
-    del.onclick = () => { const next = load(); next.splice(idx, 1); save(next); };
+    del.onclick = function () {
+      var next = stateItems.filter(function (_, i) { return i !== entry.idx; });
+      store.save(next);
+    };
     row.append(left, del);
     box.appendChild(row);
   });
 }
-document.getElementById('addBtn').onclick = () => {
-  const month = document.getElementById('month').value;
-  const amount = parseFloat(document.getElementById('amount').value || '0');
+
+document.getElementById('addBtn').onclick = function () {
+  var month = document.getElementById('month').value;
+  var amount = parseFloat(document.getElementById('amount').value || '0');
   if (!month || !(amount >= 0)) return;
-  const items = load();
-  items.push({ month, type: document.getElementById('type').value, amount, usage: document.getElementById('usage').value.trim() });
-  document.getElementById('amount').value = '';
-  document.getElementById('usage').value = '';
-  save(items);
+  var next = stateItems.concat([{
+    id: LightIsleKV.genId(),
+    month: month,
+    type: document.getElementById('type').value,
+    amount: amount,
+    usage: document.getElementById('usage').value.trim()
+  }]);
+  store.save(next).then(function (res) {
+    if (res && res.ok) {
+      document.getElementById('amount').value = '';
+      document.getElementById('usage').value = '';
+    }
+  });
 };
-document.getElementById('exportBtn').onclick = () => {
-  const blob = new Blob([JSON.stringify(load(), null, 2)], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'utility-ledger.json';
-  a.click();
+document.getElementById('exportBtn').onclick = function () {
+  LightIsleKV.exportJSON('utility-ledger.json', stateItems);
 };
-render();
+store.init();
 </script></body></html>`
 
 const templateBabyGrowthHTML = `<!doctype html>
 <html lang="zh-CN">
 <head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>宝宝成长身高体重记录</title>
 <style>
-  :root { color-scheme: light dark; }
-  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; background: #f5f5f7; color: #1d1d1f; padding: 24px; }
-  @media (prefers-color-scheme: dark) { body { background: #121214; color: #f5f5f7; } .card, input { background: #1c1c1e !important; color: #f5f5f7 !important; border-color: rgba(255,255,255,0.12) !important; } }
-  .wrap { max-width: 780px; margin: 0 auto; display: grid; gap: 16px; }
-  .card { background: #fff; border: 1px solid rgba(0,0,0,0.08); border-radius: 16px; padding: 20px; box-shadow: 0 4px 16px rgba(0,0,0,0.04); }
-  h1 { margin: 0 0 4px; font-size: 20px; } p.sub { margin: 0; font-size: 13px; opacity: 0.7; }
-  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin-top: 14px; }
-  .stat { padding: 12px 14px; border-radius: 12px; background: rgba(255,107,139,0.12); }
-  .stat b { display: block; font-size: 22px; color: #ff4f79; margin-top: 4px; }
-  .form { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
-  input { padding: 8px 12px; border-radius: 10px; border: 1px solid rgba(0,0,0,0.14); font-size: 13px; background: #fff; }
-  button { padding: 8px 14px; border-radius: 10px; border: none; background: #ff4f79; color: #fff; font-size: 13px; font-weight: 600; cursor: pointer; }
-  button.ghost { background: rgba(120,120,128,0.16); color: inherit; }
+/*__LIGHTISLE_SHARED_CSS__*/
+  :root { --accent: #e14d72; --accent-soft: rgba(225, 77, 114, 0.11); }
   .chart { width: 100%; height: 150px; margin-top: 8px; }
-  .list { display: grid; gap: 8px; }
-  .item { display: flex; justify-content: space-between; align-items: center; padding: 11px 14px; border-radius: 12px; border: 1px solid rgba(120,120,128,0.18); gap: 10px; flex-wrap: wrap; }
 </style></head>
 <body><div class="wrap">
   <div class="card">
     <h1>宝宝成长身高体重记录</h1>
-    <p class="sub">记录每次体检的身高、体重与成长里程碑，自动绘制成长曲线</p>
+    <p class="sub">记录每次体检的身高、体重与成长里程碑，自动绘制成长曲线 · 全家共同记录</p>
+    <div id="syncBar" class="li-sync-bar">正在初始化…</div>
     <div class="stats">
       <div class="stat"><span>最新身高</span><b id="latestHeight">-- cm</b></div>
       <div class="stat"><span>最新体重</span><b id="latestWeight">-- kg</b></div>
@@ -310,86 +326,110 @@ const templateBabyGrowthHTML = `<!doctype html>
     </div>
   </div>
   <div class="card">
-    <strong style="font-size:14px">身高成长曲线 (cm)</strong>
+    <h2>身高成长曲线 (cm)</h2>
     <svg id="chart" class="chart" viewBox="0 0 600 150"></svg>
   </div>
   <div class="card"><div id="list" class="list"></div></div>
 </div>
 <script>
-const KEY = 'lightisle_baby_growth_v1';
-document.getElementById('date').value = new Date().toISOString().slice(0, 10);
-const load = () => { try { return JSON.parse(localStorage.getItem(KEY) || '[]'); } catch { return []; } };
-const save = (items) => { localStorage.setItem(KEY, JSON.stringify(items)); render(); };
+/*__LIGHTISLE_KV_JS__*/
+var stateItems = [];
+document.getElementById('date').value = LightIsleKV.todayISO();
+var store = LightIsleKV.createStore({
+  legacyKey: 'lightisle_baby_growth_v1',
+  defaultValue: [],
+  statusEl: 'syncBar',
+  onData: function (data) {
+    stateItems = Array.isArray(data) ? data : [];
+    render();
+  }
+});
+
 function renderChart(items) {
-  const svg = document.getElementById('chart');
+  var svg = document.getElementById('chart');
   svg.textContent = '';
-  const pts = items.filter(it => Number(it.height) > 0).slice(-12);
+  var pts = items.filter(function (it) { return Number(it.height) > 0; }).slice(-12);
   if (!pts.length) return;
-  const vals = pts.map(p => Number(p.height));
-  const min = Math.min(...vals) - 2, max = Math.max(...vals) + 2;
-  const span = Math.max(1, max - min);
-  const coords = pts.map((p, i) => {
-    const x = pts.length === 1 ? 300 : 36 + (i / (pts.length - 1)) * 528;
-    const y = 120 - ((Number(p.height) - min) / span) * 92;
-    return { x, y, p };
+  var vals = pts.map(function (p) { return Number(p.height); });
+  var min = Math.min.apply(null, vals) - 2;
+  var max = Math.max.apply(null, vals) + 2;
+  var span = Math.max(1, max - min);
+  var coords = pts.map(function (p, i) {
+    var x = pts.length === 1 ? 300 : 36 + (i / (pts.length - 1)) * 528;
+    var y = 120 - ((Number(p.height) - min) / span) * 92;
+    return { x: x, y: y, p: p };
   });
-  const poly = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
-  poly.setAttribute('fill', 'none'); poly.setAttribute('stroke', '#ff4f79'); poly.setAttribute('stroke-width', '3');
-  poly.setAttribute('points', coords.map(c => c.x + ',' + c.y).join(' '));
+  var poly = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+  poly.setAttribute('fill', 'none'); poly.setAttribute('stroke', '#e14d72'); poly.setAttribute('stroke-width', '3');
+  poly.setAttribute('points', coords.map(function (c) { return c.x + ',' + c.y; }).join(' '));
   svg.appendChild(poly);
-  coords.forEach(c => {
-    const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-    dot.setAttribute('cx', c.x); dot.setAttribute('cy', c.y); dot.setAttribute('r', '4.5'); dot.setAttribute('fill', '#ff4f79');
-    const lbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    lbl.setAttribute('x', c.x); lbl.setAttribute('y', 142); lbl.setAttribute('text-anchor', 'middle'); lbl.setAttribute('font-size', '10'); lbl.setAttribute('fill', 'currentColor'); lbl.textContent = c.p.date.slice(5);
+  coords.forEach(function (c) {
+    var dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    dot.setAttribute('cx', c.x); dot.setAttribute('cy', c.y); dot.setAttribute('r', '4.5'); dot.setAttribute('fill', '#e14d72');
+    var lbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    lbl.setAttribute('x', c.x); lbl.setAttribute('y', 142); lbl.setAttribute('text-anchor', 'middle'); lbl.setAttribute('font-size', '10'); lbl.setAttribute('fill', 'currentColor'); lbl.textContent = (c.p.date || '').slice(5);
     svg.append(dot, lbl);
   });
 }
+
 function render() {
-  const asc = load().sort((a, b) => (a.date || '').localeCompare(b.date || ''));
-  const latest = asc[asc.length - 1];
+  var asc = stateItems.slice().sort(function (a, b) { return (a.date || '').localeCompare(b.date || ''); });
+  var latest = asc[asc.length - 1];
   document.getElementById('latestHeight').textContent = latest && latest.height ? latest.height + ' cm' : '-- cm';
   document.getElementById('latestWeight').textContent = latest && latest.weight ? latest.weight + ' kg' : '-- kg';
   document.getElementById('recordCount').textContent = asc.length + ' 条';
   renderChart(asc);
-  const box = document.getElementById('list');
+  var box = document.getElementById('list');
   box.textContent = '';
-  if (!asc.length) { box.textContent = '暂无成长记录，添加宝宝的第一次身高体重吧。'; return; }
-  [...asc].reverse().forEach(it => {
-    const row = document.createElement('div');
+  if (!asc.length) {
+    var empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = '暂无成长记录，添加宝宝的第一次身高体重吧。';
+    box.appendChild(empty);
+    return;
+  }
+  asc.slice().reverse().forEach(function (it) {
+    var row = document.createElement('div');
     row.className = 'item';
-    const left = document.createElement('div');
-    const title = document.createElement('strong');
+    var left = document.createElement('div');
+    var title = document.createElement('strong');
     title.textContent = it.date + (it.height ? ' · 身高 ' + it.height + ' cm' : '') + (it.weight ? ' · 体重 ' + it.weight + ' kg' : '');
-    const meta = document.createElement('div');
-    meta.style.cssText = 'font-size:12px;opacity:.72;margin-top:2px';
+    var meta = document.createElement('div');
+    meta.className = 'meta';
     meta.textContent = it.milestone || '常规体检记录';
     left.append(title, meta);
-    const del = document.createElement('button');
-    del.className = 'ghost';
+    var del = document.createElement('button');
+    del.className = 'ghost sm';
     del.textContent = '删除';
-    del.onclick = () => { save(load().filter(x => x.id !== it.id)); };
+    del.onclick = function () {
+      store.save(stateItems.filter(function (x) { return x.id !== it.id; }));
+    };
     row.append(left, del);
     box.appendChild(row);
   });
 }
-document.getElementById('addBtn').onclick = () => {
-  const date = document.getElementById('date').value;
-  const height = document.getElementById('height').value.trim();
-  const weight = document.getElementById('weight').value.trim();
-  const milestone = document.getElementById('milestone').value.trim();
+
+document.getElementById('addBtn').onclick = function () {
+  var date = document.getElementById('date').value;
+  var height = document.getElementById('height').value.trim();
+  var weight = document.getElementById('weight').value.trim();
+  var milestone = document.getElementById('milestone').value.trim();
   if (!date || (!height && !weight && !milestone)) return;
-  const items = load();
-  items.push({ id: Date.now() + '-' + Math.random().toString(36).slice(2, 6), date, height, weight, milestone });
-  ['height', 'weight', 'milestone'].forEach(id => document.getElementById(id).value = '');
-  save(items);
+  var next = stateItems.concat([{
+    id: LightIsleKV.genId(),
+    date: date,
+    height: height,
+    weight: weight,
+    milestone: milestone
+  }]);
+  store.save(next).then(function (res) {
+    if (res && res.ok) {
+      ['height', 'weight', 'milestone'].forEach(function (id) { document.getElementById(id).value = ''; });
+    }
+  });
 };
-document.getElementById('exportBtn').onclick = () => {
-  const blob = new Blob([JSON.stringify(load(), null, 2)], { type: 'application/json' });
-  const a = document.createElement('a');
-  a.href = URL.createObjectURL(blob);
-  a.download = 'baby-growth.json';
-  a.click();
+document.getElementById('exportBtn').onclick = function () {
+  LightIsleKV.exportJSON('baby-growth.json', stateItems);
 };
-render();
+store.init();
 </script></body></html>`

@@ -52,6 +52,12 @@ type Manager struct {
 	storageProviderFn                                                          storageidentity.Provider
 	externalVolumesFn                                                          func() []ExternalVolumeInfo
 	externalPrefixes                                                           []string
+	reminderNotifier                                                           func(code, title, body, severity string)
+	reminderScanInterval                                                       time.Duration
+	reminderScannerStarted                                                     bool
+	reminderMu                                                                 sync.Mutex
+	kvLocksMu                                                                  sync.Mutex
+	kvAppLocks                                                                 map[string]*sync.Mutex
 	mu                                                                         sync.RWMutex
 	mutation                                                                   sync.Mutex
 	apps                                                                       map[string]*appRecord
@@ -87,12 +93,14 @@ func NewManager(dataDir, execPath string, autoMgr *automation.Manager) *Manager 
 		reloadTokenPath: filepath.Join(dataDir, ".mcp-reload-token"),
 		execPath:        execPath,
 		automation:      autoMgr,
-		apps:            make(map[string]*appRecord),
-		tickets:         make(map[string]ticketRecord),
-		sessionGrants:   make(map[string]sessionGrant),
-		cookieSecret:    secret,
-		reapInterval:    5 * time.Second,
-		stopCh:          make(chan struct{}),
+		apps:                 make(map[string]*appRecord),
+		tickets:              make(map[string]ticketRecord),
+		sessionGrants:        make(map[string]sessionGrant),
+		kvAppLocks:           make(map[string]*sync.Mutex),
+		cookieSecret:         secret,
+		reapInterval:         5 * time.Second,
+		reminderScanInterval: defaultReminderScanInterval,
+		stopCh:               make(chan struct{}),
 		ctx:             ctx,
 		cancel:          cancel,
 	}

@@ -93,6 +93,20 @@ const pluginV2SpecMarkdown = `# LightIsle Plugin v2 Specification (schemaVersion
 - Gateway reverse-proxy headers: ` + "`X-Forwarded-Prefix=/apps/<id>`" + `, ` + "`X-Forwarded-Host`" + `, and ` + "`X-Forwarded-Proto`" + `.
 - **Relative-Path Rule (Mandatory)**: Frontend assets, ` + "`fetch`" + ` / WebSocket URLs, and backend HTTP ` + "`Location`" + ` redirects MUST use relative paths (e.g., ` + "`./api/status`" + ` or prefixed with ` + "`BASE_PATH`" + `). Never hardcode ` + "`127.0.0.1`" + `, LAN IPs, or fixed domains so the mini-app switches seamlessly across LAN, Tailscale, and rotating public tunnel domains.
 
+## Host Shared KV Storage Bridge (` + "`/__lightisle_kv`" + `, Zero-RSS)
+Static mini-apps (` + "`mode: \"static\"`" + `) can persist shared family state directly on the LightIsle host with **0 MB** background processes. Data is atomically written to ` + "`<dataRoot>/<appID>/kv/<key>.json`" + ` (strictly confined via ` + "`os.OpenRoot`" + `) and automatically included in ` + "`ExportAppData`" + ` / ` + "`RestoreAppData`" + `.
+- **Endpoints** (always use relative paths from ` + "`/apps/<id>/`" + `):
+  - ` + "`GET ./__lightisle_kv`" + `: list stored keys, sizes, ETags, and quota limits.
+  - ` + "`GET ./__lightisle_kv/{key}`" + `: returns JSON payload with ` + "`ETag`" + ` and ` + "`Cache-Control: no-store`" + ` (` + "`404`" + ` if unset).
+  - ` + "`PUT ./__lightisle_kv/{key}`" + `: stores valid JSON; MUST send header ` + "`X-LightIsle-Request: 1`" + ` (CSRF guard); supports ` + "`If-Match: <etag>`" + ` optimistic locking (returns ` + "`412 Precondition Failed`" + ` with current ` + "`etag`" + ` on conflict).
+  - ` + "`DELETE ./__lightisle_kv/{key}`" + `: deletes key; MUST send ` + "`X-LightIsle-Request: 1`" + `; supports optional ` + "`If-Match`" + `.
+- **Key & Quota Rules**:
+  - Key regex: ` + "`^[a-zA-Z0-9_][a-zA-Z0-9._-]{0,63}$`" + ` (no ` + "`..`" + `).
+  - Limits: ` + "`<= 512 KiB`" + ` per key, max ` + "`64`" + ` keys and ` + "`4 MiB`" + ` total per app.
+- **Standard Reminder Contract (` + "`./__lightisle_kv/_reminders`" + `)**:
+  - Write ` + "`{\"items\":[{\"id\":\"...\",\"title\":\"...\",\"dueDate\":\"YYYY-MM-DD\",\"warnDays\":7,\"category\":\"...\"}]}`" + ` to ` + "`./__lightisle_kv/_reminders`" + `.
+  - LightIsle's host reminder scanner periodically reads ` + "`kv/_reminders.json`" + ` from online enabled apps and emits deduplicated, privacy-sanitized due/overdue alerts (title + days remaining only) via configured notification channels.
+
 ## Built-in Local & LAN MCP Developer Tools
 - ` + "`lightisle_get_environment`" + ` / ` + "`lightisle_list_apps`" + `
 - ` + "`lightisle_scaffold_app`" + ` / ` + "`lightisle_validate_and_reload`" + `

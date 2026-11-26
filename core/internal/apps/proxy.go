@@ -441,13 +441,19 @@ func (m *Manager) ServeApp(w http.ResponseWriter, r *http.Request, resolveSessio
 		return
 	}
 
-	// 4. Static mode: zero-RSS direct file serving from os.Root
+	// 4. Built-in host shared KV storage bridge (zero-RSS persistence under plugin-data/<id>/kv/)
+	if rest == "/__lightisle_kv" || strings.HasPrefix(rest, "/__lightisle_kv/") {
+		m.serveAppKV(w, r, rec, rest)
+		return
+	}
+
+	// 5. Static mode: zero-RSS direct file serving from os.Root
 	if rec.manifest.Web.Mode == WebModeStatic {
 		m.serveStaticApp(w, r, rec, rest)
 		return
 	}
 
-	// 5. Dynamic mode (on-demand / persistent): wake & reverse proxy
+	// 6. Dynamic mode (on-demand / persistent): wake & reverse proxy
 	m.serveDynamicApp(w, r, rec, user, rest)
 }
 
