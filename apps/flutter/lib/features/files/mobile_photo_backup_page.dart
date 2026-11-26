@@ -5,9 +5,11 @@ import 'package:flutter/material.dart';
 import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/widgets.dart';
+import 'mobile_photo_album_picker_sheet.dart';
 import 'mobile_photo_backup_controller.dart';
 import 'mobile_photo_backup_dialogs.dart';
 import 'mobile_photo_backup_widgets.dart';
+import 'mobile_photo_space_release_sheet.dart';
 
 class MobilePhotoBackupPage extends StatefulWidget {
   const MobilePhotoBackupPage({
@@ -36,6 +38,7 @@ class MobilePhotoBackupPage extends StatefulWidget {
 class _MobilePhotoBackupState extends State<MobilePhotoBackupPage>
     with WidgetsBindingObserver {
   late final MobilePhotoBackupController _controller;
+  bool _spaceReleaseSheetOpen = false;
 
   @override
   void initState() {
@@ -47,6 +50,7 @@ class _MobilePhotoBackupState extends State<MobilePhotoBackupPage>
       androidPlatformOverride: widget.androidPlatformOverride,
       iosPlatformOverride: widget.iosPlatformOverride,
     );
+    _controller.addListener(_handleControllerChanged);
     WidgetsBinding.instance.addObserver(this);
     unawaited(_controller.init());
   }
@@ -58,9 +62,58 @@ class _MobilePhotoBackupState extends State<MobilePhotoBackupPage>
 
   @override
   void dispose() {
+    _controller.removeListener(_handleControllerChanged);
     WidgetsBinding.instance.removeObserver(this);
     _controller.dispose();
     super.dispose();
+  }
+
+  void _handleControllerChanged() {
+    if (!mounted || _spaceReleaseSheetOpen) return;
+    if (_controller.consumePendingAutoReleasePrompt()) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _spaceReleaseSheetOpen) return;
+        unawaited(
+          _openSpaceReleaseSheet(
+            autoTriggered: true,
+            initialMinAgeDays: _controller.options.autoReleaseMinAgeDays,
+          ),
+        );
+      });
+    }
+  }
+
+  Future<void> _openSpaceReleaseSheet({
+    bool autoTriggered = false,
+    int? initialMinAgeDays,
+  }) async {
+    if (_spaceReleaseSheetOpen || !mounted) return;
+    _spaceReleaseSheetOpen = true;
+    try {
+      await showMobilePhotoSpaceReleaseSheet(
+        context,
+        _controller,
+        autoTriggered: autoTriggered,
+        initialMinAgeDays: initialMinAgeDays,
+      );
+    } finally {
+      _spaceReleaseSheetOpen = false;
+    }
+  }
+
+  Future<void> _handleToggleAutoSpaceRelease(bool enabled) async {
+    if (!enabled) {
+      _controller.setAutoPromptSpaceRelease(false);
+      return;
+    }
+    if (!mounted) return;
+    final selectedAgeDays = await showMobilePhotoAutoReleaseConfirmDialog(
+      context,
+      initialMinAgeDays: _controller.options.autoReleaseMinAgeDays,
+    );
+    if (!mounted || selectedAgeDays == null) return;
+    _controller.setAutoReleaseMinAgeDays(selectedAgeDays);
+    _controller.setAutoPromptSpaceRelease(true);
   }
 
   Future<void> _handleConfigureBackground(bool enabled) =>
@@ -104,6 +157,11 @@ class _MobilePhotoBackupState extends State<MobilePhotoBackupPage>
                     body:
                         '按字节计算 SHA-256 摘要，已备份且内容相同的原片自动跳过；同名但内容不同的文件绝不会覆盖 NAS 原件。',
                   ),
+                  const IsleHelpItem(
+                    title: '按相簿备份与安全释放',
+                    body:
+                        '支持按相簿/目录精细勾选或排除，并可按年月或相簿名归档。释放本地空间前会在线核验 NAS 硬盘身份与原片 SHA-256，仅对 100% 校验一致的条目拉起系统删除确认窗。',
+                  ),
                   IsleHelpItem(
                     title: _controller.isAndroid
                         ? '相机范围与后台调度'
@@ -135,8 +193,18 @@ class _MobilePhotoBackupState extends State<MobilePhotoBackupPage>
                 secondary: MobilePhotoBackupOptionsCard(
                   controller: _controller,
                   onConfigureBackground: _handleConfigureBackground,
+                  onOpenAlbumPicker: () => unawaited(
+                    showMobilePhotoAlbumPickerSheet(context, _controller),
+                  ),
                 ),
               ),
+              if (_controller.isPersonalDestination)
+                MobilePhotoBackupSpaceReleaseCard(
+                  controller: _controller,
+                  onOpenManualRelease: () =>
+                      unawaited(_openSpaceReleaseSheet()),
+                  onToggleAutoRelease: _handleToggleAutoSpaceRelease,
+                ),
               const SizedBox(height: 16),
             ],
           ),

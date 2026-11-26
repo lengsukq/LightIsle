@@ -1,9 +1,12 @@
 package top.lengsu.lightisle
 
 import android.content.Context
+import android.content.IntentSender
+import android.os.Build
 import android.os.CancellationSignal
 import android.os.Handler
 import android.os.OperationCanceledException
+import android.provider.MediaStore
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
 import java.lang.ref.WeakReference
@@ -19,6 +22,7 @@ internal class AndroidPhotoChannelHandler(
     private val ioExecutorProvider: () -> ExecutorService,
     private val canReadPhotos: (Boolean) -> Boolean,
     private val requestPhotosPermission: (Boolean, MethodChannel.Result) -> Unit,
+    private val requestPhotoDelete: (IntentSender, Int, MethodChannel.Result) -> Unit,
 ) {
     private val photoRequests = ConcurrentHashMap<String, CancellationSignal>()
     private var photosBackgroundChannel: MethodChannel? = null
@@ -81,7 +85,12 @@ internal class AndroidPhotoChannelHandler(
                         val rootGeneration = call.argument<Number>("rootGeneration")?.toLong() ?: 0L
                         val photosPath = call.argument<String>("photosPath") ?: ""
                         val albumScope = call.argument<String>("albumScope") ?: "all"
+                        val selectedAlbumIds = parseStringList(call.argument<List<*>>("selectedAlbumIds"))
                         val organizeByYearMonth = call.argument<Boolean>("organizeByYearMonth") == true
+                        val organizeMode = AndroidPhotoAlbums.normalizeOrganizeMode(
+                            call.argument<String>("organizeMode"),
+                            legacyByYearMonth = organizeByYearMonth,
+                        )
                         runBackground(
                             result,
                             "background_enable_failed",
@@ -98,6 +107,8 @@ internal class AndroidPhotoChannelHandler(
                                 photosPath,
                                 albumScope,
                                 organizeByYearMonth,
+                                selectedAlbumIds,
+                                organizeMode,
                             )
                         }
                     }
@@ -105,7 +116,12 @@ internal class AndroidPhotoChannelHandler(
                         val server = call.argument<String>("server") ?: ""
                         val cookie = call.argument<String>("cookie") ?: ""
                         val albumScope = call.argument<String>("albumScope") ?: "all"
+                        val selectedAlbumIds = parseStringList(call.argument<List<*>>("selectedAlbumIds"))
                         val organizeByYearMonth = call.argument<Boolean>("organizeByYearMonth") == true
+                        val organizeMode = AndroidPhotoAlbums.normalizeOrganizeMode(
+                            call.argument<String>("organizeMode"),
+                            legacyByYearMonth = organizeByYearMonth,
+                        )
                         runBackground(
                             result,
                             "background_options_failed",
@@ -117,6 +133,8 @@ internal class AndroidPhotoChannelHandler(
                                 cookie,
                                 albumScope,
                                 organizeByYearMonth,
+                                selectedAlbumIds,
+                                organizeMode,
                             )
                         }
                     }
@@ -138,6 +156,29 @@ internal class AndroidPhotoChannelHandler(
                         call.argument<Boolean>("includeVideos") == true,
                         result,
                     )
+                    "listAlbums" -> {
+                        val includeVideos = call.argument<Boolean>("includeVideos") == true
+                        if (!canReadPhotos(includeVideos)) {
+                            result.error("photo_permission_required", "请先允许读取照片或视频。", null)
+                        } else {
+                            try {
+                                ioExecutorProvider().execute {
+                                    try {
+                                        val albums = AndroidPhotoAlbums.listAlbums(appContext, includeVideos)
+                                        postSuccess(result, mapOf("albums" to albums))
+                                    } catch (_: Exception) {
+                                        postError(result, "photos_albums_failed", "无法读取手机相簿列表，请检查存储权限。")
+                                    }
+                                }
+                            } catch (_: RejectedExecutionException) {
+                                result.error("photos_albums_failed", "相簿读取任务已取消。", null)
+                            }
+                        }
+                    }
+                    "requestDeleteAssets" -> {
+                        val assetIds = parseStringList(call.argument<List<*>>("assetIds"))
+                        handleRequestDeleteAssets(assetIds, result)
+                    }
                     "list" -> {
                         val includeVideos = call.argument<Boolean>("includeVideos") == true
                         if (!canReadPhotos(includeVideos)) {
@@ -146,6 +187,7 @@ internal class AndroidPhotoChannelHandler(
                             val cursor = call.argument<String>("beforeId")?.toLongOrNull()
                             val size = (call.argument<Int>("limit") ?: 80).coerceIn(1, 100)
                             val albumScope = call.argument<String>("albumScope") ?: "all"
+                            val selectedAlbumIds = parseStringList(call.argument<List<*>>("selectedAlbumIds"))
                             val allowLarge = call.argument<Boolean>("allowLargeOriginals") == true
                             try {
                                 ioExecutorProvider().execute {
@@ -157,6 +199,7 @@ internal class AndroidPhotoChannelHandler(
                                             includeVideos,
                                             albumScope,
                                             allowLarge,
+                                            selectedAlbumIds,
                                         )
                                         postSuccess(result, listing)
                                     } catch (_: Exception) {
@@ -344,6 +387,65 @@ internal class AndroidPhotoChannelHandler(
         photoRequests.clear()
         if (pending.isNotEmpty()) {
             backgroundOperations.execute { pending.forEach { it.cancel() } }
+        }
+    }
+
+    private fun parseStringList(raw: List<*>?): List<String> =
+        raw?.mapNotNull { it?.toString()?.trim()?.takeIf(String::isNotEmpty) } ?: emptyList()
+
+    private fun handleRequestDeleteAssets(
+        assetIds: List<String>,
+        result: MethodChannel.Result,
+    ) {
+        if (assetIds.isEmpty()) {
+            result.success(mapOf("deleted" to true, "cancelled" to false, "deletedCount" to 0, "alreadyMissingCount" to 0))
+            return
+        }
+        if (assetIds.size > 500) {
+            result.error("too_many_delete_assets", "单次最多释放 500 项原片，请分批操作。", null)
+            return
+        }
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            result.error(
+                "delete_unsupported_os",
+                "Android 11 及以上系统才支持由系统弹窗安全批量释放本地原片；当前版本请在系统相册中手动清理。",
+                null,
+            )
+            return
+        }
+        try {
+            ioExecutorProvider().execute {
+                try {
+                    val uris = AndroidPhotoAlbums.buildDeleteUris(appContext, assetIds)
+                    if (uris.isEmpty()) {
+                        postSuccess(
+                            result,
+                            mapOf(
+                                "deleted" to true,
+                                "cancelled" to false,
+                                "deletedCount" to 0,
+                                "alreadyMissingCount" to assetIds.size,
+                            ),
+                        )
+                        return@execute
+                    }
+                    val pendingIntent = MediaStore.createDeleteRequest(appContext.contentResolver, uris)
+                    mainHandler.post {
+                        val act = activityRef.get()
+                        if (act == null || act.isFinishing || act.isDestroyed) {
+                            try {
+                                result.error("activity_unavailable", "当前界面已关闭，原片未被删除。", null)
+                            } catch (_: Exception) { }
+                        } else {
+                            requestPhotoDelete(pendingIntent.intentSender, uris.size, result)
+                        }
+                    }
+                } catch (_: Exception) {
+                    postError(result, "photo_delete_failed", "无法向系统发起删除确认请求，本机原片未被删除。")
+                }
+            }
+        } catch (_: RejectedExecutionException) {
+            result.error("photo_delete_failed", "释放空间任务已取消，本机原片未被删除。", null)
         }
     }
 

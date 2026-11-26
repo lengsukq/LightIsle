@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../../core/widgets.dart';
 import 'mobile_photo_backup_controller.dart';
 import 'mobile_photo_backup_failure_store.dart';
+import 'photo_backup_prefs_schema.dart';
 
 Future<void> showMobilePhotoBackupPendingFailuresDialog(
   BuildContext context,
@@ -171,6 +172,84 @@ Future<bool> showMobilePhotoBackupBackgroundConsentDialog(
     ),
   );
   return accepted == true;
+}
+
+Future<int?> showMobilePhotoAutoReleaseConfirmDialog(
+  BuildContext context, {
+  required int initialMinAgeDays,
+}) {
+  var selectedDays =
+      PhotoBackupPrefsSchema.autoReleaseMinAgeOptions.contains(
+        initialMinAgeDays,
+      )
+      ? initialMinAgeDays
+      : PhotoBackupPrefsSchema.defaultAutoReleaseMinAgeDays;
+  return showDialog<int>(
+    context: context,
+    builder: (dialogContext) => StatefulBuilder(
+      builder: (context, setDialogState) => AlertDialog(
+        title: const Text('开启备份后自动发起释放确认？'),
+        content: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 400),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              const Text(
+                '开启后，每当本轮照片备份完全无错结束且未取消时，LightIsle 会自动筛选符合下方保留期的已备份条目，逐项在线核对 NAS 硬盘身份与原片 SHA-256，随后拉起系统原生删除确认弹窗。\n\n'
+                '受 Android 与 iOS 系统安全机制约束，第三方 App 无法静默删除相册原片——仍需你点一次系统确认，任何校验失败或离线都会自动保留手机原片。',
+                style: TextStyle(fontSize: 13, height: 1.45),
+              ),
+              const SizedBox(height: 14),
+              DropdownButtonFormField<int>(
+                isExpanded: true,
+                initialValue: selectedDays,
+                decoration: const InputDecoration(
+                  isDense: true,
+                  labelText: '自动筛选保留期',
+                ),
+                items: const [
+                  DropdownMenuItem(
+                    value: 30,
+                    child: Text('30 天前拍摄（推荐默认）', overflow: TextOverflow.ellipsis),
+                  ),
+                  DropdownMenuItem(
+                    value: 90,
+                    child: Text('90 天前拍摄', overflow: TextOverflow.ellipsis),
+                  ),
+                  DropdownMenuItem(
+                    value: 7,
+                    child: Text('7 天前拍摄', overflow: TextOverflow.ellipsis),
+                  ),
+                  DropdownMenuItem(
+                    value: 0,
+                    child: Text(
+                      '不限时间（全部已验证项）',
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+                onChanged: (value) {
+                  if (value == null) return;
+                  setDialogState(() => selectedDays = value);
+                },
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(null),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(selectedDays),
+            child: const Text('确认开启'),
+          ),
+        ],
+      ),
+    ),
+  );
 }
 
 String _formatEpochTimestamp(int epochMillis) {

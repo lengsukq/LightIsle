@@ -137,6 +137,8 @@ class MobilePhotoBackupBackgroundCoordinator {
         {
           ..._sessionAuthPayload(),
           'albumScope': options.albumScope,
+          'selectedAlbumIds': options.selectedAlbumIds,
+          'organizeMode': options.organizeMode,
           'organizeByYearMonth': options.organizeByYearMonth,
         },
       );
@@ -239,6 +241,8 @@ class MobilePhotoBackupBackgroundCoordinator {
               'rootGeneration': destinationRoot.generation,
               'photosPath': baseDirectory,
               'albumScope': options.albumScope,
+              'selectedAlbumIds': options.selectedAlbumIds,
+              'organizeMode': options.organizeMode,
               'organizeByYearMonth': options.organizeByYearMonth,
             })
           : await channel.invokeMapMethod<String, dynamic>(

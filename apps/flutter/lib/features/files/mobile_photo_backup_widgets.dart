@@ -6,6 +6,7 @@ import '../../core/isle_theme.dart';
 import '../../core/widgets.dart';
 import 'mobile_photo_backup_controller.dart';
 import 'mobile_photo_backup_state_models.dart';
+import 'photo_backup_prefs_schema.dart';
 
 class MobilePhotoBackupPendingFailuresCard extends StatelessWidget {
   const MobilePhotoBackupPendingFailuresCard({
@@ -67,7 +68,6 @@ class MobilePhotoBackupStatusCard extends StatelessWidget {
     final rose = palette['brandRose'];
     final sage = palette['brandSage'];
     final progress = controller.progress;
-    final options = controller.options;
     final background = controller.background;
 
     final progressRatio = progress.checked > 0
@@ -107,7 +107,7 @@ class MobilePhotoBackupStatusCard extends StatelessWidget {
                     ),
                     const SizedBox(height: 1.5),
                     Text(
-                      '${controller.baseDirectory} · ${options.albumScope == "camera" ? "仅相机拍摄" : "全部媒体"}',
+                      '${controller.baseDirectory} · ${controller.albumScopeSummaryLabel}',
                       style: theme.textTheme.bodySmall?.copyWith(
                         fontSize: 12,
                         color: colors.onSurfaceVariant,
@@ -243,19 +243,27 @@ class MobilePhotoBackupOptionsCard extends StatelessWidget {
     super.key,
     required this.controller,
     required this.onConfigureBackground,
+    required this.onOpenAlbumPicker,
   });
 
   final MobilePhotoBackupController controller;
   final Future<void> Function(bool enabled) onConfigureBackground;
+  final VoidCallback onOpenAlbumPicker;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final palette = IslePalette.of(context);
+    final rose = palette['brandRose'];
     final isDark = theme.brightness == Brightness.dark;
     final borderColor = IsleGlass.rimBorderColor(isDark);
     final progress = controller.progress;
     final options = controller.options;
     final background = controller.background;
+    final isCustomAlbumScope =
+        options.albumScope == PhotoBackupPrefsSchema.albumScopeSelected ||
+        options.albumScope == PhotoBackupPrefsSchema.albumScopeExcluded;
 
     Widget divider() => Divider(
       height: 1,
@@ -272,19 +280,55 @@ class MobilePhotoBackupOptionsCard extends StatelessWidget {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Padding(
-            padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 8),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(
-                  '备份相册范围',
-                  style: theme.textTheme.titleSmall?.copyWith(
-                    fontSize: 13.5,
-                    fontWeight: FontWeight.w700,
-                  ),
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
+                  crossAxisAlignment: WrapCrossAlignment.center,
+                  children: [
+                    Text(
+                      '备份相册范围',
+                      style: theme.textTheme.titleSmall?.copyWith(
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    TextButton.icon(
+                      key: const ValueKey('selectPhotoAlbumsTile'),
+                      style: TextButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 2,
+                        ),
+                        foregroundColor: isCustomAlbumScope
+                            ? rose
+                            : colors.primary,
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      onPressed: progress.busy ? null : onOpenAlbumPicker,
+                      icon: const Icon(
+                        Icons.collections_bookmark_outlined,
+                        size: 15,
+                      ),
+                      label: Text(
+                        isCustomAlbumScope
+                            ? controller.albumScopeSummaryLabel
+                            : '指定 / 排除相簿',
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 6),
                 SegmentedButton<String>(
+                  emptySelectionAllowed: true,
                   style: SegmentedButton.styleFrom(
                     visualDensity: VisualDensity.compact,
                     textStyle: const TextStyle(
@@ -294,21 +338,25 @@ class MobilePhotoBackupOptionsCard extends StatelessWidget {
                   ),
                   segments: const [
                     ButtonSegment<String>(
-                      value: 'camera',
+                      value: PhotoBackupPrefsSchema.albumScopeCamera,
                       icon: Icon(Icons.camera_alt_outlined, size: 16),
                       label: Text('仅相机拍摄（推荐）'),
                     ),
                     ButtonSegment<String>(
-                      value: 'all',
+                      value: PhotoBackupPrefsSchema.albumScopeAll,
                       icon: Icon(Icons.photo_library_outlined, size: 16),
                       label: Text('全部手机媒体'),
                     ),
                   ],
-                  selected: {options.albumScope},
+                  selected: isCustomAlbumScope
+                      ? const <String>{}
+                      : {options.albumScope},
                   onSelectionChanged: progress.busy
                       ? null
-                      : (selected) =>
-                            controller.switchAlbumScope(selected.first),
+                      : (selected) {
+                          if (selected.isEmpty) return;
+                          controller.switchAlbumScope(selected.first);
+                        },
                 ),
               ],
             ),
@@ -360,11 +408,227 @@ class MobilePhotoBackupOptionsCard extends StatelessWidget {
             onChanged: progress.busy ? null : controller.setIncludeVideos,
           ),
           divider(),
-          _BackupOptionSwitch(
-            title: '按拍摄年月分目录（YYYY/MM）',
-            value: options.organizeByYearMonth,
-            onChanged: progress.busy ? null : controller.setOrganizeByYearMonth,
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+            child: DropdownButtonFormField<String>(
+              key: const ValueKey('photoOrganizeModeDropdown'),
+              isExpanded: true,
+              initialValue: options.organizeMode,
+              decoration: const InputDecoration(
+                isDense: true,
+                labelText: 'NAS 归档目录规则',
+              ),
+              items: const [
+                DropdownMenuItem(
+                  value: PhotoBackupPrefsSchema.organizeFlat,
+                  child: Text(
+                    '不分子目录（平铺存放）',
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                DropdownMenuItem(
+                  value: PhotoBackupPrefsSchema.organizeYearMonth,
+                  child: Text(
+                    '按拍摄年月（YYYY/MM）',
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                DropdownMenuItem(
+                  value: PhotoBackupPrefsSchema.organizeByAlbum,
+                  child: Text(
+                    '按相簿名分类（<相簿名>）',
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+                DropdownMenuItem(
+                  value: PhotoBackupPrefsSchema.organizeByAlbumYearMonth,
+                  child: Text(
+                    '按相簿与年月（<相簿名>/YYYY/MM）',
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
+              ],
+              onChanged: progress.busy
+                  ? null
+                  : (value) {
+                      if (value != null) controller.setOrganizeMode(value);
+                    },
+            ),
           ),
+        ],
+      ),
+    );
+  }
+}
+
+class MobilePhotoBackupSpaceReleaseCard extends StatelessWidget {
+  const MobilePhotoBackupSpaceReleaseCard({
+    super.key,
+    required this.controller,
+    required this.onOpenManualRelease,
+    required this.onToggleAutoRelease,
+  });
+
+  final MobilePhotoBackupController controller;
+  final VoidCallback onOpenManualRelease;
+  final Future<void> Function(bool enabled) onToggleAutoRelease;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final colors = theme.colorScheme;
+    final palette = IslePalette.of(context);
+    final sage = palette['brandSage'];
+    final isDark = theme.brightness == Brightness.dark;
+    final borderColor = IsleGlass.rimBorderColor(isDark);
+    final progress = controller.progress;
+    final options = controller.options;
+    final space = controller.spaceRelease;
+
+    return IsleSurface(
+      margin: const EdgeInsets.only(top: 12),
+      padding: EdgeInsets.zero,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 14, 14, 10),
+            child: Row(
+              children: [
+                IsleSquircleBadge(
+                  icon: Icons.cleaning_services_outlined,
+                  color: sage,
+                  size: 36,
+                  iconSize: 18,
+                ),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        '安全释放手机空间',
+                        style: theme.textTheme.titleSmall?.copyWith(
+                          fontSize: 14.5,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        space.releasableCount > 0
+                            ? '已备份可释放估算：${formatBytes(space.releasableBytes)}（${space.releasableCount} 项）'
+                            : '备份完成后可在此在线核验 NAS 原片并安全释放本机存储',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          fontSize: 12,
+                          color: space.releasableCount > 0
+                              ? sage
+                              : colors.onSurfaceVariant,
+                          fontWeight: space.releasableCount > 0
+                              ? FontWeight.w600
+                              : FontWeight.normal,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+          if (space.lastReleaseSummary != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
+              child: Text(
+                space.lastReleaseSummary!,
+                style: theme.textTheme.bodySmall?.copyWith(
+                  fontSize: 12,
+                  color: colors.onSurfaceVariant,
+                ),
+              ),
+            ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 0, 14, 12),
+            child: Align(
+              alignment: Alignment.centerLeft,
+              child: FilledButton.tonalIcon(
+                key: const ValueKey('manualSpaceReleaseButton'),
+                onPressed: progress.busy ? null : onOpenManualRelease,
+                icon: const Icon(Icons.verified_user_outlined, size: 17),
+                label: Text(
+                  space.releasableCount > 0
+                      ? '释放本机空间（${space.releasableCount} 项）'
+                      : '查看并释放本机空间',
+                ),
+              ),
+            ),
+          ),
+          Divider(
+            height: 1,
+            thickness: 1,
+            indent: 14,
+            endIndent: 14,
+            color: borderColor,
+          ),
+          SwitchListTile.adaptive(
+            key: const ValueKey('autoPromptSpaceReleaseSwitch'),
+            dense: true,
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 14,
+              vertical: 2,
+            ),
+            title: const Text(
+              '备份无错完成后自动发起释放确认',
+              style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w600),
+            ),
+            subtitle: Text(
+              '默认关闭；仅在无错完成且远端 SHA-256 核验通过后弹出系统确认框，绝不静默删图',
+              style: TextStyle(fontSize: 11.5, color: colors.onSurfaceVariant),
+            ),
+            value: options.autoPromptSpaceRelease,
+            onChanged: progress.busy
+                ? null
+                : (value) => unawaited(onToggleAutoRelease(value)),
+          ),
+          if (options.autoPromptSpaceRelease)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(14, 2, 14, 12),
+              child: DropdownButtonFormField<int>(
+                key: const ValueKey('autoReleaseMinAgeDropdown'),
+                isExpanded: true,
+                initialValue: options.autoReleaseMinAgeDays,
+                decoration: const InputDecoration(
+                  isDense: true,
+                  labelText: '自动释放筛选保留期',
+                ),
+                items: const [
+                  DropdownMenuItem(
+                    value: 30,
+                    child: Text('30 天前拍摄（默认）', overflow: TextOverflow.ellipsis),
+                  ),
+                  DropdownMenuItem(
+                    value: 90,
+                    child: Text('90 天前拍摄', overflow: TextOverflow.ellipsis),
+                  ),
+                  DropdownMenuItem(
+                    value: 7,
+                    child: Text('7 天前拍摄', overflow: TextOverflow.ellipsis),
+                  ),
+                  DropdownMenuItem(
+                    value: 0,
+                    child: Text(
+                      '不限时间（全部已验证项）',
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+                onChanged: progress.busy
+                    ? null
+                    : (value) {
+                        if (value != null) {
+                          controller.setAutoReleaseMinAgeDays(value);
+                        }
+                      },
+              ),
+            ),
         ],
       ),
     );

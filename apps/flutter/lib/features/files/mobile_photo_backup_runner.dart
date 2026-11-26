@@ -7,20 +7,44 @@ import 'mobile_photo_backup_failure_store.dart';
 import 'mobile_photo_backup_state_models.dart';
 import 'mobile_photo_backup_transfer_client.dart';
 import 'photo_backup_prefs_schema.dart';
+import 'photo_backup_verified_ledger.dart';
 
 const int _maxOversizedClampPerPage = 10000;
 
 final RegExp _omittedAssetIdPattern = RegExp(r'^[0-9]{1,20}$');
 
+class PhotoBackupRunOutcome {
+  const PhotoBackupRunOutcome({
+    required this.summary,
+    required this.completedCleanly,
+  });
+
+  final String summary;
+  final bool completedCleanly;
+}
+
 class _BackupSessionKeys {
   _BackupSessionKeys(
     PhotoBackupPrefsSchema schema,
     String albumScope,
+    List<String> selectedAlbumIds,
     this.failureStorageKey,
-  ) : cursorKey = schema.cursorKey(albumScope),
-      storeVersionKey = schema.storeVersionKey(albumScope),
-      lastVerifiedKey = schema.lastVerifiedAtKey(albumScope),
-      lastCompleteKey = schema.lastCompleteAtKey(albumScope),
+  ) : cursorKey = schema.cursorKey(
+        albumScope,
+        selectedAlbumIds: selectedAlbumIds,
+      ),
+      storeVersionKey = schema.storeVersionKey(
+        albumScope,
+        selectedAlbumIds: selectedAlbumIds,
+      ),
+      lastVerifiedKey = schema.lastVerifiedAtKey(
+        albumScope,
+        selectedAlbumIds: selectedAlbumIds,
+      ),
+      lastCompleteKey = schema.lastCompleteAtKey(
+        albumScope,
+        selectedAlbumIds: selectedAlbumIds,
+      ),
       scanIncompleteKey = PhotoBackupPrefsSchema.scanIncompleteKey(
         failureStorageKey,
       );
@@ -50,6 +74,7 @@ class MobilePhotoBackupRunner {
     required this.checkActive,
     required this.isDisposed,
     required this.onChanged,
+    this.onAssetVerified,
   }) {
     _entryUploader = MobilePhotoBackupEntryUploader(
       api: api,
@@ -63,6 +88,7 @@ class MobilePhotoBackupRunner {
       isDisposed: isDisposed,
       onChanged: onChanged,
       onFailureCounts: _applyFailureCounts,
+      onAssetVerified: onAssetVerified,
     );
   }
 
@@ -78,10 +104,11 @@ class MobilePhotoBackupRunner {
   final void Function() checkActive;
   final bool Function() isDisposed;
   final VoidCallback onChanged;
+  final Future<void> Function(VerifiedPhotoBackupRecord record)? onAssetVerified;
 
   late final MobilePhotoBackupEntryUploader _entryUploader;
 
-  Future<String> execute({
+  Future<PhotoBackupRunOutcome> execute({
     required SharedPreferences preferences,
     required bool older,
   }) async {
@@ -89,10 +116,12 @@ class MobilePhotoBackupRunner {
     final failureStorageKey = schema.failureStorageKey(
       options.albumScope,
       includeVideos: options.includeVideos,
+      selectedAlbumIds: options.selectedAlbumIds,
     );
     final keys = _BackupSessionKeys(
       schema,
       options.albumScope,
+      options.selectedAlbumIds,
       failureStorageKey,
     );
 
@@ -115,6 +144,7 @@ class MobilePhotoBackupRunner {
         beforeCursor: before,
         includeVideos: options.includeVideos,
         albumScope: options.albumScope,
+        selectedAlbumIds: options.selectedAlbumIds,
         checkActive: checkActive,
       );
 
@@ -191,7 +221,15 @@ class MobilePhotoBackupRunner {
     }
 
     checkActive();
-    return _buildCompletionMessage(complete: complete);
+    final completedCleanly =
+        complete &&
+        progress.failed == 0 &&
+        !progress.scanHasOmissions &&
+        !progress.cancel;
+    return PhotoBackupRunOutcome(
+      summary: _buildCompletionMessage(complete: complete),
+      completedCleanly: completedCleanly,
+    );
   }
 
   Future<void> _validatePreconditions() async {

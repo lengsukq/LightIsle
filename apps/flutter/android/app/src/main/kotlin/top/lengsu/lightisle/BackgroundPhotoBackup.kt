@@ -15,6 +15,7 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
+import org.json.JSONArray
 import org.json.JSONObject
 import java.net.InetAddress
 import java.net.URI
@@ -232,10 +233,17 @@ internal object BackgroundPhotoBackup {
         photosPath: String,
         albumScope: String = "all",
         organizeByYearMonth: Boolean = false,
+        selectedAlbumIds: List<String> = emptyList(),
+        organizeMode: String? = null,
     ): Map<String, Any> =
         synchronized(lock) {
             val origin = validate(server, cookie, pin, device)
             val normalizedScope = AndroidPhotoImport.normalizeAlbumScope(albumScope)
+            val normalizedBuckets = AndroidPhotoAlbums.normalizeBucketIds(selectedAlbumIds)
+            val normalizedOrganize = AndroidPhotoAlbums.normalizeOrganizeMode(
+                organizeMode,
+                legacyByYearMonth = organizeByYearMonth,
+            )
             val physicalRoot = BackgroundPhotoRoot(rootID, rootGeneration, photosPath)
             val permission = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_IMAGES
             else Manifest.permission.READ_EXTERNAL_STORAGE
@@ -260,7 +268,13 @@ internal object BackgroundPhotoBackup {
                 .put("rootGeneration", physicalRoot.generation)
                 .put("photosPath", physicalRoot.photosPath)
                 .put("albumScope", normalizedScope)
-                .put("organizeByYearMonth", organizeByYearMonth)
+                .put("selectedAlbumIds", JSONArray(normalizedBuckets))
+                .put("organizeMode", normalizedOrganize)
+                .put(
+                    "organizeByYearMonth",
+                    normalizedOrganize == AndroidPhotoAlbums.organizeYearMonth ||
+                        normalizedOrganize == AndroidPhotoAlbums.organizeByAlbumYearMonth,
+                )
                 .put("accountKey", active.accountKey)
                 .put("generation", generation)
                 .put("until", System.currentTimeMillis() + ttlMillis)
@@ -384,13 +398,15 @@ internal object BackgroundPhotoBackup {
         statusLocked(ctx) + ("scanRequestAccepted" to true)
     }
 
-    /** Keep background albumScope and YYYY/MM preference in sync with foreground toggles. */
+    /** Keep background albumScope, bucket list, and organizeMode in sync with foreground toggles. */
     fun updateOptionsForSession(
         ctx: Context,
         server: String,
         cookie: String,
         albumScope: String,
         organizeByYearMonth: Boolean,
+        selectedAlbumIds: List<String> = emptyList(),
+        organizeMode: String? = null,
     ): Map<String, Any> = synchronized(lock) {
         val origin = normalizeOrigin(server)
         val active = activeSession
@@ -404,14 +420,36 @@ internal object BackgroundPhotoBackup {
         }
         val normalizedScope = AndroidPhotoImport.normalizeAlbumScope(albumScope)
         val prevScope = AndroidPhotoImport.normalizeAlbumScope(config.optString("albumScope", "all"))
+        val normalizedBuckets = AndroidPhotoAlbums.normalizeBucketIds(selectedAlbumIds)
+        val prevBuckets = readBucketIds(config)
+        val normalizedOrganize = AndroidPhotoAlbums.normalizeOrganizeMode(
+            organizeMode,
+            legacyByYearMonth = organizeByYearMonth,
+        )
         config.put("albumScope", normalizedScope)
-        config.put("organizeByYearMonth", organizeByYearMonth)
+        config.put("selectedAlbumIds", JSONArray(normalizedBuckets))
+        config.put("organizeMode", normalizedOrganize)
+        config.put(
+            "organizeByYearMonth",
+            normalizedOrganize == AndroidPhotoAlbums.organizeYearMonth ||
+                normalizedOrganize == AndroidPhotoAlbums.organizeByAlbumYearMonth,
+        )
         val generation = config.optLong("generation", 0L)
         preferences(ctx).edit().putString(secret, seal(config)).commit()
-        if (prevScope != normalizedScope && generation > 0L) {
+        if ((prevScope != normalizedScope || prevBuckets != normalizedBuckets) && generation > 0L) {
             writeState(ctx, "cursor", generation, "")
         }
         statusLocked(ctx)
+    }
+
+    fun readBucketIds(config: JSONObject): List<String> {
+        val raw = config.optJSONArray("selectedAlbumIds") ?: return emptyList()
+        val ids = ArrayList<String>(raw.length())
+        for (i in 0 until raw.length()) {
+            val value = raw.optString(i, "").trim()
+            if (value.isNotEmpty()) ids.add(value)
+        }
+        return AndroidPhotoAlbums.normalizeBucketIds(ids)
     }
 
     /** Worker-side auth/permission failure; stale Workers are harmless no-ops. */

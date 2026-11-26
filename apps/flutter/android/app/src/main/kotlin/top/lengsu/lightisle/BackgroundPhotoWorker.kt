@@ -18,8 +18,6 @@ import java.net.Proxy
 import java.net.URLEncoder
 import java.security.MessageDigest
 import java.security.cert.X509Certificate
-import java.time.Instant
-import java.time.ZoneId
 import java.util.concurrent.TimeUnit
 import javax.net.ssl.SSLContext
 import javax.net.ssl.TrustManager
@@ -196,8 +194,12 @@ class BackgroundPhotoWorker(context: Context, params: WorkerParameters) : Worker
         val device = config.getString("device")
         val base = client.photosDirectory
         val folder = "$base/$device"
-        val organizeByYearMonth = config.optBoolean("organizeByYearMonth", false)
-        val ensuredMonthDirs = HashSet<String>()
+        val organizeMode = AndroidPhotoAlbums.normalizeOrganizeMode(
+            config.optString("organizeMode", ""),
+            legacyByYearMonth = config.optBoolean("organizeByYearMonth", false),
+        )
+        val selectedBucketIds = BackgroundPhotoBackup.readBucketIds(config)
+        val ensuredSubdirs = HashSet<String>()
         val versionKey = "mediastoreVersion"
         try {
             if (!current()) return Result.success()
@@ -218,7 +220,13 @@ class BackgroundPhotoWorker(context: Context, params: WorkerParameters) : Worker
                 if (!current()) return Result.success()
                 if (!AndroidPhotoImport.isWifi(ctx)) return if (current()) Result.retry() else Result.success()
                 val albumScope = AndroidPhotoImport.normalizeAlbumScope(config.optString("albumScope", "all"))
-                val page = AndroidPhotoImport.list(ctx, cursor, 10, albumScope = albumScope)
+                val page = AndroidPhotoImport.list(
+                    ctx,
+                    cursor,
+                    10,
+                    albumScope = albumScope,
+                    selectedBucketIds = selectedBucketIds,
+                )
                 pages++
                 if (!current()) return Result.success()
                 val version = page["version"] as? String? ?: ""
@@ -266,17 +274,14 @@ class BackgroundPhotoWorker(context: Context, params: WorkerParameters) : Worker
                         .substringAfterLast('.', "jpg").lowercase().let {
                             if (it in setOf("jpg", "jpeg", "png", "heic", "heif", "webp", "gif", "avif", "tiff", "bmp")) it else "jpg"
                         }
-                    val destFolder = if (organizeByYearMonth && streamMod > 0L) {
-                        val epochSec = if (streamMod > 100_000_000_000L) streamMod / 1000L else streamMod
-                        val zdt = Instant.ofEpochSecond(epochSec).atZone(ZoneId.systemDefault())
-                        val yearDir = "$folder/%04d".format(zdt.year)
-                        val monthDir = "$yearDir/%02d".format(zdt.monthValue)
-                        if (ensuredMonthDirs.add(monthDir)) {
-                            client.folder(yearDir)
-                            client.folder(monthDir)
-                        }
-                        monthDir
-                    } else folder
+                    val bucketName = item["bucketName"] as? String
+                    val destFolder = AndroidPhotoAlbums.resolveDestinationSubdir(
+                        deviceFolder = folder,
+                        organizeMode = organizeMode,
+                        albumName = bucketName,
+                        modifiedEpoch = streamMod,
+                    )
+                    ensureSubdirHierarchy(client, folder, destFolder, ensuredSubdirs)
                     val target = "$destFolder/photo_${id}_${streamMod}_${digest.substring(0, 16)}.$extension"
                     if (client.sha256(target, streamSize, digest)) continue
                     uploadStream(client, ctx, generation, id, streamSize, streamMod, streamGen, target, digest)
@@ -356,6 +361,24 @@ class BackgroundPhotoWorker(context: Context, params: WorkerParameters) : Worker
             return if (current()) Result.retry() else Result.success()
         } finally {
             client.close()
+        }
+    }
+
+    private fun ensureSubdirHierarchy(
+        client: NASBackgroundClient,
+        rootDir: String,
+        targetDir: String,
+        ensuredSubdirs: MutableSet<String>,
+    ) {
+        if (targetDir == rootDir || ensuredSubdirs.contains(targetDir)) return
+        val prefix = "$rootDir/"
+        if (!targetDir.startsWith(prefix)) return
+        var current = rootDir
+        for (segment in targetDir.removePrefix(prefix).split('/').filter { it.isNotEmpty() }) {
+            current = "$current/$segment"
+            if (ensuredSubdirs.add(current)) {
+                client.folder(current)
+            }
         }
     }
 

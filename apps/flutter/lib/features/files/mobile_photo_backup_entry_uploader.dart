@@ -11,9 +11,19 @@ import 'mobile_photo_backup_state_models.dart';
 import 'mobile_photo_backup_transfer_client.dart';
 import 'photo_backup_hash.dart';
 import 'photo_backup_prefs_schema.dart';
+import 'photo_backup_verified_ledger.dart';
 
 const int _maxCachedRemoteVerifyBytes = 2 << 30;
 const int _epochMillisThreshold = 100000000000;
+const Set<String> _videoExtensions = {
+  'mp4',
+  'mov',
+  'm4v',
+  '3gp',
+  'webm',
+  'mkv',
+  'avi',
+};
 
 final RegExp _sentRecordWithSizePattern = RegExp(
   r'^([a-f0-9]{64}):([1-9][0-9]{0,14})$',
@@ -33,6 +43,8 @@ class _BackupAssetSpec {
     required this.listedSize,
     required this.generation,
     required this.suffix,
+    required this.albumName,
+    required this.isVideo,
     required this.entryDir,
     required this.successKey,
     required this.failureAssetKey,
@@ -45,9 +57,15 @@ class _BackupAssetSpec {
   final int listedSize;
   final int generation;
   final String suffix;
+  final String albumName;
+  final bool isVideo;
   final String entryDir;
   final String successKey;
   final String failureAssetKey;
+
+  int get capturedAtMs => modified <= 0
+      ? 0
+      : (modified > _epochMillisThreshold ? modified : modified * 1000);
 
   String destinationPath(String digest) =>
       '$entryDir/photo_${safeId}_${modified}_${digest.substring(0, 16)}.$suffix';
@@ -69,6 +87,7 @@ class MobilePhotoBackupEntryUploader {
     required this.isDisposed,
     required this.onChanged,
     required this.onFailureCounts,
+    this.onAssetVerified,
   });
 
   final LightIsleApi api;
@@ -82,6 +101,7 @@ class MobilePhotoBackupEntryUploader {
   final bool Function() isDisposed;
   final VoidCallback onChanged;
   final void Function(PhotoFailureCounts counts) onFailureCounts;
+  final Future<void> Function(VerifiedPhotoBackupRecord record)? onAssetVerified;
 
   Future<EntryBackupOutcome> processEntry({
     required Map<String, dynamic> entry,
@@ -151,6 +171,15 @@ class MobilePhotoBackupEntryUploader {
     final safeId = isIOS
         ? sha256.convert(utf8.encode(id)).toString().substring(0, 24)
         : id;
+    final suffix = normalizePhotoExtension(name);
+    final albumName = (entry['bucketName'] ?? entry['albumName'] ?? '')
+        .toString()
+        .trim();
+    final isVideo =
+        entry['isVideo'] == true ||
+        _videoExtensions.contains(suffix) ||
+        id.startsWith('v.') ||
+        id.startsWith('l.');
     return _BackupAssetSpec(
       id: id,
       safeId: safeId,
@@ -158,8 +187,10 @@ class MobilePhotoBackupEntryUploader {
       modified: modified,
       listedSize: listedSize,
       generation: generation,
-      suffix: normalizePhotoExtension(name),
-      entryDir: _targetDirectoryForEntry(destinationDir, modified),
+      suffix: suffix,
+      albumName: albumName,
+      isVideo: isVideo,
+      entryDir: _targetDirectoryForEntry(destinationDir, modified, albumName),
       successKey: prefsSchema().sentKey(
         id: id,
         modified: modified,
@@ -203,6 +234,13 @@ class MobilePhotoBackupEntryUploader {
     );
     checkActive();
     if (cachedMatch) {
+      await _recordVerifiedAsset(
+        spec: spec,
+        remotePath: existing,
+        digest: verifiedRecord.digest,
+        exactSize: verifiedRecord.size,
+        chunkDigests: const <String>[],
+      );
       await _clearEntryFailure(
         preferences,
         failureStorageKey,
@@ -446,6 +484,14 @@ class MobilePhotoBackupEntryUploader {
       checkActive();
       await preferences.remove(uploadKey);
       checkActive();
+      await _recordVerifiedAsset(
+        spec: spec,
+        remotePath: destination,
+        digest: digest,
+        exactSize: exactSize,
+        chunkDigests: chunkDigests,
+      );
+      checkActive();
       await _clearEntryFailure(
         preferences,
         failureStorageKey,
@@ -470,6 +516,14 @@ class MobilePhotoBackupEntryUploader {
       _formatVerifiedSentRecord(digest, exactSize),
     );
     checkActive();
+    await _recordVerifiedAsset(
+      spec: spec,
+      remotePath: destination,
+      digest: digest,
+      exactSize: exactSize,
+      chunkDigests: chunkDigests,
+    );
+    checkActive();
     await _clearEntryFailure(
       preferences,
       failureStorageKey,
@@ -477,6 +531,30 @@ class MobilePhotoBackupEntryUploader {
     );
     progress.uploaded++;
     return EntryBackupOutcome.uploaded;
+  }
+
+  Future<void> _recordVerifiedAsset({
+    required _BackupAssetSpec spec,
+    required String remotePath,
+    required String digest,
+    required int exactSize,
+    required List<String> chunkDigests,
+  }) async {
+    final callback = onAssetVerified;
+    if (callback == null || exactSize <= 0) return;
+    await callback(
+      VerifiedPhotoBackupRecord(
+        assetId: spec.id,
+        remotePath: remotePath,
+        sha256: digest,
+        sizeBytes: exactSize,
+        capturedAtMs: spec.capturedAtMs,
+        backedUpAtMs: DateTime.now().millisecondsSinceEpoch,
+        isVideo: spec.isVideo,
+        albumName: spec.albumName,
+        chunkDigests: chunkDigests,
+      ),
+    );
   }
 
   ({String digest, int size})? _parseVerifiedSentRecord(
@@ -501,14 +579,16 @@ class MobilePhotoBackupEntryUploader {
   String _formatVerifiedSentRecord(String digest, int exactSize) =>
       isIOS ? '$digest:$exactSize' : digest;
 
-  String _targetDirectoryForEntry(String destinationDir, int modified) {
-    if (!options.organizeByYearMonth || modified <= 0) return destinationDir;
-    final ms = modified > _epochMillisThreshold ? modified : modified * 1000;
-    final dt = DateTime.fromMillisecondsSinceEpoch(ms).toLocal();
-    final year = dt.year.toString().padLeft(4, '0');
-    final month = dt.month.toString().padLeft(2, '0');
-    return '$destinationDir/$year/$month';
-  }
+  String _targetDirectoryForEntry(
+    String destinationDir,
+    int modified,
+    String albumName,
+  ) => PhotoBackupPrefsSchema.resolveTargetDirectory(
+    destinationDir,
+    organizeMode: options.organizeMode,
+    modified: modified,
+    albumName: albumName,
+  );
 
   Future<void> _recordEntryFailure(
     SharedPreferences preferences,
