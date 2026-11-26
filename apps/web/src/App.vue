@@ -46,6 +46,7 @@ import {
   FILES_VIEW_CTX,
   SETTINGS_VIEW_CTX,
 } from "./contexts/shellContexts.ts";
+import { FILE_EXTRAS_CTX, useFileWorkspaceExtras } from "./features/files/fileExtrasContext.ts";
 
 const asyncPageState = (message: string, role: string) => ({
   render: () => h("p", { role, class: "page-status" }, message),
@@ -73,6 +74,7 @@ const AppWorkbenchStage = defineAsyncComponent(() => import("./features/apps/App
 const DuplicateFilesPanel = defineAsyncComponent(() => import("./features/files/DuplicateFilesPanel.vue"));
 const FileOperationDialog = defineAsyncComponent(() => import("./features/files/FileOperationDialog.vue"));
 const FileShareModal = defineAsyncComponent(() => import("./features/files/FileShareModal.vue"));
+const FileExtrasModals = defineAsyncComponent(() => import("./features/files/FileExtrasModals.vue"));
 const PhotoViewerModal = defineAsyncComponent(() => import("./features/photos/PhotoViewerModal.vue"));
 const AppsCenterView = defineAsyncComponent(() => import("./features/apps/AppsCenterView.vue"));
 const PhotosView = defineAsyncComponent({
@@ -417,12 +419,28 @@ const {
   scopedApiPath, scopedMediaPath, rootFetch, jsonGet, jsonWrite, loadFiles, loadTrash, isAbortError,
   onCinemaFilmMatched: (film) => shellBridge.openMatchedCinemaFilm(film),
 });
+const { extrasContext: fileExtras, resetAllExtras: resetFileExtras } = useFileWorkspaceExtras({
+  canList: () => user.value !== null && rootFeatureContextReady.value,
+  context: () => `${user.value?.username ?? ""}:${rootContextEpoch.value}:${selectedRootID.value}:${selectedRootGeneration.value}`,
+  filesPath,
+  scopedApiPath,
+  scopedMediaPath,
+  rootFetch,
+  jsonGet,
+  jsonWrite,
+  loadFiles,
+  revealEntryFolder,
+  legacyPreviewFile: previewFile,
+  isAbortError,
+});
+
 shellBridge.onExtracted = (name: string) => { fileOperationNotice.value = "已解压「" + name + "」到同名文件夹。"; };
 shellBridge.resetRootScopedFeatures = () => {
   resetFileTrash();
   resetFileBrowser();
   resetFileActionsAndGrantsForRoot();
   resetFileShares();
+  resetFileExtras();
   resetTaskCenter();
   resetUploadsForRoot();
 };
@@ -549,6 +567,7 @@ function clearClientSessionState(expiredMessage = "") {
   checkedFiles.value = [];
   resetLoginSessions();
   resetFileShares();
+  resetFileExtras();
   visitedPages.value = {
     overview: true, files: false, computer: false, photos: false, cinema: false,
     downloads: false, apps: false, automation: false, settings: false,
@@ -662,6 +681,7 @@ provide(FILES_VIEW_CTX, {
   batchDownloadSelected, selectFallbackPaths, copySelectedPaths, openShareDialog,
   jumpToSettingsGroup,
 });
+provide(FILE_EXTRAS_CTX, fileExtras);
 
 provide(SETTINGS_VIEW_CTX, {
   active, settingsGroup, user, sharedRoots, selectedRootID, selectedRoot,

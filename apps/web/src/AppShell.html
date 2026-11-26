@@ -191,10 +191,27 @@
       :error="shareError"
       :copied="shareCopied"
       :hour-options="shareHourOptions"
+      :can-collect="Boolean(sharingFile && sharingFile.type === 'folder' && canWriteEntry(sharingFile))"
       @link-input="shareLinkInput = $event"
       @submit="createFileShare"
       @copy="copyShareLink"
+      @open-collect-create="sharingFile = null; shareCreatedLink = ''; fileExtras.openCollectCreateModal($event)"
+      @open-collect-manage="sharingFile = null; shareCreatedLink = ''; fileExtras.openCollectManageModal()"
       @close="sharingFile = null; shareCreatedLink = ''"
+    />
+    <FileExtrasModals
+      :files-path="filesPath"
+      :extracting="extracting"
+      :can-write-entry="canWriteEntry"
+      :scoped-api-path="scopedApiPath"
+      :scoped-media-path="scopedMediaPath"
+      :root-fetch="rootFetch"
+      :json-get="jsonGet"
+      :json-write="jsonWrite"
+      :is-abort-error="isAbortError"
+      @saved="loadFiles(filesPath)"
+      @download="downloadFile($event)"
+      @extract-zip="extractZip($event)"
     />
     <FileOperationDialog
       v-if="fileOperationDialog"
