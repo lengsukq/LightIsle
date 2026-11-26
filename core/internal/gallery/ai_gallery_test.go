@@ -106,11 +106,18 @@ func waitForScanAndAIIndex(t *testing.T, lib *Library) {
 	for time.Now().Before(deadline) {
 		st := lib.Status()
 		if !st.Running && (st.AIIndexing == nil || (!st.AIIndexing.Running && st.AIIndexing.Remaining == 0)) {
-			// Verify all photos have ai_index_state rows.
+			// Verify all photos have ai_index_state rows without mutating priority queues.
 			share, err := lib.share()
 			if err == nil {
-				rem, _ := lib.nextAIBatch(share, 1)
-				if len(rem) == 0 {
+				var pending int
+				qErr := lib.db.QueryRow(`
+					SELECT COUNT(*)
+					FROM assets a
+					LEFT JOIN ai_index_state s ON s.asset_id = a.id
+					WHERE a.share = ? AND a.missing_path = '' AND a.type = 'photo'
+					  AND (s.asset_id IS NULL OR s.ai_version < ? OR s.source_size <> a.size OR s.source_modified <> a.modified)`,
+					share, aiSchemaVersion).Scan(&pending)
+				if qErr == nil && pending == 0 {
 					return
 				}
 			}
