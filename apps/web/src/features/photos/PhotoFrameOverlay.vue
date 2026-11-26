@@ -1,8 +1,15 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, onMounted, ref, watch } from "vue";
-import { Maximize2, Minimize2, Pause, Play, Shuffle, X } from "lucide-vue-next";
+import { LayoutDashboard, Maximize2, Minimize2, Moon, Pause, Play, Shuffle, Sparkles, X } from "lucide-vue-next";
 import { capturedLabel } from "./photoPresentation.ts";
 import type { BatchAsset } from "./usePhotoBatchActions.ts";
+import PhotoFrameDashboardWidgets from "./PhotoFrameDashboardWidgets.vue";
+import {
+  isNightDimHour,
+  readPhotoFrameMode,
+  savePhotoFrameMode,
+  type PhotoFrameDisplayMode,
+} from "../overview/familyRemindersApi.ts";
 
 const props = defineProps<{
   open: boolean;
@@ -28,6 +35,13 @@ const controlsVisible = ref(true);
 const isFullscreen = ref(false);
 const nowClock = ref("");
 const nowDate = ref("");
+const displayMode = ref<PhotoFrameDisplayMode>(readPhotoFrameMode());
+const nightDimAuto = ref(isNightDimHour());
+const nightDimOverride = ref<boolean | null>(null);
+
+const nightDimActive = computed(() =>
+  nightDimOverride.value !== null ? nightDimOverride.value : nightDimAuto.value,
+);
 
 type BufferSlot = { url: string; alt: string };
 const slots = ref<[BufferSlot, BufferSlot]>([
@@ -52,6 +66,25 @@ const currentAsset = computed(() => {
   if (!list.length) return null;
   return list[currentIndex.value % list.length] ?? list[0];
 });
+
+const currentCaptionText = computed(() => {
+  const asset = currentAsset.value;
+  if (!asset) return "";
+  const parts: string[] = [];
+  if (props.title) parts.push(props.title);
+  parts.push(capturedLabel(asset) || asset.name);
+  const count = photoAssets.value.length > 1 ? ` (${(currentIndex.value % photoAssets.value.length) + 1} / ${photoAssets.value.length})` : "";
+  return parts.join(" · ") + count;
+});
+
+function setDisplayMode(mode: PhotoFrameDisplayMode) {
+  displayMode.value = mode;
+  savePhotoFrameMode(mode);
+}
+
+function toggleNightDim() {
+  nightDimOverride.value = !nightDimActive.value;
+}
 
 function imageUrlFor(asset: BatchAsset | null): string {
   if (!asset) return "";
@@ -155,6 +188,7 @@ function updateClock() {
   nowClock.value = `${hh}:${mm}`;
   const weekdays = ["周日", "周一", "周二", "周三", "周四", "周五", "周六"];
   nowDate.value = `${now.getFullYear()}年${now.getMonth() + 1}月${now.getDate()}日 · ${weekdays[now.getDay()]}`;
+  nightDimAuto.value = isNightDimHour(now);
 }
 
 function advance(step = 1) {
@@ -247,6 +281,8 @@ watch(
     if (isOpen) {
       currentIndex.value = 0;
       playing.value = true;
+      displayMode.value = readPhotoFrameMode();
+      nightDimOverride.value = null;
       slots.value = [{ url: "", alt: "" }, { url: "", alt: "" }];
       activeSlot.value = 0;
       updateClock();
@@ -294,9 +330,10 @@ onBeforeUnmount(() => {
       v-if="open"
       ref="stageRef"
       class="photo-frame-overlay"
+      :class="{ 'is-night-dim': nightDimActive && displayMode === 'dashboard' }"
       role="dialog"
       aria-modal="true"
-      aria-label="电子相框轮播模式"
+      :aria-label="displayMode === 'dashboard' ? '旧 iPad 家庭看板模式' : '电子相框轮播模式'"
       @mousemove="revealControls"
       @click="revealControls"
     >
@@ -328,7 +365,16 @@ onBeforeUnmount(() => {
 
       <div class="photo-frame-scrim" aria-hidden="true" />
 
-      <div class="photo-frame-clock">
+      <PhotoFrameDashboardWidgets
+        v-if="displayMode === 'dashboard'"
+        :active="open && displayMode === 'dashboard'"
+        :now-clock="nowClock"
+        :now-date="nowDate"
+        :caption-text="currentCaptionText"
+        :night-dim="nightDimActive"
+      />
+
+      <div v-else class="photo-frame-clock">
         <div class="photo-frame-time">{{ nowClock }}</div>
         <div class="photo-frame-date">{{ nowDate }}</div>
         <div v-if="currentAsset" class="photo-frame-caption">
@@ -339,6 +385,41 @@ onBeforeUnmount(() => {
       </div>
 
       <div class="photo-frame-controls" :class="{ visible: controlsVisible }" @click.capture="revealControls">
+        <div class="frame-mode-group" role="tablist" aria-label="相框显示模式">
+          <button
+            type="button"
+            role="tab"
+            class="frame-interval-btn"
+            :class="{ active: displayMode === 'frame' }"
+            :aria-selected="displayMode === 'frame'"
+            @click.stop="setDisplayMode('frame')"
+          >
+            <Sparkles :size="13" /> 纯净相框
+          </button>
+          <button
+            type="button"
+            role="tab"
+            class="frame-interval-btn"
+            :class="{ active: displayMode === 'dashboard' }"
+            :aria-selected="displayMode === 'dashboard'"
+            @click.stop="setDisplayMode('dashboard')"
+          >
+            <LayoutDashboard :size="13" /> 家庭看板
+          </button>
+        </div>
+
+        <button
+          v-if="displayMode === 'dashboard'"
+          type="button"
+          class="frame-ctrl-btn"
+          :class="{ active: nightDimActive }"
+          title="夜间柔光模式（22:00–07:00 自动开启，可手动切换）"
+          @click.stop="toggleNightDim"
+        >
+          <Moon :size="14" />
+          <span>柔光</span>
+        </button>
+
         <button type="button" class="frame-ctrl-btn" :title="playing ? '暂停轮播' : '继续轮播'" @click.stop="playing = !playing">
           <Pause v-if="playing" :size="15" /><Play v-else :size="15" />
           <span>{{ playing ? "暂停" : "播放" }}</span>
@@ -378,6 +459,10 @@ onBeforeUnmount(() => {
   color: #ffffff;
   overflow: hidden;
   user-select: none;
+  transition: filter 0.6s ease;
+}
+.photo-frame-overlay.is-night-dim .photo-frame-stage {
+  filter: brightness(0.66) saturate(0.86);
 }
 .photo-frame-backdrop {
   position: absolute;
@@ -406,6 +491,7 @@ onBeforeUnmount(() => {
   place-items: center;
   padding: 24px;
   box-sizing: border-box;
+  transition: filter 0.6s ease;
 }
 .photo-frame-layer {
   position: absolute;
@@ -486,27 +572,12 @@ onBeforeUnmount(() => {
   transition: opacity 0.22s ease;
 }
 @media (max-width: 640px) {
-  .photo-frame-stage {
-    padding: 14px;
-  }
-  .photo-frame-layer {
-    inset: 14px;
-    max-width: calc(100% - 28px);
-    max-height: calc(100% - 28px);
-  }
-  .photo-frame-clock {
-    left: max(16px, env(safe-area-inset-left));
-    bottom: max(18px, env(safe-area-inset-bottom));
-  }
+  .photo-frame-stage { padding: 14px; }
+  .photo-frame-layer { inset: 14px; max-width: calc(100% - 28px); max-height: calc(100% - 28px); }
+  .photo-frame-clock { left: max(16px, env(safe-area-inset-left)); bottom: max(18px, env(safe-area-inset-bottom)); }
   .photo-frame-controls {
-    top: max(14px, env(safe-area-inset-top));
-    left: 12px;
-    right: 12px;
-    width: fit-content;
-    margin: 0 auto;
-    border-radius: 18px;
-    gap: 4px 6px;
-    padding: 6px 8px;
+    top: max(14px, env(safe-area-inset-top)); left: 12px; right: 12px; width: fit-content;
+    margin: 0 auto; border-radius: 18px; gap: 4px 6px; padding: 6px 8px;
   }
 }
 .photo-frame-controls.visible {
@@ -536,6 +607,7 @@ onBeforeUnmount(() => {
   background: rgba(255, 255, 255, 0.24);
   color: #ffffff;
 }
+.frame-mode-group,
 .frame-interval-group {
   display: inline-flex;
   gap: 2px;
@@ -544,6 +616,8 @@ onBeforeUnmount(() => {
   background: rgba(255, 255, 255, 0.08);
 }
 @media (prefers-reduced-motion: reduce) {
+  .photo-frame-overlay,
+  .photo-frame-stage,
   .photo-frame-bg-layer,
   .photo-frame-layer,
   .photo-frame-controls {

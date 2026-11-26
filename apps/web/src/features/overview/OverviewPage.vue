@@ -10,6 +10,7 @@ import IsleBadge from "../../components/ui/IsleBadge.vue";
 import IsleButton from "../../components/ui/IsleButton.vue";
 import IslePageHeader from "../../components/ui/IslePageHeader.vue";
 import FamilyBoardCarousel from "./FamilyBoardCarousel.vue";
+import FamilyRemindersSection from "./FamilyRemindersSection.vue";
 import { ISLE_CHART_COLORS } from "../../components/ui/isleChartsMath.ts";
 import {
   buildHostDiskSegments,
@@ -317,8 +318,9 @@ onUnmounted(() => {
     </button>
   </div>
 
-  <!-- 2.4 Family Message Board (Swipeable Carousel) -->
+  <!-- 2.4 Family Message Board (Swipeable Carousel) & Calendar Reminders -->
   <FamilyBoardCarousel :is-admin="identity.isAdmin" :username="identity.username" />
+  <FamilyRemindersSection :is-admin="identity.isAdmin" :username="identity.username" />
 
   <!-- 2.5 Home Light-Apps Tile Launcher -->
   <section v-if="showHomeAppsSection" class="home-apps-section" aria-label="家庭轻应用">

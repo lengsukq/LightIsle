@@ -12,7 +12,7 @@ import {
 } from "../../contexts/photosContext.ts";
 import {
   RefreshCw, Images, Sparkles, LayoutList,
-  Map as MapIcon, Users, FolderPlus,
+  Map as MapIcon, Users, FolderPlus, FileSearch,
 } from "lucide-vue-next";
 import { createLatestRequestGate } from "../../api/latestRequestGate.ts";
 import { mediaQueryKey } from "../../api/mediaQueryContext.ts";
@@ -26,6 +26,7 @@ import PhotosTimelineToolbar from "./PhotosTimelineToolbar.vue";
 import PhotoStickyMonthBar from "./PhotoStickyMonthBar.vue";
 import PhotoViewerModal from "./PhotoViewerModal.vue";
 import PhotoFrameOverlay from "./PhotoFrameOverlay.vue";
+import FamilyDocsArchiveView from "./FamilyDocsArchiveView.vue";
 import PhotoMetadataEditModal from "./PhotoMetadataEditModal.vue";
 import PhotoTimelineScrubber from "./PhotoTimelineScrubber.vue";
 import PhotoTimelineEmptyState from "./PhotoTimelineEmptyState.vue";
@@ -84,23 +85,24 @@ const albumOrganizerOpen = ref(false);
 const focusedIndex = ref(0);
 const nextCursor = ref(0);
 const viewMode = ref<PhotoViewMode>("timeline");
+const docsArchiveActive = ref(false);
 const modeTabsRef = ref<HTMLElement | null>(null);
 const albumSubtabsRef = ref<HTMLElement | null>(null);
 
 const { indicatorStyle: modeIndicatorStyle, indicatorReady: modeIndicatorReady } = useSlidingIndicator({
   containerRef: modeTabsRef,
   activeSelector: "button.chosen",
-  watchSources: [viewMode, () => props.active],
+  watchSources: [viewMode, docsArchiveActive, () => props.active],
 });
 const { indicatorStyle: subtabsIndicatorStyle, indicatorReady: subtabsIndicatorReady } = useSlidingIndicator({
   containerRef: albumSubtabsRef,
   activeSelector: "button.chosen",
-  watchSources: [viewMode, () => props.active],
+  watchSources: [viewMode, docsArchiveActive, () => props.active],
 });
-watch(viewMode, (mode) => {
+watch([viewMode, docsArchiveActive], ([mode, docsOn]) => {
   void nextTick(() => {
     window.dispatchEvent(new Event("resize"));
-    if (mode === "timeline") updateViewport();
+    if (mode === "timeline" && !docsOn) updateViewport();
   });
 });
 
@@ -113,7 +115,7 @@ let selectionGeneration = 0;
 
 function apiPath(path: string) { return rootApiPath(props.rootId, path); }
 function mediaPath(path: string) { return rootMediaPath(props.rootId, props.rootGeneration ?? 0, path); }
-const { api } = createScopedRootApi({
+const { api, transport } = createScopedRootApi({
   getRootId: () => props.rootId,
   getRootGeneration: () => props.rootGeneration ?? 0,
   getEpoch: () => rootEpoch,
@@ -379,6 +381,7 @@ watch(
   () => props.jumpTarget,
   (target) => {
     if (!target) return;
+    docsArchiveActive.value = false;
     viewMode.value = target.view === "similar" ? "cleanup" : target.view;
   },
   { immediate: true },
@@ -550,6 +553,7 @@ provide(PHOTO_STAGE_EXT_CTX, {
   openSmartMemory,
   downloadAsset: downloadSingleAsset,
   toggleZoomAtPointer: toggleViewerZoom,
+  openDocsArchive: () => { docsArchiveActive.value = true; },
 });
 
 const setScanPolling = createVisibleMediaPolling(status, 4500);
@@ -628,9 +632,10 @@ onUnmounted(() => {
       <template #actions>
         <div ref="modeTabsRef" class="photo-mode-tabs" role="tablist" aria-label="照片浏览方式">
           <IsleSlidingIndicator variant="segment" :ready="modeIndicatorReady" :pill-rect="modeIndicatorStyle" />
-          <button type="button" role="tab" :aria-selected="viewMode==='timeline'" :class="{chosen:viewMode==='timeline'}" @click="viewMode='timeline'"><LayoutList :size="15"/> 照片</button>
-          <button type="button" role="tab" :aria-selected="viewMode==='albums'||viewMode==='people'||viewMode==='map'" :class="{chosen:viewMode==='albums'||viewMode==='people'||viewMode==='map'}" @click="viewMode='albums';refreshFolderAlbums()"><Images :size="15"/> 相册</button>
-          <button type="button" role="tab" :aria-selected="viewMode==='cleanup'" :class="{chosen:viewMode==='cleanup'}" @click="viewMode='cleanup'"><Sparkles :size="15"/> 清理</button>
+          <button type="button" role="tab" :aria-selected="!docsArchiveActive&&viewMode==='timeline'" :class="{chosen:!docsArchiveActive&&viewMode==='timeline'}" @click="docsArchiveActive=false;viewMode='timeline'"><LayoutList :size="15"/> 照片</button>
+          <button type="button" role="tab" :aria-selected="!docsArchiveActive&&(viewMode==='albums'||viewMode==='people'||viewMode==='map')" :class="{chosen:!docsArchiveActive&&(viewMode==='albums'||viewMode==='people'||viewMode==='map')}" @click="docsArchiveActive=false;viewMode='albums';refreshFolderAlbums()"><Images :size="15"/> 相册</button>
+          <button type="button" role="tab" :aria-selected="docsArchiveActive" :class="{chosen:docsArchiveActive}" @click="docsArchiveActive=true"><FileSearch :size="15"/> 家庭档案</button>
+          <button type="button" role="tab" :aria-selected="!docsArchiveActive&&viewMode==='cleanup'" :class="{chosen:!docsArchiveActive&&viewMode==='cleanup'}" @click="docsArchiveActive=false;viewMode='cleanup'"><Sparkles :size="15"/> 清理</button>
         </div>
         <IsleButton v-if="admin" variant="glass" size="sm" :disabled="scan.running&&!scanStatusError" @click="startScan">
           <template #icon><RefreshCw :size="15" :class="{spinning:scan.running&&!scanStatusError}" /></template>
@@ -639,7 +644,7 @@ onUnmounted(() => {
       </template>
     </IslePageHeader>
 
-    <div v-if="viewMode==='albums'||viewMode==='people'||viewMode==='map'" ref="albumSubtabsRef" class="photos-album-subtabs" role="tablist" aria-label="相册分区">
+    <div v-if="!docsArchiveActive&&(viewMode==='albums'||viewMode==='people'||viewMode==='map')" ref="albumSubtabsRef" class="photos-album-subtabs" role="tablist" aria-label="相册分区">
       <IsleSlidingIndicator variant="segment" :ready="subtabsIndicatorReady" :pill-rect="subtabsIndicatorStyle" />
       <button type="button" role="tab" :aria-selected="viewMode==='albums'" :class="{chosen:viewMode==='albums'}" @click="viewMode='albums';refreshFolderAlbums()"><FolderPlus :size="14"/> 文件夹与共享相册</button>
       <button type="button" role="tab" :aria-selected="viewMode==='people'" :class="{chosen:viewMode==='people'}" @click="viewMode='people'"><Users :size="14"/> 人物</button>
@@ -661,11 +666,12 @@ onUnmounted(() => {
       @toggle-ai-pause="toggleAIPause($event)"
       @retry-status="status"
     />
-    <PhotoMapView v-if="props.active !== false && viewMode === 'map'" class="isle-subview-pane" :key="(props.rootId ?? 'legacy') + ':' + (props.rootGeneration ?? 0)" :root-id="props.rootId" :root-generation="props.rootGeneration" ref="photoMap" :transport="mapTransport" @open-asset="openMapAsset"/>
-    <PhotoPeopleView v-if="props.active !== false && viewMode === 'people'" class="isle-subview-pane" :active="viewMode === 'people'" :root-key="(props.rootId ?? 'legacy') + ':' + (props.rootGeneration ?? 0)" :api="api" :api-path="apiPath" :media-path="mediaPath" @select-person="filterByPerson" />
-    <PhotoSimilarCleanupView v-if="props.active !== false && viewMode === 'cleanup'" class="isle-subview-pane" :active="viewMode === 'cleanup'" :root-key="(props.rootId ?? 'legacy') + ':' + (props.rootGeneration ?? 0)" :api="api" :api-path="apiPath" :media-path="mediaPath" @trashed="load(true); status()" />
-    <PhotoAlbumOverviewSection v-show="viewMode === 'albums'" class="isle-subview-pane" />
-    <div v-show="viewMode === 'timeline'" class="isle-subview-pane">
+    <FamilyDocsArchiveView v-if="props.active !== false && docsArchiveActive" class="isle-subview-pane" :active="docsArchiveActive" :root-id="props.rootId" :root-generation="props.rootGeneration" :admin="admin" :api="api" :api-path="apiPath" :media-path="mediaPath" :upload-request="(u, i) => transport.request(u, i)" @open-asset="(a, list) => openMapAsset(a as never, list as never)" />
+    <PhotoMapView v-if="props.active !== false && !docsArchiveActive && viewMode === 'map'" class="isle-subview-pane" :key="(props.rootId ?? 'legacy') + ':' + (props.rootGeneration ?? 0)" :root-id="props.rootId" :root-generation="props.rootGeneration" ref="photoMap" :transport="mapTransport" @open-asset="openMapAsset"/>
+    <PhotoPeopleView v-if="props.active !== false && !docsArchiveActive && viewMode === 'people'" class="isle-subview-pane" :active="viewMode === 'people'" :root-key="(props.rootId ?? 'legacy') + ':' + (props.rootGeneration ?? 0)" :api="api" :api-path="apiPath" :media-path="mediaPath" @select-person="filterByPerson" />
+    <PhotoSimilarCleanupView v-if="props.active !== false && !docsArchiveActive && viewMode === 'cleanup'" class="isle-subview-pane" :active="viewMode === 'cleanup'" :root-key="(props.rootId ?? 'legacy') + ':' + (props.rootGeneration ?? 0)" :api="api" :api-path="apiPath" :media-path="mediaPath" @trashed="load(true); status()" />
+    <PhotoAlbumOverviewSection v-show="!docsArchiveActive && viewMode === 'albums'" class="isle-subview-pane" />
+    <div v-show="!docsArchiveActive && viewMode === 'timeline'" class="isle-subview-pane">
       <PhotosTimelineToolbar />
 
       <PhotoAlbumInlineManagement
