@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:open_filex/open_filex.dart';
 
 import '../../core/isle_theme.dart';
+import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 import '../media/cinema_detail_dialog.dart';
 import '../media/media_models.dart';
@@ -335,6 +336,7 @@ class FilesUiActions {
       api: controller.api,
       targetPath: item.path,
       folderName: item.name,
+      isAdmin: controller.isAdmin,
     );
   }
 
@@ -404,12 +406,27 @@ class FilesUiActions {
           accountIdentity: controller.effectiveOfflineAccountId,
         );
         final file = await store.fileFor(saved);
-        await OpenFilex.open(file.path);
+        final result = await OpenFilex.open(file.path);
+        if (!context.mounted) return;
+        if (result.type != ResultType.done) {
+          final reason = switch (result.type) {
+            ResultType.noAppToOpen => '未检测到可打开此文档的系统应用，文件已保留在离线文件箱。',
+            ResultType.permissionDenied => '系统未授予外部应用打开权限，请检查系统设置。',
+            ResultType.fileNotFound => '离线副本文件不存在，请重新离线保存后再试。',
+            _ =>
+              result.message.trim().isNotEmpty
+                  ? result.message.trim()
+                  : '系统未能打开此文档，请尝试从离线文件箱另存后打开。',
+          };
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text('打开离线副本失败：$reason')));
+        }
       } catch (err) {
         if (!context.mounted) return;
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text('打开离线副本失败：$err')));
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('打开离线副本失败：${userFacingError(err)}')),
+        );
       }
     }
   }

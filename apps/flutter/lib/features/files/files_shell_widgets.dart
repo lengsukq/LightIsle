@@ -68,8 +68,7 @@ class FilesBreadcrumbs extends StatelessWidget {
     final segments = controller.pathSegments;
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
-    final palette = IslePalette(isDark);
+    final palette = IslePalette.of(context);
     final disabled = controller.dir.loading || controller.filter.showingTrash;
 
     return Container(

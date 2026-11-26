@@ -22,7 +22,7 @@ internal class AndroidPhotoChannelHandler(
     private val ioExecutorProvider: () -> ExecutorService,
     private val canReadPhotos: (Boolean) -> Boolean,
     private val requestPhotosPermission: (Boolean, MethodChannel.Result) -> Unit,
-    private val requestPhotoDelete: (IntentSender, Int, MethodChannel.Result) -> Unit,
+    private val requestPhotoDelete: (IntentSender, List<String>, Int, MethodChannel.Result) -> Unit,
 ) {
     private val photoRequests = ConcurrentHashMap<String, CancellationSignal>()
     private var photosBackgroundChannel: MethodChannel? = null
@@ -397,11 +397,20 @@ internal class AndroidPhotoChannelHandler(
         assetIds: List<String>,
         result: MethodChannel.Result,
     ) {
-        if (assetIds.isEmpty()) {
-            result.success(mapOf("deleted" to true, "cancelled" to false, "deletedCount" to 0, "alreadyMissingCount" to 0))
+        val uniqueIds = assetIds.distinct()
+        if (uniqueIds.isEmpty()) {
+            result.success(
+                mapOf(
+                    "deleted" to true,
+                    "cancelled" to false,
+                    "deletedCount" to 0,
+                    "alreadyMissingCount" to 0,
+                    "deletedAssetIds" to emptyList<String>(),
+                ),
+            )
             return
         }
-        if (assetIds.size > 500) {
+        if (uniqueIds.size > 500) {
             result.error("too_many_delete_assets", "单次最多释放 500 项原片，请分批操作。", null)
             return
         }
@@ -416,20 +425,22 @@ internal class AndroidPhotoChannelHandler(
         try {
             ioExecutorProvider().execute {
                 try {
-                    val uris = AndroidPhotoAlbums.buildDeleteUris(appContext, assetIds)
-                    if (uris.isEmpty()) {
+                    val targets = AndroidPhotoAlbums.resolveDeleteTargets(appContext, uniqueIds)
+                    val alreadyMissingCount = (uniqueIds.size - targets.uris.size).coerceAtLeast(0)
+                    if (targets.uris.isEmpty()) {
                         postSuccess(
                             result,
                             mapOf(
                                 "deleted" to true,
                                 "cancelled" to false,
                                 "deletedCount" to 0,
-                                "alreadyMissingCount" to assetIds.size,
+                                "alreadyMissingCount" to alreadyMissingCount,
+                                "deletedAssetIds" to emptyList<String>(),
                             ),
                         )
                         return@execute
                     }
-                    val pendingIntent = MediaStore.createDeleteRequest(appContext.contentResolver, uris)
+                    val pendingIntent = MediaStore.createDeleteRequest(appContext.contentResolver, targets.uris)
                     mainHandler.post {
                         val act = activityRef.get()
                         if (act == null || act.isFinishing || act.isDestroyed) {
@@ -437,7 +448,12 @@ internal class AndroidPhotoChannelHandler(
                                 result.error("activity_unavailable", "当前界面已关闭，原片未被删除。", null)
                             } catch (_: Exception) { }
                         } else {
-                            requestPhotoDelete(pendingIntent.intentSender, uris.size, result)
+                            requestPhotoDelete(
+                                pendingIntent.intentSender,
+                                targets.foundAssetIds,
+                                alreadyMissingCount,
+                                result,
+                            )
                         }
                     }
                 } catch (_: Exception) {

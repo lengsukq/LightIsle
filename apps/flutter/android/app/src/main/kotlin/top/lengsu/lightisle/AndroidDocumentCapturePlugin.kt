@@ -1,6 +1,7 @@
 package top.lengsu.lightisle
 
 import android.app.Activity
+import android.content.ClipData
 import android.content.ContentValues
 import android.content.Context
 import android.content.Intent
@@ -13,6 +14,7 @@ import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.provider.MediaStore
+import androidx.core.content.FileProvider
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -24,6 +26,12 @@ import java.util.concurrent.ExecutorService
 import java.util.concurrent.RejectedExecutionException
 import kotlin.math.max
 import kotlin.math.min
+
+/**
+ * Dedicated FileProvider subclass so our app-private document scan cache authority
+ * never collides with third-party Flutter plugins during AndroidManifest merging.
+ */
+class LightIsleDocumentFileProvider : FileProvider()
 
 /**
  * Native document/receipt capture bridge (`lightisle/document-scanner`) for Android.
@@ -54,6 +62,7 @@ internal class AndroidDocumentCapturePlugin(
     private var channel: MethodChannel? = null
     private var pendingResult: MethodChannel.Result? = null
     private var pendingCameraUri: Uri? = null
+    private var pendingCameraFile: File? = null
 
     fun attach(flutterEngine: FlutterEngine) {
         detach()
@@ -104,7 +113,7 @@ internal class AndroidDocumentCapturePlugin(
     private fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
             "isAvailable" -> {
-                val hasCamera = appContext.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY)
+                val hasCamera = canLaunchCamera()
                 result.success(
                     mapOf(
                         "scanner" to false,
@@ -119,6 +128,14 @@ internal class AndroidDocumentCapturePlugin(
             }
             else -> result.notImplemented()
         }
+    }
+
+    private fun canLaunchCamera(): Boolean {
+        if (!appContext.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY)) {
+            return false
+        }
+        val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
+        return intent.resolveActivity(appContext.packageManager) != null
     }
 
     private fun startCapture(source: String, result: MethodChannel.Result) {
@@ -141,15 +158,13 @@ internal class AndroidDocumentCapturePlugin(
 
     @Suppress("DEPRECATION")
     private fun launchCamera(activity: Activity, result: MethodChannel.Result): Boolean {
-        if (!appContext.packageManager.hasSystemFeature(PackageManager.FEATURE_CAMERA_ANY)) {
+        if (!canLaunchCamera()) {
             return false
         }
         val intent = Intent(MediaStore.ACTION_IMAGE_CAPTURE)
-        if (intent.resolveActivity(appContext.packageManager) == null) {
-            return false
-        }
 
         var outputUri: Uri? = null
+        var outputFile: File? = null
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             try {
                 val values = ContentValues().apply {
@@ -161,17 +176,47 @@ internal class AndroidDocumentCapturePlugin(
                     MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
                     values,
                 )
-                if (outputUri != null) {
-                    intent.putExtra(MediaStore.EXTRA_OUTPUT, outputUri)
-                    intent.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
             } catch (_: Exception) {
                 outputUri = null
+            }
+        }
+        if (outputUri == null) {
+            try {
+                val tempFile = File(
+                    ensureScanDir(),
+                    "cam_${System.currentTimeMillis()}_${UUID.randomUUID().toString().take(8)}.jpg",
+                )
+                val authority = "${appContext.packageName}.lightisle.docscan.fileprovider"
+                val fileUri = FileProvider.getUriForFile(appContext, authority, tempFile)
+                outputFile = tempFile
+                outputUri = fileUri
+            } catch (_: Exception) {
+                outputFile = null
+                outputUri = null
+            }
+        }
+        if (outputUri != null) {
+            intent.putExtra(MediaStore.EXTRA_OUTPUT, outputUri)
+            intent.clipData = ClipData.newRawUri("", outputUri)
+            val grantFlags = Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION
+            intent.addFlags(grantFlags)
+            if (outputFile != null) {
+                val handlers = appContext.packageManager.queryIntentActivities(
+                    intent,
+                    PackageManager.MATCH_DEFAULT_ONLY,
+                )
+                for (info in handlers) {
+                    try {
+                        appContext.grantUriPermission(info.activityInfo.packageName, outputUri, grantFlags)
+                    } catch (_: Exception) {
+                    }
+                }
             }
         }
 
         pendingResult = result
         pendingCameraUri = outputUri
+        pendingCameraFile = outputFile
         return try {
             activity.startActivityForResult(intent, CAPTURE_CAMERA_REQUEST_CODE)
             true
@@ -201,23 +246,21 @@ internal class AndroidDocumentCapturePlugin(
 
     private fun handleCameraResult(data: Intent?, result: MethodChannel.Result) {
         val capturedUri = pendingCameraUri
+        val capturedFile = pendingCameraFile
         pendingCameraUri = null
+        pendingCameraFile = null
         @Suppress("DEPRECATION")
         val fallbackBitmap = data?.extras?.get("data") as? Bitmap
 
         runOnIo(result) {
             try {
                 val savedPath = when {
-                    capturedUri != null -> normalizeUriToJpeg(capturedUri)
-                    fallbackBitmap != null -> saveBitmapToJpeg(fallbackBitmap)
+                    capturedFile != null && capturedFile.isFile && capturedFile.length() > 0L ->
+                        normalizeFileToJpeg(capturedFile)
+                    capturedFile == null && capturedUri != null ->
+                        normalizeUriToJpeg(capturedUri)
                     else -> null
-                }
-                if (capturedUri != null) {
-                    try {
-                        appContext.contentResolver.delete(capturedUri, null, null)
-                    } catch (_: Exception) {
-                    }
-                }
+                } ?: fallbackBitmap?.let { saveBitmapToJpeg(it) }
                 if (savedPath == null) {
                     deliverError(result, "capture_failed", "未能读取拍摄的照片，请重试或改用从相册选取。")
                 } else {
@@ -231,13 +274,9 @@ internal class AndroidDocumentCapturePlugin(
                     )
                 }
             } catch (_: Exception) {
-                if (capturedUri != null) {
-                    try {
-                        appContext.contentResolver.delete(capturedUri, null, null)
-                    } catch (_: Exception) {
-                    }
-                }
                 deliverError(result, "capture_failed", "处理拍摄照片失败，请检查存储空间后重试。")
+            } finally {
+                cleanupCapturedCameraOutput(capturedUri, capturedFile)
             }
         }
     }
@@ -297,43 +336,47 @@ internal class AndroidDocumentCapturePlugin(
                 }
             } ?: return null
 
-            if (!rawTemp.isFile || rawTemp.length() <= 0L) return null
-
-            val orientation = try {
-                ExifInterface(rawTemp.absolutePath).getAttributeInt(
-                    ExifInterface.TAG_ORIENTATION,
-                    ExifInterface.ORIENTATION_NORMAL,
-                )
-            } catch (_: Exception) {
-                ExifInterface.ORIENTATION_NORMAL
-            }
-
-            val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
-            BitmapFactory.decodeFile(rawTemp.absolutePath, bounds)
-            if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
-
-            var sampleSize = 1
-            val longest = max(bounds.outWidth, bounds.outHeight)
-            while (longest / sampleSize > MAX_EDGE_PX * 2) {
-                sampleSize *= 2
-            }
-
-            val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sampleSize }
-            val decoded = BitmapFactory.decodeFile(rawTemp.absolutePath, decodeOpts) ?: return null
-            val transformed = applyOrientationAndScale(decoded, orientation)
-            if (transformed !== decoded) {
-                decoded.recycle()
-            }
-            try {
-                return saveBitmapToJpeg(transformed)
-            } finally {
-                transformed.recycle()
-            }
+            return normalizeFileToJpeg(rawTemp)
         } finally {
             try {
                 rawTemp.delete()
             } catch (_: Exception) {
             }
+        }
+    }
+
+    private fun normalizeFileToJpeg(rawFile: File): String? {
+        if (!rawFile.isFile || rawFile.length() <= 0L) return null
+
+        val orientation = try {
+            ExifInterface(rawFile.absolutePath).getAttributeInt(
+                ExifInterface.TAG_ORIENTATION,
+                ExifInterface.ORIENTATION_NORMAL,
+            )
+        } catch (_: Exception) {
+            ExifInterface.ORIENTATION_NORMAL
+        }
+
+        val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        BitmapFactory.decodeFile(rawFile.absolutePath, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+
+        var sampleSize = 1
+        val longest = max(bounds.outWidth, bounds.outHeight)
+        while (longest / sampleSize > MAX_EDGE_PX * 2) {
+            sampleSize *= 2
+        }
+
+        val decodeOpts = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+        val decoded = BitmapFactory.decodeFile(rawFile.absolutePath, decodeOpts) ?: return null
+        val transformed = applyOrientationAndScale(decoded, orientation)
+        if (transformed !== decoded) {
+            decoded.recycle()
+        }
+        try {
+            return saveBitmapToJpeg(transformed)
+        } finally {
+            transformed.recycle()
         }
     }
 
@@ -395,11 +438,33 @@ internal class AndroidDocumentCapturePlugin(
     }
 
     private fun clearPendingCameraEntry() {
-        val uri = pendingCameraUri ?: return
+        val uri = pendingCameraUri
+        val file = pendingCameraFile
         pendingCameraUri = null
-        try {
-            appContext.contentResolver.delete(uri, null, null)
-        } catch (_: Exception) {
+        pendingCameraFile = null
+        cleanupCapturedCameraOutput(uri, file)
+    }
+
+    private fun cleanupCapturedCameraOutput(uri: Uri?, file: File?) {
+        if (file != null) {
+            if (uri != null) {
+                try {
+                    appContext.revokeUriPermission(
+                        uri,
+                        Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION,
+                    )
+                } catch (_: Exception) {
+                }
+            }
+            try {
+                file.delete()
+            } catch (_: Exception) {
+            }
+        } else if (uri != null) {
+            try {
+                appContext.contentResolver.delete(uri, null, null)
+            } catch (_: Exception) {
+            }
         }
     }
 

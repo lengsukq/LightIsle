@@ -207,7 +207,7 @@ class _MapZoomControls extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final palette = IslePalette(isDark);
+    final palette = IslePalette.of(context);
     final borderColor = IsleGlass.rimBorderColor(isDark);
     final canZoomIn = zoom < photoMapMaxZoom - 0.05;
     final canZoomOut = zoom > photoMapMinZoom + 0.05;
@@ -299,7 +299,7 @@ class _LocationPhotoSheet extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
-    final palette = IslePalette(isDark);
+    final palette = IslePalette.of(context);
     final borderColor = IsleGlass.rimBorderColor(isDark);
     final dateLabel = group.dateRangeLabel;
 

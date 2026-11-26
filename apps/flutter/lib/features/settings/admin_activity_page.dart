@@ -145,7 +145,7 @@ class _AdminActivityPageState extends State<AdminActivityPage> {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
-    final palette = IslePalette(isDark);
+    final palette = IslePalette.of(context);
     final active = entry['active'] == true;
     final acknowledged = entry['acknowledged'] == true;
     final (badgeColor, badgeIcon, title, subtitleText, outcome) =
@@ -204,7 +204,7 @@ class _AdminActivityPageState extends State<AdminActivityPage> {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
-    final palette = IslePalette(isDark);
+    final palette = IslePalette.of(context);
     final active = entry['active'] == true;
     final acknowledged = entry['acknowledged'] == true;
     final (badgeColor, badgeIcon, title, subtitleText, outcome) =

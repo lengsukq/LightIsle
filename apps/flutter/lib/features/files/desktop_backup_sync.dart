@@ -189,20 +189,26 @@ extension _DesktopBackupSync on DesktopBackupController {
       skippedOversized: scanResult.skippedOversized,
       failedCount: finalFailures.length,
       cancelled: false,
+      truncated: scanResult.truncated,
     );
     final completedAt = DateTime.now().millisecondsSinceEpoch;
+    final cleanComplete =
+        finalFailures.isEmpty &&
+        quotaStopError == null &&
+        !scanResult.truncated;
+    final truncationWarning = scanResult.truncated
+        ? '目录文件数或深度达到单次扫描上限（100,000 项），部分深层或超额文件尚未纳入本次同步，建议拆分任务或补充忽略规则。'
+        : null;
     final updatedTask = task.copyWith(
       lastRunAtMs: startedAtMs,
-      lastCompleteAtMs: finalFailures.isEmpty && quotaStopError == null
-          ? completedAt
-          : task.lastCompleteAtMs,
+      lastCompleteAtMs: cleanComplete ? completedAt : task.lastCompleteAtMs,
       lastSummary: summary.formatLabel(),
       lastError:
           quotaStopError ??
-          (finalFailures.isEmpty
-              ? null
-              : '有 ${finalFailures.length} 个文件未能完成同步，可点击「仅重试失败项」'),
-      clearError: finalFailures.isEmpty && quotaStopError == null,
+          (finalFailures.isNotEmpty
+              ? '有 ${finalFailures.length} 个文件未能完成同步，可点击「仅重试失败项」'
+              : truncationWarning),
+      clearError: cleanComplete,
       lastSkippedSymlinks: scanResult.skippedSymlinks,
     );
     await _persistTaskUpdate(updatedTask);

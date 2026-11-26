@@ -207,7 +207,7 @@ class _FolderAlbumOverviewSection extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final palette = IslePalette(isDark);
+    final palette = IslePalette.of(context);
     final borderColor = IsleGlass.rimBorderColor(isDark);
     final rose = palette['brandRose'];
     final amber = palette['brandAmber'];

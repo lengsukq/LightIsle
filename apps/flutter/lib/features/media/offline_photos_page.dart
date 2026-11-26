@@ -25,7 +25,7 @@ class OfflineMediaSegmentBar extends StatelessWidget {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
-    final palette = IslePalette(isDark);
+    final palette = IslePalette.of(context);
 
     Widget pill({
       required IconData icon,

@@ -219,7 +219,7 @@ class _PhotoPeoplePageState extends State<PhotoPeoplePage> {
 
   Widget _buildAvatar(BuildContext context, PersonSummary person, double size) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final palette = IslePalette(isDark);
+    final palette = IslePalette.of(context);
     final rose = palette['brandRose'];
     final path = person.coverFaceId > 0
         ? '/api/v2/photos/faces/${person.coverFaceId}/thumbnail'
@@ -264,7 +264,7 @@ class _PhotoPeoplePageState extends State<PhotoPeoplePage> {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
-    final palette = IslePalette(isDark);
+    final palette = IslePalette.of(context);
     final borderColor = IsleGlass.rimBorderColor(isDark);
     final rose = palette['brandRose'];
     final namedCount = _persons.where((p) => p.name.trim().isNotEmpty).length;

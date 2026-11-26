@@ -8,9 +8,41 @@ import 'package:flutter/services.dart';
 
 import '../../core/authenticated_media_image.dart';
 import '../../core/lightisle_api.dart';
+import '../../core/personal_storage_routing.dart';
 import '../../core/widgets.dart';
 import 'media_models.dart';
 import 'photo_ai_models.dart';
+
+/// Preserves whitelisted image extensions when archiving local receipt photos.
+String normalizeDocumentArchiveExtension(String localPath) {
+  final normalized = localPath.replaceAll('\\', '/');
+  final name = normalized.split('/').last;
+  final dot = name.lastIndexOf('.');
+  if (dot <= 0 || dot == name.length - 1) return 'jpg';
+  final ext = name.substring(dot + 1).toLowerCase();
+  return switch (ext) {
+    'jpg' || 'jpeg' => 'jpg',
+    'png' => 'png',
+    'webp' => 'webp',
+    'heic' => 'heic',
+    _ => 'jpg',
+  };
+}
+
+class DocumentArchiveDestination {
+  const DocumentArchiveDestination({
+    required this.baseDir,
+    this.boundRoot,
+    this.blockedMessage,
+  });
+
+  final String baseDir;
+  final LightIsleRoot? boundRoot;
+  final String? blockedMessage;
+
+  bool get isBlocked =>
+      blockedMessage != null && blockedMessage!.isNotEmpty;
+}
 
 const List<String> documentArchiveCategories = <String>[
   '证件',
@@ -143,36 +175,115 @@ class DocumentArchiveApi {
     return normalized;
   }
 
+  Future<DocumentArchiveDestination> resolvePhotosDestination({
+    String? preferred,
+    Map<String, dynamic>? personalStorage,
+    List<LightIsleRoot>? roots,
+    bool? isAdmin,
+  }) async {
+    final pref = cleanRelativeDir(preferred ?? '');
+    Map<String, dynamic>? policy = personalStorage;
+    if (policy == null) {
+      try {
+        policy = await api.get('/api/v2/me/storage');
+      } catch (_) {
+        policy = null;
+      }
+    }
+
+    var resolvedRoots = roots ?? const <LightIsleRoot>[];
+    if (resolvedRoots.isEmpty) {
+      try {
+        final rawRoots = await api.get('/api/v2/roots');
+        final items = rawRoots['roots'];
+        if (items is List) {
+          resolvedRoots = items
+              .whereType<Map>()
+              .map(
+                (item) => LightIsleRoot.fromJson(
+                  Map<String, dynamic>.from(item),
+                ),
+              )
+              .toList(growable: false);
+        }
+      } catch (_) {
+        resolvedRoots = const <LightIsleRoot>[];
+      }
+    }
+
+    final route = resolvePersonalRoute(policy, resolvedRoots, 'photos');
+    if (route.kind == PersonalRouteKind.personal &&
+        route.root != null &&
+        route.root!.online &&
+        route.path != null) {
+      return DocumentArchiveDestination(
+        baseDir: cleanRelativeDir(route.path!),
+        boundRoot: route.root,
+      );
+    }
+
+    if (route.kind == PersonalRouteKind.offline) {
+      return DocumentArchiveDestination(
+        baseDir: pref.isNotEmpty ? pref : '图库',
+        blockedMessage:
+            '你的照片专属存储硬盘当前离线或已更换，为避免归档到错误硬盘已拦截本次写入；请检查硬盘连接或刷新存储配置后重试。',
+      );
+    }
+
+    // PersonalRouteKind.shared: no personal photos assignment on policy.
+    if (isAdmin == false && policy != null && policy['locations'] is List) {
+      return DocumentArchiveDestination(
+        baseDir: pref.isNotEmpty ? pref : '图库',
+        blockedMessage: '当前账号尚未分配照片存储位置，无法归档票据；请联系管理员在存储管理中分配后再试。',
+      );
+    }
+
+    LightIsleRoot? sharedRoot;
+    if (resolvedRoots.isNotEmpty) {
+      final selected = api.selectedRoot;
+      if (selected != null) {
+        sharedRoot = resolvedRoots
+            .where((r) => r.identity == selected.identity && r.online)
+            .firstOrNull;
+      }
+      sharedRoot ??=
+          resolvedRoots.where((r) => r.isDefault && r.online).firstOrNull ??
+          resolvedRoots.where((r) => r.online).firstOrNull;
+      if (sharedRoot == null) {
+        return DocumentArchiveDestination(
+          baseDir: pref.isNotEmpty ? pref : '图库',
+          blockedMessage: '当前没有在线的存储硬盘，无法归档票据，请检查硬盘连接后重试。',
+        );
+      }
+    } else if (api.selectedRoot != null) {
+      if (!api.selectedRoot!.online) {
+        return DocumentArchiveDestination(
+          baseDir: pref.isNotEmpty ? pref : '图库',
+          blockedMessage: '当前选中的存储硬盘已离线，无法归档票据，请检查硬盘连接后重试。',
+        );
+      }
+      sharedRoot = api.selectedRoot;
+    }
+
+    return DocumentArchiveDestination(
+      baseDir: pref.isNotEmpty ? pref : '图库',
+      boundRoot: sharedRoot,
+    );
+  }
+
   Future<String> resolvePhotosBaseDir({
     String? preferred,
     Map<String, dynamic>? personalStorage,
+    List<LightIsleRoot>? roots,
+    bool? isAdmin,
   }) async {
-    final pref = cleanRelativeDir(preferred ?? '');
-    if (pref.isNotEmpty && pref != '图库') return pref;
-
-    final fromSnapshot = _extractPhotosLocation(personalStorage);
-    if (fromSnapshot.isNotEmpty) return fromSnapshot;
-
-    try {
-      final fetched = await api.get('/api/v2/me/storage');
-      final fromServer = _extractPhotosLocation(fetched);
-      if (fromServer.isNotEmpty) return fromServer;
-    } catch (_) {
-      // Fallback below.
-    }
-    return pref.isNotEmpty ? pref : '图库';
-  }
-
-  String _extractPhotosLocation(Map<String, dynamic>? storage) {
-    if (storage == null) return '';
-    for (final loc in objectList(storage['locations'])) {
-      if (loc['category']?.toString() != 'photos') continue;
-      final rel = cleanRelativeDir(
-        loc['relativePath']?.toString() ?? loc['path']?.toString() ?? '',
-      );
-      if (rel.isNotEmpty) return rel;
-    }
-    return '';
+    final dest = await resolvePhotosDestination(
+      preferred: preferred,
+      personalStorage: personalStorage,
+      roots: roots,
+      isAdmin: isAdmin,
+    );
+    return dest.baseDir;
   }
 
   Future<void> ensureFolders(String baseDir, String category) async {
@@ -219,6 +330,12 @@ class DocumentArchiveApi {
             : remaining;
         await raf.setPosition(offset);
         final bytes = await raf.read(chunkLen);
+        if (bytes.isEmpty) {
+          throw FileSystemException(
+            '本地图片在上传期间被截断或变更，请重新选择后再试。',
+            localFile.path,
+          );
+        }
         await api.uploadChunk(
           uploadId,
           Stream<List<int>>.value(bytes),
@@ -376,7 +493,7 @@ class _ArchiveItemDetailSheetState extends State<ArchiveItemDetailSheet> {
             ),
             const SizedBox(height: 12),
             ClipRRect(
-              borderRadius: BorderRadius.circular(12),
+              borderRadius: BorderRadius.circular(IsleRadius.input),
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxHeight: 240),
                 child: AuthenticatedMediaImage(
@@ -411,7 +528,10 @@ class _ArchiveItemDetailSheetState extends State<ArchiveItemDetailSheet> {
             else if (text.isNotEmpty)
               Container(
                 padding: const EdgeInsets.all(12),
-                decoration: IsleDecorations.recessedWell(context, radius: 10),
+                decoration: IsleDecorations.recessedWell(
+                  context,
+                  radius: IsleRadius.badge,
+                ),
                 child: SelectableText(
                   text,
                   style: theme.textTheme.bodySmall?.copyWith(height: 1.5),

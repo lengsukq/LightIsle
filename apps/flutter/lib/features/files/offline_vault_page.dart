@@ -88,24 +88,35 @@ class _OfflineVaultPageState extends State<OfflineVaultPage> {
     var files = const <OfflineFileEntry>[];
     var photos = const <OfflinePhoto>[];
     var videos = const <OfflineVideo>[];
+    final failedSources = <String>[];
     try {
       final fs = _fileStore;
       if (fs != null) files = await fs.list();
-    } catch (_) {}
+    } catch (_) {
+      failedSources.add('离线文档');
+    }
     try {
       final ps = _photoStore;
       if (ps != null) photos = await ps.list();
-    } catch (_) {}
+    } catch (_) {
+      failedSources.add('离线照片');
+    }
     try {
       final vs = _videoStore;
       if (vs != null) videos = await vs.list();
-    } catch (_) {}
+    } catch (_) {
+      failedSources.add('离线视频');
+    }
     if (!mounted) return;
     setState(() {
       _files = files;
       _photos = photos;
       _videos = videos;
       _loading = false;
+      if (failedSources.isNotEmpty) {
+        _notice = '部分本机离线索引未能读取（${failedSources.join('、')}），请检查存储空间后重试刷新。';
+        _noticeError = true;
+      }
     });
   }
 
@@ -386,6 +397,7 @@ class _OfflineVaultPageState extends State<OfflineVaultPage> {
                         ),
                       ),
                     );
+                    if (!mounted) return;
                     await _refresh();
                   },
                   child: const Text('打开完整照片库'),
@@ -404,6 +416,7 @@ class _OfflineVaultPageState extends State<OfflineVaultPage> {
                         ),
                       ),
                     );
+                    if (!mounted) return;
                     await _refresh();
                   },
                   child: const Text('打开完整影片库'),

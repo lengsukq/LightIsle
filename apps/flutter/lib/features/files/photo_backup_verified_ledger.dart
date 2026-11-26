@@ -7,6 +7,18 @@ import 'photo_backup_prefs_schema.dart';
 const int maxVerifiedPhotoLedgerEntries = 2000;
 final RegExp _sha256HexPattern = RegExp(r'^[a-f0-9]{64}$');
 
+/// Extracts the base `PHAsset.localIdentifier` from an encoded iOS photo asset
+/// ID by stripping component prefixes (`l.` Live Photo video, `v.` video,
+/// `r.` RAW companion).
+String baseIosPhotoAssetId(String assetId) {
+  if (assetId.length > 2 &&
+      assetId[1] == '.' &&
+      (assetId[0] == 'l' || assetId[0] == 'v' || assetId[0] == 'r')) {
+    return assetId.substring(2);
+  }
+  return assetId;
+}
+
 enum SpaceReleaseFilter { all, olderThan30Days, olderThan90Days, videosOnly, byAlbum }
 
 enum RemoteReleaseVerifyStatus {
@@ -14,6 +26,7 @@ enum RemoteReleaseVerifyStatus {
   missing,
   mismatch,
   unverifiableLargeFile,
+  localModifiedOrIncomplete,
   rootChangedOrOffline,
   error,
 }
@@ -94,6 +107,7 @@ class VerifiedPhotoBackupRecord {
     required this.isVideo,
     required this.albumName,
     this.chunkDigests = const <String>[],
+    this.assetGeneration = 0,
   });
 
   final String assetId;
@@ -105,6 +119,7 @@ class VerifiedPhotoBackupRecord {
   final bool isVideo;
   final String albumName;
   final List<String> chunkDigests;
+  final int assetGeneration;
 
   String get displayName {
     final slash = remotePath.lastIndexOf('/');
@@ -121,6 +136,7 @@ class VerifiedPhotoBackupRecord {
     'isVideo': isVideo,
     'albumName': albumName,
     if (chunkDigests.isNotEmpty) 'chunkDigests': chunkDigests,
+    if (assetGeneration > 0) 'assetGeneration': assetGeneration,
   };
 
   static VerifiedPhotoBackupRecord? fromJson(Object? raw) {
@@ -144,6 +160,7 @@ class VerifiedPhotoBackupRecord {
               .where(_sha256HexPattern.hasMatch)
               .toList(growable: false)
         : const <String>[];
+    final assetGeneration = (raw['assetGeneration'] as num?)?.toInt() ?? 0;
     return VerifiedPhotoBackupRecord(
       assetId: assetId,
       remotePath: remotePath,
@@ -154,6 +171,7 @@ class VerifiedPhotoBackupRecord {
       isVideo: raw['isVideo'] == true,
       albumName: raw['albumName']?.toString().trim() ?? '',
       chunkDigests: chunkDigests,
+      assetGeneration: assetGeneration > 0 ? assetGeneration : 0,
     );
   }
 }
@@ -254,8 +272,12 @@ class PhotoBackupVerifiedLedger {
     final reference = (now ?? DateTime.now()).millisecondsSinceEpoch;
     int? ageDays = minAgeDaysOverride;
     if (ageDays == null) {
-      if (filter == SpaceReleaseFilter.olderThan30Days) ageDays = 30;
-      if (filter == SpaceReleaseFilter.olderThan90Days) ageDays = 90;
+      if (filter == SpaceReleaseFilter.olderThan30Days) {
+        ageDays = PhotoBackupPrefsSchema.spaceReleaseAgeDays30;
+      }
+      if (filter == SpaceReleaseFilter.olderThan90Days) {
+        ageDays = PhotoBackupPrefsSchema.spaceReleaseAgeDays90;
+      }
     }
     final cutoffMs = ageDays != null && ageDays > 0
         ? reference - Duration(days: ageDays).inMilliseconds

@@ -508,6 +508,8 @@ class _OverviewPageState extends State<OverviewPage>
         builder: (_) => DocumentScanArchivePage(
           api: widget.api,
           personalStorage: _personalStorage,
+          roots: _roots,
+          isAdmin: widget.isAdmin,
         ),
       ),
     );

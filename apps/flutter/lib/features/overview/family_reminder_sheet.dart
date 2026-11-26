@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
@@ -88,14 +89,31 @@ class _FamilyReminderEditorSheetState
   bool _submitting = false;
   String? _error;
 
+  int? _extractOriginalNonYearlyYear(FamilyReminder? existing) {
+    if (existing == null || existing.repeatRule == 'yearly') return null;
+    if (existing.year >= 1900 && existing.year <= 2100) return existing.year;
+    final parsed = DateTime.tryParse(existing.nextSolarDate);
+    if (parsed != null && parsed.year >= 1900 && parsed.year <= 2100) {
+      return parsed.year;
+    }
+    return null;
+  }
+
   @override
   void initState() {
     super.initState();
     final existing = widget.existing;
     final now = DateTime.now();
+    _category = existing?.category ?? 'birthday';
+    _calendarType = existing?.calendarType ?? 'solar';
+    _repeatRule = existing?.repeatRule ?? 'yearly';
+    final initialYear =
+        (existing != null && existing.year >= 1900 && existing.year <= 2100)
+        ? existing.year
+        : (_extractOriginalNonYearlyYear(existing) ?? 0);
     _titleCtrl = TextEditingController(text: existing?.title ?? '');
     _yearCtrl = TextEditingController(
-      text: existing != null && existing.year > 0 ? '${existing.year}' : '',
+      text: initialYear > 0 ? '$initialYear' : '',
     );
     _intervalCtrl = TextEditingController(
       text: existing != null && existing.intervalDays > 0
@@ -103,12 +121,9 @@ class _FamilyReminderEditorSheetState
           : '7',
     );
     _notesCtrl = TextEditingController(text: existing?.notes ?? '');
-    _category = existing?.category ?? 'birthday';
-    _calendarType = existing?.calendarType ?? 'solar';
     _month = (existing?.month ?? now.month).clamp(1, 12);
     _day = (existing?.day ?? now.day).clamp(1, _maxDaysInMonth);
     _isLeapMonth = existing?.isLeapMonth ?? false;
-    _repeatRule = existing?.repeatRule ?? 'yearly';
     _remindDays = existing != null && existing.remindDays.isNotEmpty
         ? existing.remindDays.toSet()
         : {7, 1, 0};
@@ -125,7 +140,26 @@ class _FamilyReminderEditorSheetState
     super.dispose();
   }
 
-  int get _maxDaysInMonth => _calendarType == 'lunar' ? 30 : 31;
+  int get _effectiveSolarYearForCalendar {
+    final parsed = int.tryParse(_yearCtrl.text.trim());
+    if (parsed != null && parsed >= 1900 && parsed <= 2100) return parsed;
+    if (_repeatRule == 'yearly') {
+      // Allow Feb 29 for leap-day yearly anniversaries when birth/origin year is omitted.
+      return 2024;
+    }
+    return _extractOriginalNonYearlyYear(widget.existing) ?? DateTime.now().year;
+  }
+
+  int get _maxDaysInMonth {
+    if (_calendarType == 'lunar') return 30;
+    return DateUtils.getDaysInMonth(_effectiveSolarYearForCalendar, _month);
+  }
+
+  void _clampDayForCurrentMonth() {
+    final limit = _maxDaysInMonth;
+    if (_day > limit) _day = limit;
+    if (_day < 1) _day = 1;
+  }
 
   List<({String id, String label})> get _availableRepeatRules =>
       _calendarType == 'lunar'
@@ -140,13 +174,13 @@ class _FamilyReminderEditorSheetState
     setState(() {
       _calendarType = next;
       if (next == 'lunar') {
-        if (_day > 30) _day = 30;
         if (_repeatRule != 'yearly' && _repeatRule != 'once') {
           _repeatRule = 'yearly';
         }
       } else {
         _isLeapMonth = false;
       }
+      _clampDayForCurrentMonth();
       _error = null;
     });
   }
@@ -181,10 +215,27 @@ class _FamilyReminderEditorSheetState
     }
 
     final sortedRemind = _remindDays.toList()..sort((a, b) => b.compareTo(a));
+    final preservedOriginalYear = _extractOriginalNonYearlyYear(
+      widget.existing,
+    );
     final effectiveYear =
-        (year == 0 && (_repeatRule == 'once' || _repeatRule == 'weekly' || _repeatRule == 'interval_days'))
-        ? DateTime.now().year
-        : year;
+        (year == 0 &&
+            (_repeatRule == 'once' ||
+                _repeatRule == 'weekly' ||
+                _repeatRule == 'interval_days'))
+        ? (preservedOriginalYear ?? DateTime.now().year)
+        : (year == 0 && _repeatRule == 'monthly' && preservedOriginalYear != null
+              ? preservedOriginalYear
+              : year);
+    final safeDay = _calendarType == 'lunar'
+        ? _day.clamp(1, 30)
+        : _day.clamp(
+            1,
+            DateUtils.getDaysInMonth(
+              effectiveYear >= 1900 ? effectiveYear : 2024,
+              _month,
+            ),
+          );
 
     final body = <String, dynamic>{
       'title': title,
@@ -192,7 +243,7 @@ class _FamilyReminderEditorSheetState
       'calendarType': _calendarType,
       'year': effectiveYear,
       'month': _month,
-      'day': _day,
+      'day': safeDay,
       'isLeapMonth': _calendarType == 'lunar' ? _isLeapMonth : false,
       'repeatRule': _repeatRule,
       'intervalDays': _repeatRule == 'interval_days' ? intervalDays : 0,
@@ -204,7 +255,7 @@ class _FamilyReminderEditorSheetState
 
     if (_calendarType == 'solar' && effectiveYear >= 1900) {
       final mm = _month.toString().padLeft(2, '0');
-      final dd = _day.toString().padLeft(2, '0');
+      final dd = safeDay.toString().padLeft(2, '0');
       if (_repeatRule == 'once' ||
           _repeatRule == 'weekly' ||
           _repeatRule == 'interval_days') {
@@ -235,9 +286,11 @@ class _FamilyReminderEditorSheetState
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
+    final palette = IslePalette.of(context);
     final bottomInset = MediaQuery.viewInsetsOf(context).bottom;
     final editing = widget.existing != null;
     final dayCount = _maxDaysInMonth;
+    final safeDay = _day.clamp(1, dayCount);
 
     return Padding(
       padding: EdgeInsets.fromLTRB(20, 14, 20, bottomInset + 20),
@@ -271,7 +324,6 @@ class _FamilyReminderEditorSheetState
               decoration: const InputDecoration(
                 labelText: '提醒标题',
                 hintText: '例如：妈妈农历生日、结婚纪念日、更换净水器滤芯',
-                border: OutlineInputBorder(),
               ),
             ),
             const SizedBox(height: 8),
@@ -325,10 +377,10 @@ class _FamilyReminderEditorSheetState
                     controller: _yearCtrl,
                     enabled: !_submitting,
                     keyboardType: TextInputType.number,
+                    onChanged: (_) => setState(_clampDayForCurrentMonth),
                     decoration: const InputDecoration(
                       labelText: '年份（可选）',
                       hintText: '如 1990',
-                      border: OutlineInputBorder(),
                       isDense: true,
                     ),
                   ),
@@ -341,7 +393,6 @@ class _FamilyReminderEditorSheetState
                     initialValue: _month,
                     decoration: const InputDecoration(
                       labelText: '月',
-                      border: OutlineInputBorder(),
                       isDense: true,
                     ),
                     items: [
@@ -358,7 +409,12 @@ class _FamilyReminderEditorSheetState
                     onChanged: _submitting
                         ? null
                         : (v) {
-                            if (v != null) setState(() => _month = v);
+                            if (v != null) {
+                              setState(() {
+                                _month = v;
+                                _clampDayForCurrentMonth();
+                              });
+                            }
                           },
                   ),
                 ),
@@ -366,11 +422,10 @@ class _FamilyReminderEditorSheetState
                 Expanded(
                   flex: 4,
                   child: DropdownButtonFormField<int>(
-                    key: ValueKey('day-$_calendarType'),
-                    initialValue: _day.clamp(1, dayCount),
+                    key: ValueKey('day-$_calendarType-$dayCount'),
+                    initialValue: safeDay,
                     decoration: const InputDecoration(
                       labelText: '日',
-                      border: OutlineInputBorder(),
                       isDense: true,
                     ),
                     items: [
@@ -420,7 +475,10 @@ class _FamilyReminderEditorSheetState
                     selected: _repeatRule == rule.id,
                     onSelected: _submitting
                         ? null
-                        : (_) => setState(() => _repeatRule = rule.id),
+                        : (_) => setState(() {
+                            _repeatRule = rule.id;
+                            _clampDayForCurrentMonth();
+                          }),
                   ),
               ],
             ),
@@ -433,7 +491,6 @@ class _FamilyReminderEditorSheetState
                 decoration: const InputDecoration(
                   labelText: '每隔几天重复',
                   hintText: '例如 30',
-                  border: OutlineInputBorder(),
                   isDense: true,
                 ),
               ),
@@ -468,11 +525,11 @@ class _FamilyReminderEditorSheetState
               children: [
                 Text('卡片色调', style: theme.textTheme.labelMedium),
                 const SizedBox(width: 10),
-                for (final item in familyReminderColors)
+                for (final item in familyReminderColorSpecs)
                   Padding(
                     padding: const EdgeInsets.only(right: 8),
                     child: InkWell(
-                      borderRadius: BorderRadius.circular(999),
+                      borderRadius: BorderRadius.circular(IsleRadius.pill),
                       onTap: _submitting
                           ? null
                           : () => setState(() => _color = item.id),
@@ -481,7 +538,7 @@ class _FamilyReminderEditorSheetState
                         width: 22,
                         height: 22,
                         decoration: BoxDecoration(
-                          color: item.color,
+                          color: familyReminderPaletteColor(item.id, palette),
                           shape: BoxShape.circle,
                           border: Border.all(
                             color: _color == item.id
@@ -512,7 +569,6 @@ class _FamilyReminderEditorSheetState
               decoration: const InputDecoration(
                 labelText: '备注（可选）',
                 hintText: '补充礼品清单、滤芯型号或交费账号提示…',
-                border: OutlineInputBorder(),
               ),
             ),
             if (_error != null) ...[

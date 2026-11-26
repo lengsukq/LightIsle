@@ -11,274 +11,14 @@ import '../../core/user_facing_error.dart';
 import 'android_folder_backup_access.dart';
 import 'desktop_backup_ignore.dart';
 import 'desktop_backup_models.dart';
+import 'desktop_backup_sources.dart';
 import 'desktop_backup_watcher.dart';
 import 'file_name_validation.dart';
 import 'photo_backup_hash.dart';
 
+export 'desktop_backup_sources.dart';
+
 part 'desktop_backup_sync.dart';
-
-class BackupScannedFile {
-  const BackupScannedFile({
-    required this.relativePath,
-    required this.parentRelativeDir,
-    required this.fileName,
-    required this.size,
-    required this.modifiedMs,
-    this.localFile,
-    this.sourceUri,
-  });
-
-  final String relativePath;
-  final String parentRelativeDir;
-  final String fileName;
-  final int size;
-  final int modifiedMs;
-  final File? localFile;
-  final String? sourceUri;
-}
-
-class BackupScanResult {
-  const BackupScanResult({
-    required this.files,
-    required this.failures,
-    this.skippedSymlinks = 0,
-    this.skippedIgnored = 0,
-    this.skippedOversized = 0,
-  });
-
-  final List<BackupScannedFile> files;
-  final List<DesktopBackupFailure> failures;
-  final int skippedSymlinks;
-  final int skippedIgnored;
-  final int skippedOversized;
-}
-
-/// Abstract read-only source interface shared by Desktop filesystem folders
-/// and Android SAF document trees so both reuse the exact same incremental
-/// verification and two-phase replacement pipeline.
-abstract class BackupFolderSource {
-  const BackupFolderSource();
-
-  Future<BackupScanResult> scan({
-    required DesktopBackupTask task,
-    required DesktopBackupIgnoreMatcher matcher,
-    Set<String>? onlyPaths,
-    required void Function() checkActive,
-  });
-
-  Future<({int size, int modifiedMs})?> statFile(
-    BackupScannedFile item, {
-    required void Function() checkActive,
-  });
-
-  Future<PhotoHashResult> hashFile(
-    BackupScannedFile item, {
-    required int expectedSize,
-    required int expectedModifiedMs,
-    required void Function() checkActive,
-  });
-
-  Stream<List<int>> readChunk(
-    BackupScannedFile item, {
-    required int offset,
-    required int length,
-    required int expectedSize,
-    required int expectedModifiedMs,
-    required void Function() checkActive,
-  });
-
-  Future<void> verifyUnchangedBeforeComplete(
-    BackupScannedFile item, {
-    required int expectedSize,
-    required int expectedModifiedMs,
-    required void Function() checkActive,
-  });
-}
-
-class LocalFilesystemFolderSource extends BackupFolderSource {
-  const LocalFilesystemFolderSource(this.rootPath);
-
-  final String rootPath;
-
-  @override
-  Future<BackupScanResult> scan({
-    required DesktopBackupTask task,
-    required DesktopBackupIgnoreMatcher matcher,
-    Set<String>? onlyPaths,
-    required void Function() checkActive,
-  }) async {
-    final files = <BackupScannedFile>[];
-    final failures = <DesktopBackupFailure>[];
-    var skippedSymlinks = 0;
-    var skippedIgnored = 0;
-    var skippedOversized = 0;
-
-    Future<void> walkDirectory(Directory current, String relPrefix) async {
-      checkActive();
-      final List<FileSystemEntity> children;
-      try {
-        children = await current.list(followLinks: false).toList();
-      } catch (error) {
-        failures.add(
-          DesktopBackupFailure(
-            relativePath: relPrefix.isEmpty ? '.' : relPrefix,
-            reason: '目录无法读取：${userFacingError(error)}',
-            failedAtMs: DateTime.now().millisecondsSinceEpoch,
-          ),
-        );
-        return;
-      }
-      children.sort((a, b) => a.path.compareTo(b.path));
-      for (final entity in children) {
-        checkActive();
-        final name = _basename(entity.path);
-        final relPath = relPrefix.isEmpty ? name : '$relPrefix/$name';
-        final type = await FileSystemEntity.type(entity.path, followLinks: false);
-        if (type == FileSystemEntityType.link) {
-          if (!matcher.shouldSkipSegmentName(name)) skippedSymlinks++;
-          continue;
-        }
-        final isDir = type == FileSystemEntityType.directory;
-        if (matcher.shouldIgnore(relPath, isDirectory: isDir)) {
-          skippedIgnored++;
-          continue;
-        }
-        final nameIssue = validateFileName(name);
-        if (nameIssue != null) {
-          failures.add(
-            DesktopBackupFailure(
-              relativePath: relPath,
-              reason: '文件名不符合 NAS 规范：$nameIssue',
-              failedAtMs: DateTime.now().millisecondsSinceEpoch,
-            ),
-          );
-          continue;
-        }
-        if (isDir) {
-          await walkDirectory(Directory(entity.path), relPath);
-          continue;
-        }
-        if (type != FileSystemEntityType.file) continue;
-        if (onlyPaths != null && !onlyPaths.contains(relPath)) continue;
-        final file = File(entity.path);
-        final FileStat stat;
-        try {
-          stat = await file.stat();
-        } catch (error) {
-          failures.add(
-            DesktopBackupFailure(
-              relativePath: relPath,
-              reason: '无法读取文件信息：${userFacingError(error)}',
-              failedAtMs: DateTime.now().millisecondsSinceEpoch,
-            ),
-          );
-          continue;
-        }
-        if (matcher.exceedsSizeLimit(stat.size)) {
-          skippedOversized++;
-          continue;
-        }
-        final targetRel = task.remoteBasePath == '.'
-            ? relPath
-            : '${task.remoteBasePath}/$relPath';
-        final pathIssue = validateRelativePath(targetRel);
-        if (pathIssue != null) {
-          failures.add(
-            DesktopBackupFailure(
-              relativePath: relPath,
-              reason: '目标相对路径无效：$pathIssue',
-              failedAtMs: DateTime.now().millisecondsSinceEpoch,
-            ),
-          );
-          continue;
-        }
-        files.add(
-          BackupScannedFile(
-            relativePath: relPath,
-            parentRelativeDir: relPrefix,
-            fileName: name,
-            size: stat.size,
-            modifiedMs: stat.modified.millisecondsSinceEpoch,
-            localFile: file,
-          ),
-        );
-      }
-    }
-
-    await walkDirectory(Directory(rootPath), '');
-    return BackupScanResult(
-      files: files,
-      failures: failures,
-      skippedSymlinks: skippedSymlinks,
-      skippedIgnored: skippedIgnored,
-      skippedOversized: skippedOversized,
-    );
-  }
-
-  @override
-  Future<({int size, int modifiedMs})?> statFile(
-    BackupScannedFile item, {
-    required void Function() checkActive,
-  }) async {
-    checkActive();
-    final file = item.localFile;
-    if (file == null) return null;
-    if (await FileSystemEntity.type(file.path, followLinks: false) !=
-        FileSystemEntityType.file) {
-      return null;
-    }
-    final stat = await file.stat();
-    return (size: stat.size, modifiedMs: stat.modified.millisecondsSinceEpoch);
-  }
-
-  @override
-  Future<PhotoHashResult> hashFile(
-    BackupScannedFile item, {
-    required int expectedSize,
-    required int expectedModifiedMs,
-    required void Function() checkActive,
-  }) => item.localFile == null
-      ? Future<PhotoHashResult>.error(const PhotoSourceChanged())
-      : hashLocalBackupFile(item.localFile!, expectedSize, checkActive: checkActive);
-
-  @override
-  Stream<List<int>> readChunk(
-    BackupScannedFile item, {
-    required int offset,
-    required int length,
-    required int expectedSize,
-    required int expectedModifiedMs,
-    required void Function() checkActive,
-  }) => item.localFile == null
-      ? Stream<List<int>>.error(const PhotoSourceChanged())
-      : item.localFile!.openRead(offset, offset + length);
-
-  @override
-  Future<void> verifyUnchangedBeforeComplete(
-    BackupScannedFile item, {
-    required int expectedSize,
-    required int expectedModifiedMs,
-    required void Function() checkActive,
-  }) async {
-    checkActive();
-    final file = item.localFile;
-    if (file == null) throw const PhotoSourceChanged();
-    final before = await file.stat();
-    if (before.type != FileSystemEntityType.file || before.size != expectedSize) {
-      throw const PhotoSourceChanged();
-    }
-  }
-
-  static String _basename(String fsPath) {
-    var normalized = fsPath;
-    while (normalized.length > 1 &&
-        (normalized.endsWith('/') || normalized.endsWith('\\'))) {
-      normalized = normalized.substring(0, normalized.length - 1);
-    }
-    final slash = max(normalized.lastIndexOf('/'), normalized.lastIndexOf('\\'));
-    return slash < 0 ? normalized : normalized.substring(slash + 1);
-  }
-}
 
 class DesktopDirectoryLease {
   const DesktopDirectoryLease({
@@ -418,6 +158,7 @@ class DesktopBackupRunSummary {
     this.skippedOversized = 0,
     required this.failedCount,
     required this.cancelled,
+    this.truncated = false,
   });
 
   final int uploadedNew;
@@ -428,6 +169,7 @@ class DesktopBackupRunSummary {
   final int skippedOversized;
   final int failedCount;
   final bool cancelled;
+  final bool truncated;
 
   String formatLabel() {
     if (cancelled) {
@@ -441,6 +183,7 @@ class DesktopBackupRunSummary {
       if (skippedOversized > 0) '超体积跳过 $skippedOversized',
       if (skippedSymlinks > 0) '跳过符号链接 $skippedSymlinks',
       if (failedCount > 0) '失败 $failedCount',
+      if (truncated) '扫描达上限（未完整）',
     ];
     return parts.join(' · ');
   }
@@ -489,6 +232,7 @@ class DesktopBackupController extends ChangeNotifier {
   bool _watchersEnabled = false;
   Timer? _scheduleTimer;
   DesktopBackupWatcher? _watcher;
+  BackupFolderSource? _activeSource;
 
   List<DesktopBackupTask> get tasks => _tasks;
   String? get loadError => store.lastLoadError;
@@ -607,8 +351,12 @@ class DesktopBackupController extends ChangeNotifier {
   void requestCancel() {
     if (!_running) return;
     _cancelRequested = true;
+    _activeSource?.cancelActiveRequest();
     notifyListeners();
   }
+
+  /// Immediately signals cancellation and aborts any active native scan/hash/read.
+  void cancelActiveRun() => requestCancel();
 
   Future<void> runAllEnabled() async {
     if (_running || _disposed) return;
@@ -686,6 +434,7 @@ class DesktopBackupController extends ChangeNotifier {
 
       final source =
           lease.source ?? LocalFilesystemFolderSource(lease.resolvedPath);
+      _activeSource = source;
       final (summary, quotaError) = await _executeSync(
         client: client,
         task: task,
@@ -719,6 +468,7 @@ class DesktopBackupController extends ChangeNotifier {
       await _persistTaskUpdate(updated);
       return null;
     } finally {
+      _activeSource = null;
       await lease?.stop();
       isolatedClient?.close();
       if (mutatedSharedRoot && !_disposed) {
@@ -771,6 +521,8 @@ class DesktopBackupController extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _cancelRequested = true;
+    _activeSource?.cancelActiveRequest();
+    _activeSource = null;
     _scheduleTimer?.cancel();
     _scheduleTimer = null;
     final watcher = _watcher;

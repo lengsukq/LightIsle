@@ -14,6 +14,7 @@ import android.system.OsConstants
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
+import java.io.FileNotFoundException
 import java.io.IOException
 import java.io.InputStream
 import java.lang.ref.WeakReference
@@ -56,6 +57,8 @@ internal class AndroidFolderBackupPlugin(
             ".DS_Store", "Thumbs.db", "desktop.ini", ".Spotlight-V100",
             ".Trashes", ".fseventsd", ".TemporaryItems", "Icon\r",
         )
+        private val LIGHTISLE_BAK_REGEX = Regex("\\.lightisle-bak(?:\\.\\d+)?$")
+        private val LIGHTISLE_RESTORE_PART_REGEX = Regex("\\.lightisle-restore-[^/\\\\]+\\.part$")
         private val REQUEST_ID_REGEX = Regex("^[A-Za-z0-9_-]{16,128}$")
     }
 
@@ -291,7 +294,14 @@ internal class AndroidFolderBackupPlugin(
             DocumentsContract.Document.COLUMN_MIME_TYPE,
             DocumentsContract.Document.COLUMN_FLAGS,
         )
-        return appContext.contentResolver.query(docUri, cols, null, null, null)?.use { c ->
+        val cursor = try {
+            appContext.contentResolver.query(docUri, cols, null, null, null)
+        } catch (_: FileNotFoundException) {
+            return null
+        } catch (_: IllegalArgumentException) {
+            return null
+        } ?: return null
+        return cursor.use { c ->
             if (!c.moveToFirst()) return null
             val sIdx = c.getColumnIndex(DocumentsContract.Document.COLUMN_SIZE)
             val mIdx = c.getColumnIndex(DocumentsContract.Document.COLUMN_LAST_MODIFIED)
@@ -326,6 +336,7 @@ internal class AndroidFolderBackupPlugin(
         var skippedIgnored = 0
         var skippedOversized = 0
         var skippedVirtual = 0
+        var truncated = false
         val cols = arrayOf(
             DocumentsContract.Document.COLUMN_DOCUMENT_ID,
             DocumentsContract.Document.COLUMN_DISPLAY_NAME,
@@ -337,7 +348,10 @@ internal class AndroidFolderBackupPlugin(
 
         fun walk(parentId: String, prefix: String, depth: Int) {
             cancellation.throwIfCanceled()
-            if (depth > MAX_DEPTH || files.size >= MAX_SCAN_ENTRIES) return
+            if (depth > MAX_DEPTH || files.size >= MAX_SCAN_ENTRIES) {
+                truncated = true
+                return
+            }
             val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(treeUri, parentId)
             val cursor = try {
                 appContext.contentResolver.query(childrenUri, cols, null, null, null, cancellation)
@@ -390,7 +404,10 @@ internal class AndroidFolderBackupPlugin(
                         skippedOversized++
                         continue
                     }
-                    if (files.size >= MAX_SCAN_ENTRIES) break
+                    if (files.size >= MAX_SCAN_ENTRIES) {
+                        truncated = true
+                        break
+                    }
                     val docUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, docId)
                     files.add(
                         mapOf(
@@ -401,8 +418,12 @@ internal class AndroidFolderBackupPlugin(
                     )
                 }
             }
+            if (truncated) return
             subDirs.sortBy { it.second }
-            for ((childId, childRel) in subDirs) walk(childId, childRel, depth + 1)
+            for ((childId, childRel) in subDirs) {
+                if (truncated) break
+                walk(childId, childRel, depth + 1)
+            }
         }
 
         walk(rootDocId, "", 0)
@@ -411,6 +432,7 @@ internal class AndroidFolderBackupPlugin(
             "files" to files, "failures" to failures,
             "skippedIgnored" to skippedIgnored, "skippedOversized" to skippedOversized,
             "skippedSymlinks" to skippedVirtual,
+            "truncated" to truncated,
         )
     }
 
@@ -676,7 +698,10 @@ internal class AndroidFolderBackupPlugin(
             val segs = norm.split('/')
             for (seg in segs) {
                 if (seg.isEmpty() || seg == "." || seg == ".." || SYSTEM_JUNK.contains(seg) ||
-                    seg.startsWith(".lightisle-") || (ignoreHidden && seg.startsWith("."))
+                    seg.startsWith(".lightisle-") ||
+                    LIGHTISLE_BAK_REGEX.containsMatchIn(seg) ||
+                    LIGHTISLE_RESTORE_PART_REGEX.containsMatchIn(seg) ||
+                    (ignoreHidden && seg.startsWith("."))
                 ) return true
             }
             return rules.any { matches(it, norm, segs, isDirectory) }

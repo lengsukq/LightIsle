@@ -198,6 +198,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
         builder: (_) => DocumentScanArchivePage(
           api: widget.api,
           initialBaseDirectory: widget.uploadDirectory,
+          isAdmin: widget.isAdmin,
         ),
       ),
     );

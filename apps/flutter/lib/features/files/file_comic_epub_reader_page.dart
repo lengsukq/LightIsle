@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:collection';
 import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
@@ -39,13 +40,15 @@ class FileComicEpubReaderPage extends StatefulWidget {
 class _FileComicEpubReaderPageState extends State<FileComicEpubReaderPage> {
   static const int _maxCachedImages = 16;
 
-  late final FileExtrasApi _extrasApi = FileExtrasApi(widget.api);
+  late FileExtrasApi _extrasApi = FileExtrasApi(widget.api);
   final LinkedHashMap<String, Uint8List> _imageCache =
       LinkedHashMap<String, Uint8List>();
   final Map<String, Future<Uint8List>> _inflightImages =
       <String, Future<Uint8List>>{};
   final Map<String, EpubChapterContent> _chapterCache =
       <String, EpubChapterContent>{};
+  final Map<String, Future<EpubChapterContent>> _inflightChapters =
+      <String, Future<EpubChapterContent>>{};
 
   PageController? _pageController;
   final ScrollController _epubScrollController = ScrollController();
@@ -59,6 +62,8 @@ class _FileComicEpubReaderPageState extends State<FileComicEpubReaderPage> {
   List<ArchiveEntryDescriptor> _comicPages = const [];
   List<ArchiveEntryDescriptor> _epubChapters = const [];
   int _currentIndex = 0;
+  Future<EpubChapterContent>? _currentChapterFuture;
+  int _loadGeneration = 0;
 
   Timer? _progressDebounce;
   String? _lastSavedLocator;
@@ -74,10 +79,20 @@ class _FileComicEpubReaderPageState extends State<FileComicEpubReaderPage> {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.item.path != widget.item.path || oldWidget.api != widget.api) {
       _progressDebounce?.cancel();
-      _flushProgressNow();
+      _flushProgressNow(
+        pathOverride: oldWidget.item.path,
+        apiOverride: FileExtrasApi(oldWidget.api),
+      );
+      _extrasApi = FileExtrasApi(widget.api);
+      _loadGeneration++;
       _imageCache.clear();
       _inflightImages.clear();
       _chapterCache.clear();
+      _inflightChapters.clear();
+      _currentChapterFuture = null;
+      _comicPages = const [];
+      _epubChapters = const [];
+      _currentIndex = 0;
       _lastSavedLocator = null;
       unawaited(_initialize());
     }
@@ -93,26 +108,36 @@ class _FileComicEpubReaderPageState extends State<FileComicEpubReaderPage> {
   }
 
   Future<void> _initialize() async {
+    final generation = ++_loadGeneration;
+    final path = widget.item.path;
+    final extras = _extrasApi;
     setState(() {
       _loading = true;
       _error = null;
+      _currentChapterFuture = null;
     });
     try {
-      final response = await _extrasApi.listArchiveEntries(widget.item.path);
+      final response = await extras.listArchiveEntries(path);
+      if (!mounted || generation != _loadGeneration) return;
       final isEpub = response.format == 'epub' ||
           widget.item.name.toLowerCase().endsWith('.epub');
       List<ArchiveEntryDescriptor> comicPages = const [];
       List<ArchiveEntryDescriptor> epubChapters = const [];
 
       if (isEpub) {
-        epubChapters = await _resolveEpubChapters(response.entries);
+        epubChapters = await _resolveEpubChapters(
+          response.entries,
+          path: path,
+          extras: extras,
+        );
       } else {
         comicPages = response.entries.where((e) => e.isImage).toList();
       }
+      if (!mounted || generation != _loadGeneration) return;
 
       var initialIndex = 0;
       try {
-        final saved = await _extrasApi.getReadingProgress(widget.item.path);
+        final saved = await extras.getReadingProgress(path);
         if (saved != null) {
           initialIndex = _indexFromLocator(
             saved.locator,
@@ -124,27 +149,36 @@ class _FileComicEpubReaderPageState extends State<FileComicEpubReaderPage> {
         // Never block reading if progress lookup fails.
       }
 
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
       _pageController?.dispose();
       _pageController = PageController(initialPage: initialIndex);
+      Future<EpubChapterContent>? chapterFuture;
+      if (isEpub && epubChapters.isNotEmpty) {
+        chapterFuture = _loadEpubChapterFor(
+          epubChapters[initialIndex],
+          initialIndex,
+          generation: generation,
+        );
+      }
       setState(() {
         _isEpub = isEpub;
         _comicPages = comicPages;
         _epubChapters = epubChapters;
         _currentIndex = initialIndex;
+        _currentChapterFuture = chapterFuture;
         _loading = false;
       });
 
-      if (isEpub && epubChapters.isNotEmpty) {
-        unawaited(_loadEpubChapter(initialIndex));
+      if (chapterFuture != null) {
+        unawaited(chapterFuture.then<void>((_) {}, onError: (Object _) {}));
       } else if (!isEpub && comicPages.isNotEmpty) {
-        unawaited(_loadComicImage(comicPages[initialIndex].name));
+        _prefetchComicImage(comicPages[initialIndex]);
         if (initialIndex + 1 < comicPages.length) {
-          unawaited(_loadComicImage(comicPages[initialIndex + 1].name));
+          _prefetchComicImage(comicPages[initialIndex + 1]);
         }
       }
     } catch (err) {
-      if (!mounted) return;
+      if (!mounted || generation != _loadGeneration) return;
       setState(() {
         _error = '打开轻阅读器失败：${userFacingError(err)}';
         _loading = false;
@@ -153,8 +187,10 @@ class _FileComicEpubReaderPageState extends State<FileComicEpubReaderPage> {
   }
 
   Future<List<ArchiveEntryDescriptor>> _resolveEpubChapters(
-    List<ArchiveEntryDescriptor> entries,
-  ) async {
+    List<ArchiveEntryDescriptor> entries, {
+    required String path,
+    required FileExtrasApi extras,
+  }) async {
     final docByName = <String, ArchiveEntryDescriptor>{
       for (final e in entries)
         if (e.isDocument) e.name: e,
@@ -164,16 +200,17 @@ class _FileComicEpubReaderPageState extends State<FileComicEpubReaderPage> {
     );
     if (opfEntry.isNotEmpty) {
       try {
-        final opfBytes = await _extrasApi.fetchArchiveEntryBytes(
-          widget.item.path,
+        final opfBytes = await extras.fetchArchiveEntryBytes(
+          path,
           opfEntry.first.name,
+          entryIndex: opfEntry.first.index,
           maxBytes: 2 * 1024 * 1024,
         );
         final opfXml = utf8.decode(opfBytes, allowMalformed: true);
         final spinePaths = parseEpubOpfSpine(opfXml, opfEntry.first.name);
         final ordered = <ArchiveEntryDescriptor>[];
-        for (final path in spinePaths) {
-          final match = docByName[path];
+        for (final spinePath in spinePaths) {
+          final match = docByName[spinePath];
           if (match != null) ordered.add(match);
         }
         if (ordered.isNotEmpty) return ordered;
@@ -210,59 +247,108 @@ class _FileComicEpubReaderPageState extends State<FileComicEpubReaderPage> {
     return 0;
   }
 
-  Future<Uint8List> _loadComicImage(String entryName) {
-    final cached = _imageCache.remove(entryName);
+  void _prefetchComicImage(ArchiveEntryDescriptor entry) {
+    unawaited(
+      _loadComicImage(entry).then<void>((_) {}, onError: (Object _) {}),
+    );
+  }
+
+  Future<Uint8List> _loadComicImage(ArchiveEntryDescriptor entry) {
+    final key = entry.cacheKey;
+    final cached = _imageCache.remove(key);
     if (cached != null) {
-      _imageCache[entryName] = cached;
+      _imageCache[key] = cached;
       return Future<Uint8List>.value(cached);
     }
-    final existing = _inflightImages[entryName];
+    final existing = _inflightImages[key];
     if (existing != null) return existing;
+    final generation = _loadGeneration;
     final future = _extrasApi
-        .fetchArchiveEntryBytes(widget.item.path, entryName)
+        .fetchArchiveEntryBytes(
+          widget.item.path,
+          entry.name,
+          entryIndex: entry.index,
+        )
         .then((bytes) {
-          _imageCache[entryName] = bytes;
-          while (_imageCache.length > _maxCachedImages) {
-            _imageCache.remove(_imageCache.keys.first);
+          if (generation == _loadGeneration) {
+            _imageCache[key] = bytes;
+            while (_imageCache.length > _maxCachedImages) {
+              _imageCache.remove(_imageCache.keys.first);
+            }
           }
           return bytes;
         })
-        .whenComplete(() => _inflightImages.remove(entryName));
-    _inflightImages[entryName] = future;
+        .whenComplete(() {
+          if (generation == _loadGeneration) {
+            _inflightImages.remove(key);
+          }
+        });
+    _inflightImages[key] = future;
     return future;
   }
 
-  Future<EpubChapterContent> _loadEpubChapter(int index) async {
+  Future<EpubChapterContent> _loadEpubChapter(int index) {
     final entry = _epubChapters[index];
-    final cached = _chapterCache[entry.name];
-    if (cached != null) return cached;
-    final bytes = await _extrasApi.fetchArchiveEntryBytes(
-      widget.item.path,
-      entry.name,
-      maxBytes: 8 * 1024 * 1024,
-    );
-    final raw = utf8.decode(bytes, allowMalformed: true);
-    final parsed = parseSafeEpubDocument(
-      raw,
-      fallbackTitle: '第 ${index + 1} 章',
-    );
-    _chapterCache[entry.name] = parsed;
-    if (mounted) setState(() {});
-    return parsed;
+    return _loadEpubChapterFor(entry, index, generation: _loadGeneration);
+  }
+
+  Future<EpubChapterContent> _loadEpubChapterFor(
+    ArchiveEntryDescriptor entry,
+    int index, {
+    required int generation,
+  }) {
+    final key = entry.cacheKey;
+    final cached = _chapterCache[key];
+    if (cached != null) {
+      return Future<EpubChapterContent>.value(cached);
+    }
+    final inflight = _inflightChapters[key];
+    if (inflight != null) return inflight;
+    final future = _extrasApi
+        .fetchArchiveEntryBytes(
+          widget.item.path,
+          entry.name,
+          entryIndex: entry.index,
+          maxBytes: 8 * 1024 * 1024,
+        )
+        .then((bytes) {
+          final raw = utf8.decode(bytes, allowMalformed: true);
+          final parsed = parseSafeEpubDocument(
+            raw,
+            fallbackTitle: '第 ${index + 1} 章',
+          );
+          if (generation == _loadGeneration) {
+            _chapterCache[key] = parsed;
+          }
+          return parsed;
+        })
+        .whenComplete(() {
+          if (generation == _loadGeneration) {
+            _inflightChapters.remove(key);
+          }
+        });
+    _inflightChapters[key] = future;
+    return future;
   }
 
   void _onPositionChanged(int index) {
     final total = _isEpub ? _epubChapters.length : _comicPages.length;
     if (total == 0) return;
     final clamped = index.clamp(0, total - 1);
-    if (_currentIndex != clamped) {
-      setState(() => _currentIndex = clamped);
+    final chapterFuture = _isEpub ? _loadEpubChapter(clamped) : null;
+    if (_currentIndex != clamped || _isEpub) {
+      setState(() {
+        _currentIndex = clamped;
+        if (_isEpub) _currentChapterFuture = chapterFuture;
+      });
     }
     if (!_isEpub && clamped + 1 < _comicPages.length) {
-      unawaited(_loadComicImage(_comicPages[clamped + 1].name));
+      _prefetchComicImage(_comicPages[clamped + 1]);
     }
     if (_isEpub) {
-      unawaited(_loadEpubChapter(clamped));
+      if (chapterFuture != null) {
+        unawaited(chapterFuture.then<void>((_) {}, onError: (Object _) {}));
+      }
       if (_epubScrollController.hasClients) {
         _epubScrollController.jumpTo(0);
       }
@@ -292,16 +378,21 @@ class _FileComicEpubReaderPageState extends State<FileComicEpubReaderPage> {
     );
   }
 
-  void _flushProgressNow() {
+  void _flushProgressNow({
+    String? pathOverride,
+    FileExtrasApi? apiOverride,
+  }) {
     final total = _isEpub ? _epubChapters.length : _comicPages.length;
     if (total == 0) return;
     final locator = _buildLocator();
     if (locator == _lastSavedLocator) return;
     _lastSavedLocator = locator;
+    final targetPath = pathOverride ?? widget.item.path;
+    final targetApi = apiOverride ?? _extrasApi;
     unawaited(
-      _extrasApi
+      targetApi
           .saveReadingProgress(
-            path: widget.item.path,
+            path: targetPath,
             locator: locator,
             percent: _buildPercent(),
           )
@@ -320,31 +411,63 @@ class _FileComicEpubReaderPageState extends State<FileComicEpubReaderPage> {
   }
 
   void _showEpubToc() {
+    final theme = Theme.of(context);
+    final borderColor = IsleGlass.rimBorderColor(
+      theme.brightness == Brightness.dark,
+    );
     showModalBottomSheet<void>(
       context: context,
       useSafeArea: true,
-      builder: (sheetCtx) => ListView.builder(
-        itemCount: _epubChapters.length,
-        itemBuilder: (_, idx) {
-          final entry = _epubChapters[idx];
-          final cachedTitle = _chapterCache[entry.name]?.title;
-          final label = cachedTitle != null && cachedTitle.isNotEmpty
-              ? cachedTitle
-              : entry.name.split('/').last;
-          return ListTile(
-            dense: true,
-            selected: idx == _currentIndex,
-            title: Text(
-              '${idx + 1}. $label',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+      showDragHandle: true,
+      builder: (sheetCtx) => Column(
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 0, 8, 8),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '章节目录（共 ${_epubChapters.length} 章）',
+                    style: theme.textTheme.titleMedium?.copyWith(
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                ),
+                IconButton(
+                  tooltip: '关闭目录',
+                  onPressed: () => Navigator.pop(sheetCtx),
+                  icon: const Icon(Icons.close_rounded),
+                ),
+              ],
             ),
-            onTap: () {
-              Navigator.pop(sheetCtx);
-              _jumpToIndex(idx);
-            },
-          );
-        },
+          ),
+          Divider(height: 1, color: borderColor),
+          Expanded(
+            child: ListView.builder(
+              itemCount: _epubChapters.length,
+              itemBuilder: (_, idx) {
+                final entry = _epubChapters[idx];
+                final cachedTitle = _chapterCache[entry.cacheKey]?.title;
+                final label = cachedTitle != null && cachedTitle.isNotEmpty
+                    ? cachedTitle
+                    : entry.name.split('/').last;
+                return ListTile(
+                  dense: true,
+                  selected: idx == _currentIndex,
+                  title: Text(
+                    '${idx + 1}. $label',
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                  onTap: () {
+                    Navigator.pop(sheetCtx);
+                    _jumpToIndex(idx);
+                  },
+                );
+              },
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -467,8 +590,8 @@ class _FileComicEpubReaderPageState extends State<FileComicEpubReaderPage> {
       onPageChanged: _onPositionChanged,
       itemBuilder: (context, index) => _ComicPageTile(
         entry: _comicPages[index],
-        cachedBytes: _imageCache[_comicPages[index].name],
-        loader: () => _loadComicImage(_comicPages[index].name),
+        cachedBytes: _imageCache[_comicPages[index].cacheKey],
+        loader: () => _loadComicImage(_comicPages[index]),
         interactive: true,
       ),
     );
@@ -498,8 +621,8 @@ class _FileComicEpubReaderPageState extends State<FileComicEpubReaderPage> {
           padding: const EdgeInsets.only(bottom: 4),
           child: _ComicPageTile(
             entry: _comicPages[index],
-            cachedBytes: _imageCache[_comicPages[index].name],
-            loader: () => _loadComicImage(_comicPages[index].name),
+            cachedBytes: _imageCache[_comicPages[index].cacheKey],
+            loader: () => _loadComicImage(_comicPages[index]),
             interactive: false,
           ),
         ),
@@ -509,13 +632,14 @@ class _FileComicEpubReaderPageState extends State<FileComicEpubReaderPage> {
 
   Widget _buildEpubBody(BuildContext context) {
     final entry = _epubChapters[_currentIndex];
-    final cached = _chapterCache[entry.name];
+    final cached = _chapterCache[entry.cacheKey];
     return FutureBuilder<EpubChapterContent>(
       future: cached != null
           ? Future<EpubChapterContent>.value(cached)
-          : _loadEpubChapter(_currentIndex),
+          : _currentChapterFuture,
       builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting && cached == null) {
+        if (snapshot.connectionState == ConnectionState.waiting &&
+            cached == null) {
           return const Center(
             child: IsleLoadingState(compact: true, label: '正在加载章节内容…'),
           );
@@ -526,7 +650,13 @@ class _FileComicEpubReaderPageState extends State<FileComicEpubReaderPage> {
             child: Notice(
               '加载章节失败：${userFacingError(snapshot.error!)}',
               error: true,
-              onRetry: () => setState(() {}),
+              onRetry: () {
+                final retryFuture = _loadEpubChapter(_currentIndex);
+                setState(() => _currentChapterFuture = retryFuture);
+                unawaited(
+                  retryFuture.then<void>((_) {}, onError: (Object _) {}),
+                );
+              },
             ),
           );
         }
@@ -574,43 +704,58 @@ class _FileComicEpubReaderPageState extends State<FileComicEpubReaderPage> {
   }
 
   Widget _buildBottomBar(BuildContext context, int total) {
-    final borderColor = IsleGlass.rimBorderColor(
-      Theme.of(context).brightness == Brightness.dark,
-    );
-    return SafeArea(
-      top: false,
-      child: Container(
-        height: 56,
-        decoration: BoxDecoration(
-          border: Border(top: BorderSide(color: borderColor)),
-        ),
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-        child: Row(
-          children: [
-            IconButton(
-              tooltip: _isEpub ? '上一章' : '上一页',
-              onPressed: _currentIndex > 0
-                  ? () => _jumpToIndex(_currentIndex - 1)
-                  : null,
-              icon: const Icon(Icons.chevron_left_rounded),
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    final borderColor = IsleGlass.rimBorderColor(isDark);
+    return ClipRect(
+      child: BackdropFilter(
+        filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+        child: Container(
+          decoration: BoxDecoration(
+            color: theme.colorScheme.surface.withValues(
+              alpha: isDark ? 0.82 : 0.90,
             ),
-            Expanded(
-              child: Slider(
-                value: _currentIndex.toDouble(),
-                min: 0,
-                max: (total - 1).toDouble(),
-                divisions: total > 1 ? total - 1 : null,
-                onChanged: (v) => _jumpToIndex(v.round()),
+            border: Border(top: BorderSide(color: borderColor)),
+          ),
+          child: SafeArea(
+            top: false,
+            child: SizedBox(
+              height: 56,
+              child: Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 12,
+                  vertical: 4,
+                ),
+                child: Row(
+                  children: [
+                    IconButton(
+                      tooltip: _isEpub ? '上一章' : '上一页',
+                      onPressed: _currentIndex > 0
+                          ? () => _jumpToIndex(_currentIndex - 1)
+                          : null,
+                      icon: const Icon(Icons.chevron_left_rounded),
+                    ),
+                    Expanded(
+                      child: Slider(
+                        value: _currentIndex.toDouble(),
+                        min: 0,
+                        max: (total - 1).toDouble(),
+                        divisions: total > 1 ? total - 1 : null,
+                        onChanged: (v) => _jumpToIndex(v.round()),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: _isEpub ? '下一章' : '下一页',
+                      onPressed: _currentIndex < total - 1
+                          ? () => _jumpToIndex(_currentIndex + 1)
+                          : null,
+                      icon: const Icon(Icons.chevron_right_rounded),
+                    ),
+                  ],
+                ),
               ),
             ),
-            IconButton(
-              tooltip: _isEpub ? '下一章' : '下一页',
-              onPressed: _currentIndex < total - 1
-                  ? () => _jumpToIndex(_currentIndex + 1)
-                  : null,
-              icon: const Icon(Icons.chevron_right_rounded),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -646,7 +791,7 @@ class _ComicPageTileState extends State<_ComicPageTile> {
   @override
   void didUpdateWidget(covariant _ComicPageTile oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.entry.name != widget.entry.name) {
+    if (oldWidget.entry.cacheKey != widget.entry.cacheKey) {
       _future = widget.cachedBytes == null ? widget.loader() : null;
     }
   }

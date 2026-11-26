@@ -287,17 +287,23 @@ internal object AndroidPhotoAlbums {
         return if (index >= 0) parent.substring(index + marker.length) else parent
     }
 
+    internal data class DeleteResolution(
+        val uris: List<Uri>,
+        val foundAssetIds: List<String>,
+    )
+
     /**
      * Resolves verified MediaStore IDs to typed Image/Video content URIs required
-     * by Android 11+ MediaStore.createDeleteRequest.
+     * by Android 11+ MediaStore.createDeleteRequest, along with the matched IDs
+     * so callers can accurately count items already deleted outside LightIsle.
      */
-    fun buildDeleteUris(context: Context, rawAssetIds: List<String>): List<Uri> {
+    fun resolveDeleteTargets(context: Context, rawAssetIds: List<String>): DeleteResolution {
         val ids = rawAssetIds.asSequence()
             .mapNotNull { it.trim().toLongOrNull() }
             .filter { it > 0L }
             .distinct()
             .toList()
-        if (ids.isEmpty()) return emptyList()
+        if (ids.isEmpty()) return DeleteResolution(emptyList(), emptyList())
 
         val resolver = context.contentResolver
         val collection = MediaStore.Files.getContentUri("external")
@@ -306,6 +312,7 @@ internal object AndroidPhotoAlbums {
             MediaStore.Files.FileColumns.MEDIA_TYPE,
         )
         val uris = ArrayList<Uri>(ids.size)
+        val foundIds = ArrayList<String>(ids.size)
         val batchSize = 100
         var offset = 0
         while (offset < ids.size) {
@@ -328,10 +335,18 @@ internal object AndroidPhotoAlbums {
                     }
                     if (base != null) {
                         uris.add(ContentUris.withAppendedId(base, id))
+                        foundIds.add(id.toString())
                     }
                 }
             }
         }
-        return uris
+        return DeleteResolution(uris = uris, foundAssetIds = foundIds)
     }
+
+    /**
+     * Resolves verified MediaStore IDs to typed Image/Video content URIs required
+     * by Android 11+ MediaStore.createDeleteRequest.
+     */
+    fun buildDeleteUris(context: Context, rawAssetIds: List<String>): List<Uri> =
+        resolveDeleteTargets(context, rawAssetIds).uris
 }

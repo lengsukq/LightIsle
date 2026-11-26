@@ -36,8 +36,38 @@ class PhotoBackupPrefsSchema {
   static const String organizeByAlbum = 'byAlbum';
   static const String organizeByAlbumYearMonth = 'byAlbumYearMonth';
 
-  static const List<int> autoReleaseMinAgeOptions = [0, 7, 30, 90];
-  static const int defaultAutoReleaseMinAgeDays = 30;
+  static const int spaceReleaseAgeDaysAll = 0;
+  static const int spaceReleaseAgeDays7 = 7;
+  static const int spaceReleaseAgeDays30 = 30;
+  static const int spaceReleaseAgeDays90 = 90;
+
+  static const List<int> autoReleaseMinAgeOptions = [
+    spaceReleaseAgeDaysAll,
+    spaceReleaseAgeDays7,
+    spaceReleaseAgeDays30,
+    spaceReleaseAgeDays90,
+  ];
+  static const List<int> autoReleaseDropdownOrder = [
+    spaceReleaseAgeDays30,
+    spaceReleaseAgeDays90,
+    spaceReleaseAgeDays7,
+    spaceReleaseAgeDaysAll,
+  ];
+  static const int defaultAutoReleaseMinAgeDays = spaceReleaseAgeDays30;
+
+  static String autoReleaseMinAgeLabel(
+    int days, {
+    bool recommendDefault = false,
+    bool showDefaultTag = false,
+  }) => switch (days) {
+    spaceReleaseAgeDaysAll => '不限时间（全部已验证项）',
+    spaceReleaseAgeDays7 => '7 天前拍摄',
+    spaceReleaseAgeDays30 => recommendDefault
+        ? '30 天前拍摄（推荐默认）'
+        : (showDefaultTag ? '30 天前拍摄（默认）' : '30 天前拍摄'),
+    spaceReleaseAgeDays90 => '90 天前拍摄',
+    _ => '$days 天前拍摄',
+  };
 
   final String origin;
   final String accountName;

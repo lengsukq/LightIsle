@@ -13,6 +13,24 @@ enum IOSPhotoAlbums {
     private static let maxCollectionFilterCount = 200
     private static let defaultCameraAlbumName = "相机胶卷"
     private static let screenshotsAlbumName = "截屏"
+    static let rawExtensions: Set<String> = [
+        "dng", "cr2", "cr3", "nef", "arw", "raf", "rw2", "orf", "pef",
+    ]
+
+    /// Deterministic positive 52-bit version stamp that changes whenever an
+    /// asset is edited, reverted, or its PHAssetResource metadata changes.
+    static func assetGeneration(_ asset: PHAsset, _ resource: PHAssetResource) -> Int64 {
+        let modMicros = Int64(((asset.modificationDate ?? asset.creationDate ?? .distantPast).timeIntervalSince1970 * 1_000_000.0).rounded())
+        let createdMicros = Int64(((asset.creationDate ?? .distantPast).timeIntervalSince1970 * 1_000_000.0).rounded())
+        let raw = "\(asset.localIdentifier)|\(modMicros)|\(createdMicros)|\(asset.pixelWidth)x\(asset.pixelHeight)|\(asset.mediaSubtypes.rawValue)|\(resource.type.rawValue)|\(resource.originalFilename)|\(resource.uniformTypeIdentifier)"
+        let digest = SHA256.hash(data: Data(raw.utf8))
+        var value: UInt64 = 0
+        for byte in digest.prefix(7) {
+            value = (value << 8) | UInt64(byte)
+        }
+        let bounded = Int64(value & 0x000F_FFFF_FFFF_FFFF)
+        return bounded > 0 ? bounded : 1
+    }
 
     private static let smartAlbumDefinitions: [(PHAssetCollectionSubtype, String, Bool)] = [
         (.smartAlbumUserLibrary, "最近项目", true),
@@ -283,6 +301,91 @@ enum IOSPhotoAlbums {
         return identifiers
     }
 
+    static func inspectAssets(encodedIds: [String]) -> [String: [String: Any]] {
+        let identifiers = decodeAssetIdentifiers(encodedIds)
+        if identifiers.isEmpty { return [:] }
+
+        var output = [String: [String: Any]]()
+        let assets = PHAsset.fetchAssets(withLocalIdentifiers: identifiers, options: nil)
+        assets.enumerateObjects { asset, _, _ in
+            let baseId = encodeID(asset.localIdentifier)
+            let resources = PHAssetResource.assetResources(for: asset)
+            let modDate = asset.modificationDate ?? asset.creationDate ?? .distantPast
+            let modMs = Int64((modDate.timeIntervalSince1970 * 1000.0).rounded())
+
+            let photoResource = asset.mediaType == .image
+                ? resources.first(where: { $0.type == .photo || $0.type == .fullSizePhoto })
+                : nil
+            let rawResource = asset.mediaType == .image
+                ? resources.first(where: { item in
+                    item.type == .alternatePhoto &&
+                        rawExtensions.contains((item.originalFilename as NSString).pathExtension.lowercased())
+                })
+                : nil
+            let hasLiveVideo = asset.mediaType == .image && asset.mediaSubtypes.contains(.photoLive)
+            let liveVideoResource = hasLiveVideo
+                ? resources.first(where: { $0.type == .pairedVideo })
+                : nil
+            let videoResource = asset.mediaType == .video
+                ? resources.first(where: { $0.type == .video || $0.type == .fullSizeVideo })
+                : nil
+
+            var generations = [String: Int64]()
+            var requiredAssetIds = [String]()
+            if let photo = photoResource {
+                generations[baseId] = assetGeneration(asset, photo)
+                requiredAssetIds.append(baseId)
+            }
+            if let raw = rawResource {
+                let rawId = "r." + baseId
+                generations[rawId] = assetGeneration(asset, raw)
+                requiredAssetIds.append(rawId)
+            }
+            if hasLiveVideo {
+                let liveId = "l." + baseId
+                requiredAssetIds.append(liveId)
+                if let live = liveVideoResource {
+                    generations[liveId] = assetGeneration(asset, live)
+                }
+            }
+            if let video = videoResource {
+                let videoId = "v." + baseId
+                generations[videoId] = assetGeneration(asset, video)
+                requiredAssetIds.append(videoId)
+            }
+            let primaryGeneration = generations[baseId] ?? generations["v." + baseId] ?? 0
+            output[baseId] = [
+                "exists": true,
+                "modificationDate": modMs,
+                "assetGeneration": primaryGeneration,
+                "generations": generations,
+                "hasPhoto": photoResource != nil,
+                "hasRaw": rawResource != nil,
+                "hasLiveVideo": hasLiveVideo,
+                "hasVideo": videoResource != nil,
+                "requiredAssetIds": requiredAssetIds,
+            ]
+        }
+
+        for identifier in identifiers {
+            let baseId = encodeID(identifier)
+            if output[baseId] == nil {
+                output[baseId] = [
+                    "exists": false,
+                    "modificationDate": 0,
+                    "assetGeneration": 0,
+                    "generations": [String: Int64](),
+                    "hasPhoto": false,
+                    "hasRaw": false,
+                    "hasLiveVideo": false,
+                    "hasVideo": false,
+                    "requiredAssetIds": [String](),
+                ]
+            }
+        }
+        return output
+    }
+
     static func requestDeleteAssets(
         encodedIds: [String],
         completion: @escaping (Result<[String: Any], NSError>) -> Void
@@ -294,6 +397,7 @@ enum IOSPhotoAlbums {
                 "cancelled": false,
                 "deletedCount": 0,
                 "alreadyMissingCount": encodedIds.count,
+                "deletedAssetIds": [String](),
             ]))
             return
         }
@@ -304,8 +408,14 @@ enum IOSPhotoAlbums {
                 "cancelled": false,
                 "deletedCount": 0,
                 "alreadyMissingCount": identifiers.count,
+                "deletedAssetIds": [String](),
             ]))
             return
+        }
+        var existingEncodedIds = [String]()
+        existingEncodedIds.reserveCapacity(assets.count)
+        assets.enumerateObjects { asset, _, _ in
+            existingEncodedIds.append(encodeID(asset.localIdentifier))
         }
         let targetCount = assets.count
         let missingCount = max(0, identifiers.count - targetCount)
@@ -318,6 +428,7 @@ enum IOSPhotoAlbums {
                     "cancelled": false,
                     "deletedCount": targetCount,
                     "alreadyMissingCount": missingCount,
+                    "deletedAssetIds": existingEncodedIds,
                 ]))
                 return
             }
@@ -329,6 +440,7 @@ enum IOSPhotoAlbums {
                     "cancelled": true,
                     "deletedCount": 0,
                     "alreadyMissingCount": missingCount,
+                    "deletedAssetIds": [String](),
                 ]))
                 return
             }

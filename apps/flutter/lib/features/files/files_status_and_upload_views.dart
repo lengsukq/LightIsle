@@ -17,7 +17,7 @@ class FilesReadOnlyBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final colors = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final palette = IslePalette(isDark);
+    final palette = IslePalette.of(context);
     return Padding(
       padding: const EdgeInsets.only(top: 6),
       child: Container(

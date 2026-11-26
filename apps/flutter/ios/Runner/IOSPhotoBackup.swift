@@ -63,19 +63,8 @@ final class IOSPhotoBackup {
         IOSPhotoAlbums.decodeID(encoded)
     }
 
-    /// Deterministic positive 52-bit version stamp that changes whenever an
-    /// asset is edited, reverted, or its PHAssetResource metadata changes.
     private func assetGeneration(_ asset: PHAsset, _ resource: PHAssetResource) -> Int64 {
-        let modMicros = Int64(((asset.modificationDate ?? asset.creationDate ?? .distantPast).timeIntervalSince1970 * 1_000_000.0).rounded())
-        let createdMicros = Int64(((asset.creationDate ?? .distantPast).timeIntervalSince1970 * 1_000_000.0).rounded())
-        let raw = "\(asset.localIdentifier)|\(modMicros)|\(createdMicros)|\(asset.pixelWidth)x\(asset.pixelHeight)|\(asset.mediaSubtypes.rawValue)|\(resource.type.rawValue)|\(resource.originalFilename)|\(resource.uniformTypeIdentifier)"
-        let digest = SHA256.hash(data: Data(raw.utf8))
-        var value: UInt64 = 0
-        for byte in digest.prefix(7) {
-            value = (value << 8) | UInt64(byte)
-        }
-        let bounded = Int64(value & 0x000F_FFFF_FFFF_FFFF)
-        return bounded > 0 ? bounded : 1
+        IOSPhotoAlbums.assetGeneration(asset, resource)
     }
 
     private func isICloudNetworkRequired(_ error: Error) -> Bool {
@@ -110,6 +99,17 @@ final class IOSPhotoBackup {
             DispatchQueue.global(qos: .userInitiated).async {
                 let albums = IOSPhotoAlbums.listAlbums(includeVideos: includeVideos)
                 DispatchQueue.main.async { result(["albums": albums]) }
+            }
+        case "inspectAssets":
+            guard authorized() else {
+                result(error("photo_permission_denied", "需要全部照片权限才能核验本机原片版本状态。"))
+                return
+            }
+            let args = call.arguments as? [String: Any] ?? [:]
+            let assetIds = (args["assetIds"] as? [Any] ?? []).compactMap { $0 as? String }
+            DispatchQueue.global(qos: .userInitiated).async {
+                let inspected = IOSPhotoAlbums.inspectAssets(encodedIds: assetIds)
+                DispatchQueue.main.async { result(["assets": inspected]) }
             }
         case "requestDeleteAssets":
             guard authorized() else {
