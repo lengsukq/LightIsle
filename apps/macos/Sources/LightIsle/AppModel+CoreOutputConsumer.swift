@@ -78,7 +78,10 @@ extension AppModel {
             }
         case .disks(let disks):
             if let disks {
-                if managedDisks != disks { managedDisks = disks }
+                if managedDisks != disks {
+                    managedDisks = disks
+                    mediaImport.refreshDetectedVolumes()
+                }
                 let validDevices = Set(
                     disks.flatMap { [$0.id, $0.parent] }
                         .filter { !$0.isEmpty }
@@ -181,6 +184,8 @@ extension AppModel {
             personalSpaces.consume(payload)
         case .apps(let payload):
             appsCenter.consume(payload)
+        case .mediaImport(let payload):
+            mediaImport.consume(payload)
         }
     }
 

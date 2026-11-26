@@ -70,6 +70,7 @@ final class AppModel: ObservableObject {
     let appsCenter = NativeAppsModel()
     let hostMetrics = HostMetricsStore()
     let externalVolumeCoordinator = ExternalVolumePermissionCoordinator()
+    let mediaImport = RemovableMediaImportCoordinator()
 
     @Published var state: CoreState = .offline {
         didSet {
@@ -330,6 +331,7 @@ final class AppModel: ObservableObject {
         if !isPresentationPreview {
             refreshCachedSecretPresence()
             externalVolumeCoordinator.start(appModel: self)
+            mediaImport.startMonitoring(appModel: self)
         }
     }
 }

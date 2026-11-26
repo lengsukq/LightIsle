@@ -7,6 +7,7 @@ struct ExternalDependencyCatalogSmoke {
         let expected: [ExternalDependency: (package: String, executable: String)] = [
             .ffmpeg: ("ffmpeg", "ffmpeg"),
             .aria2: ("aria2", "aria2c"),
+            .ytdlp: ("yt-dlp", "yt-dlp"),
             .smartmontools: ("smartmontools", "smartctl"),
             .cloudflared: ("cloudflared", "cloudflared")
         ]

@@ -200,8 +200,9 @@ func main() {
 	}
 
 	var externalTransferRunning atomic.Bool
+	var mediaImportRunning atomic.Bool
 	configureSMBRootProvider(rootRegistry, dataDir)
-	installDiskProtectionGuard(rootRegistry, backupService, backupSchedule, appsManager, &externalTransferRunning)
+	installDiskProtectionGuard(rootRegistry, backupService, backupSchedule, appsManager, &externalTransferRunning, &mediaImportRunning)
 
 	downloadPublisher := downloads.NewRegistryPublisher(rootRegistry, accountStore)
 	downloadCenter := openOptionalDownloadCenter(
@@ -299,6 +300,7 @@ func main() {
 		backupService:           backupService,
 		backupSchedule:          backupSchedule,
 		rootCommands:            rootCommands,
+		mediaImporter:           newMediaImportControl(rootRegistry, accountStore, rootServer, &mediaImportRunning),
 		tunnelCtl:               newDaemonTunnelControl(ctx, *port, taskJournal, dispatchAlert),
 		frpCtl:                  newFRPControl(ctx),
 		httpHandler:             handler,
@@ -426,9 +428,10 @@ func installDiskProtectionGuard(
 	backupSchedule *backup.Scheduler,
 	appsManager *apps.Manager,
 	externalTransferRunning *atomic.Bool,
+	mediaImportRunning *atomic.Bool,
 ) {
 	diskmgmt.Shared().SetGuard(func(d diskmgmt.Disk, action string) error {
-		if externalTransferRunning.Load() || backupService.Status().Running {
+		if externalTransferRunning.Load() || mediaImportRunning.Load() || backupService.Status().Running {
 			return diskmgmt.ErrBusy
 		}
 		if action == "mount" {
@@ -617,6 +620,7 @@ type ipcCommandDispatcher struct {
 	backupService           *backup.Service
 	backupSchedule          *backup.Scheduler
 	rootCommands            *rootControl
+	mediaImporter           *mediaImportControl
 	tunnelCtl               *tunnelControl
 	frpCtl                  *frpControl
 	httpHandler             http.Handler
@@ -639,6 +643,9 @@ func (d *ipcCommandDispatcher) runLoop(ctx context.Context) {
 		case <-ctx.Done():
 			if d.exportCancel != nil {
 				d.exportCancel()
+			}
+			if d.mediaImporter != nil {
+				d.mediaImporter.CancelAll()
 			}
 			if r := d.remote.Swap(nil); r != nil {
 				r.Stop()
@@ -679,6 +686,7 @@ func (d *ipcCommandDispatcher) dispatch(ctx context.Context, command string) {
 	case handleRootCinemaTokenSettings(command, d.rootServer):
 	case handleNotificationIPC(command, d.notifyHub, &d.notifyTestActive, d.notifyTestDone):
 	case handleExportIPC(ctx, command, d.rootRegistry, d.rootServer, &d.exportCancel, d.externalTransferRunning, d.exportDone):
+	case d.mediaImporter.handle(ctx, command):
 	case handleBackupIPC(ctx, command, d.backupService, d.backupSchedule, &d.inventoryActive, d.inventoryDone):
 	case handleSMBCommand(ctx, command):
 	default:

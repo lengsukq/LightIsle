@@ -6,6 +6,7 @@ import Foundation
 enum ExternalDependency: String, CaseIterable, Identifiable {
     case ffmpeg
     case aria2
+    case ytdlp = "yt-dlp"
     case smartmontools
     case cloudflared
 
@@ -14,6 +15,7 @@ enum ExternalDependency: String, CaseIterable, Identifiable {
         switch self {
         case .ffmpeg: return "FFmpeg"
         case .aria2: return "aria2"
+        case .ytdlp: return "yt-dlp"
         case .smartmontools: return "smartmontools"
         case .cloudflared: return "cloudflared"
         }
@@ -22,6 +24,7 @@ enum ExternalDependency: String, CaseIterable, Identifiable {
         switch self {
         case .ffmpeg: return "ffmpeg"
         case .aria2: return "aria2c"
+        case .ytdlp: return "yt-dlp"
         case .smartmontools: return "smartctl"
         case .cloudflared: return "cloudflared"
         }
@@ -30,6 +33,7 @@ enum ExternalDependency: String, CaseIterable, Identifiable {
         switch self {
         case .ffmpeg: return "媒体探测与按需转码。原片播放不强制依赖它。"
         case .aria2: return "下载中心的 HTTP、FTP 与磁力下载任务。"
+        case .ytdlp: return "下载中心的在线视频防失效归档（可选，也可通过 brew install yt-dlp 安装）。"
         case .smartmontools: return "读取外置硬盘 SMART 详情，部分设备仍需授权。"
         case .cloudflared: return "Cloudflare Tunnel 外网连接；安装不代表隧道已配置或启动。"
         }
@@ -38,10 +42,12 @@ enum ExternalDependency: String, CaseIterable, Identifiable {
         switch self {
         case .ffmpeg: return "film.stack"
         case .aria2: return "arrow.down.circle"
+        case .ytdlp: return "play.rectangle.on.rectangle"
         case .smartmontools: return "externaldrive"
         case .cloudflared: return "cloud"
         }
     }
+    var brewInstallHint: String { "brew install \(rawValue)" }
 }
 
 enum DependencyInstallFailure: LocalizedError {

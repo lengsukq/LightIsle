@@ -137,7 +137,7 @@ struct ExternalDependenciesView: View {
                 }
             }
 
-            Text("提示：安装完成后，FFmpeg（视频转码与缩略图）和 aria2（下载中心）将在对应页面刷新后自动生效，无需重启 LightIsle；smartctl 可能仍需要设备权限。安装过程中可以切换页面，但应避免退出 App。")
+            Text("提示：安装完成后，FFmpeg（视频转码与缩略图）、aria2（下载中心）和 yt-dlp（在线视频归档，终端命令：brew install yt-dlp）将在对应页面刷新后自动生效，无需重启 LightIsle；smartctl 可能仍需要设备权限。安装过程中可以切换页面，但应避免退出 App。")
                 .font(.caption)
                 .foregroundStyle(IsleTheme.secondaryText)
                 .fixedSize(horizontal: false, vertical: true)
@@ -170,7 +170,7 @@ struct ExternalDependenciesView: View {
         ) {
             VStack(alignment: .leading, spacing: 13) {
                 Label(
-                    "首次使用只需要安装一次 Homebrew，之后就能在这里一键安装 FFmpeg、aria2 等依赖。",
+                    "首次使用只需要安装一次 Homebrew，之后就能在这里一键安装 FFmpeg、aria2、yt-dlp 等依赖。",
                     systemImage: "info.circle"
                 )
                 .font(.system(size: 12))

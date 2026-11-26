@@ -20,6 +20,7 @@ extension AppModel {
         sendCoreCommandLine("stats summary\ndisk list\nalerts status\n", context: "volume.refresh")
         rootManagement.refresh()
         personalSpaces.refresh()
+        mediaImport.refreshDetectedVolumes()
         Task { @MainActor [weak self] in
             try? await Task.sleep(for: .milliseconds(750))
             guard let self, self.state == .online else { return }
