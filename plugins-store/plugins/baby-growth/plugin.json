@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 2,
+  "id": "baby-growth",
+  "name": "宝宝成长身高体重记录",
+  "version": "1.1.0",
+  "author": "LightIsle Official",
+  "description": "记录宝宝每次体检的身高、体重与成长里程碑，全家共享同步并自动绘制身高成长曲线。",
+  "category": "lifestyle",
+  "icon": "icon.svg",
+  "access": {
+    "policy": "all_members",
+    "allowedUserIDs": []
+  },
+  "web": {
+    "enabled": true,
+    "mode": "static",
+    "runtime": "static",
+    "staticDir": "ui",
+    "basePath": "/apps/baby-growth"
+  }
+}

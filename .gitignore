@@ -29,6 +29,7 @@ build/
 *.dmg
 *.pkg
 *.zip
+!plugins-store/packages/*.liapp.zip
 *.ipa
 *.apk
 *.aab

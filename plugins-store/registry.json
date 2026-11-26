@@ -1,0 +1,193 @@
+{
+  "schemaVersion": 1,
+  "storeName": "LightIsle 官方家庭轻应用商店",
+  "repository": "https://github.com/lengsukq/LightIsle",
+  "updatedAt": "2026-01-01T00:00:00Z",
+  "plugins": [
+    {
+      "id": "network-pulse",
+      "name": "轻屿网络与系统脉搏",
+      "version": "1.0.0",
+      "author": "LightIsle Official",
+      "category": "system",
+      "mode": "static",
+      "defaultScope": "all_members",
+      "description": "实时测量当前终端到家庭 NAS 的往返延迟、抖动与局域网/组网连通健康度。",
+      "tags": [
+        "zero-ram",
+        "network"
+      ],
+      "iconPath": "plugins/network-pulse/icon.svg",
+      "packagePath": "packages/network-pulse.liapp.zip",
+      "sha256": "2664f993b83bdee6d8fb64de559cddf7173d2f632ec3b8feaa073a9c1aae2943",
+      "sizeBytes": 2756
+    },
+    {
+      "id": "family-subscriptions",
+      "name": "家庭账单与订阅管家",
+      "version": "1.1.0",
+      "author": "LightIsle Official",
+      "category": "family",
+      "mode": "static",
+      "defaultScope": "all_members",
+      "description": "集中记录家庭宽带、影视会员、云服务与物业续费周期，全家共享同步并自动推送临近续费提醒。",
+      "tags": [
+        "zero-ram",
+        "kv-sync",
+        "reminders"
+      ],
+      "iconPath": "plugins/family-subscriptions/icon.svg",
+      "packagePath": "packages/family-subscriptions.liapp.zip",
+      "sha256": "46506bccefea1e442a7da9bfebc25ac210e7e5a7c48da6932312e27cdfe34b9d",
+      "sizeBytes": 8139
+    },
+    {
+      "id": "warranty-vault",
+      "name": "电子发票与保修卡夹",
+      "version": "1.1.0",
+      "author": "LightIsle Official",
+      "category": "family",
+      "mode": "static",
+      "defaultScope": "all_members",
+      "description": "登记家电数码购买日期、保修到期日、序列号与票据存放位置，全家同步并自动推送 30 天过保预警。",
+      "tags": [
+        "zero-ram",
+        "kv-sync",
+        "reminders"
+      ],
+      "iconPath": "plugins/warranty-vault/icon.svg",
+      "packagePath": "packages/warranty-vault.liapp.zip",
+      "sha256": "1fd64a1ae7c370fc22e230c4edcd7fcbe917598e7a4deeb826e9e6475a8ab0fa",
+      "sizeBytes": 7898
+    },
+    {
+      "id": "family-board",
+      "name": "家庭留言板与采购清单",
+      "version": "1.1.0",
+      "author": "LightIsle Official",
+      "category": "lifestyle",
+      "mode": "static",
+      "defaultScope": "all_members",
+      "description": "温馨的家庭便签墙与周末超市采购打勾清单，支持全家共享同步与一键导出备份。",
+      "tags": [
+        "zero-ram",
+        "kv-sync"
+      ],
+      "iconPath": "plugins/family-board/icon.svg",
+      "packagePath": "packages/family-board.liapp.zip",
+      "sha256": "dc5dcecc50cdef9a560d2a77f0402f97e6b1c6691f3c8013b8d62605124da7e6",
+      "sizeBytes": 7591
+    },
+    {
+      "id": "medicine-expiry",
+      "name": "家庭药箱与证件有效期",
+      "version": "1.1.0",
+      "author": "LightIsle Official",
+      "category": "family",
+      "mode": "static",
+      "defaultScope": "all_members",
+      "description": "登记家庭常备药、护照、身份证与驾照到期日，全家同步并在 30 天内自动高亮与推送临期提醒。",
+      "tags": [
+        "zero-ram",
+        "kv-sync",
+        "reminders"
+      ],
+      "iconPath": "plugins/medicine-expiry/icon.svg",
+      "packagePath": "packages/medicine-expiry.liapp.zip",
+      "sha256": "27fc819632b62ccd01603aa652358d3c1dc3e9195c1edaae59c1f229936d4587",
+      "sizeBytes": 8291
+    },
+    {
+      "id": "utility-ledger",
+      "name": "水电燃气与月度账本",
+      "version": "1.1.0",
+      "author": "LightIsle Official",
+      "category": "family",
+      "mode": "static",
+      "defaultScope": "all_members",
+      "description": "按月记录电费、水费、燃气与物业支出及用量，全家共享同步并自动生成近 6 个月消费柱状趋势图。",
+      "tags": [
+        "zero-ram",
+        "kv-sync"
+      ],
+      "iconPath": "plugins/utility-ledger/icon.svg",
+      "packagePath": "packages/utility-ledger.liapp.zip",
+      "sha256": "8f95856eb2c7854597a62a444cb91e11e19e5c22d9bdbf93bf41125217f5326a",
+      "sizeBytes": 8487
+    },
+    {
+      "id": "baby-growth",
+      "name": "宝宝成长身高体重记录",
+      "version": "1.1.0",
+      "author": "LightIsle Official",
+      "category": "lifestyle",
+      "mode": "static",
+      "defaultScope": "all_members",
+      "description": "记录宝宝每次体检的身高、体重与成长里程碑，全家共享同步并自动绘制身高成长曲线。",
+      "tags": [
+        "zero-ram",
+        "kv-sync"
+      ],
+      "iconPath": "plugins/baby-growth/icon.svg",
+      "packagePath": "packages/baby-growth.liapp.zip",
+      "sha256": "0e01ee3503973f3d5b926f1ea19e66442dffb78ea8bc6d0cfad037061e6dc192",
+      "sizeBytes": 8380
+    },
+    {
+      "id": "house-info",
+      "name": "家庭公共备忘卡",
+      "version": "1.0.0",
+      "author": "LightIsle Official",
+      "category": "family",
+      "mode": "static",
+      "defaultScope": "all_members",
+      "description": "集中保管家庭 Wi-Fi 密码、宽带光猫、水电燃气户号、车架号、开票抬头与物业紧急电话，支持分组筛选与一键复制。",
+      "tags": [
+        "zero-ram",
+        "kv-sync"
+      ],
+      "iconPath": "plugins/house-info/icon.svg",
+      "packagePath": "packages/house-info.liapp.zip",
+      "sha256": "3026c3a97088a4fa29dbe3c79c9a2941d6a5ca4a7e14e629e3660d80dcc3bcfa",
+      "sizeBytes": 8681
+    },
+    {
+      "id": "weekly-menu",
+      "name": "每周菜单与冰箱囤货",
+      "version": "1.0.0",
+      "author": "LightIsle Official",
+      "category": "lifestyle",
+      "mode": "static",
+      "defaultScope": "all_members",
+      "description": "规划周一至周日三餐排期与冷藏/冷冻食材保质期高亮，一键提取缺料采购清单并自动推送临期预警。",
+      "tags": [
+        "zero-ram",
+        "kv-sync",
+        "reminders"
+      ],
+      "iconPath": "plugins/weekly-menu/icon.svg",
+      "packagePath": "packages/weekly-menu.liapp.zip",
+      "sha256": "49e11e596067d4c112e2541f5e99590451036a1751c37264c77574c2f77f28a3",
+      "sizeBytes": 10079
+    },
+    {
+      "id": "pet-care",
+      "name": "宠物健康与疫苗驱虫",
+      "version": "1.0.0",
+      "author": "LightIsle Official",
+      "category": "lifestyle",
+      "mode": "static",
+      "defaultScope": "all_members",
+      "description": "多宠物档案管理、原生 SVG 体重趋势曲线，疫苗与体内外驱虫下次到期自动推算并接入家庭推送提醒。",
+      "tags": [
+        "zero-ram",
+        "kv-sync",
+        "reminders"
+      ],
+      "iconPath": "plugins/pet-care/icon.svg",
+      "packagePath": "packages/pet-care.liapp.zip",
+      "sha256": "a895c4d7851192fd6eab28b0d42844b086883736a8654e73f6370d39255e244d",
+      "sizeBytes": 10505
+    }
+  ]
+}

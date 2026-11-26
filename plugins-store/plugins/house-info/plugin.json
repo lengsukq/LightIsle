@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 2,
+  "id": "house-info",
+  "name": "家庭公共备忘卡",
+  "version": "1.0.0",
+  "author": "LightIsle Official",
+  "description": "集中保管家庭 Wi-Fi 密码、宽带光猫、水电燃气户号、车架号、开票抬头与物业紧急电话，支持分组筛选与一键复制。",
+  "category": "family",
+  "icon": "icon.svg",
+  "access": {
+    "policy": "all_members",
+    "allowedUserIDs": []
+  },
+  "web": {
+    "enabled": true,
+    "mode": "static",
+    "runtime": "static",
+    "staticDir": "ui",
+    "basePath": "/apps/house-info"
+  }
+}

@@ -1,0 +1,45 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>轻屿网络与系统脉搏</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif; background: #f5f5f7; color: #1d1d1f; padding: 24px; }
+  @media (prefers-color-scheme: dark) { body { background: #121214; color: #f5f5f7; } .card { background: #1c1c1e !important; border-color: rgba(255,255,255,0.1) !important; } }
+  .wrap { max-width: 680px; margin: 0 auto; display: grid; gap: 16px; }
+  .card { background: #fff; border: 1px solid rgba(0,0,0,0.08); border-radius: 16px; padding: 20px; box-shadow: 0 4px 16px rgba(0,0,0,0.04); }
+  h1 { margin: 0 0 6px; font-size: 20px; font-weight: 600; }
+  p { margin: 0; font-size: 13px; opacity: 0.7; }
+  .metrics { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-top: 16px; }
+  .metric { padding: 14px; border-radius: 12px; background: rgba(10,132,255,0.08); }
+  .metric .label { font-size: 12px; opacity: 0.75; }
+  .metric .val { font-size: 24px; font-weight: 600; color: #0a84ff; margin-top: 4px; }
+  button { margin-top: 16px; background: #0a84ff; color: #fff; border: none; border-radius: 10px; padding: 8px 16px; font-size: 13px; font-weight: 500; cursor: pointer; }
+</style></head>
+<body><div class="wrap"><div class="card">
+  <h1>轻屿网络与系统脉搏</h1>
+  <p>内置静态轻应用（Zero-RSS Static Mode）· 实时检测当前终端与 LightIsle 主机的局域网连接响应</p>
+  <div class="metrics">
+    <div class="metric"><div class="label">往返延迟 (RTT)</div><div class="val" id="rtt">-- ms</div></div>
+    <div class="metric"><div class="label">平均抖动 (Jitter)</div><div class="val" id="jitter">-- ms</div></div>
+    <div class="metric"><div class="label">探测状态</div><div class="val" id="state">就绪</div></div>
+  </div>
+  <button id="probeBtn">立即探测</button>
+</div></div>
+<script>
+const samples = [];
+async function probe() {
+  const t0 = performance.now();
+  try {
+    await fetch(window.location.pathname, { cache: 'no-store', method: 'HEAD' });
+    const ms = Math.max(1, Math.round(performance.now() - t0));
+    samples.push(ms); if (samples.length > 8) samples.shift();
+    document.getElementById('rtt').textContent = ms + ' ms';
+    const avg = samples.reduce((a,b)=>a+b,0)/samples.length;
+    const jit = Math.round(samples.reduce((a,b)=>a+Math.abs(b-avg),0)/samples.length);
+    document.getElementById('jitter').textContent = jit + ' ms';
+    document.getElementById('state').textContent = '在线';
+  } catch (e) { document.getElementById('state').textContent = '离线'; }
+}
+document.getElementById('probeBtn').addEventListener('click', probe);
+probe(); setInterval(probe, 5000);
+</script></body></html>

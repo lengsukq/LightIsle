@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 2,
+  "id": "network-pulse",
+  "name": "轻屿网络与系统脉搏",
+  "version": "1.0.0",
+  "author": "LightIsle Official",
+  "description": "实时测量当前终端到家庭 NAS 的往返延迟、抖动与局域网/组网连通健康度。",
+  "category": "system",
+  "icon": "icon.svg",
+  "access": {
+    "policy": "all_members",
+    "allowedUserIDs": []
+  },
+  "web": {
+    "enabled": true,
+    "mode": "static",
+    "runtime": "static",
+    "staticDir": "ui",
+    "basePath": "/apps/network-pulse"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 2,
+  "id": "warranty-vault",
+  "name": "电子发票与保修卡夹",
+  "version": "1.1.0",
+  "author": "LightIsle Official",
+  "description": "登记家电数码购买日期、保修到期日、序列号与票据存放位置，全家同步并自动推送 30 天过保预警。",
+  "category": "family",
+  "icon": "icon.svg",
+  "access": {
+    "policy": "all_members",
+    "allowedUserIDs": []
+  },
+  "web": {
+    "enabled": true,
+    "mode": "static",
+    "runtime": "static",
+    "staticDir": "ui",
+    "basePath": "/apps/warranty-vault"
+  }
+}

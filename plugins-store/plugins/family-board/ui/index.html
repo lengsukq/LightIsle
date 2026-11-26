@@ -1,0 +1,93 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>家庭留言板与采购清单</title>
+<style>
+/*__LIGHTISLE_SHARED_CSS__*/
+  :root { --accent: #b45309; --accent-soft: rgba(217, 119, 6, 0.12); }
+  @media (prefers-color-scheme: dark) { :root { --accent: #fbbf24; --accent-soft: rgba(251, 191, 36, 0.17); } }
+  .done strong { text-decoration: line-through; opacity: 0.5; }
+</style></head>
+<body><div class="wrap">
+  <div class="card">
+    <h1>家庭留言板与采购清单</h1>
+    <p class="sub">随手记录周末采购食材、家务待办与家人温馨留言 · 全家实时同步</p>
+    <div id="syncBar" class="li-sync-bar">正在初始化…</div>
+    <div class="form">
+      <select id="tag"><option value="采购">🛒 采购</option><option value="留言">💬 留言</option><option value="待办">📌 待办</option></select>
+      <input id="text" placeholder="输入采购物品或家庭留言…" style="flex:1;min-width:200px"/>
+      <button id="addBtn">发布</button>
+      <button id="exportBtn" class="ghost">导出 JSON</button>
+    </div>
+  </div>
+  <div class="card"><div id="list" class="list"></div></div>
+</div>
+<script>
+/*__LIGHTISLE_KV_JS__*/
+var stateItems = [];
+var store = LightIsleKV.createStore({
+  legacyKey: 'lightisle_family_board_v1',
+  defaultValue: [],
+  statusEl: 'syncBar',
+  onData: function (data) {
+    stateItems = Array.isArray(data) ? data : [];
+    render();
+  }
+});
+
+function render() {
+  var box = document.getElementById('list');
+  box.textContent = '';
+  if (!stateItems.length) {
+    var empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = '还没有留言或待采购项，添加第一条家庭备忘吧！';
+    box.appendChild(empty);
+    return;
+  }
+  stateItems.forEach(function (it, idx) {
+    var row = document.createElement('div');
+    row.className = 'item' + (it.done ? ' done' : '');
+    var left = document.createElement('label');
+    left.style.cssText = 'display:flex;align-items:center;gap:10px;cursor:pointer;flex:1';
+    var cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = !!it.done;
+    cb.onchange = function () {
+      var next = stateItems.map(function (x, i) {
+        return i === idx ? { id: x.id, tag: x.tag, text: x.text, done: cb.checked } : x;
+      });
+      store.save(next);
+    };
+    var txt = document.createElement('strong');
+    txt.textContent = '[' + it.tag + '] ' + it.text;
+    left.append(cb, txt);
+    var del = document.createElement('button');
+    del.className = 'ghost sm';
+    del.textContent = '清除';
+    del.onclick = function () {
+      var next = stateItems.filter(function (_, i) { return i !== idx; });
+      store.save(next);
+    };
+    row.append(left, del);
+    box.appendChild(row);
+  });
+}
+
+document.getElementById('addBtn').onclick = function () {
+  var text = document.getElementById('text').value.trim();
+  if (!text) return;
+  var next = [{
+    id: LightIsleKV.genId(),
+    tag: document.getElementById('tag').value,
+    text: text,
+    done: false
+  }].concat(stateItems);
+  store.save(next).then(function (res) {
+    if (res && res.ok) document.getElementById('text').value = '';
+  });
+};
+document.getElementById('exportBtn').onclick = function () {
+  LightIsleKV.exportJSON('family-board.json', stateItems);
+};
+store.init();
+</script></body></html>

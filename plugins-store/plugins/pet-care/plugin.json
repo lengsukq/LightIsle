@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 2,
+  "id": "pet-care",
+  "name": "宠物健康与疫苗驱虫",
+  "version": "1.0.0",
+  "author": "LightIsle Official",
+  "description": "多宠物档案管理、原生 SVG 体重趋势曲线，疫苗与体内外驱虫下次到期自动推算并接入家庭推送提醒。",
+  "category": "lifestyle",
+  "icon": "icon.svg",
+  "access": {
+    "policy": "all_members",
+    "allowedUserIDs": []
+  },
+  "web": {
+    "enabled": true,
+    "mode": "static",
+    "runtime": "static",
+    "staticDir": "ui",
+    "basePath": "/apps/pet-care"
+  }
+}

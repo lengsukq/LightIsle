@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>电子发票与保修卡夹</title>
+<style>
+/*__LIGHTISLE_SHARED_CSS__*/
+  :root { --accent: #248a3d; --accent-soft: rgba(36, 138, 61, 0.11); }
+  @media (prefers-color-scheme: dark) { :root { --accent: #5ce081; --accent-soft: rgba(92, 224, 129, 0.17); } }
+</style></head>
+<body><div class="wrap">
+  <div class="card">
+    <h1>电子发票与保修卡夹</h1>
+    <p class="sub">管理家电数码序列号、保修截止日与发票存放位置 · 自动同步全家并推送 30 天过保预警</p>
+    <div id="syncBar" class="li-sync-bar">正在初始化…</div>
+    <div class="form">
+      <input id="device" placeholder="设备名称（如：Mac mini M4 / 洗碗机）" style="flex:1;min-width:180px"/>
+      <input id="sn" placeholder="序列号 / 订单号" style="width:150px"/>
+      <input id="until" type="date" title="保修截止日期"/>
+      <input id="note" placeholder="发票路径或售后电话备注" style="flex:1;min-width:180px"/>
+      <button id="addBtn">登记设备</button>
+      <button id="exportBtn" class="ghost">导出 JSON</button>
+    </div>
+  </div>
+  <div class="card"><div id="list" class="list"></div></div>
+</div>
+<script>
+/*__LIGHTISLE_KV_JS__*/
+var stateItems = [];
+var store = LightIsleKV.createStore({
+  legacyKey: 'lightisle_warranty_vault_v1',
+  defaultValue: [],
+  statusEl: 'syncBar',
+  buildReminders: function (items) {
+    return (items || []).filter(function (it) { return it && it.until; }).map(function (it, idx) {
+      return {
+        id: it.id || ('war-' + idx + '-' + it.device),
+        title: '保修即将到期：' + it.device,
+        dueDate: it.until,
+        warnDays: 30,
+        category: 'warranty'
+      };
+    });
+  },
+  onData: function (data) {
+    stateItems = Array.isArray(data) ? data : [];
+    render();
+  }
+});
+
+function render() {
+  var box = document.getElementById('list');
+  box.textContent = '';
+  if (!stateItems.length) {
+    var empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = '暂无保修卡记录，登记后可随时核对过保时间与发票归档位置。';
+    box.appendChild(empty);
+    return;
+  }
+  stateItems.forEach(function (it, idx) {
+    var days = LightIsleKV.daysUntil(it.until);
+    var row = document.createElement('div');
+    row.className = 'item' + (days !== null && days < 0 ? ' expired' : (days !== null && days <= 30 ? ' expiring' : ''));
+    var info = document.createElement('div');
+    var title = document.createElement('strong');
+    title.textContent = it.device + (it.sn ? ' · ' + it.sn : '');
+    var meta = document.createElement('div');
+    meta.className = 'meta';
+    var status = days === null ? '长期 / 未设截止日' : (days < 0 ? '已过保 ' + Math.abs(days) + ' 天 (' + it.until + ')' : (days === 0 ? '今天过保' : '剩余 ' + days + ' 天 (' + it.until + ')'));
+    meta.textContent = status + (it.note ? ' · ' + it.note : '');
+    info.append(title, meta);
+    var del = document.createElement('button');
+    del.className = 'ghost sm';
+    del.textContent = '删除';
+    del.onclick = function () {
+      var next = stateItems.filter(function (_, i) { return i !== idx; });
+      store.save(next);
+    };
+    row.append(info, del);
+    box.appendChild(row);
+  });
+}
+
+document.getElementById('addBtn').onclick = function () {
+  var device = document.getElementById('device').value.trim();
+  if (!device) return;
+  var next = [{
+    id: LightIsleKV.genId(),
+    device: device,
+    sn: document.getElementById('sn').value.trim(),
+    until: document.getElementById('until').value,
+    note: document.getElementById('note').value.trim()
+  }].concat(stateItems);
+  store.save(next).then(function (res) {
+    if (res && res.ok) {
+      ['device', 'sn', 'until', 'note'].forEach(function (id) { document.getElementById(id).value = ''; });
+    }
+  });
+};
+document.getElementById('exportBtn').onclick = function () {
+  LightIsleKV.exportJSON('warranty-vault.json', stateItems);
+};
+store.init();
+</script></body></html>

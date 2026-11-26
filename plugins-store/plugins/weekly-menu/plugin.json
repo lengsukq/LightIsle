@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 2,
+  "id": "weekly-menu",
+  "name": "每周菜单与冰箱囤货",
+  "version": "1.0.0",
+  "author": "LightIsle Official",
+  "description": "规划周一至周日三餐排期与冷藏/冷冻食材保质期高亮，一键提取缺料采购清单并自动推送临期预警。",
+  "category": "lifestyle",
+  "icon": "icon.svg",
+  "access": {
+    "policy": "all_members",
+    "allowedUserIDs": []
+  },
+  "web": {
+    "enabled": true,
+    "mode": "static",
+    "runtime": "static",
+    "staticDir": "ui",
+    "basePath": "/apps/weekly-menu"
+  }
+}

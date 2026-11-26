@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 2,
+  "id": "family-subscriptions",
+  "name": "家庭账单与订阅管家",
+  "version": "1.1.0",
+  "author": "LightIsle Official",
+  "description": "集中记录家庭宽带、影视会员、云服务与物业续费周期，全家共享同步并自动推送临近续费提醒。",
+  "category": "family",
+  "icon": "icon.svg",
+  "access": {
+    "policy": "all_members",
+    "allowedUserIDs": []
+  },
+  "web": {
+    "enabled": true,
+    "mode": "static",
+    "runtime": "static",
+    "staticDir": "ui",
+    "basePath": "/apps/family-subscriptions"
+  }
+}

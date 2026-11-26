@@ -1,0 +1,175 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>家庭公共备忘卡</title>
+<style>
+/*__LIGHTISLE_SHARED_CSS__*/
+  :root { --accent: #b86b43; --accent-soft: rgba(184, 107, 67, 0.13); }
+  @media (prefers-color-scheme: dark) { :root { --accent: #f0a175; --accent-soft: rgba(240, 161, 117, 0.18); } }
+  .cards-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 12px; }
+  .memo-card { background: var(--surface); border: 1px solid var(--border); border-radius: 15px; padding: 15px; display: grid; gap: 8px; align-content: start; }
+  .memo-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+  .memo-val { font-size: 16px; font-weight: 650; word-break: break-all; padding: 9px 11px; border-radius: 10px; background: var(--surface-soft); letter-spacing: 0.01em; }
+  .memo-actions { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-top: 2px; }
+  .presets { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+</style></head>
+<body><div class="wrap">
+  <div class="card">
+    <div class="head-row">
+      <div>
+        <h1>家庭公共备忘卡</h1>
+        <p class="sub">集中保管 Wi-Fi、宽带光猫、水电燃气户号、车架号、公司开票抬头与物业电话，全家随时一键复制</p>
+      </div>
+      <button id="exportBtn" class="ghost sm">导出 JSON</button>
+    </div>
+    <div id="syncBar" class="li-sync-bar">正在初始化…</div>
+    <div class="presets">
+      <span class="meta" style="margin:0;align-self:center">快速模板：</span>
+      <button type="button" class="ghost sm" data-preset="网络 Wi-Fi|客厅 Wi-Fi 密码">Wi-Fi 密码</button>
+      <button type="button" class="ghost sm" data-preset="水电户号|电表户号">电表户号</button>
+      <button type="button" class="ghost sm" data-preset="车辆与开票|公司开票抬头与税号">开票抬头</button>
+      <button type="button" class="ghost sm" data-preset="车辆与开票|家庭车辆车架号 (VIN)">车架号</button>
+      <button type="button" class="ghost sm" data-preset="物业与紧急|小区物业 24 小时电话">物业电话</button>
+    </div>
+    <div class="form">
+      <select id="cat">
+        <option value="网络 Wi-Fi">📶 网络 Wi-Fi</option>
+        <option value="水电户号">⚡ 水电户号</option>
+        <option value="车辆与开票">🧾 车辆与开票</option>
+        <option value="物业与紧急">🏠 物业与紧急</option>
+        <option value="其他">📌 其他</option>
+      </select>
+      <input id="title" placeholder="卡片标题（如：主卧 Wi-Fi / 燃气表号）" style="flex:1;min-width:160px"/>
+      <input id="val" placeholder="具体号码、密码或抬头信息" style="flex:1.2;min-width:180px"/>
+      <input id="note" placeholder="补充备注（可选）" style="flex:1;min-width:140px"/>
+      <button id="addBtn">保存卡片</button>
+    </div>
+    <div class="toolbar">
+      <div class="filters" style="margin:0;flex:1">
+        <button class="ghost active sm" data-filter="all">全部</button>
+        <button class="ghost sm" data-filter="网络 Wi-Fi">网络 Wi-Fi</button>
+        <button class="ghost sm" data-filter="水电户号">水电户号</button>
+        <button class="ghost sm" data-filter="车辆与开票">车辆与开票</button>
+        <button class="ghost sm" data-filter="物业与紧急">物业与紧急</button>
+        <button class="ghost sm" data-filter="其他">其他</button>
+      </div>
+      <input id="search" placeholder="搜索标题、号码或备注…" style="width:190px"/>
+    </div>
+  </div>
+  <div id="grid" class="cards-grid"></div>
+</div>
+<script>
+/*__LIGHTISLE_KV_JS__*/
+var stateItems = [];
+var activeFilter = 'all';
+var store = LightIsleKV.createStore({
+  legacyKey: 'lightisle_house_info_v1',
+  defaultValue: [],
+  statusEl: 'syncBar',
+  onData: function (data) {
+    stateItems = Array.isArray(data) ? data : [];
+    render();
+  }
+});
+
+function render() {
+  var q = (document.getElementById('search').value || '').trim().toLowerCase();
+  var items = stateItems.filter(function (it) {
+    if (activeFilter !== 'all' && it.cat !== activeFilter) return false;
+    if (!q) return true;
+    return ((it.title || '') + ' ' + (it.val || '') + ' ' + (it.note || '') + ' ' + (it.cat || '')).toLowerCase().indexOf(q) >= 0;
+  });
+  var grid = document.getElementById('grid');
+  grid.textContent = '';
+  if (!items.length) {
+    var emptyCard = document.createElement('div');
+    emptyCard.className = 'card empty';
+    emptyCard.style.gridColumn = '1 / -1';
+    emptyCard.textContent = stateItems.length ? '没有匹配筛选条件的备忘卡片。' : '还没有家庭备忘卡，点击上方快速模板或填写第一条常用信息吧。';
+    grid.appendChild(emptyCard);
+    return;
+  }
+  items.forEach(function (it) {
+    var card = document.createElement('div');
+    card.className = 'memo-card';
+    var top = document.createElement('div');
+    top.className = 'memo-top';
+    var title = document.createElement('strong');
+    title.textContent = it.title;
+    var badge = document.createElement('span');
+    badge.className = 'pill';
+    badge.textContent = it.cat || '其他';
+    top.append(title, badge);
+
+    var valBox = document.createElement('div');
+    valBox.className = 'memo-val';
+    valBox.textContent = it.val;
+
+    var note = document.createElement('div');
+    note.className = 'meta';
+    note.style.marginTop = '0';
+    note.textContent = it.note || ' ';
+
+    var actions = document.createElement('div');
+    actions.className = 'memo-actions';
+    var copyBtn = document.createElement('button');
+    copyBtn.className = 'sm';
+    copyBtn.textContent = '一键复制';
+    copyBtn.onclick = function () {
+      LightIsleKV.copyText(it.val).then(function () {
+        copyBtn.textContent = '已复制 ✓';
+        setTimeout(function () { copyBtn.textContent = '一键复制'; }, 1400);
+      }).catch(function () {
+        copyBtn.textContent = '复制失败，请手动选中';
+        setTimeout(function () { copyBtn.textContent = '一键复制'; }, 2000);
+      });
+    };
+    var delBtn = document.createElement('button');
+    delBtn.className = 'ghost sm';
+    delBtn.textContent = '删除';
+    delBtn.onclick = function () {
+      store.save(stateItems.filter(function (x) { return x.id !== it.id; }));
+    };
+    actions.append(copyBtn, delBtn);
+    card.append(top, valBox, note, actions);
+    grid.appendChild(card);
+  });
+}
+
+document.querySelectorAll('[data-preset]').forEach(function (btn) {
+  btn.onclick = function () {
+    var parts = btn.dataset.preset.split('|');
+    document.getElementById('cat').value = parts[0];
+    document.getElementById('title').value = parts[1];
+    document.getElementById('val').focus();
+  };
+});
+document.querySelectorAll('[data-filter]').forEach(function (btn) {
+  btn.onclick = function () {
+    activeFilter = btn.dataset.filter;
+    document.querySelectorAll('[data-filter]').forEach(function (b) { b.classList.toggle('active', b === btn); });
+    render();
+  };
+});
+document.getElementById('search').oninput = render;
+document.getElementById('addBtn').onclick = function () {
+  var title = document.getElementById('title').value.trim();
+  var val = document.getElementById('val').value.trim();
+  if (!title || !val) return;
+  var next = [{
+    id: LightIsleKV.genId(),
+    cat: document.getElementById('cat').value,
+    title: title,
+    val: val,
+    note: document.getElementById('note').value.trim()
+  }].concat(stateItems);
+  store.save(next).then(function (res) {
+    if (res && res.ok) {
+      ['title', 'val', 'note'].forEach(function (id) { document.getElementById(id).value = ''; });
+    }
+  });
+};
+document.getElementById('exportBtn').onclick = function () {
+  LightIsleKV.exportJSON('house-info.json', stateItems);
+};
+store.init();
+</script></body></html>

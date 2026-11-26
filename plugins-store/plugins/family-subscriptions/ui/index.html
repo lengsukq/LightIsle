@@ -1,0 +1,122 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>家庭账单与订阅管家</title>
+<style>
+/*__LIGHTISLE_SHARED_CSS__*/
+  :root { --accent: #5e5ce6; --accent-soft: rgba(94, 92, 230, 0.11); }
+  @media (prefers-color-scheme: dark) { :root { --accent: #a5a4ff; --accent-soft: rgba(165, 164, 255, 0.18); } }
+</style></head>
+<body><div class="wrap">
+  <div class="card">
+    <h1>家庭账单与订阅管家</h1>
+    <p class="sub">0 MB 静态轻应用 · 全家共享存储并自动接入 LightIsle 续费到期通知</p>
+    <div id="syncBar" class="li-sync-bar">正在初始化…</div>
+    <div class="stats">
+      <div class="stat"><span>折合月均支出</span><b id="monthlyTotal">¥0.00</b></div>
+      <div class="stat"><span>预计年度总额</span><b id="yearlyTotal">¥0.00</b></div>
+      <div class="stat"><span>7 天内续费项</span><b id="soonCount">0</b></div>
+    </div>
+    <div class="form">
+      <input id="name" placeholder="项目名称（如：千兆宽带 / Apple One）" style="flex:1;min-width:180px"/>
+      <input id="price" type="number" step="0.01" min="0" placeholder="金额 (元)" style="width:105px"/>
+      <select id="cycle"><option value="month">按月</option><option value="year">按年</option></select>
+      <input id="nextDate" type="date" title="下次续费日期"/>
+      <button id="addBtn">添加记录</button>
+      <button id="exportBtn" class="ghost">导出 JSON</button>
+    </div>
+  </div>
+  <div class="card"><div id="list" class="list"></div></div>
+</div>
+<script>
+/*__LIGHTISLE_KV_JS__*/
+var stateItems = [];
+var store = LightIsleKV.createStore({
+  legacyKey: 'lightisle_family_subscriptions_v1',
+  defaultValue: [],
+  statusEl: 'syncBar',
+  buildReminders: function (items) {
+    return (items || []).filter(function (it) { return it && it.nextDate; }).map(function (it, idx) {
+      return {
+        id: it.id || ('sub-' + idx + '-' + it.name),
+        title: '续费提醒：' + it.name,
+        dueDate: it.nextDate,
+        warnDays: 7,
+        category: 'subscription'
+      };
+    });
+  },
+  onData: function (data) {
+    stateItems = Array.isArray(data) ? data : [];
+    render();
+  }
+});
+
+function render() {
+  var monthly = 0, soon = 0;
+  var box = document.getElementById('list');
+  box.textContent = '';
+  if (!stateItems.length) {
+    var empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = '暂无订阅记录，可在上方添加宽带、视频会员或物业缴费提醒。';
+    box.appendChild(empty);
+  }
+  stateItems.forEach(function (it, idx) {
+    var p = Number(it.price) || 0;
+    monthly += it.cycle === 'year' ? p / 12 : p;
+    var days = LightIsleKV.daysUntil(it.nextDate);
+    if (days !== null && days >= 0 && days <= 7) soon++;
+    var row = document.createElement('div');
+    row.className = 'item' + (days !== null && days < 0 ? ' expired' : (days !== null && days <= 7 ? ' soon' : ''));
+    var left = document.createElement('div');
+    var strong = document.createElement('strong');
+    strong.textContent = it.name;
+    var meta = document.createElement('div');
+    meta.className = 'meta';
+    var datePart = '';
+    if (it.nextDate) {
+      if (days === null) datePart = ' · 下次续费 ' + it.nextDate;
+      else if (days < 0) datePart = ' · 已过期 ' + Math.abs(days) + ' 天 (' + it.nextDate + ')';
+      else if (days === 0) datePart = ' · 今天续费 (' + it.nextDate + ')';
+      else datePart = ' · 下次续费 ' + it.nextDate + '（剩余 ' + days + ' 天）';
+    }
+    meta.textContent = '¥' + p.toFixed(2) + (it.cycle === 'year' ? ' / 年' : ' / 月') + datePart;
+    left.append(strong, meta);
+    var del = document.createElement('button');
+    del.className = 'ghost sm';
+    del.textContent = '移除';
+    del.onclick = function () {
+      var next = stateItems.filter(function (_, i) { return i !== idx; });
+      store.save(next);
+    };
+    row.append(left, del);
+    box.appendChild(row);
+  });
+  document.getElementById('monthlyTotal').textContent = '¥' + monthly.toFixed(2);
+  document.getElementById('yearlyTotal').textContent = '¥' + (monthly * 12).toFixed(2);
+  document.getElementById('soonCount').textContent = String(soon);
+}
+
+document.getElementById('addBtn').onclick = function () {
+  var name = document.getElementById('name').value.trim();
+  var price = parseFloat(document.getElementById('price').value || '0');
+  if (!name || !(price >= 0)) return;
+  var next = stateItems.concat([{
+    id: LightIsleKV.genId(),
+    name: name,
+    price: price,
+    cycle: document.getElementById('cycle').value,
+    nextDate: document.getElementById('nextDate').value
+  }]);
+  store.save(next).then(function (res) {
+    if (res && res.ok) {
+      document.getElementById('name').value = '';
+      document.getElementById('price').value = '';
+    }
+  });
+};
+document.getElementById('exportBtn').onclick = function () {
+  LightIsleKV.exportJSON('family-subscriptions.json', stateItems);
+};
+store.init();
+</script></body></html>

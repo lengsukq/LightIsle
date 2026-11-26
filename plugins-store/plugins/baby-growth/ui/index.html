@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>宝宝成长身高体重记录</title>
+<style>
+/*__LIGHTISLE_SHARED_CSS__*/
+  :root { --accent: #e14d72; --accent-soft: rgba(225, 77, 114, 0.11); }
+  @media (prefers-color-scheme: dark) { :root { --accent: #ff8aa8; --accent-soft: rgba(255, 138, 168, 0.18); } }
+  .chart { width: 100%; height: 150px; margin-top: 8px; }
+</style></head>
+<body><div class="wrap">
+  <div class="card">
+    <h1>宝宝成长身高体重记录</h1>
+    <p class="sub">记录每次体检的身高、体重与成长里程碑，自动绘制成长曲线 · 全家共同记录</p>
+    <div id="syncBar" class="li-sync-bar">正在初始化…</div>
+    <div class="stats">
+      <div class="stat"><span>最新身高</span><b id="latestHeight">-- cm</b></div>
+      <div class="stat"><span>最新体重</span><b id="latestWeight">-- kg</b></div>
+      <div class="stat"><span>成长记录</span><b id="recordCount">0 条</b></div>
+    </div>
+    <div class="form">
+      <input id="date" type="date"/>
+      <input id="height" type="number" step="0.1" min="0" placeholder="身高 (cm)" style="width:110px"/>
+      <input id="weight" type="number" step="0.05" min="0" placeholder="体重 (kg)" style="width:110px"/>
+      <input id="milestone" placeholder="里程碑备注（如：第一次翻身 / 会叫爸爸）" style="flex:1;min-width:180px"/>
+      <button id="addBtn">记录成长</button>
+      <button id="exportBtn" class="ghost">导出 JSON</button>
+    </div>
+  </div>
+  <div class="card">
+    <h2>身高成长曲线 (cm)</h2>
+    <svg id="chart" class="chart" viewBox="0 0 600 150"></svg>
+  </div>
+  <div class="card"><div id="list" class="list"></div></div>
+</div>
+<script>
+/*__LIGHTISLE_KV_JS__*/
+var stateItems = [];
+document.getElementById('date').value = LightIsleKV.todayISO();
+var store = LightIsleKV.createStore({
+  legacyKey: 'lightisle_baby_growth_v1',
+  defaultValue: [],
+  statusEl: 'syncBar',
+  onData: function (data) {
+    stateItems = Array.isArray(data) ? data : [];
+    render();
+  }
+});
+
+function renderChart(items) {
+  var svg = document.getElementById('chart');
+  svg.textContent = '';
+  var pts = items.filter(function (it) { return Number(it.height) > 0; }).slice(-12);
+  if (!pts.length) return;
+  var vals = pts.map(function (p) { return Number(p.height); });
+  var min = Math.min.apply(null, vals) - 2;
+  var max = Math.max.apply(null, vals) + 2;
+  var span = Math.max(1, max - min);
+  var coords = pts.map(function (p, i) {
+    var x = pts.length === 1 ? 300 : 36 + (i / (pts.length - 1)) * 528;
+    var y = 120 - ((Number(p.height) - min) / span) * 92;
+    return { x: x, y: y, p: p };
+  });
+  var poly = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+  poly.setAttribute('fill', 'none'); poly.setAttribute('stroke', 'var(--accent)'); poly.setAttribute('stroke-width', '3');
+  poly.setAttribute('points', coords.map(function (c) { return c.x + ',' + c.y; }).join(' '));
+  svg.appendChild(poly);
+  coords.forEach(function (c) {
+    var dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    dot.setAttribute('cx', c.x); dot.setAttribute('cy', c.y); dot.setAttribute('r', '4.5'); dot.setAttribute('fill', 'var(--accent)');
+    var lbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    lbl.setAttribute('x', c.x); lbl.setAttribute('y', 142); lbl.setAttribute('text-anchor', 'middle'); lbl.setAttribute('font-size', '10'); lbl.setAttribute('fill', 'currentColor'); lbl.textContent = (c.p.date || '').slice(5);
+    svg.append(dot, lbl);
+  });
+}
+
+function render() {
+  var asc = stateItems.slice().sort(function (a, b) { return (a.date || '').localeCompare(b.date || ''); });
+  var latest = asc[asc.length - 1];
+  document.getElementById('latestHeight').textContent = latest && latest.height ? latest.height + ' cm' : '-- cm';
+  document.getElementById('latestWeight').textContent = latest && latest.weight ? latest.weight + ' kg' : '-- kg';
+  document.getElementById('recordCount').textContent = asc.length + ' 条';
+  renderChart(asc);
+  var box = document.getElementById('list');
+  box.textContent = '';
+  if (!asc.length) {
+    var empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = '暂无成长记录，添加宝宝的第一次身高体重吧。';
+    box.appendChild(empty);
+    return;
+  }
+  asc.slice().reverse().forEach(function (it) {
+    var row = document.createElement('div');
+    row.className = 'item';
+    var left = document.createElement('div');
+    var title = document.createElement('strong');
+    title.textContent = it.date + (it.height ? ' · 身高 ' + it.height + ' cm' : '') + (it.weight ? ' · 体重 ' + it.weight + ' kg' : '');
+    var meta = document.createElement('div');
+    meta.className = 'meta';
+    meta.textContent = it.milestone || '常规体检记录';
+    left.append(title, meta);
+    var del = document.createElement('button');
+    del.className = 'ghost sm';
+    del.textContent = '删除';
+    del.onclick = function () {
+      store.save(stateItems.filter(function (x) { return x.id !== it.id; }));
+    };
+    row.append(left, del);
+    box.appendChild(row);
+  });
+}
+
+document.getElementById('addBtn').onclick = function () {
+  var date = document.getElementById('date').value;
+  var height = document.getElementById('height').value.trim();
+  var weight = document.getElementById('weight').value.trim();
+  var milestone = document.getElementById('milestone').value.trim();
+  if (!date || (!height && !weight && !milestone)) return;
+  var next = stateItems.concat([{
+    id: LightIsleKV.genId(),
+    date: date,
+    height: height,
+    weight: weight,
+    milestone: milestone
+  }]);
+  store.save(next).then(function (res) {
+    if (res && res.ok) {
+      ['height', 'weight', 'milestone'].forEach(function (id) { document.getElementById(id).value = ''; });
+    }
+  });
+};
+document.getElementById('exportBtn').onclick = function () {
+  LightIsleKV.exportJSON('baby-growth.json', stateItems);
+};
+store.init();
+</script></body></html>

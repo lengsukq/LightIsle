@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="zh-CN">
+<head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><title>家庭药箱与证件有效期</title>
+<style>
+/*__LIGHTISLE_SHARED_CSS__*/
+  :root { --accent: #dc2626; --accent-soft: rgba(220, 38, 38, 0.10); }
+  @media (prefers-color-scheme: dark) { :root { --accent: #ff8585; --accent-soft: rgba(255, 133, 133, 0.18); } }
+</style></head>
+<body><div class="wrap">
+  <div class="card">
+    <h1>家庭药箱与证件有效期</h1>
+    <p class="sub">集中管理常备药品、护照、身份证、驾照与年检到期日 · 全家共享并自动推送 30 天临期预警</p>
+    <div id="syncBar" class="li-sync-bar">正在初始化…</div>
+    <div class="stats">
+      <div class="stat"><span>已过期项目</span><b id="expiredCount">0</b></div>
+      <div class="stat"><span>30 天内到期</span><b id="soonCount">0</b></div>
+      <div class="stat"><span>全部登记</span><b id="totalCount">0</b></div>
+    </div>
+    <div class="form">
+      <select id="kind"><option value="药品">💊 家庭药品</option><option value="证件">🪪 重要证件</option><option value="食品">🥫 储备食品</option></select>
+      <input id="name" placeholder="名称（如：布洛芬 / 护照 / 驾照）" style="flex:1;min-width:170px"/>
+      <input id="expiry" type="date" title="到期日期"/>
+      <input id="place" placeholder="存放位置或用法备注" style="flex:1;min-width:150px"/>
+      <button id="addBtn">登记</button>
+      <button id="exportBtn" class="ghost">导出 JSON</button>
+    </div>
+    <div class="filters">
+      <button class="ghost active sm" data-filter="all">全部</button>
+      <button class="ghost sm" data-filter="药品">💊 药品</button>
+      <button class="ghost sm" data-filter="证件">🪪 证件</button>
+      <button class="ghost sm" data-filter="食品">🥫 食品</button>
+    </div>
+  </div>
+  <div class="card"><div id="list" class="list"></div></div>
+</div>
+<script>
+/*__LIGHTISLE_KV_JS__*/
+var stateItems = [];
+var currentFilter = 'all';
+var store = LightIsleKV.createStore({
+  legacyKey: 'lightisle_medicine_expiry_v1',
+  defaultValue: [],
+  statusEl: 'syncBar',
+  buildReminders: function (items) {
+    return (items || []).filter(function (it) { return it && it.expiry; }).map(function (it, idx) {
+      return {
+        id: it.id || ('exp-' + idx + '-' + it.name),
+        title: '[' + (it.kind || '到期') + '] ' + it.name,
+        dueDate: it.expiry,
+        warnDays: 30,
+        category: 'expiry'
+      };
+    });
+  },
+  onData: function (data) {
+    stateItems = Array.isArray(data) ? data : [];
+    render();
+  }
+});
+
+function render() {
+  var all = stateItems.slice().sort(function (a, b) {
+    return (a.expiry || '9999-99-99').localeCompare(b.expiry || '9999-99-99');
+  });
+  var expired = 0, soon = 0;
+  all.forEach(function (it) {
+    var d = LightIsleKV.daysUntil(it.expiry);
+    if (d !== null && d < 0) expired++;
+    else if (d !== null && d <= 30) soon++;
+  });
+  document.getElementById('expiredCount').textContent = String(expired);
+  document.getElementById('soonCount').textContent = String(soon);
+  document.getElementById('totalCount').textContent = String(all.length);
+  var items = currentFilter === 'all' ? all : all.filter(function (it) { return it.kind === currentFilter; });
+  var box = document.getElementById('list');
+  box.textContent = '';
+  if (!items.length) {
+    var empty = document.createElement('div');
+    empty.className = 'empty';
+    empty.textContent = '暂无到期记录，可在上方登记家中常备药或重要证件有效期。';
+    box.appendChild(empty);
+    return;
+  }
+  items.forEach(function (it) {
+    var d = LightIsleKV.daysUntil(it.expiry);
+    var row = document.createElement('div');
+    row.className = 'item' + (d !== null && d < 0 ? ' expired' : (d !== null && d <= 30 ? ' soon' : ''));
+    var left = document.createElement('div');
+    var title = document.createElement('strong');
+    title.textContent = '[' + it.kind + '] ' + it.name;
+    var meta = document.createElement('div');
+    meta.className = 'meta';
+    var status = d === null ? '未设置日期' : (d < 0 ? '已过期 ' + Math.abs(d) + ' 天 (' + it.expiry + ')' : (d === 0 ? '今天到期' : '剩余 ' + d + ' 天 (' + it.expiry + ')'));
+    meta.textContent = status + (it.place ? ' · ' + it.place : '');
+    left.append(title, meta);
+    var del = document.createElement('button');
+    del.className = 'ghost sm';
+    del.textContent = '移除';
+    del.onclick = function () {
+      var next = stateItems.filter(function (x) { return x.id !== it.id; });
+      store.save(next);
+    };
+    row.append(left, del);
+    box.appendChild(row);
+  });
+}
+
+document.querySelectorAll('[data-filter]').forEach(function (btn) {
+  btn.onclick = function () {
+    currentFilter = btn.dataset.filter;
+    document.querySelectorAll('[data-filter]').forEach(function (b) { b.classList.toggle('active', b === btn); });
+    render();
+  };
+});
+document.getElementById('addBtn').onclick = function () {
+  var name = document.getElementById('name').value.trim();
+  if (!name) return;
+  var next = stateItems.concat([{
+    id: LightIsleKV.genId(),
+    kind: document.getElementById('kind').value,
+    name: name,
+    expiry: document.getElementById('expiry').value,
+    place: document.getElementById('place').value.trim()
+  }]);
+  store.save(next).then(function (res) {
+    if (res && res.ok) {
+      ['name', 'expiry', 'place'].forEach(function (id) { document.getElementById(id).value = ''; });
+    }
+  });
+};
+document.getElementById('exportBtn').onclick = function () {
+  LightIsleKV.exportJSON('medicine-expiry.json', stateItems);
+};
+store.init();
+</script></body></html>

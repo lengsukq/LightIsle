@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 2,
+  "id": "family-board",
+  "name": "家庭留言板与采购清单",
+  "version": "1.1.0",
+  "author": "LightIsle Official",
+  "description": "温馨的家庭便签墙与周末超市采购打勾清单，支持全家共享同步与一键导出备份。",
+  "category": "lifestyle",
+  "icon": "icon.svg",
+  "access": {
+    "policy": "all_members",
+    "allowedUserIDs": []
+  },
+  "web": {
+    "enabled": true,
+    "mode": "static",
+    "runtime": "static",
+    "staticDir": "ui",
+    "basePath": "/apps/family-board"
+  }
+}

@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 2,
+  "id": "medicine-expiry",
+  "name": "家庭药箱与证件有效期",
+  "version": "1.1.0",
+  "author": "LightIsle Official",
+  "description": "登记家庭常备药、护照、身份证与驾照到期日，全家同步并在 30 天内自动高亮与推送临期提醒。",
+  "category": "family",
+  "icon": "icon.svg",
+  "access": {
+    "policy": "all_members",
+    "allowedUserIDs": []
+  },
+  "web": {
+    "enabled": true,
+    "mode": "static",
+    "runtime": "static",
+    "staticDir": "ui",
+    "basePath": "/apps/medicine-expiry"
+  }
+}

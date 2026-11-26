@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 2,
+  "id": "utility-ledger",
+  "name": "水电燃气与月度账本",
+  "version": "1.1.0",
+  "author": "LightIsle Official",
+  "description": "按月记录电费、水费、燃气与物业支出及用量，全家共享同步并自动生成近 6 个月消费柱状趋势图。",
+  "category": "family",
+  "icon": "icon.svg",
+  "access": {
+    "policy": "all_members",
+    "allowedUserIDs": []
+  },
+  "web": {
+    "enabled": true,
+    "mode": "static",
+    "runtime": "static",
+    "staticDir": "ui",
+    "basePath": "/apps/utility-ledger"
+  }
+}
