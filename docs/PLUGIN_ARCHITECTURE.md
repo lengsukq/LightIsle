@@ -161,10 +161,57 @@ Go Core 启动 `run-web.sh` 时会自动注入干净的白名单环境变量：
 > Go Core 反代转发请求至 `127.0.0.1:$PORT` 时，会注入请求头 `X-LightIsle-Proxy-Secret` 以及当前登录用户的 `X-LightIsle-User-ID`、`X-LightIsle-Username`、`X-LightIsle-Role`。插件只需校验 `req.headers['x-lightisle-proxy-secret'] === process.env.LIGHTISLE_PROXY_SECRET`，即可安全实现免二次登录，防止本机其他进程直连 `127.0.0.1:$PORT` 伪造身份头。
 
 ### 4.2 纯静态 HTML 轻应用指南与内置官方精选模板（`mode: "static"`，0 MB 进程开销）
-- `run-cron.sh` 定时运行采集脚本，将最新结果写入 `ui/data.json`；`ui/index.html` 通过相对路径 `fetch('./data.json')` 或 `localStorage` 渲染看板，常驻与浏览期间子进程内存均为 **0 MB**。
-- `core/internal/apps/builtin_templates.go` 随包内置 4 款零外部依赖的官方精选静态家庭轻应用模板（`network-pulse` 家庭网络脉搏哨兵、`family-subscriptions` 家庭订阅与续费管家、`warranty-vault` 家电数码保修卡库、`family-board` 家庭共享备忘白板），支持管理员通过 `GET /api/v2/apps/templates` 与 `POST /api/v2/apps/templates/{id}/install` 一键安装并按成员授权开放。
+- `run-cron.sh` 定时运行采集脚本，将最新结果写入 `ui/data.json`；`ui/index.html` 通过相对路径 `fetch('./data.json')`、`localStorage` 或宿主共享 KV 存储桥（`./__lightisle_kv`）渲染看板，常驻与浏览期间子进程内存均为 **0 MB**。
+- `core/internal/apps/builtin_templates.go` 随包内置 **10 款**零外部依赖的官方精选静态家庭轻应用模板，支持管理员通过 `GET /api/v2/apps/templates` 与 `POST /api/v2/apps/templates/{id}/install` 一键安装并按成员授权开放（全部接入 `./__lightisle_kv` 家庭共享持久化，到期类模板同步接入 `kv/_reminders.json` 自动通知）：
 
-### 4.3 Python / Java / Node.js / Go / Rust 轻量化模版
+| 模板 ID | 名称 | 版本 | 分类 | 功能说明与同步/提醒能力 |
+| :--- | :--- | :--- | :--- | :--- |
+| `network-pulse` | 轻屿网络与系统脉搏 | `1.0.0` | `system` | 实时测量当前终端到家庭 NAS 的往返延迟、抖动与局域网/组网连通健康度。 |
+| `family-subscriptions` | 家庭账单与订阅管家 | `1.1.0` | `family` | 集中记录家庭宽带、影视会员、云服务与物业续费周期，全家 KV 同步并写入 `_reminders.json` 推送临近续费提醒。 |
+| `warranty-vault` | 电子发票与保修卡夹 | `1.1.0` | `family` | 登记家电数码购买日期、保修到期日、序列号与票据存放位置，全家 KV 同步并自动推送 30 天过保预警。 |
+| `family-board` | 家庭留言板与采购清单 | `1.1.0` | `lifestyle` | 家庭便签墙与周末超市采购打勾清单，支持全家 KV 共享同步与一键导出备份。 |
+| `medicine-expiry` | 家庭药箱与证件有效期 | `1.1.0` | `family` | 登记家庭常备药、护照、身份证与驾照到期日，全家 KV 同步并在 30 天内高亮与推送临期提醒。 |
+| `utility-ledger` | 水电燃气与月度账本 | `1.1.0` | `family` | 按月记录电费、水费、燃气与物业支出及用量，全家 KV 同步并自动生成近 6 个月消费柱状趋势图。 |
+| `baby-growth` | 宝宝成长身高体重记录 | `1.1.0` | `lifestyle` | 记录宝宝每次体检的身高、体重与成长里程碑，全家 KV 同步并自动绘制身高成长曲线。 |
+| `house-info` | 家庭公共备忘卡 | `1.0.0` | `family` | 集中保管家庭 Wi-Fi 密码、宽带光猫、水电燃气户号、车架号、开票抬头与物业紧急电话，支持分组筛选与一键复制。 |
+| `weekly-menu` | 每周菜单与冰箱囤货 | `1.0.0` | `lifestyle` | 规划周一至周日三餐排期与冷藏/冷冻食材保质期高亮，一键提取缺料采购清单并自动推送临期预警。 |
+| `pet-care` | 宠物健康与疫苗驱虫 | `1.0.0` | `lifestyle` | 多宠物档案管理、原生 SVG 体重趋势曲线，疫苗与体内外驱虫下次到期自动推算并接入家庭推送提醒。 |
+
+### 4.3 静态轻应用 `0 MB` 宿主共享 KV 存储桥与 `_reminders.json` 提醒规范
+为了让纯静态 HTML 轻应用无需启动 Node/Python 进程即可实现**多设备/多家庭成员实时共享持久化**与**宿主机主动到期推送**，Go Core（`core/internal/apps/kv_store.go`、`reminder_scanner.go`）内置了受 `os.OpenRoot` 隔离的宿主共享存储桥：
+
+1. **HTTP 契约（必须使用相对路径 `./__lightisle_kv`）**：
+   - `GET /apps/{appID}/__lightisle_kv`（前端调用 `./__lightisle_kv`）：列出当前轻应用所有键的元信息（`key`、`size`、`etag`、`updatedAt`）以及配额使用量与上限（`maxKeys`、`maxTotalBytes`、`maxValueBytes`），响应头强制带 `Cache-Control: no-store` 与 `Vary: Cookie`。
+   - `GET/HEAD /apps/{appID}/__lightisle_kv/{key}`：读取单个键的 JSON 正文并附带 `ETag`（取正文 SHA-256 前 16 字节十六进制），支持 `If-None-Match` 返回 `304 Not Modified`；键不存在返回 `404 kv_not_found`。
+   - `PUT /apps/{appID}/__lightisle_kv/{key}`：原子写入（临时文件 + `fsync` + `Rename`）合法非空 JSON。
+   - `DELETE /apps/{appID}/__lightisle_kv/{key}`：删除指定键（支持可选 `If-Match`）。
+2. **安全守卫与乐观并发锁**：
+   - **认证、ACL 与存储盘状态**：所有 `/__lightisle_kv*` 请求均先通过 `ServeApp` 校验当前会话、`pendingActivation` 状态、成员访问策略（`AccessPolicy`）与所在物理盘在线状态（离线/换盘立即拒绝且不回退）。
+   - **CSRF 防护**：所有 `PUT` 与 `DELETE` 请求**必须**携带请求头 `X-LightIsle-Request: 1`，否则返回 `403 csrf_header_required`。
+   - **乐观锁（`If-Match`）**：支持携带上一次读取或写入返回的 `ETag`（或 `*`）作为 `If-Match` 请求头；当其他设备或家庭成员已更新该键时返回 `412 Precondition Failed`（`error: "kv_conflict"`，响应体与响应头附带最新 `etag`），前端刷新合并后再重试保存，防止多人并发静默覆盖。
+3. **键名、配额与一致备份恢复边界**：
+   - **键名校验**：`ValidKVKey` 仅允许匹配 `^[a-zA-Z0-9_][a-zA-Z0-9._-]{0,63}$` 且不包含 `..` 的键名（非法返回 `400 invalid_kv_key`）；底层严格落盘于 `<dataRoot>/<appID>/kv/<key>.json`（由 `os.OpenRoot` 限制路径越界）。
+   - **容量与数量配额**：单键 JSON 正文上限 **`512 KiB`**（超限返回 `413 kv_value_too_large`），单应用最多 **`64` 个键**（`413 kv_key_limit_exceeded`），单应用 KV 总容量上限 **`4 MiB`**（`413 kv_quota_exceeded`）。
+   - **纳入一致性备份与恢复**：KV 文件位于插件持久化数据目录 `$LIGHTISLE_PLUGIN_DATA_DIR/kv/` 内，因此自动随 `GET /api/v2/apps/{id}/data-backup`（`ExportAppData`）生成 SHA-256 清单导出，并在 `POST /api/v2/apps/{id}/data-restore`（`RestoreAppData`）校验通过后完整恢复。
+4. **`_reminders.json` 标准提醒契约（`./__lightisle_kv/_reminders`）**：
+   - 任何需要到期通知的静态轻应用只需将提醒清单写入保留键 `_reminders`（落盘文件为 `kv/_reminders.json`，单应用最多处理前 `200` 条）：
+     ```json
+     {
+       "items": [
+         {
+           "id": "passport-alice",
+           "title": "Alice 护照有效期",
+           "dueDate": "2026-12-15",
+           "warnDays": 30,
+           "category": "document"
+         }
+       ]
+     }
+     ```
+   - 宿主后台 `StartReminderScanner` 默认每 **30 分钟**扫描一次所有在线且已激活启用 Web 的轻应用（跳过离线盘与 `pendingActivation` 应用），按 `dueDate`（`YYYY-MM-DD`）与 `warnDays`（默认 `7` 天，最大 `90` 天；过期最多追踪 `30` 天）划分为 `overdue`、`due_today`、`due_1d`、`due_3d`、`due_7d`、`due_warn` 六档分桶；
+   - 去重账本持久化于 `<DataDir>/apps-reminder-state.json`（键为 `<appID>|<itemID>|<dueDate>|<bucket>`，保留 `60` 天），同一阶段绝不重复轰炸；通知内容自动过滤控制字符与敏感明文，仅向已配置的宿主机通知渠道（Bark / 企业微信 / 钉钉 / 邮件 / Webhook）推送脱敏后的标题与剩余/过期天数。
+
+### 4.4 Python / Java / Node.js / Go / Rust 轻量化模版
 - **Python (FastAPI)**：优先使用 `.venv/bin/python`，传入 `--host 127.0.0.1 --port "$PORT" --root-path "${BASE_PATH:-}" --workers 1`。
 - **Java (GraalVM / JVM)**：JVM 强制添加 `-XX:+UseSerialGC -Xms16m -Xmx64m -XX:TieredStopAtLevel=1 -Xss256k`。
 - **Node.js (Next.js standalone)**：添加 `--max-old-space-size=64 --optimize-for-size`。
@@ -181,14 +228,17 @@ core/internal/automation/
 
 core/internal/apps/
 ├── types.go          # PluginManifest v2 定义、ID 校验、PublicApp 视图（含 lastError / diagnostic）与 AppsSystemConfig
+├── builtin_templates*.go # 随包内置 10 款 0 MB 官方静态家庭轻应用模板目录与 HTML 资源
+├── kv_store.go       # 静态轻应用 /__lightisle_kv 宿主共享 KV 存储桥（os.OpenRoot 隔离、CSRF 校验、If-Match 乐观锁与 4 MiB 配额）
+├── reminder_scanner.go # 静态轻应用 kv/_reminders.json 30 分钟后台到期扫描与去重脱敏推送
 ├── diagnostics.go    # 启动/校验/崩溃根因诊断（AppDiagnostic：原因、stderr 关键输出、排查步骤、修复办法、数据安全说明）与浏览器网关 HTML 诊断页
 ├── manager.go        # 按需扫描、成员 ACL 校验、非管理员诊断/路径隔离、原子更新 plugin.json、进程组清理
 ├── instance.go       # 动态子进程状态机（Singleflight 唤醒锁、动态端口、启动期 stderr 捕获与阶段区分、闲置 SIGTERM、看门狗）
-├── proxy.go          # Launch Ticket 握手、反代 Header 剥离与身份头注入、网关诊断页回退、/api/v2/* Referer 越权守卫
-├── mcp.go            # 内置 Stdio 与 JSON-RPC 2.0 MCP Server（暴露 3 个规范 Resource 与 9 个辅助开发/远程调试 Tool）
+├── proxy.go          # Launch Ticket 握手、反代 Header 剥离与身份头注入、/__lightisle_kv 路由分发、网关诊断页回退、/api/v2/* Referer 越权守卫
+├── mcp.go            # 内置 Stdio 与 JSON-RPC 2.0 MCP Server
 ├── mcp_remote.go     # 局域网 MCP 配置快照、Token 轮换、ExecuteDebugMCP 交互式调试与 ProbeApp 网关 HTTP 探针
 ├── mcp_debug.go      # 远程文件读写（os.Root 隔离）、进程启停、日志拉取、探针调试工具与最近 50 条 MCP 调用追踪日志
-└── mcp_templates.go  # 内置插件 v2 规范、UI 主题规范与自动化规范模板常量
+└── mcp_templates*.go # 内置插件 v2 规范、UI 主题规范、MCP 安全与自动化规范模板常量
 ```
 
 ### 5.2 兼顾正常前端体验的浏览器同源边界与可信本地插件模型

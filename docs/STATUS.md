@@ -1,6 +1,8 @@
 # LightIsle 当前功能状态
 
-> **代码核对：2026-11-21，Beta 开发预览。** 本页描述仓库中现行代码实现与尚未验收的边界。
+> **代码核对：2026-11-26，Beta 开发预览。** 本页描述仓库中现行代码实现与尚未验收的边界。
+>
+> **2026-11-26 本轮 11 项代码落地核对**：已完成相册按相簿/文件夹精细备份与 SHA-256 校验安全释放空间、Android SAF 文件夹备份与桌面忽略规则/30s 防抖/一键还原、Mac 主机 USB/SD 卡一键增量导入、Write-Only 文件收集链接、文件置顶与大文件/近期快筛、Flutter 统一离线文件箱、Markdown 安全编辑保存/Web Office 懒加载预览/漫画与 EPUB 免解压阅读与跨端进度、静态轻应用 `0 MB` 宿主共享 KV 存储桥与到期通知扫描、3 款新官方家庭模板（内置共 10 款）、家庭纪念日/农历生日/周期家务提醒与通知循环、电子相框旧 iPad 家庭桌面看板、家庭证件票据拍照扫描与优先 Vision OCR 秒搜，以及下载中心按需 `yt-dlp` 与 SSRF 安全纯 Go 网页单文件离线归档（详见下文第 7 节）。**诚实声明**：上述 11 项新增能力当前仅完成代码实现与对应单测/构建检查，**仍全部待真实设备、外置物理磁盘与外部网络环境验收**；跨渠道硬配额整体状态仍保持 **`enforcement=pending` / `usageComplete=false`**。
 >
 > **Mac mini 常驻稳定性实机验收（用户反馈登记：2026-11-05）**：用户已在实际部署 LightIsle 的 **Mac mini** 上连续运行 **7 天（168 小时）**，确认期间**无异常、无自动退出，服务正常**。本项为**已完成的用户实机验证**；仓库未附第三方复核日志或精确起止时间，正式发布门禁证据仍须单独核实；图库、备份、磁盘异常、性能等其他实机项目不得由此推定通过。详见 [真实设备验收记录](DEVICE_ACCEPTANCE.md)。
 >
@@ -92,25 +94,57 @@
   - **移动端相册备份统一重构**：旧 Android 相册备份拆片已收敛为跨 Android/iOS 的 `MobilePhotoBackupPage`（`mobile_photo_backup_*.dart`，历史兼容壳页已物理移除），并在 `PhotosPage` 顶栏新增 `PhotoBackupStatusPill`。Android 端从 `MainActivity.kt` 抽离 `AndroidPhotoChannelHandler.kt`，前台与后台 WorkManager（`BackgroundPhotoWorker.kt`）统一采用 `inspectAndHash` 与 `readChunk` 原生零拷贝流式分块读取（消除整片复制到临时目录的双倍空间占用，前台单文件上限由 `2 GiB` 提升至 `32 GiB`；后台实时同步 `albumScope` 仅相机/全部媒体与 `organizeByYearMonth` 年月分目录配置，仍仅限照片与 `100 MiB` 阈值）。iOS 端（`IOSPhotoBackup.swift`）新增 52-bit 确定性 `assetGeneration` 资源版本指纹（免除未变更原片重复导出）、`camera`（过滤截图）/`all` 范围筛选、RAW 伴侣资源（`r.` 前缀）及可选 Wi-Fi 下 `allowICloudDownload` 云端原片拉取。
   - **桌面端本机文件夹单向增量备份**：新增 `DesktopBackupController`（拆分为 `desktop_backup_engine.dart` `454` 行与 `desktop_backup_sync.dart` `< 750` 行，接入 `ClientShell` 会话生命周期，并在 `SettingsPage`「文件与连接」顶部按平台自适应展示备份入口）、`DesktopFolderBackupPage`、`desktop_folder_backup_task_sheet.dart` 与 macOS 只读安全作用域书签插件 `DesktopFolderBookmarkPlugin.swift`（已配置 `com.apple.security.files.bookmarks.app-scope`，并对齐非沙盒空 `accessId` 直读与沙盒过期书签 `refreshedBookmark` 自动续签契约），支持绑定目标 `rootID + generation`、客户端运行期间 `1h / 6h` 定时增量巡检、本地 `(size, mtime)` 与远端 SHA-256 三级快检、远端满盘/配额耗尽（`507`/`413`/`quota_exceeded`）立即熔断，以及冲突时默认先传 `{stem}_sync_{hash8}{ext}` 暂存校验再将旧版移入回收站的二阶段安全替换（`trashAndReplace`，含中断后遗留暂存副本 SHA-256 核验免重传恢复）或保留双份（`keepBoth`）；macOS 沙盒重启授权与外置盘备份仍待真机实测。
 
+### 7. 家庭日常便利、归档备份与轻应用生态深化（2026-11-26）
+
+> 以下 11 项功能均已完成 Go Core / macOS / Web / Flutter 代码实现与对应自动化单测/构建验证，**均尚未经过真实移动设备、物理外置盘、SD 读卡器与真实外网环境验收**；全渠道硬配额整体状态仍保持 **`enforcement=pending` / `usageComplete=false`**。
+
+- **（1）手机相册按相簿/文件夹精细备份与 SHA-256 校验安全释放空间（`2884e21`）**：
+  - Android（`AndroidPhotoAlbums.kt`、`AndroidPhotoChannelHandler.kt`、`BackgroundPhotoWorker.kt`）与 iOS（`IOSPhotoAlbums.swift`、`IOSPhotoBackup.swift`）新增 `listAlbums` 枚举系统与用户相簿；Flutter `MobilePhotoBackupPage`（`mobile_photo_album_picker_sheet.dart`、`photo_backup_prefs_schema.dart`）支持 `camera`（仅相机）/ `all`（全部媒体）/ `selected`（仅备份已选相簿）/ `excluded`（排除已选相簿）四种筛选模式及 `flat` / `yearMonth`（`YYYY/MM`） / `byAlbum` / `byAlbumYearMonth` 四种目录归档结构（兼容迁移旧 `organizeByYearMonth`）。
+  - 新增有界本地已验证账本 `PhotoBackupVerifiedLedger`（按 `origin + account + deviceId + rootIdentity` 隔离）与手动释放主入口 `MobilePhotoSpaceReleaseSheet`（支持按全部 / 30 天前 / 90 天前 / 仅视频 / 相簿筛选）；执行释放前逐项在线调用 `GET /api/v2/roots/{rootID}/files/sha256` 核对 `rootID + generation` 与 SHA-256，遇到离线、换盘、文件缺失或校验不匹配立即安全剔除并**绝不删除本地原片**，仅将 100% 校验通过条目提交给系统原生删除确认弹窗（Android 11+ `MediaStore.createDeleteRequest` / iOS `PHPhotoLibrary.performChanges`）；可选自动发起释放开关默认关闭（`false`），开启需二次确认且仅在无错完成时拉起系统确认框，绝不静默删图。
+- **（2）Android SAF 文件夹备份与桌面忽略规则 / 30 秒防抖监听 / 一键还原（`40a91c4`）**：
+  - Android 端新增 `AndroidFolderBackupPlugin.kt` 与 `android_folder_backup_access.dart`，基于 Storage Access Framework（SAF）授权实现手机本地任意目录单向增量备份；
+  - 文件夹备份引擎新增 `.gitignore` 风格忽略规则引擎（`desktop_backup_ignore.dart`）、30 秒防抖实时文件监听（`desktop_backup_watcher.dart`）及从 NAS 一键还原至本机目标目录（`desktop_backup_restore.dart`）。
+- **（3）Mac 主机 USB / SD 卡一键增量导入（`521c210`）**：
+  - Go Core（`core/cmd/lightisled/ipc_media_import.go`、`ipc_media_import_scan.go`）与 macOS 原生端（`RemovableMediaImportCoordinator.swift`、`RemovableMediaImportView.swift`、`RemovableMediaImportSupport.swift`）支持插入 USB 读卡器或 SD 卡后扫描识别照片/视频并与目标已在线存储根目录执行按文件身份校验的一键增量导入。
+- **（4）Write-Only 外部文件收集链接（`2ac9aa6`、`632fa95`、`a539120`）**：
+  - Go Core（`core/internal/auth/collect_links.go`、`core/internal/server/collect_links.go`、`collect_links_page.go`）新增仅写入（Write-Only）文件收集链接（`POST/GET/DELETE /api/v2/roots/{rootID}/collect-links` 与免登录收集端点 `/api/v2/roots/{rootID}/public/collect/{token}*`），外部上传者无法浏览目标目录已有文件，上传分片提交严格按目标所有者与物理根代次预占入账；Web（`CollectLinkModal.vue`、`fileCollectLinksApi.ts`）与 Flutter（`CollectLinksSheet`、`file_extras_api.dart`）全端接入创建、口令/次数管理与撤销。
+- **（5）文件置顶与大文件/近期快筛（`2ac9aa6`、`632fa95`、`a539120`）**：
+  - Go Core（`core/internal/auth/file_pins.go`、`core/internal/files/insights.go`、`core/internal/server/file_pins.go`、`file_insights.go`）提供按账号+物理根隔离的文件/目录置顶（`/api/v2/files/pins` 与根限定路由）以及按授权范围统计的大文件/近期修改快筛（`/api/v2/files/insights`）；Web（`FilePinsBar.vue`、`FileInsightsModal.vue`）与 Flutter（`file_pins_and_insights_widgets.dart`）全端接入。
+- **（6）Flutter 统一离线文件箱、Markdown 安全编辑保存、Web Office 懒加载预览与漫画/EPUB 免解压阅读（`2ac9aa6`、`632fa95`、`a539120`）**：
+  - **Flutter 统一离线文件箱**：新增 `offline_file_store.dart` 与 `offline_vault_page.dart`，支持将受权文件离线缓存至与临时预览缓存隔离的独立存储区并纳入设置缓存统计管理。
+  - **Markdown/文本安全编辑与跨端进度**：Core（`core/internal/files/text_save.go`、`core/internal/auth/storage_text_replace.go`、`core/internal/server/file_text_save.go`）新增 `GET/PUT /api/v2/files/text`（及根限定路由）支持原子替换与个人配额结算，新增 `GET/PUT /api/v2/files/reading-progress`（`core/internal/auth/reading_progress.go`）同步阅读进度；Web 新增 `FileMarkdownEditorModal.vue`（集成 `DOMPurify` 安全渲染与在线保存），Flutter 扩展 `file_text_preview_dialog.dart`。
+  - **Web Office 懒加载预览与漫画/EPUB 免解压阅读**：Core（`core/internal/server/file_reader.go`）新增 `GET /api/v2/files/archive-entries` 与 `archive-entry`（及根限定路由）实现 ZIP/CBZ 漫画与 EPUB 电子书流式免解压按条目读取；Web 新增异步独立懒加载分包的 Office 预览（`FileOfficePreviewModal.vue`，集成 `mammoth` 解析 `.docx` 与 `read-excel-file` 解析 `.xlsx`）与 `FileComicEpubReaderModal.vue`；Flutter 新增 `file_comic_epub_reader_page.dart` 与 `file_epub_parser.dart`。
+- **（7）静态轻应用 `0 MB` 宿主共享 KV 存储桥、到期通知扫描与 3 款新官方家庭模板（`1c657ae`）**：
+  - Core 新增 `core/internal/apps/kv_store.go`（`/apps/{appID}/__lightisle_kv` 与 `/apps/{appID}/__lightisle_kv/{key}`，`os.OpenRoot` 隔离、写删必带 `X-LightIsle-Request: 1`、`If-Match` 乐观锁 `412` 冲突保护、单键 `<= 512 KiB` / 单应用最多 `64` 键与 `4 MiB` 配额、随 `ExportAppData`/`RestoreAppData` 自动备份恢复）及 `reminder_scanner.go`（30 分钟周期扫描在线启用应用的 `kv/_reminders.json`，去重脱敏推送到期/逾期提醒）；
+  - `core/internal/apps/builtin_templates.go` 继 `446de84` 新增 `medicine-expiry`、`utility-ledger`、`baby-growth` 后，再次新增 **3 款**官方静态家庭模板（`house-info` 家庭公共备忘卡、`weekly-menu` 每周菜单与冰箱囤货、`pet-care` 宠物健康与疫苗驱虫），内置静态模板总数增至 **10 款**。详见 [插件与按需应用架构](PLUGIN_ARCHITECTURE.md)。
+- **（8）家庭纪念日、农历生日与周期家务提醒及通知循环（`2ac9aa6`、`6400a5f`、`a00beca`、`e889fd8`）**：
+  - Core（`core/internal/auth/family_reminders.go`、`family_reminders_schedule.go`、`lunar_calendar.go`、`core/internal/server/family_reminders.go`、`core/cmd/lightisled/reminders_loop.go`）新增 `/api/v2/family-reminders` CRUD 与完成打卡接口，支持公历/农历生日推算、周期家务重复规则及 30 分钟后台提醒扫描循环桥接至 `notify.Hub`；Web（`FamilyRemindersSection.vue`、`FamilyReminderModal.vue`）与 Flutter（`family_reminders_card.dart`、`family_reminder_sheet.dart`）首页看板同步上线。
+- **（9）电子相框旧 iPad 家庭桌面看板（`a00beca`、`e889fd8`）**：
+  - 在 `294a8d7` 电子相框基础上，Web（`PhotoFrameOverlay.vue`、`PhotoFrameDashboardWidgets.vue`）与 Flutter（`photo_frame_page.dart`、`photo_frame_dashboard_overlay.dart`）新增家庭桌面看板模式，支持将旧 iPad 等平板常驻展示为融合时间、家庭提醒、家庭留言与精选相框的家居桌面屏。
+- **（10）家庭证件票据拍照扫描与优先 Vision OCR 秒搜（`2ac9aa6`、`a00beca`、`e889fd8`）**：
+  - Core（`core/internal/gallery/ai_indexer.go`、`core/internal/server/gallery.go`）新增 `POST /api/v2/photos/ocr-priority`（及根限定路由）为新上传证件票据照片插队优先执行 Apple Silicon Vision OCR 索引；Web（`FamilyDocsArchiveView.vue`）与 Flutter（`document_scan_archive_page.dart`、`document_scan_archive_service.dart`、Android `AndroidDocumentCapturePlugin.kt`、iOS `IOSDocumentScannerPlugin.swift`）提供快速扫描归档与文本秒搜。
+- **（11）下载中心按需 `yt-dlp` 与 SSRF 安全纯 Go 网页单文件离线归档（`61c2899`、`521c210`、`6400a5f`、`a00beca`、`a539120`）**：
+  - Core 新增 `core/internal/ytdlpbin/locate.go`（按 Homebrew 前缀白名单按需探测 `yt-dlp`，未安装返回诚实状态 `ytdlp_not_installed` 且绝不静默下载）、`core/internal/downloads/ytdlp_runner.go`、纯 Go SSRF 安全单文件网页归档引擎 `core/internal/webarchive/`（`archiver.go`、`sanitize.go`，拦截内网/回环/CGNAT/链路本地地址、净化 HTML 并内联正文图片为 Base64 Data URI 生成独立 `.html`，默认上限 `15 MiB` / `48` 图 / `5` 重定向）与 `webarchive_runner.go`；macOS（`ExternalDependenciesView.swift`）新增 `yt-dlp` 依赖探测卡；Web（`DownloadEngineIntakeCard.vue`、`DownloadsView.vue`）与 Flutter（`downloads_dialogs.dart`、`downloads_page.dart`）对管理员开放三引擎切换（`aria2` / `yt-dlp` / 网页单文件归档），缺失 `yt-dlp` 不阻塞网页离线保存。
+
 ## 实现与限制
 
 | 模块 | 当前代码能力 | 仍需关注 |
 | --- | --- | --- |
-| **Mac 主机** | SwiftUI/AppKit 管理 Core 运行、管理员初始化、本地私有 IPC、菜单栏继续运行；原生媒体 Worker | 实际系统权限、休眠/唤醒、72h 常驻及正式签名未验收 |
+| **Mac 主机** | SwiftUI/AppKit 管理 Core 运行、管理员初始化、本地私有 IPC、菜单栏继续运行；原生媒体 Worker；可移动介质 USB/SD 卡一键增量导入（`RemovableMediaImportCoordinator`） | 实际系统权限、休眠/唤醒、72h 常驻、真实 SD 卡/读卡器增量导入及正式签名未验收 |
 | **API / 身份** | Go Core 只注册 `/api/v2/...` 及根限定 `/api/v2/roots/{rootID}/...`；Argon2id、会话撤销、角色与目录授权 | 旧 v1 客户端不可用；不开放远程宿主高权限操作 |
-| **文件管理** | Web/Flutter 文件列表、搜索、预览、分片续传、范围下载、批量操作、ZIP 打包与受控 ZIP 在线解压（中途异常自动移入回收站回滚）、私人目录文件夹重命名/同根移动、按需 SHA-256 + APFS 克隆感知的重复大文件扫描与安全移入回收站、回收站/恢复与身份核验后的私人回收站永久清理、受限分享；Web 与 Flutter 常见 JPEG/PNG/WebP/GIF 全屏预览后自动渐进加载高清原图；PDF/`pdfx`、文本和其他应用打开入口并存 | 同名换盘时普通/分片上传及复制写入后再校验物理根身份并保留不确定账本，但满盘/突然断盘/覆盖竞态与大文件真实硬件测试仍缺 |
+| **文件管理** | Web/Flutter 文件列表、搜索、预览、分片续传、范围下载、批量操作、ZIP 打包与受控 ZIP 在线解压（中途异常自动移入回收站回滚）、私人目录文件夹重命名/同根移动、按需 SHA-256 + APFS 克隆感知的重复大文件扫描与安全移入回收站、回收站/恢复与身份核验后的私人回收站永久清理、受限分享、Write-Only 外部文件收集链接（`/collect-links` 与 `/public/collect/{token}`）、文件置顶（`/files/pins`）、大文件/近期快筛（`/files/insights`）、Markdown/文本原子编辑保存（`GET/PUT /files/text`）、Web Office 懒加载预览（`mammoth` + `read-excel-file`）、ZIP/CBZ 漫画与 EPUB 免解压阅读（`archive-entries`/`archive-entry`）及跨端阅读进度同步；Flutter 新增独立「离线文件箱」与常见格式全屏高清渐进加载；PDF/`pdfx`、文本和其他应用打开入口并存 | 同名换盘时普通/分片上传及复制写入后再校验物理根身份并保留不确定账本；Write-Only 收集链接、Office/漫画/EPUB 阅读、离线文件箱与满盘/突然断盘/覆盖竞态及大文件真实硬件测试仍缺 |
 | **WebDAV** | 独立密码、逐盘代次挂载、Range、私人目录 COPY、PUT、MKCOL、同所有者 MOVE 和回收站 | 同名目录覆盖和跨根 MOVE 拒绝，无法安全交换的卷提示另存；Finder/Infuse 与中断实测待补 |
-| **照片图库** | 索引、缩略图、共享及私人相册、文件夹相册受控软链接共享（只读/可写，可写计入所有者额度）、Apple Live Photo 全端实况自动配对与有声动态播放（含 ZIP 打包成对导出）、按时空/GPS/收藏聚类的智能回忆合集（`/api/v2/photos/memories`）、基于 Vision 聚类的宝宝/家人零拷贝自动只读人物共享视图（`/api/v2/photos/person-shares*`）、时间线、收藏、EXIF/GPS 多维筛选、地图与本地离线 AI 索引（OCR、双语场景搜图、私有人物聚类、连拍相似废片清理）；Flutter 可读离线原件 | 万张级真实家庭照片库的聚类准确率、Apple Silicon 持续负载温控、大图库地图瓦片及 RAW/Live Photo 实机体验待验 |
+| **照片图库** | 索引、缩略图、共享及私人相册、文件夹相册受控软链接共享（只读/可写，可写计入所有者额度）、Apple Live Photo 全端实况自动配对与有声动态播放（含 ZIP 打包成对导出）、按时空/GPS/收藏聚类的智能回忆合集（`/api/v2/photos/memories`）、基于 Vision 聚类的宝宝/家人零拷贝自动只读人物共享视图（`/api/v2/photos/person-shares*`）、电子相框模式及旧 iPad 家庭桌面看板（叠加时间/日程提醒/家庭留言）、证件票据拍照扫描归档与 `POST /api/v2/photos/ocr-priority` 优先 Vision OCR 秒搜、时间线、收藏、EXIF/GPS 多维筛选、地图与本地离线 AI 索引（OCR、双语场景搜图、私有人物聚类、连拍相似废片清理）；Flutter 可读离线原件 | 万张级真实家庭照片库的聚类准确率、Apple Silicon 持续负载温控、旧 iPad 常驻桌面看板、证件拍照 OCR 秒搜及 RAW/Live Photo 实机体验待验 |
 | **影视** | 电影/剧集、NFO/TMDB、`.strm` 流媒体直链文件安全识别与 `307` 直出播放（拦截 `file://`、回环与链路本地 SSRF 并自动衔接 TMDB/豆瓣海报墙刮削）、扫描后增量刮削、「待匹配」筛选、字幕/音轨、原片播放、播放进度、可选 FFmpeg/HLS、Flutter Android TV / 遥控器方向键焦点高亮导航及 WebDAV Apple TV · Infuse / VidHub 一键大屏配置复制 | 不保证所有格式、HDR、字幕设备通用；AirPlay/PiP/DLNA、外部 `.strm` 网盘源过期及成员授权撤销的真机交互需实测 |
 | **多硬盘** | RootRegistry 为唯一运行时存储身份，Mac 可直接选择已登记/新专用目录作为默认 rootID，**不触发迁移**；移除存储根或重启时自动驱逐运行时并将孤儿派生 SQLite 归档至 `retired-roots/`；成员与管理员的个人分类跨盘迁移统一在「个人空间」按任务进度与物理身份校验执行，通用目录跨盘复制保留在 Go Core 私有 IPC `export` 经日志化拷贝与 SHA-256 校验完成 | 公开分享与共享相册在换盘后需由所有者重新建立；真实多 TB 硬盘拔插/断电恢复待实盘验收 |
-| **成员配额** | 每物理根代次独立计费；上传、应用内复制和解压、私人下载发布和 WebDAV 写入按目标所有者预占与结算 | **`enforcement=pending` / `usageComplete=false`**，SMB 和外部直接写入尚未纳入，实盘与异常恢复待验 |
-| **照片与目录备份** | 统一 `MobilePhotoBackupPage`：Android 前台流式分片直传（最高 32 GiB）+ WorkManager 根限定后台照片任务（≤100 MiB）；iOS 前台照片/视频/RAW/Live Photo + 52-bit 版本快检与可选 Wi-Fi iCloud 下载；桌面客户端本机文件夹单向增量备份（三级快检 + 二阶段安全替换 + macOS 只读书签续签） | macOS 沙盒重启恢复与外置盘备份、Android 后台与大视频、iOS iCloud/RAW/弱网待真机验收；不提供 iOS 系统级后台备份或桌面常驻守护进程 |
-| **下载** | 可选 aria2。管理员发起网络下载，已授权的私人目的地使用目标所有者的额度与对象身份发布；重试复用原发布记录 | 真实磁力、外网和换盘场景待验；默认盘变化时旧任务保留原绑定并停止发布 |
+| **成员配额** | 每物理根代次独立计费；上传、Write-Only 收集链接入库、文本编辑替换、应用内复制和解压、私人下载发布和 WebDAV 写入按目标所有者预占与结算 | **`enforcement=pending` / `usageComplete=false`**，SMB 和外部直接写入尚未纳入，实盘与异常恢复待验 |
+| **照片与目录备份** | 统一 `MobilePhotoBackupPage`：Android/iOS 支持按相簿/文件夹精细筛选（`camera`/`all`/`selected`/`excluded`）与 4 种归档目录结构，手动为主（可选自动提示默认关闭）的远端 `GET .../files/sha256` + `rootID + generation` 核验后拉起系统删除弹窗安全释放空间；Android 前台流式分片直传（最高 32 GiB）+ WorkManager 后台照片任务（≤100 MiB）+ SAF 文件夹单向增量备份；桌面与移动端文件夹备份新增 `.gitignore` 风格忽略规则、30s 防抖监听与一键还原 | macOS 沙盒重启恢复、Android SAF 大目录与后台/大视频、iOS iCloud/RAW/弱网及真机空间释放确认流程待真机验收；不提供 iOS 系统级后台备份或桌面常驻守护进程 |
+| **下载** | 管理员多引擎任务中心：可选 `aria2`（HTTP/磁力）、按需探测 Homebrew `yt-dlp` 视频归档（缺失诚实提示 `ytdlp_not_installed`）及纯 Go SSRF 安全单文件网页离线归档（`webarchive`，内联图片且默认 `15 MiB` 上限，不依赖 `yt-dlp`）；已授权的私人目的地使用目标所有者的额度与对象身份发布；重试复用原发布记录 | 真实磁力、外网 `yt-dlp` 站点、复杂动态网页归档及换盘场景待验；默认盘变化时旧任务保留原绑定并停止发布 |
 | **远程访问** | LAN HTTP 默认可启用；开启局域网连接时自动探测本机 `utun`/`tailscale` 虚拟网卡上的私有 IPv4（RFC 1918 `10/8`、`172.16/12`、`192.168/16` 及 Tailscale `100.64.0.0/10`）与 MagicDNS，并执行多接口同端口伴随绑定与多 SAN 证书签发（`GET /api/v2/admin/tailscale`，绝不绑定 `0.0.0.0`）；支持登录设备级会话管理（记录终端型号、客户端 IP、节流活跃时间与单设备远程下线）；按需 HTTPS、Cloudflare Tunnel、FRP 客户端、WebDAV 与三端 macOS 原生 SMB 文件共享接管 | **严禁直接公网明文 HTTP**；SMB 使用 macOS 系统本机账号鉴权且写入不经过 LightIsle 配额账本；Tailscale/VPN/FRP 跨网连通仍需外部客户端登录实测 |
-| **Docker 与外部工具** | 管理已存在 Docker Desktop/Colima；按需检测 FFmpeg、aria2、smartctl、cloudflared、Tailscale | 不内置重型引擎/工具，不静默下载；真实环境与权限可能不同 |
-| **脚本、通知与系统状态** | JSON/Cron 本地脚本、随包内置 4 款 `0 MB` 官方精选静态家庭轻应用模板一键安装（网络哨兵、家庭订阅管家、电子保修卡库、家庭备忘白板）、原生 `pmset -g batt` 免驱动 UPS/电池断电联动守护（断电自动暂停 AI 索引、低电量 `≤25%` 停止转码并执行 SQLite WAL 被动刷盘与告警推送）、任务日志与系统资源历史 | 运行脚本使用本机用户权限，不是沙箱；USB UPS 通讯线与真实市电切换需实机验证 |
+| **Docker 与外部工具** | 管理已存在 Docker Desktop/Colima；按需检测 FFmpeg、aria2、`yt-dlp`、smartctl、cloudflared、Tailscale | 不内置重型引擎/工具，不静默下载；真实环境与权限可能不同 |
+| **脚本、通知与系统状态** | JSON/Cron 本地脚本、静态轻应用 `0 MB` 宿主共享 KV 存储桥（`/__lightisle_kv` + `If-Match` 乐观锁 + `kv/_reminders.json` 30 分钟扫描推送）、随包内置 **10 款** `0 MB` 官方精选静态家庭轻应用模板（含新增 `house-info`、`weekly-menu`、`pet-care`）、家庭纪念日/农历生日/周期家务提醒（`/api/v2/family-reminders`）与 30 分钟通知循环、原生 `pmset -g batt` 免驱动 UPS/电池断电联动守护、任务日志与系统资源历史 | 运行脚本使用本机用户权限，不是沙箱；USB UPS 通讯线、轻应用多终端 KV 并发冲突及真实家庭提醒渠道外发需实机验证 |
 | **应用配置备份** | Mac 本机手动与每周自动配置/SQLite 快照，保留最近 **5 份**；本机验证后恢复 | **不备份原始文件、照片和视频**；异盘/断电真实恢复尚待验收 |
-| **Web 与 Flutter** | Vue 3 Web/PWA；Flutter Android/iOS/macOS 文件、图库、影视、账号等功能；响应式 UI 对齐 Mac 视觉规范，管理员/普通成员分别使用对应 Dashboard 和高密度设置页，含窄屏、200% 字号、媒体列表及二级页回归 | 无法以 widget/单测通过代替真机视觉、无障碍、键盘避让与后台/系统权限测试 |
+| **Web 与 Flutter** | Vue 3 Web/PWA；Flutter Android/iOS/macOS 文件、图库、影视、账号、家庭提醒、旧 iPad 相框桌面看板、证件扫描 OCR、离线文件箱与统一阅读/编辑能力；响应式 UI 对齐 Mac 视觉规范，管理员/普通成员分别使用对应 Dashboard 和高密度设置页 | 无法以 widget/单测通过代替真机视觉、无障碍、键盘避让、相机扫描与后台/系统权限测试 |
 | **社区构建** | 本地 Ad-hoc DMG、手动 GitHub Actions 预览构建 | **未完成** Developer ID、公证、Gatekeeper 和完整 QA，非正式稳定版 |
 
 - **Core 常驻恢复**：Mac App 对意外退出和连续三次本机健康检查失败按 2、10、30 秒限次恢复，确认旧进程退出后才启动替代。启动端口被占用时，可换端口后立即重试，或确认并强制停止可核对的本机占用进程。数据目录和离线恢复阻断有明确原因。管理命令拥堵与任务历史、备份计划、分盘媒体索引异常分别提示。关闭窗口继续监测，退出 App 取消恢复。详见 [Mac 进程生命周期](MACOS_APP.md#核心服务恢复与故障隔离)。
