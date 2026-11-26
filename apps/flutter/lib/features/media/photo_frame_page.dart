@@ -6,6 +6,7 @@ import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../core/authenticated_media_image.dart';
+import '../../core/isle_style.dart';
 import '../../core/lightisle_api.dart';
 import 'media_models.dart';
 import 'media_ui.dart';
@@ -144,19 +145,18 @@ class _PhotoFramePageState extends State<PhotoFramePage> {
     });
   }
 
-  String get _clockText =>
-      '${_now.hour.toString().padLeft(2, '0')}:${_now.minute.toString().padLeft(2, '0')}';
-
-  String get _dateText {
-    const weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
-    return '${_now.year}年${_now.month}月${_now.day}日 · ${weekdays[_now.weekday - 1]}';
-  }
+  bool get _isNightDimActive =>
+      _nightDimOverride ?? isPhotoFrameNightHour(_now);
 
   @override
   Widget build(BuildContext context) {
     final reduceMotion = MediaQuery.disableAnimationsOf(context);
     final current = _photos.isEmpty ? null : _photos[_index % _photos.length];
     final safe = MediaQuery.paddingOf(context);
+    final darkPalette = IslePalette(
+      true,
+      preset: IslePalette.of(context).effectivePreset,
+    );
 
     return Scaffold(
       backgroundColor: const Color(0xFF050507),
@@ -214,7 +214,7 @@ class _PhotoFramePageState extends State<PhotoFramePage> {
                     mainAxisSize: MainAxisSize.min,
                     children: [
                       Text(
-                        _clockText,
+                        formatPhotoFrameClock(_now),
                         style: const TextStyle(
                           color: Colors.white,
                           fontSize: 56,
@@ -228,7 +228,7 @@ class _PhotoFramePageState extends State<PhotoFramePage> {
                       ),
                       const SizedBox(height: 6),
                       Text(
-                        _dateText,
+                        formatPhotoFrameSolarDate(_now),
                         style: const TextStyle(
                           color: Color(0xE6FFFFFF),
                           fontSize: 15,
@@ -273,7 +273,7 @@ class _PhotoFramePageState extends State<PhotoFramePage> {
                         padding: const EdgeInsets.all(3),
                         decoration: BoxDecoration(
                           color: const Color(0xB8141418),
-                          borderRadius: BorderRadius.circular(999),
+                          borderRadius: BorderRadius.circular(IsleRadius.pill),
                           border: Border.all(
                             color: Colors.white.withValues(alpha: 0.18),
                           ),
@@ -304,7 +304,7 @@ class _PhotoFramePageState extends State<PhotoFramePage> {
                         ),
                         decoration: BoxDecoration(
                           color: const Color(0xB8141418),
-                          borderRadius: BorderRadius.circular(999),
+                          borderRadius: BorderRadius.circular(IsleRadius.pill),
                           border: Border.all(
                             color: Colors.white.withValues(alpha: 0.18),
                           ),
@@ -314,22 +314,22 @@ class _PhotoFramePageState extends State<PhotoFramePage> {
                           children: [
                             if (_dashboardMode)
                               IconButton(
-                                tooltip: _nightDimOverride == true
+                                key: const ValueKey('photoFrameNightDimButton'),
+                                tooltip: _isNightDimActive
                                     ? '关闭夜间柔光'
-                                    : '夜间柔光',
-                                color: _nightDimOverride == true
-                                    ? const Color(0xFFE8C184)
+                                    : '开启夜间柔光',
+                                color: _isNightDimActive
+                                    ? darkPalette['brandAmber']
                                     : Colors.white70,
                                 icon: Icon(
-                                  _nightDimOverride == true
+                                  _isNightDimActive
                                       ? Icons.bedtime_rounded
                                       : Icons.bedtime_outlined,
                                   size: 20,
                                 ),
                                 onPressed: () {
                                   setState(() {
-                                    _nightDimOverride =
-                                        !(_nightDimOverride ?? false);
+                                    _nightDimOverride = !_isNightDimActive;
                                   });
                                   _revealControls();
                                 },
@@ -428,7 +428,7 @@ class _FrameModePill extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
           color: selected ? Colors.white.withValues(alpha: 0.22) : null,
-          borderRadius: BorderRadius.circular(999),
+          borderRadius: BorderRadius.circular(IsleRadius.pill),
         ),
         child: Text(
           label,

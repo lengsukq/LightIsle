@@ -553,6 +553,7 @@ class MobilePhotoBackupEntryUploader {
         isVideo: spec.isVideo,
         albumName: spec.albumName,
         chunkDigests: chunkDigests,
+        assetGeneration: spec.generation,
       ),
     );
   }

@@ -314,6 +314,7 @@ class EditableTextDocument {
     required this.content,
     required this.size,
     required this.mtimeUnixNano,
+    this.mtimeToken = '',
     this.modified,
     required this.canWrite,
   });
@@ -323,6 +324,7 @@ class EditableTextDocument {
   final String content;
   final int size;
   final int mtimeUnixNano;
+  final String mtimeToken;
   final DateTime? modified;
   final bool canWrite;
 
@@ -334,6 +336,7 @@ class EditableTextDocument {
       content: json['content']?.toString() ?? '',
       size: (json['size'] as num?)?.toInt() ?? 0,
       mtimeUnixNano: (json['mtimeUnixNano'] as num?)?.toInt() ?? 0,
+      mtimeToken: json['mtimeToken']?.toString() ?? '',
       modified: modRaw == null || modRaw.isEmpty
           ? null
           : DateTime.tryParse(modRaw),
@@ -349,6 +352,7 @@ class TextSaveOutcome {
     this.path = '',
     this.size = 0,
     this.mtimeUnixNano = 0,
+    this.mtimeToken = '',
     this.conflictMessage,
   });
 
@@ -357,6 +361,7 @@ class TextSaveOutcome {
   final String path;
   final int size;
   final int mtimeUnixNano;
+  final String mtimeToken;
   final String? conflictMessage;
 }
 
@@ -366,16 +371,20 @@ class ArchiveEntryDescriptor {
     required this.size,
     required this.mime,
     required this.kind,
+    this.index,
   });
 
   final String name;
   final int size;
   final String mime;
   final String kind;
+  final int? index;
 
   bool get isImage => kind == 'image';
   bool get isDocument => kind == 'document';
   bool get isMetadata => kind == 'metadata';
+
+  String get cacheKey => index != null ? 'idx:$index:$name' : name;
 
   factory ArchiveEntryDescriptor.fromJson(Map<String, dynamic> json) =>
       ArchiveEntryDescriptor(
@@ -383,6 +392,7 @@ class ArchiveEntryDescriptor {
         size: (json['size'] as num?)?.toInt() ?? 0,
         mime: json['mime']?.toString() ?? '',
         kind: json['kind']?.toString() ?? '',
+        index: (json['index'] as num?)?.toInt(),
       );
 }
 
@@ -464,9 +474,9 @@ class FileExtrasApi {
   String _collectLinksBasePath() {
     final root = api.selectedRoot;
     if (root == null || root.id.isEmpty) {
-      return '/api/v2/collect-links';
+      throw StateError('请先选择在线存储硬盘后再管理收集链接。');
     }
-    return '/api/v2/roots/${Uri.encodeComponent(root.id)}/collect-links';
+    return api.scopedApiPath('/api/v2/collect-links');
   }
 
   Map<String, String>? _collectRootQuery() {
@@ -497,6 +507,7 @@ class FileExtrasApi {
     int maxFileBytes = 0,
     int maxTotalBytes = 0,
     List<String> allowedExts = const [],
+    bool isAdmin = false,
   }) async {
     final body = <String, Object>{
       'path': path,
@@ -539,21 +550,20 @@ class FileExtrasApi {
         '/api/v2/roots/${Uri.encodeComponent(link.rootId)}/public/collect/${Uri.encodeComponent(token)}';
     final primaryUrl = resolvePublicPathUrl(publicPath);
     String? alternateUrl;
-    try {
-      final remote = await api.get('/api/v2/remote/status');
-      final candidate =
-          remote['publicUrl']?.toString() ??
-          remote['tailscaleUrl']?.toString() ??
-          remote['url']?.toString();
-      if (candidate != null && candidate.trim().isNotEmpty) {
-        final base = Uri.tryParse(candidate.trim());
-        if (base != null && base.hasScheme && base.host.isNotEmpty) {
-          final alt = base.resolve(publicPath).toString();
-          if (alt != primaryUrl) alternateUrl = alt;
+    if (isAdmin) {
+      try {
+        final remote = await api.get('/api/v2/admin/tailscale');
+        final candidate = remote['boundUrl']?.toString();
+        if (candidate != null && candidate.trim().isNotEmpty) {
+          final base = Uri.tryParse(candidate.trim());
+          if (base != null && base.hasScheme && base.host.isNotEmpty) {
+            final alt = base.resolve(publicPath).toString();
+            if (alt != primaryUrl) alternateUrl = alt;
+          }
         }
+      } catch (_) {
+        // Optional Tailscale origin lookup; never fail collect link creation.
       }
-    } catch (_) {
-      // Optional remote origin lookup; never fail collect link creation.
     }
     return CreatedCollectLink(
       link: link,
@@ -637,6 +647,7 @@ class FileExtrasApi {
     required String path,
     required String content,
     int? expectedMtimeUnixNano,
+    String? expectedMtimeToken,
     bool create = false,
   }) async {
     try {
@@ -648,6 +659,8 @@ class FileExtrasApi {
           'content': content,
           if (expectedMtimeUnixNano != null && expectedMtimeUnixNano > 0)
             'expectedMtimeUnixNano': expectedMtimeUnixNano,
+          if (expectedMtimeToken != null && expectedMtimeToken.isNotEmpty)
+            'expectedMtimeToken': expectedMtimeToken,
           if (create) 'create': true,
         },
       );
@@ -657,6 +670,7 @@ class FileExtrasApi {
         path: res['path']?.toString() ?? path,
         size: (res['size'] as num?)?.toInt() ?? utf8.encode(content).length,
         mtimeUnixNano: (res['mtimeUnixNano'] as num?)?.toInt() ?? 0,
+        mtimeToken: res['mtimeToken']?.toString() ?? '',
       );
     } on LightIsleApiException catch (err) {
       if (err.statusCode == 409 || err.code == 'file_modified_conflict') {
@@ -684,10 +698,17 @@ class FileExtrasApi {
   Future<Uint8List> fetchArchiveEntryBytes(
     String path,
     String entry, {
+    int? entryIndex,
     int maxBytes = 32 * 1024 * 1024,
   }) => api.bytes(
     '/api/v2/files/archive-entry',
-    query: {'path': path, 'entry': entry},
+    query: <String, String>{
+      'path': path,
+      if (entryIndex != null && entryIndex >= 0)
+        'index': '$entryIndex'
+      else
+        'entry': entry,
+    },
     maxBytes: maxBytes,
   );
 

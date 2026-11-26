@@ -5,7 +5,6 @@ import 'dart:math';
 import 'package:flutter/widgets.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../../core/isle_formatters.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
 import 'mobile_photo_backup_background_service.dart';
@@ -13,6 +12,7 @@ import 'mobile_photo_backup_failure_store.dart';
 import 'mobile_photo_backup_runner.dart';
 import 'mobile_photo_backup_state_models.dart';
 import 'mobile_photo_backup_transfer_client.dart';
+import 'mobile_photo_space_release_service.dart';
 import 'photo_backup_prefs_schema.dart';
 import 'photo_backup_verified_ledger.dart';
 
@@ -77,6 +77,12 @@ class MobilePhotoBackupController extends ChangeNotifier {
       onChanged: _notify,
       onAssetVerified: _recordVerifiedBackupAsset,
     );
+    _spaceReleaseService = MobilePhotoSpaceReleaseService(
+      transfer: _transfer,
+      verifiedLedger: _verifiedLedger,
+      isIOS: isIOS,
+      isDisposed: () => _disposed,
+    );
   }
 
   final LightIsleApi api;
@@ -100,6 +106,7 @@ class MobilePhotoBackupController extends ChangeNotifier {
   late final MobilePhotoBackupTransferClient _transfer;
   late final MobilePhotoBackupBackgroundCoordinator _backgroundCoordinator;
   late final MobilePhotoBackupRunner _runner;
+  late final MobilePhotoSpaceReleaseService _spaceReleaseService;
 
   SharedPreferences? _prefs;
   bool _disposed = false;
@@ -571,143 +578,43 @@ class MobilePhotoBackupController extends ChangeNotifier {
       );
 
   /// Online verification before any OS deletion request: confirms the bound
-  /// physical root (rootID + generation) is online, then verifies every item's
+  /// physical root (rootID + generation) is online, checks iOS local asset
+  /// completeness & edit freshness when applicable, then verifies every item's
   /// remote SHA-256 via `GET /api/v2/roots/{rootID}/files/sha256`.
   Future<SpaceReleaseVerificationSummary> verifyCandidatesForRelease(
     List<VerifiedPhotoBackupRecord> candidates, {
     required void Function(int checked, int total) onProgress,
     required bool Function() isCancelled,
-  }) async {
-    if (candidates.isEmpty) {
-      return const SpaceReleaseVerificationSummary(
-        verified: <VerifiedPhotoBackupRecord>[],
-        skipped: <SpaceReleaseSkippedItem>[],
-        aborted: false,
-        cancelled: false,
-      );
-    }
-    try {
-      final rootOnline = await _transfer.verifyBoundRootOnline();
-      if (!rootOnline) {
-        return const SpaceReleaseVerificationSummary(
-          verified: <VerifiedPhotoBackupRecord>[],
-          skipped: <SpaceReleaseSkippedItem>[],
-          aborted: true,
-          cancelled: false,
-          abortMessage: '照片存储硬盘已离线或已更换，无法核验远端原片；已中止释放并保留全部手机原片。',
-        );
-      }
-    } catch (error) {
-      return SpaceReleaseVerificationSummary(
-        verified: const <VerifiedPhotoBackupRecord>[],
-        skipped: const <SpaceReleaseSkippedItem>[],
-        aborted: true,
-        cancelled: false,
-        abortMessage: '无法连接 NAS 确认硬盘状态（${userFacingError(error)}），已保留全部手机原片。',
-      );
-    }
-
-    final verified = <VerifiedPhotoBackupRecord>[];
-    final skipped = <SpaceReleaseSkippedItem>[];
-    final total = candidates.length;
-    for (var i = 0; i < total; i++) {
-      if (isCancelled() || _disposed) {
-        return SpaceReleaseVerificationSummary(
-          verified: const <VerifiedPhotoBackupRecord>[],
-          skipped: skipped,
-          aborted: false,
-          cancelled: true,
-        );
-      }
-      onProgress(i + 1, total);
-      final record = candidates[i];
-      final outcome = await _transfer.verifyRemoteAssetForRelease(record);
-      if (outcome.shouldAbortBatch) {
-        return SpaceReleaseVerificationSummary(
-          verified: const <VerifiedPhotoBackupRecord>[],
-          skipped: skipped,
-          aborted: true,
-          cancelled: false,
-          abortMessage: outcome.reason,
-        );
-      }
-      if (outcome.isVerified) {
-        verified.add(record);
-      } else {
-        skipped.add(
-          SpaceReleaseSkippedItem(
-            record: record,
-            reason: outcome.reason,
-            status: outcome.status,
-          ),
-        );
-      }
-    }
-    return SpaceReleaseVerificationSummary(
-      verified: verified,
-      skipped: skipped,
-      aborted: false,
-      cancelled: false,
-    );
-  }
+  }) => _spaceReleaseService.verifyCandidates(
+    candidates: candidates,
+    includeVideos: options.includeVideos,
+    onProgress: onProgress,
+    isCancelled: isCancelled,
+  );
 
   /// Submits ONLY 100% online-verified asset IDs to the OS native delete
-  /// confirmation dialog (Android 11+ MediaStore.createDeleteRequest / iOS
-  /// PHPhotoLibrary.performChanges). Never silently deletes local originals.
+  /// confirmation dialog in batches of at most 500 unique native assets
+  /// (Android 11+ MediaStore.createDeleteRequest / iOS PHPhotoLibrary).
   Future<SpaceReleaseExecutionResult> executeNativeSpaceRelease(
-    List<VerifiedPhotoBackupRecord> verifiedRecords,
-  ) async {
-    if (verifiedRecords.isEmpty) {
-      return const SpaceReleaseExecutionResult(
-        deleted: false,
-        cancelled: false,
-        deletedCount: 0,
-        freedBytes: 0,
-        alreadyMissingCount: 0,
-        message: '没有通过远端 SHA-256 核验的可释放条目，本机原片未受影响。',
-      );
-    }
-    final assetIds = verifiedRecords
-        .map((item) => item.assetId)
-        .toList(growable: false);
-    final result = await _transfer.requestDeleteAssets(assetIds);
-    if (result.cancelled || !result.deleted) {
-      return const SpaceReleaseExecutionResult(
-        deleted: false,
-        cancelled: true,
-        deletedCount: 0,
-        freedBytes: 0,
-        alreadyMissingCount: 0,
-        message: '已取消系统删除确认，手机原片均已保留。',
-      );
-    }
-    final freedBytes = PhotoBackupVerifiedLedger.totalBytes(verifiedRecords);
-    final prefs = _prefs;
-    if (prefs != null && options.deviceId.isNotEmpty) {
-      final remaining = await _verifiedLedger.removeAssetIds(
-        prefs,
-        prefsSchema,
-        assetIds.toSet(),
-      );
-      if (!_disposed) {
+    List<VerifiedPhotoBackupRecord> verifiedRecords, {
+    void Function(int currentBatch, int totalBatches, int deletedSoFar)?
+    onBatchProgress,
+  }) async {
+    final result = await _spaceReleaseService.executeBatchedRelease(
+      verifiedRecords: verifiedRecords,
+      prefs: _prefs,
+      schema: prefsSchema,
+      hasDeviceId: options.deviceId.isNotEmpty,
+      onLedgerUpdated: (remaining) {
         spaceRelease.verifiedRecords = remaining;
-      }
-    }
-    final summary = result.deletedCount > 0
-        ? '已由系统确认释放 ${result.deletedCount} 项本地原片（约 ${formatBytes(freedBytes)}），NAS 远端备份完整保留。'
-        : '所选 ${result.alreadyMissingCount} 项原片已不在本机相册中，已同步更新本地记录。';
-    if (!_disposed) {
-      spaceRelease.lastReleaseSummary = summary;
+      },
+      onBatchProgress: onBatchProgress,
+    );
+    if (result.deleted && !_disposed) {
+      spaceRelease.lastReleaseSummary = result.message;
       _notify();
     }
-    return SpaceReleaseExecutionResult(
-      deleted: true,
-      cancelled: false,
-      deletedCount: result.deletedCount,
-      freedBytes: freedBytes,
-      alreadyMissingCount: result.alreadyMissingCount,
-      message: summary,
-    );
+    return result;
   }
 
   void setBatchPages(int value) {

@@ -553,7 +553,7 @@ class _FolderAlbumsPageState extends State<FolderAlbumsPage> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final palette = IslePalette(isDark);
+    final palette = IslePalette.of(context);
     final borderColor = IsleGlass.rimBorderColor(isDark);
     final rose = palette['brandRose'];
     final sharedCount = _items.where((i) => i['shared'] == true).length;

@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
@@ -9,6 +8,9 @@ import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 import 'file_extras_api.dart';
 import 'file_models.dart';
+import 'file_safe_markdown_view.dart';
+
+export 'file_safe_markdown_view.dart';
 
 enum _TextDialogMode { preview, source, edit }
 
@@ -60,9 +62,12 @@ class _FileTextPreviewDialogState extends State<FileTextPreviewDialog> {
   );
 
   int? _mtimeUnixNano;
+  String _mtimeToken = '';
+  late int _currentSizeBytes = widget.item.size;
   bool _loadingForEdit = false;
   bool _saving = false;
   bool _dirty = false;
+  bool _hasConflict = false;
   String? _bannerMessage;
   bool _bannerError = false;
   String? _conflictLatestContent;
@@ -87,10 +92,12 @@ class _FileTextPreviewDialogState extends State<FileTextPreviewDialog> {
 
   Future<void> _enterEditMode() async {
     if (!_canEnterEdit || _loadingForEdit) return;
-    if (_mtimeUnixNano != null && _mtimeUnixNano! > 0) {
+    if ((_mtimeToken.isNotEmpty) ||
+        (_mtimeUnixNano != null && _mtimeUnixNano! > 0)) {
       setState(() {
         _mode = _TextDialogMode.edit;
         _bannerMessage = null;
+        _hasConflict = false;
       });
       return;
     }
@@ -98,6 +105,7 @@ class _FileTextPreviewDialogState extends State<FileTextPreviewDialog> {
       _loadingForEdit = true;
       _bannerMessage = null;
       _bannerError = false;
+      _hasConflict = false;
     });
     try {
       final doc = await FileExtrasApi(
@@ -116,7 +124,10 @@ class _FileTextPreviewDialogState extends State<FileTextPreviewDialog> {
         _content = doc.content;
         _editor.text = doc.content;
         _mtimeUnixNano = doc.mtimeUnixNano;
+        _mtimeToken = doc.mtimeToken;
+        _currentSizeBytes = doc.size;
         _dirty = false;
+        _hasConflict = false;
         _mode = _TextDialogMode.edit;
         _loadingForEdit = false;
       });
@@ -138,6 +149,7 @@ class _FileTextPreviewDialogState extends State<FileTextPreviewDialog> {
       setState(() {
         _bannerMessage = '文本内容超过 2 MiB 在线保存上限，请精简后再保存。';
         _bannerError = true;
+        _hasConflict = false;
       });
       return;
     }
@@ -145,6 +157,7 @@ class _FileTextPreviewDialogState extends State<FileTextPreviewDialog> {
       _saving = true;
       _bannerMessage = null;
       _bannerError = false;
+      if (!refreshConflictFirst) _hasConflict = false;
     });
     try {
       final extras = FileExtrasApi(api);
@@ -153,7 +166,10 @@ class _FileTextPreviewDialogState extends State<FileTextPreviewDialog> {
         if (!mounted) return;
         setState(() {
           _mtimeUnixNano = latest.mtimeUnixNano;
+          _mtimeToken = latest.mtimeToken;
+          _currentSizeBytes = latest.size;
           _conflictLatestContent = latest.content;
+          _hasConflict = false;
           _bannerMessage = '已刷新服务端最新版本供对照（下方可核对）。当前编辑草稿已保留，确认无误后可再次点击保存。';
           _bannerError = false;
         });
@@ -163,10 +179,12 @@ class _FileTextPreviewDialogState extends State<FileTextPreviewDialog> {
         path: widget.item.path,
         content: draft,
         expectedMtimeUnixNano: _mtimeUnixNano,
+        expectedMtimeToken: _mtimeToken.isNotEmpty ? _mtimeToken : null,
       );
       if (!mounted) return;
       if (outcome.conflict) {
         setState(() {
+          _hasConflict = true;
           _bannerMessage =
               outcome.conflictMessage ??
               '文件已被其他设备修改，本次保存已中止，您的草稿仍保留在编辑框中。';
@@ -179,7 +197,12 @@ class _FileTextPreviewDialogState extends State<FileTextPreviewDialog> {
         _mtimeUnixNano = outcome.mtimeUnixNano > 0
             ? outcome.mtimeUnixNano
             : _mtimeUnixNano;
+        if (outcome.mtimeToken.isNotEmpty) {
+          _mtimeToken = outcome.mtimeToken;
+        }
+        _currentSizeBytes = outcome.size;
         _dirty = false;
+        _hasConflict = false;
         _conflictLatestContent = null;
         _bannerMessage = '已安全保存到 NAS（${formatBytes(outcome.size)}）。';
         _bannerError = false;
@@ -207,39 +230,33 @@ class _FileTextPreviewDialogState extends State<FileTextPreviewDialog> {
       backgroundColor: Colors.transparent,
       elevation: 0,
       insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-      child: ClipRRect(
-        borderRadius: IsleRadius.brCard,
-        child: BackdropFilter(
-          filter: ui.ImageFilter.blur(sigmaX: 20, sigmaY: 20),
-          child: Container(
-            constraints: const BoxConstraints(maxWidth: 840),
-            decoration: BoxDecoration(
-              color: colors.surface.withValues(alpha: isDark ? 0.92 : 0.97),
-              borderRadius: IsleRadius.brCard,
-              border: Border.all(color: borderColor, width: 1.0),
-              boxShadow: IsleShadows.floating(isDark),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                _buildHeader(context, theme, colors),
-                Divider(height: 1, thickness: 1, color: borderColor),
-                if (widget.error == null && (_isMarkdown || _canEnterEdit))
-                  _buildModeToolbar(context, colors, borderColor),
-                if (_bannerMessage != null)
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(14, 10, 14, 0),
-                    child: _buildBanner(context, colors),
-                  ),
-                Flexible(
-                  child: Padding(
-                    padding: const EdgeInsets.all(14),
-                    child: _buildBody(context, theme, colors, isDark, borderColor),
-                  ),
+      shape: IsleShapes.card(side: BorderSide(color: borderColor)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 840),
+        child: IsleSurface(
+          margin: EdgeInsets.zero,
+          padding: EdgeInsets.zero,
+          radius: IsleRadius.card,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _buildHeader(context, theme, colors),
+              Divider(height: 1, thickness: 1, color: borderColor),
+              if (widget.error == null && (_isMarkdown || _canEnterEdit))
+                _buildModeToolbar(context, colors, borderColor),
+              if (_bannerMessage != null)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 10, 14, 0),
+                  child: _buildBanner(context, colors),
                 ),
-              ],
-            ),
+              Flexible(
+                child: Padding(
+                  padding: const EdgeInsets.all(14),
+                  child: _buildBody(context, theme, colors, isDark, borderColor),
+                ),
+              ),
+            ],
           ),
         ),
       ),
@@ -273,7 +290,7 @@ class _FileTextPreviewDialogState extends State<FileTextPreviewDialog> {
                 ),
                 const SizedBox(height: 1.5),
                 Text(
-                  '${formatBytes(widget.item.size)} · ${_mode == _TextDialogMode.edit ? (_dirty ? '编辑中（未保存）' : '在线编辑') : 'QuickLook 快速查看'}',
+                  '${formatBytes(_currentSizeBytes)} · ${_mode == _TextDialogMode.edit ? (_dirty ? '编辑中（未保存）' : '在线编辑') : 'QuickLook 快速查看'}',
                   style: theme.textTheme.bodySmall?.copyWith(
                     fontSize: 11.5,
                     color: colors.onSurfaceVariant,
@@ -377,11 +394,11 @@ class _FileTextPreviewDialogState extends State<FileTextPreviewDialog> {
               ),
               onPressed: _saving ? null : () => unawaited(_save()),
               icon: _saving
-                  ? const SizedBox.square(
+                  ? SizedBox.square(
                       dimension: 14,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
-                        color: Colors.white,
+                        color: colors.onPrimary,
                       ),
                     )
                   : const Icon(Icons.save_outlined, size: 16),
@@ -393,14 +410,13 @@ class _FileTextPreviewDialogState extends State<FileTextPreviewDialog> {
   }
 
   Widget _buildBanner(BuildContext context, ColorScheme colors) {
-    final isConflict = _bannerError && _bannerMessage!.contains('修改');
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
       decoration: BoxDecoration(
         color: (_bannerError ? colors.error : colors.primary).withValues(
           alpha: 0.1,
         ),
-        borderRadius: BorderRadius.circular(10),
+        borderRadius: BorderRadius.circular(IsleRadius.badge),
         border: Border.all(
           color: (_bannerError ? colors.error : colors.primary).withValues(
             alpha: 0.35,
@@ -418,7 +434,7 @@ class _FileTextPreviewDialogState extends State<FileTextPreviewDialog> {
               ),
             ),
           ),
-          if (isConflict)
+          if (_hasConflict)
             TextButton(
               key: const ValueKey('textDialogRefreshLatestBtn'),
               onPressed: _saving
@@ -452,7 +468,7 @@ class _FileTextPreviewDialogState extends State<FileTextPreviewDialog> {
       color: isDark
           ? Colors.black.withValues(alpha: 0.36)
           : colors.surfaceContainerHighest.withValues(alpha: 0.42),
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(IsleRadius.input),
       border: Border.all(color: borderColor, width: 1.0),
     );
 
@@ -540,253 +556,5 @@ class _FileTextPreviewDialogState extends State<FileTextPreviewDialog> {
         ),
       ),
     );
-  }
-}
-
-/// Safe pure-Dart Markdown preview widget (never renders raw HTML or scripts).
-class SafeMarkdownView extends StatelessWidget {
-  const SafeMarkdownView({super.key, required this.markdown});
-
-  final String markdown;
-
-  @override
-  Widget build(BuildContext context) {
-    final theme = Theme.of(context);
-    final colors = theme.colorScheme;
-    final lines = markdown.replaceAll('\r\n', '\n').split('\n');
-    final widgets = <Widget>[];
-    var inCodeBlock = false;
-    final codeBuffer = StringBuffer();
-
-    void flushCodeBlock() {
-      if (codeBuffer.isEmpty) return;
-      widgets.add(
-        Container(
-          width: double.infinity,
-          margin: const EdgeInsets.symmetric(vertical: 6),
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            color: colors.surfaceContainerHighest.withValues(alpha: 0.65),
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: SelectableText(
-            codeBuffer.toString().trimRight(),
-            style: const TextStyle(
-              fontFamily: 'monospace',
-              fontSize: 12.2,
-              height: 1.45,
-            ),
-          ),
-        ),
-      );
-      codeBuffer.clear();
-    }
-
-    for (final rawLine in lines) {
-      final trimmed = rawLine.trimRight();
-      if (trimmed.startsWith('```')) {
-        if (inCodeBlock) {
-          flushCodeBlock();
-          inCodeBlock = false;
-        } else {
-          inCodeBlock = true;
-        }
-        continue;
-      }
-      if (inCodeBlock) {
-        codeBuffer.writeln(rawLine);
-        continue;
-      }
-      if (trimmed.trim().isEmpty) {
-        widgets.add(const SizedBox(height: 6));
-        continue;
-      }
-      if (RegExp(r'^(-{3,}|\*{3,}|_{3,})$').hasMatch(trimmed.trim())) {
-        widgets.add(const Divider(height: 18));
-        continue;
-      }
-      final heading = RegExp(r'^(#{1,4})\s+(.*)$').firstMatch(trimmed);
-      if (heading != null) {
-        final level = heading.group(1)!.length;
-        final size = switch (level) {
-          1 => 20.0,
-          2 => 17.5,
-          3 => 15.5,
-          _ => 14.0,
-        };
-        widgets.add(
-          Padding(
-            padding: const EdgeInsets.only(top: 8, bottom: 4),
-            child: SelectableText.rich(
-              _parseInlineSpans(
-                heading.group(2) ?? '',
-                TextStyle(fontSize: size, fontWeight: FontWeight.w800, height: 1.35),
-                colors,
-              ),
-            ),
-          ),
-        );
-        continue;
-      }
-      if (trimmed.startsWith('> ')) {
-        widgets.add(
-          Container(
-            margin: const EdgeInsets.symmetric(vertical: 4),
-            padding: const EdgeInsets.fromLTRB(10, 4, 8, 4),
-            decoration: BoxDecoration(
-              border: Border(
-                left: BorderSide(color: colors.primary, width: 3),
-              ),
-            ),
-            child: SelectableText.rich(
-              _parseInlineSpans(
-                trimmed.substring(2),
-                TextStyle(
-                  fontSize: 13.5,
-                  color: colors.onSurfaceVariant,
-                  height: 1.5,
-                ),
-                colors,
-              ),
-            ),
-          ),
-        );
-        continue;
-      }
-      final taskMatch = RegExp(r'^[-*]\s+\[([ xX])\]\s+(.*)$').firstMatch(trimmed);
-      if (taskMatch != null) {
-        final done = taskMatch.group(1)!.toLowerCase() == 'x';
-        widgets.add(
-          Padding(
-            padding: const EdgeInsets.symmetric(vertical: 2),
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Icon(
-                  done ? Icons.check_box_rounded : Icons.check_box_outline_blank_rounded,
-                  size: 16,
-                  color: done ? colors.primary : colors.onSurfaceVariant,
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: SelectableText.rich(
-                    _parseInlineSpans(
-                      taskMatch.group(2) ?? '',
-                      TextStyle(
-                        fontSize: 13.5,
-                        height: 1.5,
-                        decoration: done ? TextDecoration.lineThrough : null,
-                      ),
-                      colors,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-        continue;
-      }
-      final bulletMatch = RegExp(r'^[-*+]\s+(.*)$').firstMatch(trimmed);
-      if (bulletMatch != null) {
-        widgets.add(
-          Padding(
-            padding: const EdgeInsets.only(left: 8, top: 2, bottom: 2),
-            child: SelectableText.rich(
-              _parseInlineSpans(
-                '• ${bulletMatch.group(1) ?? ''}',
-                const TextStyle(fontSize: 13.5, height: 1.5),
-                colors,
-              ),
-            ),
-          ),
-        );
-        continue;
-      }
-      widgets.add(
-        Padding(
-          padding: const EdgeInsets.symmetric(vertical: 2),
-          child: SelectableText.rich(
-            _parseInlineSpans(
-              trimmed,
-              const TextStyle(fontSize: 13.5, height: 1.55),
-              colors,
-            ),
-          ),
-        ),
-      );
-    }
-    if (inCodeBlock) flushCodeBlock();
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: widgets,
-    );
-  }
-
-  TextSpan _parseInlineSpans(
-    String text,
-    TextStyle baseStyle,
-    ColorScheme colors,
-  ) {
-    final spans = <InlineSpan>[];
-    final tokenRegex = RegExp(
-      r'(\*\*[^*]+\*\*|`[^`]+`|\*[^*]+\*|\[[^\]]+\]\([^)]+\))',
-    );
-    var cursor = 0;
-    for (final match in tokenRegex.allMatches(text)) {
-      if (match.start > cursor) {
-        spans.add(TextSpan(text: text.substring(cursor, match.start)));
-      }
-      final token = match.group(0)!;
-      if (token.startsWith('**') && token.endsWith('**')) {
-        spans.add(
-          TextSpan(
-            text: token.substring(2, token.length - 2),
-            style: const TextStyle(fontWeight: FontWeight.w700),
-          ),
-        );
-      } else if (token.startsWith('`') && token.endsWith('`')) {
-        spans.add(
-          TextSpan(
-            text: token.substring(1, token.length - 1),
-            style: TextStyle(
-              fontFamily: 'monospace',
-              backgroundColor: colors.surfaceContainerHighest.withValues(
-                alpha: 0.7,
-              ),
-            ),
-          ),
-        );
-      } else if (token.startsWith('*') && token.endsWith('*')) {
-        spans.add(
-          TextSpan(
-            text: token.substring(1, token.length - 1),
-            style: const TextStyle(fontStyle: FontStyle.italic),
-          ),
-        );
-      } else if (token.startsWith('[')) {
-        final close = token.indexOf('](');
-        if (close > 1) {
-          final label = token.substring(1, close);
-          spans.add(
-            TextSpan(
-              text: label,
-              style: TextStyle(
-                color: colors.primary,
-                decoration: TextDecoration.underline,
-              ),
-            ),
-          );
-        } else {
-          spans.add(TextSpan(text: token));
-        }
-      }
-      cursor = match.end;
-    }
-    if (cursor < text.length) {
-      spans.add(TextSpan(text: text.substring(cursor)));
-    }
-    return TextSpan(style: baseStyle, children: spans);
   }
 }

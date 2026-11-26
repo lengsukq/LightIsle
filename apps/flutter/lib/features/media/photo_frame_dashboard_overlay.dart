@@ -4,12 +4,27 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/widgets.dart';
 import '../overview/family_board_card.dart';
 import '../overview/family_reminders_card.dart';
 import 'media_models.dart';
 import 'media_ui.dart';
+
+/// Shared clock/date/night-hour helpers used by both pure Photo Frame mode
+/// and the Family Dashboard overlay.
+String formatPhotoFrameClock(DateTime value) =>
+    '${value.hour.toString().padLeft(2, '0')}:'
+    '${value.minute.toString().padLeft(2, '0')}';
+
+String formatPhotoFrameSolarDate(DateTime value) {
+  const weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
+  return '${value.year}年${value.month}月${value.day}日 · '
+      '${weekdays[value.weekday - 1]}';
+}
+
+bool isPhotoFrameNightHour(DateTime value) => value.hour >= 22 || value.hour < 7;
 
 /// Platform channel bridge (`lightisle/device-display`) keeping idle iPad /
 /// tablet screens awake while Photo Frame or Family Dashboard mode is open.
@@ -151,21 +166,8 @@ class _PhotoFrameDashboardOverlayState
     }
   }
 
-  bool get _isNightSoftGlow {
-    if (widget.nightDimOverride != null) return widget.nightDimOverride!;
-    final hour = widget.now.hour;
-    return hour >= 22 || hour < 7;
-  }
-
-  String get _clockText =>
-      '${widget.now.hour.toString().padLeft(2, '0')}:'
-      '${widget.now.minute.toString().padLeft(2, '0')}';
-
-  String get _solarDateText {
-    const weekdays = ['周一', '周二', '周三', '周四', '周五', '周六', '周日'];
-    return '${widget.now.year}年${widget.now.month}月${widget.now.day}日 · '
-        '${weekdays[widget.now.weekday - 1]}';
-  }
+  bool get _isNightSoftGlow =>
+      widget.nightDimOverride ?? isPhotoFrameNightHour(widget.now);
 
   Widget _glassPanel({
     required Widget child,
@@ -175,14 +177,14 @@ class _PhotoFrameDashboardOverlayState
     final bgAlpha = nightMode ? 0.56 : 0.42;
     final borderAlpha = nightMode ? 0.14 : 0.22;
     return ClipRRect(
-      borderRadius: BorderRadius.circular(20),
+      borderRadius: BorderRadius.circular(IsleRadius.hero),
       child: BackdropFilter(
         filter: ui.ImageFilter.blur(sigmaX: 18, sigmaY: 18),
         child: Container(
           padding: padding,
           decoration: BoxDecoration(
             color: Color.fromRGBO(14, 16, 22, bgAlpha),
-            borderRadius: BorderRadius.circular(20),
+            borderRadius: BorderRadius.circular(IsleRadius.hero),
             border: Border.all(
               color: Colors.white.withValues(alpha: borderAlpha),
               width: 1.0,
@@ -194,7 +196,11 @@ class _PhotoFrameDashboardOverlayState
     );
   }
 
-  Widget _buildClockCard(bool nightMode, bool compact) {
+  Widget _buildClockCard(
+    bool nightMode,
+    bool compact,
+    IslePalette darkPalette,
+  ) {
     final lunar = _reminders.todayLunar?.display.trim() ?? '';
     final primaryColor = nightMode ? const Color(0xFFD8D4CC) : Colors.white;
     final secondaryColor = nightMode
@@ -203,6 +209,7 @@ class _PhotoFrameDashboardOverlayState
     final mutedColor = nightMode
         ? const Color(0x8CD8D4CC)
         : const Color(0xBFFFFFFF);
+    final warmAmber = darkPalette['brandAmber'];
 
     return _glassPanel(
       nightMode: nightMode,
@@ -220,7 +227,7 @@ class _PhotoFrameDashboardOverlayState
             crossAxisAlignment: WrapCrossAlignment.end,
             children: [
               Text(
-                _clockText,
+                formatPhotoFrameClock(widget.now),
                 style: TextStyle(
                   color: primaryColor,
                   fontSize: compact ? 44 : 62,
@@ -238,22 +245,22 @@ class _PhotoFrameDashboardOverlayState
                       vertical: 3,
                     ),
                     decoration: BoxDecoration(
-                      color: const Color(0x33E8A64D),
-                      borderRadius: BorderRadius.circular(999),
+                      color: warmAmber.withValues(alpha: 0.22),
+                      borderRadius: BorderRadius.circular(IsleRadius.pill),
                     ),
-                    child: const Row(
+                    child: Row(
                       mainAxisSize: MainAxisSize.min,
                       children: [
                         Icon(
                           Icons.bedtime_rounded,
                           size: 12,
-                          color: Color(0xFFE8C184),
+                          color: warmAmber,
                         ),
-                        SizedBox(width: 4),
+                        const SizedBox(width: 4),
                         Text(
                           '夜间柔光',
                           style: TextStyle(
-                            color: Color(0xFFE8C184),
+                            color: warmAmber,
                             fontSize: 11,
                             fontWeight: FontWeight.w600,
                           ),
@@ -266,7 +273,7 @@ class _PhotoFrameDashboardOverlayState
           ),
           const SizedBox(height: 8),
           Text(
-            _solarDateText,
+            formatPhotoFrameSolarDate(widget.now),
             style: TextStyle(
               color: secondaryColor,
               fontSize: compact ? 14 : 16,
@@ -279,8 +286,8 @@ class _PhotoFrameDashboardOverlayState
               lunar,
               key: const ValueKey('dashboardLunarDateText'),
               style: TextStyle(
-                color: const Color(0xFFE8C184).withValues(
-                  alpha: nightMode ? 0.85 : 0.96,
+                color: warmAmber.withValues(
+                  alpha: nightMode ? 0.88 : 0.98,
                 ),
                 fontSize: compact ? 13 : 14,
                 fontWeight: FontWeight.w600,
@@ -302,9 +309,10 @@ class _PhotoFrameDashboardOverlayState
     );
   }
 
-  Widget _buildBoardCard(bool nightMode) {
+  Widget _buildBoardCard(bool nightMode, IslePalette darkPalette) {
     final textColor = nightMode ? const Color(0xD9E2DDD5) : Colors.white;
     final subColor = nightMode ? const Color(0x99E2DDD5) : Colors.white70;
+    final amber = darkPalette['brandAmber'];
     return _glassPanel(
       nightMode: nightMode,
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
@@ -315,10 +323,10 @@ class _PhotoFrameDashboardOverlayState
         children: [
           Row(
             children: [
-              const Icon(
+              Icon(
                 Icons.forum_outlined,
                 size: 15,
-                color: Color(0xFFE8A64D),
+                color: amber,
               ),
               const SizedBox(width: 6),
               Text(
@@ -347,10 +355,10 @@ class _PhotoFrameDashboardOverlayState
               Row(
                 children: [
                   if (_boardMessages[i].pinned) ...[
-                    const Icon(
+                    Icon(
                       Icons.push_pin_rounded,
                       size: 12,
-                      color: Color(0xFFE8A64D),
+                      color: amber,
                     ),
                     const SizedBox(width: 4),
                   ],
@@ -385,7 +393,7 @@ class _PhotoFrameDashboardOverlayState
     );
   }
 
-  Widget _buildRemindersCard(bool nightMode) {
+  Widget _buildRemindersCard(bool nightMode, IslePalette darkPalette) {
     final textColor = nightMode ? const Color(0xD9E2DDD5) : Colors.white;
     final subColor = nightMode ? const Color(0x99E2DDD5) : Colors.white70;
     final items = _reminders.reminders.take(4).toList(growable: false);
@@ -400,10 +408,10 @@ class _PhotoFrameDashboardOverlayState
         children: [
           Row(
             children: [
-              const Icon(
+              Icon(
                 Icons.event_available_rounded,
                 size: 15,
-                color: Color(0xFFD4657D),
+                color: darkPalette['brandRose'],
               ),
               const SizedBox(width: 6),
               Text(
@@ -425,47 +433,52 @@ class _PhotoFrameDashboardOverlayState
           else
             for (var i = 0; i < items.length; i++) ...[
               if (i > 0) const SizedBox(height: 6),
-              Row(
-                children: [
-                  Container(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 7,
-                      vertical: 2,
-                    ),
-                    decoration: BoxDecoration(
-                      color: items[i].toneColor.withValues(alpha: 0.28),
-                      borderRadius: BorderRadius.circular(999),
-                    ),
-                    child: Text(
-                      items[i].countdownLabel,
-                      style: TextStyle(
-                        color: items[i].toneColor,
-                        fontSize: 11,
-                        fontWeight: FontWeight.w700,
+              Builder(
+                builder: (_) {
+                  final tone = items[i].resolveToneColor(darkPalette);
+                  return Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 7,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: tone.withValues(alpha: 0.24),
+                          borderRadius: BorderRadius.circular(IsleRadius.pill),
+                        ),
+                        child: Text(
+                          items[i].countdownLabel,
+                          style: TextStyle(
+                            color: tone,
+                            fontSize: 11,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-                  const SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      items[i].title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        color: textColor,
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Text(
+                          items[i].title,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: TextStyle(
+                            color: textColor,
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
                       ),
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Text(
-                    items[i].yearsBadge.isNotEmpty
-                        ? items[i].yearsBadge
-                        : items[i].nextSolarDate,
-                    style: TextStyle(color: subColor, fontSize: 11.5),
-                  ),
-                ],
+                      const SizedBox(width: 6),
+                      Text(
+                        items[i].yearsBadge.isNotEmpty
+                            ? items[i].yearsBadge
+                            : items[i].nextSolarDate,
+                        style: TextStyle(color: subColor, fontSize: 11.5),
+                      ),
+                    ],
+                  );
+                },
               ),
             ],
         ],
@@ -481,6 +494,12 @@ class _PhotoFrameDashboardOverlayState
     final nightMode = _isNightSoftGlow;
     final wide = size.width >= 760;
     final offset = reduceMotion ? Offset.zero : _burnInOffsets[_shiftStep];
+    // Photo frame overlays sit permanently over a dark glass backdrop, so
+    // always map semantic tones against the high-contrast dark palette.
+    final darkPalette = IslePalette(
+      true,
+      preset: IslePalette.of(context).effectivePreset,
+    );
 
     return IgnorePointer(
       child: Stack(
@@ -507,7 +526,7 @@ class _PhotoFrameDashboardOverlayState
                         children: [
                           ConstrainedBox(
                             constraints: const BoxConstraints(maxWidth: 360),
-                            child: _buildClockCard(nightMode, false),
+                            child: _buildClockCard(nightMode, false, darkPalette),
                           ),
                           const Spacer(),
                           SizedBox(
@@ -516,9 +535,9 @@ class _PhotoFrameDashboardOverlayState
                               mainAxisSize: MainAxisSize.min,
                               crossAxisAlignment: CrossAxisAlignment.stretch,
                               children: [
-                                _buildBoardCard(nightMode),
+                                _buildBoardCard(nightMode, darkPalette),
                                 const SizedBox(height: 12),
-                                _buildRemindersCard(nightMode),
+                                _buildRemindersCard(nightMode, darkPalette),
                               ],
                             ),
                           ),
@@ -528,11 +547,11 @@ class _PhotoFrameDashboardOverlayState
                         mainAxisAlignment: MainAxisAlignment.end,
                         crossAxisAlignment: CrossAxisAlignment.stretch,
                         children: [
-                          _buildClockCard(nightMode, true),
+                          _buildClockCard(nightMode, true, darkPalette),
                           const SizedBox(height: 10),
-                          _buildBoardCard(nightMode),
+                          _buildBoardCard(nightMode, darkPalette),
                           const SizedBox(height: 10),
-                          _buildRemindersCard(nightMode),
+                          _buildRemindersCard(nightMode, darkPalette),
                         ],
                       ),
               ),

@@ -599,26 +599,19 @@ class MobilePhotoBackupSpaceReleaseCard extends StatelessWidget {
                   isDense: true,
                   labelText: '自动释放筛选保留期',
                 ),
-                items: const [
-                  DropdownMenuItem(
-                    value: 30,
-                    child: Text('30 天前拍摄（默认）', overflow: TextOverflow.ellipsis),
-                  ),
-                  DropdownMenuItem(
-                    value: 90,
-                    child: Text('90 天前拍摄', overflow: TextOverflow.ellipsis),
-                  ),
-                  DropdownMenuItem(
-                    value: 7,
-                    child: Text('7 天前拍摄', overflow: TextOverflow.ellipsis),
-                  ),
-                  DropdownMenuItem(
-                    value: 0,
-                    child: Text(
-                      '不限时间（全部已验证项）',
-                      overflow: TextOverflow.ellipsis,
+                items: [
+                  for (final days
+                      in PhotoBackupPrefsSchema.autoReleaseDropdownOrder)
+                    DropdownMenuItem(
+                      value: days,
+                      child: Text(
+                        PhotoBackupPrefsSchema.autoReleaseMinAgeLabel(
+                          days,
+                          showDefaultTag: true,
+                        ),
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
-                  ),
                 ],
                 onChanged: progress.busy
                     ? null

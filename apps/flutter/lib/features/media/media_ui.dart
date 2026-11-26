@@ -122,7 +122,7 @@ class MediaFilterChip extends StatelessWidget {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final dark = theme.brightness == Brightness.dark;
-    final palette = IslePalette(dark);
+    final palette = IslePalette.of(context);
     final maxLabelWidth = (MediaQuery.sizeOf(context).width * .58)
         .clamp(160.0, 300.0)
         .toDouble();

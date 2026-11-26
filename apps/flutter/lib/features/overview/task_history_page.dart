@@ -79,7 +79,7 @@ class _TaskHistoryPageState extends State<TaskHistoryPage> {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
-    final palette = IslePalette(isDark);
+    final palette = IslePalette.of(context);
     final borderColor = IsleGlass.rimBorderColor(isDark);
     final failedCount = _runs.where(_isFailed).length;
     final okCount = _runs.where((t) => !_isFailed(t) && !_isRunning(t)).length;

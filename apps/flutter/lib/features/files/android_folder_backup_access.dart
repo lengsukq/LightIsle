@@ -90,13 +90,14 @@ class AndroidFolderBackupAccess extends DesktopDirectoryAccess {
 /// Zero-copy streaming folder source backed by Android `DocumentsContract` and
 /// `ContentResolver.openInputStream`.
 class AndroidSafFolderSource extends BackupFolderSource {
-  const AndroidSafFolderSource({
+  AndroidSafFolderSource({
     required this.channel,
     required this.treeUri,
   });
 
   final MethodChannel channel;
   final String treeUri;
+  final Set<String> _activeRequestIds = <String>{};
 
   static String _newRequestId() {
     final rng = Random.secure();
@@ -118,6 +119,14 @@ class AndroidSafFolderSource extends BackupFolderSource {
   }
 
   @override
+  void cancelActiveRequest() {
+    final pending = _activeRequestIds.toList(growable: false);
+    for (final requestId in pending) {
+      _cancelNativeRequestAsync(requestId);
+    }
+  }
+
+  @override
   Future<BackupScanResult> scan({
     required DesktopBackupTask task,
     required DesktopBackupIgnoreMatcher matcher,
@@ -126,6 +135,7 @@ class AndroidSafFolderSource extends BackupFolderSource {
   }) async {
     checkActive();
     final requestId = _newRequestId();
+    _activeRequestIds.add(requestId);
     final Map<String, dynamic>? raw;
     try {
       raw = await channel.invokeMapMethod<String, dynamic>(
@@ -139,11 +149,14 @@ class AndroidSafFolderSource extends BackupFolderSource {
         },
       );
     } on PlatformException catch (error) {
+      checkActive();
       throw StateError(
         error.message?.isNotEmpty == true
             ? error.message!
             : '扫描 Android 文件夹失败：${userFacingError(error)}',
       );
+    } finally {
+      _activeRequestIds.remove(requestId);
     }
     try {
       checkActive();
@@ -160,6 +173,7 @@ class AndroidSafFolderSource extends BackupFolderSource {
     var skippedIgnored = (raw['skippedIgnored'] as num?)?.toInt() ?? 0;
     var skippedOversized = (raw['skippedOversized'] as num?)?.toInt() ?? 0;
     final skippedSymlinks = (raw['skippedSymlinks'] as num?)?.toInt() ?? 0;
+    final truncated = raw['truncated'] == true;
 
     final rawFailures = raw['failures'];
     if (rawFailures is List) {
@@ -261,6 +275,7 @@ class AndroidSafFolderSource extends BackupFolderSource {
       skippedSymlinks: skippedSymlinks,
       skippedIgnored: skippedIgnored,
       skippedOversized: skippedOversized,
+      truncated: truncated,
     );
   }
 
@@ -303,6 +318,7 @@ class AndroidSafFolderSource extends BackupFolderSource {
       throw const PhotoSourceChanged();
     }
     final requestId = _newRequestId();
+    _activeRequestIds.add(requestId);
     try {
       final result = await channel.invokeMapMethod<String, dynamic>(
         'hashFile',
@@ -325,6 +341,7 @@ class AndroidSafFolderSource extends BackupFolderSource {
           : const <String>[];
       return PhotoHashResult(digest, chunks);
     } on PlatformException catch (error) {
+      checkActive();
       if (error.code == 'folder_source_changed') {
         throw const PhotoSourceChanged();
       }
@@ -334,6 +351,8 @@ class AndroidSafFolderSource extends BackupFolderSource {
     } catch (_) {
       _cancelNativeRequestAsync(requestId);
       rethrow;
+    } finally {
+      _activeRequestIds.remove(requestId);
     }
   }
 
@@ -353,6 +372,7 @@ class AndroidSafFolderSource extends BackupFolderSource {
     }
     if (length == 0) return;
     final requestId = _newRequestId();
+    _activeRequestIds.add(requestId);
     try {
       final bytes = await channel.invokeMethod<Uint8List>(
         'readChunk',
@@ -372,6 +392,7 @@ class AndroidSafFolderSource extends BackupFolderSource {
       }
       yield bytes;
     } on PlatformException catch (error) {
+      checkActive();
       if (error.code == 'folder_source_changed') {
         throw const PhotoSourceChanged();
       }
@@ -381,6 +402,8 @@ class AndroidSafFolderSource extends BackupFolderSource {
     } catch (_) {
       _cancelNativeRequestAsync(requestId);
       rethrow;
+    } finally {
+      _activeRequestIds.remove(requestId);
     }
   }
 

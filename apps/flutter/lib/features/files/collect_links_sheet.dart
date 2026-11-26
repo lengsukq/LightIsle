@@ -14,6 +14,7 @@ Future<void> showCollectLinksSheet(
   required LightIsleApi api,
   required String targetPath,
   required String folderName,
+  bool isAdmin = false,
 }) => showModalBottomSheet<void>(
   context: context,
   isScrollControlled: true,
@@ -25,6 +26,7 @@ Future<void> showCollectLinksSheet(
       api: api,
       targetPath: targetPath,
       folderName: folderName,
+      isAdmin: isAdmin,
     ),
   ),
 );
@@ -36,11 +38,13 @@ class CollectLinksSheet extends StatefulWidget {
     required this.api,
     required this.targetPath,
     required this.folderName,
+    this.isAdmin = false,
   });
 
   final LightIsleApi api;
   final String targetPath;
   final String folderName;
+  final bool isAdmin;
 
   @override
   State<CollectLinksSheet> createState() => _CollectLinksSheetState();
@@ -162,6 +166,7 @@ class _CollectLinksSheetState extends State<CollectLinksSheet> {
         maxFileBytes: (maxFileMb * 1024 * 1024).round(),
         maxTotalBytes: (maxTotalGb * 1024 * 1024 * 1024).round(),
         allowedExts: _parseAllowedExts(),
+        isAdmin: widget.isAdmin,
       );
       if (!mounted) return;
       setState(() {
@@ -219,7 +224,7 @@ class _CollectLinksSheetState extends State<CollectLinksSheet> {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
     final isDark = theme.brightness == Brightness.dark;
-    final palette = IslePalette(isDark);
+    final palette = IslePalette.of(context);
     final borderColor = IsleGlass.rimBorderColor(isDark);
     final visibleLinks = _showAllFolders
         ? _links
@@ -228,13 +233,26 @@ class _CollectLinksSheetState extends State<CollectLinksSheet> {
     return Container(
       decoration: BoxDecoration(
         color: colors.surface,
-        borderRadius: const BorderRadius.vertical(top: Radius.circular(22)),
+        borderRadius: const BorderRadius.vertical(
+          top: Radius.circular(IsleRadius.sheet),
+        ),
         border: Border.all(color: borderColor),
       ),
       child: Column(
         children: [
+          Center(
+            child: Container(
+              width: 36,
+              height: 4,
+              margin: const EdgeInsets.only(top: 10, bottom: 2),
+              decoration: BoxDecoration(
+                color: colors.onSurfaceVariant.withValues(alpha: 0.34),
+                borderRadius: BorderRadius.circular(IsleRadius.pill),
+              ),
+            ),
+          ),
           Padding(
-            padding: const EdgeInsets.fromLTRB(18, 12, 10, 8),
+            padding: const EdgeInsets.fromLTRB(18, 6, 10, 8),
             child: Row(
               children: [
                 IsleSquircleBadge(
@@ -520,11 +538,11 @@ class _CollectLinksSheetState extends State<CollectLinksSheet> {
               key: const ValueKey('createCollectLinkBtn'),
               onPressed: _creating ? null : _createLink,
               icon: _creating
-                  ? const SizedBox.square(
+                  ? SizedBox.square(
                       dimension: 15,
                       child: CircularProgressIndicator(
                         strokeWidth: 2,
-                        color: Colors.white,
+                        color: Theme.of(context).colorScheme.onPrimary,
                       ),
                     )
                   : const Icon(Icons.add_link_rounded, size: 17),

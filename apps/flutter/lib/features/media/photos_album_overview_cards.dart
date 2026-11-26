@@ -171,7 +171,7 @@ class PhotosCollectionsQuickGrid extends StatelessWidget {
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final palette = IslePalette(isDark);
+    final palette = IslePalette.of(context);
     final borderColor = IsleGlass.rimBorderColor(isDark);
     final items =
         <({String label, IconData icon, Color accent, String route})>[

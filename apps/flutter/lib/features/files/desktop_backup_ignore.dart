@@ -52,6 +52,20 @@ const Set<String> kDesktopBackupSystemJunkNames = <String>{
 
 const int kBytesPerMiB = 1024 * 1024;
 
+final RegExp _lightIsleBackupSuffixPattern = RegExp(
+  r'\.lightisle-bak(?:\.\d+)?$',
+);
+final RegExp _lightIsleRestorePartPattern = RegExp(
+  r'\.lightisle-restore-[^/\\]+\.part$',
+);
+
+/// Returns true if a file or directory segment is an internal LightIsle
+/// artifact (`.lightisle-*`, restore `.lightisle-bak[.N]`, or `.lightisle-restore-*.part`).
+bool isLightIsleInternalArtifactName(String name) =>
+    name.startsWith('.lightisle-') ||
+    _lightIsleBackupSuffixPattern.hasMatch(name) ||
+    _lightIsleRestorePartPattern.hasMatch(name);
+
 DesktopBackupIgnorePreset? findIgnorePreset(String id) {
   for (final preset in kDesktopBackupIgnorePresets) {
     if (preset.id == id) return preset;
@@ -116,7 +130,7 @@ class DesktopBackupIgnoreMatcher {
   bool shouldSkipSegmentName(String name) {
     if (name.isEmpty || name == '.' || name == '..') return true;
     if (kDesktopBackupSystemJunkNames.contains(name)) return true;
-    if (name.startsWith('.lightisle-')) return true;
+    if (isLightIsleInternalArtifactName(name)) return true;
     if (ignoreHidden && name.startsWith('.')) return true;
     return false;
   }

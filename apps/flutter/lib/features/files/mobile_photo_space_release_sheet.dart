@@ -6,6 +6,7 @@ import '../../core/isle_theme.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 import 'mobile_photo_backup_controller.dart';
+import 'photo_backup_prefs_schema.dart';
 import 'photo_backup_verified_ledger.dart';
 
 Future<void> showMobilePhotoSpaceReleaseSheet(
@@ -54,6 +55,8 @@ class _MobilePhotoSpaceReleaseSheetState
   bool _cancelled = false;
   int _checkedCount = 0;
   int _totalCount = 0;
+  int _deleteBatchCurrent = 0;
+  int _deleteBatchTotal = 0;
 
   SpaceReleaseVerificationSummary? _verificationSummary;
   SpaceReleaseExecutionResult? _executionResult;
@@ -63,9 +66,9 @@ class _MobilePhotoSpaceReleaseSheetState
   void initState() {
     super.initState();
     final minAge = widget.initialMinAgeDays;
-    if (minAge == 30) {
+    if (minAge == PhotoBackupPrefsSchema.spaceReleaseAgeDays30) {
       _filter = SpaceReleaseFilter.olderThan30Days;
-    } else if (minAge == 90) {
+    } else if (minAge == PhotoBackupPrefsSchema.spaceReleaseAgeDays90) {
       _filter = SpaceReleaseFilter.olderThan90Days;
     } else if (minAge != null && minAge > 0) {
       _filter = SpaceReleaseFilter.all;
@@ -144,11 +147,20 @@ class _MobilePhotoSpaceReleaseSheetState
 
     setState(() {
       _deleting = true;
+      _deleteBatchCurrent = 1;
+      _deleteBatchTotal = 1;
       _errorMessage = null;
     });
     try {
       final result = await widget.controller.executeNativeSpaceRelease(
         summary.verified,
+        onBatchProgress: (currentBatch, totalBatches, _) {
+          if (!mounted) return;
+          setState(() {
+            _deleteBatchCurrent = currentBatch;
+            _deleteBatchTotal = totalBatches;
+          });
+        },
       );
       if (!mounted) return;
       setState(() {
@@ -373,16 +385,20 @@ class _MobilePhotoSpaceReleaseSheetState
                     ],
                     if (_deleting) ...[
                       const SizedBox(height: 14),
-                      const Row(
+                      Row(
                         children: [
-                          SizedBox(
+                          const SizedBox(
                             width: 18,
                             height: 18,
                             child: CircularProgressIndicator(strokeWidth: 2.2),
                           ),
-                          SizedBox(width: 10),
+                          const SizedBox(width: 10),
                           Expanded(
-                            child: Text('请在系统弹出的相册确认窗口中点击确认以释放本地原片…'),
+                            child: Text(
+                              _deleteBatchTotal > 1
+                                  ? '正在分批请求系统释放（第 $_deleteBatchCurrent / $_deleteBatchTotal 批），请在系统弹窗中点击确认…'
+                                  : '请在系统弹出的相册确认窗口中点击确认以释放本地原片…',
+                            ),
                           ),
                         ],
                       ),
@@ -587,7 +603,7 @@ class _StatusCallout extends StatelessWidget {
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(12),
+        borderRadius: BorderRadius.circular(IsleRadius.input),
         border: Border.all(color: color.withValues(alpha: 0.28)),
       ),
       child: Row(

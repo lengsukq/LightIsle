@@ -6,6 +6,7 @@ import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
+import '../files/offline_file_store.dart';
 import '../media/offline_photo_store.dart';
 import '../media/offline_video_store.dart';
 import 'network_diagnostics_page.dart';
@@ -315,7 +316,7 @@ Future<void> confirmSettingsLogout(
       content: Text(
         '下次连接需要重新输入密码。'
         '${(pendingUploads?.call() ?? 0) > 0 ? '当前仍有 ${pendingUploads!()} 个上传任务未结束；退出后传输将暂停，重新登录时可尝试断点续传。' : ''}'
-        '${canClear ? '你可以保留离线照片和影片，或清理当前服务器、账号和存储位置的两种本地副本；其他硬盘位置的副本需分别清理。NAS 原始文件不会删除。' : '本客户端无法确认稳定账号 ID，已保存的本地文件不会自动删除。'}',
+        '${canClear ? '你可以保留离线照片、影片与文件，或清理当前服务器、账号和存储位置的全部本地离线副本；其他硬盘位置的副本需分别清理。NAS 原始文件不会删除。' : '本客户端无法确认稳定账号 ID，已保存的本地文件不会自动删除。'}',
       ),
       actions: [
         TextButton(
@@ -339,6 +340,7 @@ Future<void> confirmSettingsLogout(
     try {
       await OfflineVideoStore(api: api, accountName: 'uid:$userId').clear();
       await OfflinePhotoStore(api: api, accountId: 'uid:$userId').clear();
+      await OfflineFileStore(api: api, accountIdentity: 'uid:$userId').clear();
     } catch (error) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

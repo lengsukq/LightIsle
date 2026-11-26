@@ -120,7 +120,7 @@ class _AccountsPageState extends State<AccountsPage> {
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final palette = IslePalette(isDark);
+    final palette = IslePalette.of(context);
     final borderColor = IsleGlass.rimBorderColor(isDark);
     final mineral = palette['brandBlue'];
     final sage = palette['brandSage'];

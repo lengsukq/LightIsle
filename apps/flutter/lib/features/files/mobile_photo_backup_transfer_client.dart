@@ -82,12 +82,69 @@ class NativePhotoDeleteResult {
     required this.cancelled,
     required this.deletedCount,
     required this.alreadyMissingCount,
+    this.deletedAssetIds = const <String>[],
   });
 
   final bool deleted;
   final bool cancelled;
   final int deletedCount;
   final int alreadyMissingCount;
+  final List<String> deletedAssetIds;
+}
+
+class NativeIosAssetInspection {
+  const NativeIosAssetInspection({
+    required this.exists,
+    required this.modificationDateMs,
+    required this.assetGeneration,
+    required this.generations,
+    required this.hasPhoto,
+    required this.hasRaw,
+    required this.hasLiveVideo,
+    required this.hasVideo,
+    required this.requiredAssetIds,
+  });
+
+  final bool exists;
+  final int modificationDateMs;
+  final int assetGeneration;
+  final Map<String, int> generations;
+  final bool hasPhoto;
+  final bool hasRaw;
+  final bool hasLiveVideo;
+  final bool hasVideo;
+  final List<String> requiredAssetIds;
+
+  static NativeIosAssetInspection fromMap(Map<String, dynamic> raw) {
+    final rawGens = raw['generations'];
+    final generations = <String, int>{};
+    if (rawGens is Map) {
+      rawGens.forEach((key, value) {
+        final k = key?.toString().trim() ?? '';
+        if (k.isNotEmpty && value is num) {
+          generations[k] = value.toInt();
+        }
+      });
+    }
+    final rawRequired = raw['requiredAssetIds'];
+    final requiredAssetIds = rawRequired is List
+        ? rawRequired
+              .map((e) => e?.toString().trim() ?? '')
+              .where((e) => e.isNotEmpty)
+              .toList(growable: false)
+        : const <String>[];
+    return NativeIosAssetInspection(
+      exists: raw['exists'] == true,
+      modificationDateMs: (raw['modificationDate'] as num?)?.toInt() ?? 0,
+      assetGeneration: (raw['assetGeneration'] as num?)?.toInt() ?? 0,
+      generations: generations,
+      hasPhoto: raw['hasPhoto'] == true,
+      hasRaw: raw['hasRaw'] == true,
+      hasLiveVideo: raw['hasLiveVideo'] == true,
+      hasVideo: raw['hasVideo'] == true,
+      requiredAssetIds: requiredAssetIds,
+    );
+  }
 }
 
 class PhotoPageResponse {
@@ -225,6 +282,42 @@ class MobilePhotoBackupTransferClient {
         .toList(growable: false);
   }
 
+  Future<Map<String, NativeIosAssetInspection>> inspectIosAssets(
+    List<String> assetIds,
+  ) async {
+    final uniqueIds = assetIds
+        .map((id) => id.trim())
+        .where((id) => id.isNotEmpty)
+        .toSet()
+        .toList(growable: false);
+    if (uniqueIds.isEmpty) return const <String, NativeIosAssetInspection>{};
+    final out = <String, NativeIosAssetInspection>{};
+    const chunkSize = 500;
+    for (var offset = 0; offset < uniqueIds.length; offset += chunkSize) {
+      final batch = uniqueIds.sublist(
+        offset,
+        min(offset + chunkSize, uniqueIds.length),
+      );
+      final response = await channel.invokeMapMethod<String, dynamic>(
+        'inspectAssets',
+        {'assetIds': batch},
+      );
+      final rawAssets = response?['assets'];
+      if (rawAssets is! Map) {
+        throw StateError('iOS 相册未返回有效的资产状态核验结果。');
+      }
+      rawAssets.forEach((key, value) {
+        final id = key?.toString().trim() ?? '';
+        if (id.isNotEmpty && value is Map) {
+          out[id] = NativeIosAssetInspection.fromMap(
+            value.cast<String, dynamic>(),
+          );
+        }
+      });
+    }
+    return out;
+  }
+
   Future<NativePhotoDeleteResult> requestDeleteAssets(
     List<String> assetIds,
   ) async {
@@ -240,12 +333,20 @@ class MobilePhotoBackupTransferClient {
       'requestDeleteAssets',
       {'assetIds': assetIds},
     );
+    final rawDeletedIds = response?['deletedAssetIds'];
+    final deletedAssetIds = rawDeletedIds is List
+        ? rawDeletedIds
+              .map((e) => e?.toString().trim() ?? '')
+              .where((e) => e.isNotEmpty)
+              .toList(growable: false)
+        : const <String>[];
     return NativePhotoDeleteResult(
       deleted: response?['deleted'] == true,
       cancelled: response?['cancelled'] == true,
       deletedCount: (response?['deletedCount'] as num?)?.toInt() ?? 0,
       alreadyMissingCount:
           (response?['alreadyMissingCount'] as num?)?.toInt() ?? 0,
+      deletedAssetIds: deletedAssetIds,
     );
   }
 

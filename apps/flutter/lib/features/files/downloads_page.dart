@@ -304,7 +304,7 @@ class _DownloadsPageState extends State<DownloadsPage>
   @override
   Widget build(BuildContext context) {
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final palette = IslePalette(isDark);
+    final palette = IslePalette.of(context);
     final borderColor = IsleGlass.rimBorderColor(isDark);
     final accent = palette['brandAmber'];
     final activeCount = _tasks

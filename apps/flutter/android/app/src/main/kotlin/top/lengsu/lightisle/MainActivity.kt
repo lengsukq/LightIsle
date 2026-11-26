@@ -50,7 +50,8 @@ class MainActivity : FlutterActivity() {
     private var photosPermissionPending: MethodChannel.Result? = null
     private var photosPermissionIncludesVideos = false
     private var pendingPhotoDeleteResult: MethodChannel.Result? = null
-    private var pendingPhotoDeleteCount = 0
+    private var pendingPhotoDeleteAssetIds: List<String> = emptyList()
+    private var pendingPhotoDeleteAlreadyMissingCount = 0
     private var nasDiscovery: AndroidNasDiscovery? = null
 
     private var pipChannel: MethodChannel? = null
@@ -424,11 +425,20 @@ class MainActivity : FlutterActivity() {
 
         pendingPhotoDeleteResult?.let {
             try {
-                it.success(mapOf("deleted" to false, "cancelled" to true, "deletedCount" to 0))
+                it.success(
+                    mapOf(
+                        "deleted" to false,
+                        "cancelled" to true,
+                        "deletedCount" to 0,
+                        "alreadyMissingCount" to 0,
+                        "deletedAssetIds" to emptyList<String>(),
+                    ),
+                )
             } catch (_: Exception) { }
         }
         pendingPhotoDeleteResult = null
-        pendingPhotoDeleteCount = 0
+        pendingPhotoDeleteAssetIds = emptyList()
+        pendingPhotoDeleteAlreadyMissingCount = 0
 
         nasDiscovery?.destroy()
         nasDiscovery = null
@@ -449,7 +459,8 @@ class MainActivity : FlutterActivity() {
     @Suppress("DEPRECATION")
     private fun launchPhotoDeleteRequest(
         intentSender: IntentSender,
-        count: Int,
+        assetIds: List<String>,
+        alreadyMissingCount: Int,
         result: MethodChannel.Result,
     ) {
         if (pendingPhotoDeleteResult != null) {
@@ -457,27 +468,33 @@ class MainActivity : FlutterActivity() {
             return
         }
         pendingPhotoDeleteResult = result
-        pendingPhotoDeleteCount = count
+        pendingPhotoDeleteAssetIds = assetIds
+        pendingPhotoDeleteAlreadyMissingCount = alreadyMissingCount
         try {
             startIntentSenderForResult(intentSender, photoDeleteRequest, null, 0, 0, 0)
         } catch (_: Exception) {
             pendingPhotoDeleteResult = null
-            pendingPhotoDeleteCount = 0
+            pendingPhotoDeleteAssetIds = emptyList()
+            pendingPhotoDeleteAlreadyMissingCount = 0
             result.error("photo_delete_failed", "无法拉起系统相册删除确认弹窗，本机原片未被删除。", null)
         }
     }
 
     private fun handlePhotoDeleteResult(resultCode: Int) {
         val result = pendingPhotoDeleteResult ?: return
-        val count = pendingPhotoDeleteCount
+        val assetIds = pendingPhotoDeleteAssetIds
+        val alreadyMissingCount = pendingPhotoDeleteAlreadyMissingCount
         pendingPhotoDeleteResult = null
-        pendingPhotoDeleteCount = 0
+        pendingPhotoDeleteAssetIds = emptyList()
+        pendingPhotoDeleteAlreadyMissingCount = 0
         if (resultCode == Activity.RESULT_OK) {
             result.success(
                 mapOf(
                     "deleted" to true,
                     "cancelled" to false,
-                    "deletedCount" to count,
+                    "deletedCount" to assetIds.size,
+                    "alreadyMissingCount" to alreadyMissingCount,
+                    "deletedAssetIds" to assetIds,
                 ),
             )
         } else {
@@ -486,6 +503,8 @@ class MainActivity : FlutterActivity() {
                     "deleted" to false,
                     "cancelled" to true,
                     "deletedCount" to 0,
+                    "alreadyMissingCount" to alreadyMissingCount,
+                    "deletedAssetIds" to emptyList<String>(),
                 ),
             )
         }

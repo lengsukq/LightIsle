@@ -35,6 +35,8 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
+	<key>NSCameraUsageDescription</key>
+	<string>用于扫描或拍摄家庭证件、发票与保修卡等票据并归档至你的轻屿 NAS。</string>
 	<key>NSLocalNetworkUsageDescription</key>
 	<string>连接你在局域网中的轻屿 NAS，访问文件、照片与影视。</string>
 	<key>NSPhotoLibraryUsageDescription</key>

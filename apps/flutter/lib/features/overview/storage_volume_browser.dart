@@ -373,7 +373,7 @@ class AdminVolumeBrowser extends StatelessWidget {
     final text = theme.textTheme;
     final secondary = theme.colorScheme.onSurfaceVariant;
     final isDark = theme.brightness == Brightness.dark;
-    final palette = IslePalette(isDark);
+    final palette = IslePalette.of(context);
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [

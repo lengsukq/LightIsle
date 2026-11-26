@@ -46,20 +46,24 @@ class FamilyLunarDate {
   );
 }
 
-const List<({String id, String label, Color color})> familyReminderColors = [
-  (id: 'amber', label: '暖阳', color: Color(0xFFE8A64D)),
-  (id: 'rose', label: '晚霞', color: Color(0xFFD4657D)),
-  (id: 'blue', label: '晴空', color: Color(0xFF0E6B74)),
-  (id: 'sage', label: '青苔', color: Color(0xFF18835B)),
-  (id: 'violet', label: '暮紫', color: Color(0xFF6B5799)),
+const List<({String id, String label, String paletteKey})>
+familyReminderColorSpecs = [
+  (id: 'amber', label: '暖阳', paletteKey: 'brandAmber'),
+  (id: 'rose', label: '晚霞', paletteKey: 'brandRose'),
+  (id: 'blue', label: '晴空', paletteKey: 'brandBlue'),
+  (id: 'sage', label: '青苔', paletteKey: 'brandSage'),
+  (id: 'violet', label: '暮紫', paletteKey: 'brandViolet'),
 ];
 
-Color familyReminderToneColor(String id) {
-  for (final item in familyReminderColors) {
-    if (item.id == id) return item.color;
+Color familyReminderPaletteColor(String id, IslePalette palette) {
+  for (final item in familyReminderColorSpecs) {
+    if (item.id == id) return palette[item.paletteKey];
   }
-  return familyReminderColors.first.color;
+  return palette['brandAmber'];
 }
+
+Color familyReminderToneColor(String id) =>
+    familyReminderPaletteColor(id, const IslePalette(false));
 
 class FamilyReminder {
   const FamilyReminder({
@@ -127,6 +131,9 @@ class FamilyReminder {
     if (category == 'anniversary') return '第 $yearsCount 周年';
     return '第 $yearsCount 年';
   }
+
+  Color resolveToneColor(IslePalette palette) =>
+      familyReminderPaletteColor(color, palette);
 
   Color get toneColor => familyReminderToneColor(color);
 
@@ -349,24 +356,14 @@ class _FamilyRemindersSectionState extends State<FamilyRemindersSection> {
 
   Future<void> _deleteReminder(FamilyReminder item) async {
     if (!_canEdit(item) || _busyId != null) return;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('删除这条提醒？'),
-        content: Text('删除「${item.title}」后，所有家庭成员将不再收到该提醒。'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(ctx).pop(false),
-            child: const Text('取消'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('删除'),
-          ),
-        ],
-      ),
+    final confirmed = await confirmAction(
+      context,
+      '删除这条提醒？',
+      '删除「${item.title}」后，所有家庭成员将不再收到该提醒。',
+      action: '删除',
+      isDestructive: true,
     );
-    if (confirmed != true || !mounted) return;
+    if (!confirmed || !mounted) return;
     setState(() => _busyId = item.id);
     try {
       await FamilyRemindersApi(widget.api).delete(item.id);
@@ -389,7 +386,7 @@ class _FamilyRemindersSectionState extends State<FamilyRemindersSection> {
     IslePalette palette,
   ) {
     final theme = Theme.of(context);
-    final tone = item.toneColor;
+    final tone = item.resolveToneColor(palette);
     final isBusy = _busyId == item.id;
     final isUrgent = item.daysUntil <= 3;
     final dateParts = <String>[
@@ -447,7 +444,7 @@ class _FamilyRemindersSectionState extends State<FamilyRemindersSection> {
                       ),
                       decoration: BoxDecoration(
                         color: tone.withValues(alpha: dark ? 0.28 : 0.16),
-                        borderRadius: BorderRadius.circular(999),
+                        borderRadius: BorderRadius.circular(IsleRadius.pill),
                       ),
                       child: Text(
                         item.countdownLabel,
@@ -516,9 +513,18 @@ class _FamilyRemindersSectionState extends State<FamilyRemindersSection> {
                   unawaited(_deleteReminder(item));
                 }
               },
-              itemBuilder: (_) => const [
-                PopupMenuItem(value: 'edit', child: Text('编辑提醒')),
-                PopupMenuItem(value: 'delete', child: Text('删除提醒')),
+              itemBuilder: (_) => [
+                isleActionMenuItem(
+                  value: 'edit',
+                  label: '编辑提醒',
+                  icon: Icons.edit_outlined,
+                ),
+                isleActionMenuItem(
+                  value: 'delete',
+                  label: '删除提醒',
+                  icon: Icons.delete_outline_rounded,
+                  destructive: true,
+                ),
               ],
             ),
         ],
