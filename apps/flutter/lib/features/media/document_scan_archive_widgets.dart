@@ -324,7 +324,7 @@ class DocumentScanLatestOcrCard extends StatelessWidget {
               padding: const EdgeInsets.all(10),
               decoration: IsleDecorations.recessedWell(
                 context,
-                radius: IsleRadius.badge,
+                radius: IsleRadius.sm,
               ),
               child: SelectableText(
                 result.ocrText,
@@ -375,7 +375,7 @@ class DocumentArchiveAssetTile extends StatelessWidget {
         child: Row(
           children: [
             ClipRRect(
-              borderRadius: BorderRadius.circular(IsleRadius.badge),
+              borderRadius: BorderRadius.circular(IsleRadius.sm),
               child: SizedBox(
                 width: 56,
                 height: 56,

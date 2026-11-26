@@ -1,4 +1,3 @@
-import 'dart:collection';
 import 'dart:math';
 
 import 'package:shared_preferences/shared_preferences.dart';
@@ -132,7 +131,7 @@ class MobilePhotoSpaceReleaseService {
     required void Function(int checked, int total) onProgress,
     required bool Function() isCancelled,
   }) async {
-    final groups = LinkedHashMap<String, List<VerifiedPhotoBackupRecord>>();
+    final groups = <String, List<VerifiedPhotoBackupRecord>>{};
     for (final record in candidates) {
       final baseId = baseIosPhotoAssetId(record.assetId);
       groups.putIfAbsent(baseId, () => <VerifiedPhotoBackupRecord>[]).add(
@@ -351,7 +350,7 @@ class MobilePhotoSpaceReleaseService {
       );
     }
 
-    final grouped = LinkedHashMap<String, List<VerifiedPhotoBackupRecord>>();
+    final grouped = <String, List<VerifiedPhotoBackupRecord>>{};
     for (final record in verifiedRecords) {
       final nativeId = isIOS
           ? baseIosPhotoAssetId(record.assetId)
@@ -449,7 +448,7 @@ class MobilePhotoSpaceReleaseService {
 
   int _computeBatchFreedBytes({
     required List<String> batchNativeIds,
-    required LinkedHashMap<String, List<VerifiedPhotoBackupRecord>> grouped,
+    required Map<String, List<VerifiedPhotoBackupRecord>> grouped,
     required NativePhotoDeleteResult result,
   }) {
     if (result.deletedCount <= 0) return 0;

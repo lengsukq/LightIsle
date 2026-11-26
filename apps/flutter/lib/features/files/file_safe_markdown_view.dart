@@ -26,7 +26,7 @@ class SafeMarkdownView extends StatelessWidget {
           padding: const EdgeInsets.all(10),
           decoration: BoxDecoration(
             color: colors.surfaceContainerHighest.withValues(alpha: 0.65),
-            borderRadius: BorderRadius.circular(IsleRadius.badge),
+            borderRadius: BorderRadius.circular(IsleRadius.sm),
           ),
           child: SelectableText(
             codeBuffer.toString().trimRight(),

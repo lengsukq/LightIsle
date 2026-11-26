@@ -493,7 +493,7 @@ class _ArchiveItemDetailSheetState extends State<ArchiveItemDetailSheet> {
             ),
             const SizedBox(height: 12),
             ClipRRect(
-              borderRadius: BorderRadius.circular(IsleRadius.input),
+              borderRadius: BorderRadius.circular(IsleRadius.control),
               child: ConstrainedBox(
                 constraints: const BoxConstraints(maxHeight: 240),
                 child: AuthenticatedMediaImage(
@@ -530,7 +530,7 @@ class _ArchiveItemDetailSheetState extends State<ArchiveItemDetailSheet> {
                 padding: const EdgeInsets.all(12),
                 decoration: IsleDecorations.recessedWell(
                   context,
-                  radius: IsleRadius.badge,
+                  radius: IsleRadius.sm,
                 ),
                 child: SelectableText(
                   text,

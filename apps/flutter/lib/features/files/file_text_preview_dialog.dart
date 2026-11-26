@@ -3,6 +3,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 
+import '../../core/isle_surface_widgets.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
@@ -416,7 +417,7 @@ class _FileTextPreviewDialogState extends State<FileTextPreviewDialog> {
         color: (_bannerError ? colors.error : colors.primary).withValues(
           alpha: 0.1,
         ),
-        borderRadius: BorderRadius.circular(IsleRadius.badge),
+        borderRadius: BorderRadius.circular(IsleRadius.sm),
         border: Border.all(
           color: (_bannerError ? colors.error : colors.primary).withValues(
             alpha: 0.35,
@@ -468,7 +469,7 @@ class _FileTextPreviewDialogState extends State<FileTextPreviewDialog> {
       color: isDark
           ? Colors.black.withValues(alpha: 0.36)
           : colors.surfaceContainerHighest.withValues(alpha: 0.42),
-      borderRadius: BorderRadius.circular(IsleRadius.input),
+      borderRadius: BorderRadius.circular(IsleRadius.control),
       border: Border.all(color: borderColor, width: 1.0),
     );
 

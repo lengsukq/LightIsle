@@ -203,7 +203,6 @@ class _AdminActivityPageState extends State<AdminActivityPage> {
   Widget _buildDesktopCardEntry(Map<String, dynamic> entry) {
     final theme = Theme.of(context);
     final colors = theme.colorScheme;
-    final isDark = theme.brightness == Brightness.dark;
     final palette = IslePalette.of(context);
     final active = entry['active'] == true;
     final acknowledged = entry['acknowledged'] == true;

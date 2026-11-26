@@ -134,7 +134,17 @@ class _ArchiveFakeApi extends LightIsleApi {
       return {'hostname': 'Mac mini', 'volumes': []};
     }
     if (path == '/api/v2/roots') {
-      return {'roots': []};
+      return {
+        'roots': [
+          {
+            'rootID': 'root-1',
+            'name': '家庭主盘',
+            'generation': 1,
+            'online': true,
+            'default': true,
+          },
+        ],
+      };
     }
     if (path == '/api/v2/tasks') {
       return {'tasks': []};

@@ -190,7 +190,7 @@ class _DesktopBackupRestoreDialogState
                   padding: const EdgeInsets.all(10),
                   decoration: IsleDecorations.recessedWell(
                     context,
-                    radius: IsleRadius.badge,
+                    radius: IsleRadius.sm,
                   ),
                   child: Text(
                     'NAS 源目录：${widget.task.rootName} → /${widget.task.remoteBasePath == '.' ? '' : widget.task.remoteBasePath}\n'
@@ -249,7 +249,7 @@ class _DesktopBackupRestoreDialogState
                     padding: const EdgeInsets.all(8),
                     decoration: IsleDecorations.recessedWell(
                       context,
-                      radius: IsleRadius.badge,
+                      radius: IsleRadius.sm,
                     ),
                     child: ListView.builder(
                       shrinkWrap: true,

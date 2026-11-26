@@ -603,7 +603,7 @@ class _StatusCallout extends StatelessWidget {
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
         color: color.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(IsleRadius.input),
+        borderRadius: BorderRadius.circular(IsleRadius.control),
         border: Border.all(color: color.withValues(alpha: 0.28)),
       ),
       child: Row(

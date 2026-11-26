@@ -87,8 +87,8 @@ class _FakeExtrasApi extends LightIsleApi {
     if (path == '/api/v2/roots/root-main/collect-links') {
       return {'links': collectLinks};
     }
-    if (path == '/api/v2/remote/status') {
-      return {'publicUrl': 'https://nas.example.com'};
+    if (path == '/api/v2/admin/tailscale') {
+      return {'boundUrl': 'https://nas.example.com'};
     }
     if (path == '/api/v2/files/root') return {'name': '家庭主盘'};
     if (path == '/api/v2/files/pins') return {'pins': pins};
@@ -353,6 +353,7 @@ void main() {
             api: api,
             targetPath: '家庭相册',
             folderName: '家庭相册',
+            isAdmin: true,
           ),
         ),
       ),
