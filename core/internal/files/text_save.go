@@ -111,16 +111,17 @@ func (s *Store) ReplaceTextFile(raw string, content []byte, expectedMtimeUnixNan
 	}
 	sameStage := func(entryName string) bool {
 		var st unix.Stat_t
-		return unix.Fstat(stageFD, &stageStat) == nil &&
-			unix.Fstatat(fd, entryName, &st, unix.AT_SYMLINK_NOFOLLOW) == nil &&
+		return unix.Fstatat(fd, entryName, &st, unix.AT_SYMLINK_NOFOLLOW) == nil &&
 			st.Dev == stageStat.Dev && st.Ino == stageStat.Ino
 	}
 	committed := false
 	defer func() {
-		_ = f.Close()
+		// Unlink while stageFD is still open so stageStat.Dev/Ino cannot be recycled
+		// and we never Fstat a closed/reused descriptor.
 		if !committed && sameStage(tmp) {
 			_ = unix.Unlinkat(fd, tmp, 0)
 		}
+		_ = f.Close()
 	}()
 
 	written := 0

@@ -1,8 +1,6 @@
 package server
 
 import (
-	"crypto/subtle"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"io/fs"
@@ -17,100 +15,6 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/auth"
 	"github.com/lengsukq/lightisle/core/internal/files"
 )
-
-const (
-	collectGrantCookie     = "lightisle_collect_grant"
-	collectUploadChunkHint = int64(4) << 20 // 4 MiB recommended chunk size
-	collectUploadMaxInMem  = 4096
-	collectUploadStaleTTL  = 24 * time.Hour
-)
-
-type trackedCollectUpload struct {
-	linkDigestHex string
-	size          int64
-	createdAt     time.Time
-}
-
-type collectUploadTracker struct {
-	mu      sync.Mutex
-	uploads map[string]trackedCollectUpload
-}
-
-func newCollectUploadTracker() *collectUploadTracker {
-	return &collectUploadTracker{uploads: make(map[string]trackedCollectUpload)}
-}
-
-func (t *collectUploadTracker) gcLocked(now time.Time) {
-	for id, u := range t.uploads {
-		if now.Sub(u.createdAt) > collectUploadStaleTTL {
-			delete(t.uploads, id)
-		}
-	}
-}
-
-func (t *collectUploadTracker) tryRegister(uploadID string, linkDigest []byte, size int64, maxFiles int, maxTotalBytes int64, uploadedFiles int, uploadedBytes int64) bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	now := time.Now()
-	t.gcLocked(now)
-	if len(t.uploads) >= collectUploadMaxInMem {
-		return false
-	}
-	key := hex.EncodeToString(linkDigest)
-	var inflightFiles int
-	var inflightBytes int64
-	for _, u := range t.uploads {
-		if u.linkDigestHex == key {
-			inflightFiles++
-			inflightBytes += u.size
-		}
-	}
-	if maxFiles > 0 && uploadedFiles+inflightFiles >= maxFiles {
-		return false
-	}
-	if maxTotalBytes > 0 && uploadedBytes+inflightBytes+size > maxTotalBytes {
-		return false
-	}
-	t.uploads[uploadID] = trackedCollectUpload{
-		linkDigestHex: key,
-		size:          size,
-		createdAt:     now,
-	}
-	return true
-}
-
-func (t *collectUploadTracker) matches(uploadID string, linkDigest []byte) bool {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	u, ok := t.uploads[uploadID]
-	if !ok {
-		return false
-	}
-	expected := hex.EncodeToString(linkDigest)
-	return subtle.ConstantTimeCompare([]byte(u.linkDigestHex), []byte(expected)) == 1
-}
-
-func (t *collectUploadTracker) remove(uploadID string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	delete(t.uploads, uploadID)
-}
-
-func (t *collectUploadTracker) inflightFor(linkDigest []byte) (int, int64) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.gcLocked(time.Now())
-	key := hex.EncodeToString(linkDigest)
-	var count int
-	var bytes int64
-	for _, u := range t.uploads {
-		if u.linkDigestHex == key {
-			count++
-			bytes += u.size
-		}
-	}
-	return count, bytes
-}
 
 // collectPublicHandler acquires the target physical root lease for a write-only
 // public collect link without ever consulting root_file_shares.
@@ -506,6 +410,10 @@ func (a *API) publicCollectUploadBegin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	a.reserveAndBeginCollectUpload(w, r, access, creator, cleanName, req.Size)
+}
+
+func (a *API) reserveAndBeginCollectUpload(w http.ResponseWriter, r *http.Request, access auth.CollectLinkAccess, creator auth.User, cleanName string, size int64) {
 	gen := a.rootRuntime.root.Generation
 	baseDest := path.Join(access.TargetPath, cleanName)
 	destination := baseDest
@@ -515,7 +423,7 @@ func (a *API) publicCollectUploadBegin(w http.ResponseWriter, r *http.Request) {
 			writeAPIErrorCode(w, http.StatusServiceUnavailable, "root_unavailable")
 			return
 		}
-		resID, _, resErr := a.auth.ReserveStorageUploadForUser(creator, a.rootID, gen, destination, req.Size)
+		resID, _, resErr := a.auth.ReserveStorageUploadForUser(creator, a.rootID, gen, destination, size)
 		if resErr != nil {
 			if errors.Is(resErr, auth.ErrStorageLedgerConflict) {
 				next, candErr := files.NextRenameCandidate(baseDest, attempt+2)
@@ -529,16 +437,16 @@ func (a *API) publicCollectUploadBegin(w http.ResponseWriter, r *http.Request) {
 			storageQuotaError(w, resErr)
 			return
 		}
-		upload, upErr := a.files.BeginUpload(destination, req.Size, creator.ID)
+		upload, upErr := a.files.BeginUpload(destination, size, creator.ID)
 		if upErr == nil {
 			if resID != "" {
 				if linkErr := a.auth.LinkStorageUpload(resID, upload.ID); linkErr != nil {
-					a.rollbackUnlinkedCollectUpload(r, upload.ID, creator.ID, resID, destination, req.Size)
+					a.rollbackUnlinkedCollectUpload(r, upload.ID, creator.ID, resID, destination, size)
 					writeAPIErrorCode(w, http.StatusServiceUnavailable, "upload_begin_uncertain")
 					return
 				}
 			}
-			if !a.collectUploads.tryRegister(upload.ID, access.Digest, req.Size, access.MaxFiles, access.MaxTotalBytes, access.UploadedFiles, access.UploadedBytes) {
+			if !a.collectUploads.tryRegister(upload.ID, access.Digest, size, access.MaxFiles, access.MaxTotalBytes, access.UploadedFiles, access.UploadedBytes) {
 				a.abortCollectStaging(r, upload.ID, creator.ID)
 				writeAPIErrorCode(w, http.StatusConflict, "collect_limit_reached")
 				return
@@ -556,7 +464,7 @@ func (a *API) publicCollectUploadBegin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if resID != "" {
-			if a.auth.ReleaseUnlinkedStorageReservation(resID, a.rootID, gen, destination, req.Size) != nil {
+			if a.auth.ReleaseUnlinkedStorageReservation(resID, a.rootID, gen, destination, size) != nil {
 				writeAPIErrorCode(w, http.StatusServiceUnavailable, "upload_begin_uncertain")
 				return
 			}
@@ -703,9 +611,9 @@ func (a *API) publicCollectUploadComplete(w http.ResponseWriter, r *http.Request
 	}
 
 	if err := a.auth.ConsumeRootCollectUpload(access.Digest, current.Size); err != nil {
+		a.collectUploads.remove(uploadID)
+		a.abortCollectStaging(r, uploadID, creator.ID)
 		if errors.Is(err, auth.ErrCollectLimitReached) {
-			a.collectUploads.remove(uploadID)
-			a.abortCollectStaging(r, uploadID, creator.ID)
 			writeAPIErrorCode(w, http.StatusConflict, "collect_limit_reached")
 			return
 		}

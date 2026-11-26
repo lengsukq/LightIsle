@@ -267,7 +267,7 @@ printf 'video-bytes-payload' > "$out_dir/clip.mp4"
 			return "", "", os.ErrNotExist
 		}
 		return mockBin, "2025.03.26", nil
-	}, nil)
+	}, &webarchive.Options{AllowHosts: []string{"example.com"}})
 
 	// Non-admin member cannot create ytdlp or webarchive tasks even with write grant.
 	for _, engine := range []string{"ytdlp", "webarchive"} {

@@ -146,3 +146,52 @@ func TestAppReminderScannerLifecycle(t *testing.T) {
 		t.Fatalf("Close failed: %v", err)
 	}
 }
+
+func TestAppReminderScannerReadyCheckAndLedgerFailureAbort(t *testing.T) {
+	dataDir := t.TempDir()
+	mgr := NewManager(dataDir, "", nil)
+	defer mgr.Close()
+	if err := mgr.Reload(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mgr.InstallTemplateAt("medicine-expiry", ""); err != nil {
+		t.Fatal(err)
+	}
+	kvDir := filepath.Join(dataDir, "plugin-data", "medicine-expiry", "kv")
+	if err := os.MkdirAll(kvDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	day := time.Date(2026, 6, 10, 9, 0, 0, 0, time.UTC)
+	raw, _ := json.Marshal(AppReminderPayload{
+		Items: []AppReminderItem{{ID: "item1", Title: "常备药", DueDate: "2026-06-10", WarnDays: 7}},
+	})
+	if err := os.WriteFile(filepath.Join(kvDir, "_reminders.json"), raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	ready := false
+	sentCount := 0
+	mgr.SetReminderReadyCheck(func() bool { return ready })
+	mgr.SetReminderNotifier(func(code, title, body, severity string) { sentCount++ })
+
+	// While unready, scanner must skip without burning dedup keys.
+	if got := mgr.ScanAppReminders(day); got != 0 || sentCount != 0 {
+		t.Fatalf("expected 0 alerts while unready, got %d / %d", got, sentCount)
+	}
+	// Once ready, make ledger target a non-empty directory to force persistence failure -> must abort push!
+	ready = true
+	ledgerPath := filepath.Join(dataDir, reminderStateFileName)
+	if err := os.MkdirAll(filepath.Join(ledgerPath, "blocker"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if got := mgr.ScanAppReminders(day); got != 0 || sentCount != 0 {
+		t.Fatalf("expected push aborted on ledger save failure, got %d / %d", got, sentCount)
+	}
+	if err := os.RemoveAll(ledgerPath); err != nil {
+		t.Fatal(err)
+	}
+	// Now ledger persistence succeeds and reminder fires cleanly!
+	if got := mgr.ScanAppReminders(day); got != 1 || sentCount != 1 {
+		t.Fatalf("expected 1 alert once ready and writable, got %d / %d", got, sentCount)
+	}
+}

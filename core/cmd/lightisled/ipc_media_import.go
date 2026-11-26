@@ -57,9 +57,14 @@ type mediaImportScanResult struct {
 	Truncated      bool     `json:"truncated,omitempty"`
 }
 
+var (
+	errMediaImportSizeMismatch        = errors.New("media_import_size_mismatch")
+	errMediaImportAccountingUncertain = errors.New("storage_accounting_uncertain")
+)
+
 type mediaImportStatus struct {
 	JobID          string `json:"jobID"`
-	Phase          string `json:"phase"` // "running" | "completed" | "cancelled" | "failed"
+	Phase          string `json:"phase"` // "running" | "completed" | "completed_with_errors" | "cancelled" | "failed"
 	SourcePath     string `json:"sourcePath"`
 	RootID         string `json:"rootID"`
 	Generation     uint64 `json:"generation"`
@@ -281,7 +286,11 @@ func (c *mediaImportControl) handleStart(ctx context.Context, req mediaImportReq
 		return
 	}
 
-	jobID := newMediaImportJobID()
+	jobID, idErr := newMediaImportJobID()
+	if idErr != nil {
+		c.reply(req.RequestID, "start", nil, "media_import_unavailable")
+		return
+	}
 	jobCtx, cancel := context.WithCancel(ctx)
 	c.mu.Lock()
 	if c.cancelJob != nil {
@@ -320,16 +329,27 @@ func (c *mediaImportControl) handleStart(ctx context.Context, req mediaImportReq
 		defer safego.Recover("media-import-run")
 		defer func() {
 			cancel()
-			c.setRunning(false)
-			c.mu.Lock()
-			if c.activeID == jobID {
-				c.activeID = ""
-				c.cancelJob = nil
-			}
-			c.mu.Unlock()
+			c.markJobFinished(jobID)
 		}()
 		c.executeImportJob(jobCtx, req.RequestID, jobID, resolvedSource, targetPlan, archiveMode, subfolder)
 	}()
+}
+
+func (c *mediaImportControl) markJobFinished(jobID string) {
+	c.setRunning(false)
+	c.mu.Lock()
+	if c.activeID == jobID {
+		c.activeID = ""
+		c.cancelJob = nil
+	}
+	c.mu.Unlock()
+}
+
+func (c *mediaImportControl) emitComplete(requestID, jobID string, status mediaImportStatus, errCode string) {
+	// Release running state BEFORE emitting "complete" so an immediate eject
+	// clicked by the user upon seeing completion never trips disk_busy.
+	c.markJobFinished(jobID)
+	c.reply(requestID, "complete", status, errCode)
 }
 
 type mediaImportTargetPlan struct {
@@ -468,14 +488,14 @@ func (c *mediaImportControl) executeImportJob(
 	if scanErr != nil {
 		status.Phase = terminalPhaseForError(ctx, scanErr)
 		status.LastError = classifyMediaImportError(scanErr)
-		c.reply(requestID, "complete", status, status.LastError)
+		c.emitComplete(requestID, jobID, status, status.LastError)
 		return
 	}
 	status.TotalFiles = scanResult.TotalFiles
 	status.TotalBytes = scanResult.TotalBytes
 	if len(items) == 0 {
 		status.Phase = "completed"
-		c.reply(requestID, "complete", status, "")
+		c.emitComplete(requestID, jobID, status, "")
 		return
 	}
 
@@ -483,21 +503,21 @@ func (c *mediaImportControl) executeImportJob(
 	if err != nil {
 		status.Phase = "failed"
 		status.LastError = classifyMediaImportError(err)
-		c.reply(requestID, "complete", status, status.LastError)
+		c.emitComplete(requestID, jobID, status, status.LastError)
 		return
 	}
 	defer func() { _ = lease.Close() }()
 	if lease.Binding != plan.root.Binding || !lease.Valid(ctx) {
 		status.Phase = "failed"
 		status.LastError = "root_unavailable"
-		c.reply(requestID, "complete", status, status.LastError)
+		c.emitComplete(requestID, jobID, status, status.LastError)
 		return
 	}
 	manager, err := files.NewPinnedManager(lease.Root, lease.Binding)
 	if err != nil {
 		status.Phase = "failed"
 		status.LastError = classifyMediaImportError(err)
-		c.reply(requestID, "complete", status, status.LastError)
+		c.emitComplete(requestID, jobID, status, status.LastError)
 		return
 	}
 	defer func() { _ = manager.Close() }()
@@ -566,13 +586,18 @@ finish:
 		if ctx.Err() != nil {
 			status.Phase = "cancelled"
 			status.LastError = "media_import_cancelled"
-		} else if status.FailedFiles > 0 && status.ImportedFiles == 0 && status.SkippedFiles == 0 {
-			status.Phase = "failed"
+		} else if status.FailedFiles > 0 {
+			if status.ImportedFiles == 0 && status.SkippedFiles == 0 {
+				status.Phase = "failed"
+			} else {
+				status.Phase = "completed_with_errors"
+			}
 		} else {
 			status.Phase = "completed"
 		}
 	}
 	status.AllVerified = status.Phase == "completed" &&
+		!scanResult.Truncated &&
 		status.FailedFiles == 0 &&
 		status.TotalFiles > 0 &&
 		(status.ImportedFiles+status.SkippedFiles) == status.TotalFiles
@@ -588,10 +613,13 @@ finish:
 	}
 
 	errToReport := ""
-	if status.Phase == "failed" {
+	if status.Phase == "failed" || status.Phase == "completed_with_errors" {
 		errToReport = status.LastError
+		if errToReport == "" {
+			errToReport = "media_import_failed"
+		}
 	}
-	c.reply(requestID, "complete", status, errToReport)
+	c.emitComplete(requestID, jobID, status, errToReport)
 }
 
 func (c *mediaImportControl) importSingleMediaItem(
@@ -649,7 +677,9 @@ func (c *mediaImportControl) importSingleMediaItem(
 	defer func() { _ = srcFile.Close() }()
 
 	var publishedIdentity string
-	reader := &ctxReader{ctx: ctx, r: io.LimitReader(srcFile, actualSize)}
+	// Read up to actualSize+1 so both source truncation and source growth are
+	// caught inside prepare() BEFORE publishing the temp file into targetRel.
+	reader := &ctxReader{ctx: ctx, r: io.LimitReader(srcFile, actualSize+1)}
 	written, pubErr := manager.PublishDownloadPrepared(lease.Binding, targetRel, reader, func(info os.FileInfo) error {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -657,31 +687,38 @@ func (c *mediaImportControl) importSingleMediaItem(
 		if !lease.Valid(ctx) {
 			return roots.ErrOffline
 		}
+		if info.Size() != actualSize {
+			return errMediaImportSizeMismatch
+		}
 		publishedIdentity = files.MediaFileIdentity(info)
 		return nil
 	})
 	if pubErr != nil {
 		if tracked {
+			if errors.Is(pubErr, files.ErrPublishedSync) {
+				// Target file was already published; keep reservation and surface
+				// accounting uncertainty rather than silently under-counting quota.
+				return "failed", written, errMediaImportAccountingUncertain
+			}
 			_ = c.accounts.ReleaseStorageReservation(resID)
 		}
 		return "failed", 0, pubErr
 	}
-	if written != actualSize {
-		if tracked {
-			_ = c.accounts.ReleaseStorageReservation(resID)
-		}
-		return "failed", 0, errors.New("media_import_size_mismatch")
-	}
 	if tracked {
+		if !lease.Valid(ctx) {
+			return "failed", written, errMediaImportAccountingUncertain
+		}
 		if commitErr := c.accounts.CommitStorageReservationWithIdentity(resID, publishedIdentity); commitErr != nil {
-			return "failed", written, commitErr
+			return "failed", written, errors.Join(errMediaImportAccountingUncertain, commitErr)
 		}
 	}
 	return "imported", written, nil
 }
 
-func newMediaImportJobID() string {
+func newMediaImportJobID() (string, error) {
 	var b [8]byte
-	_, _ = rand.Read(b[:])
-	return "mi-" + hex.EncodeToString(b[:])
+	if _, err := rand.Read(b[:]); err != nil {
+		return "", err
+	}
+	return "mi-" + hex.EncodeToString(b[:]), nil
 }

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -76,12 +77,14 @@ func (a *API) fileTextGet(w http.ResponseWriter, r *http.Request) {
 		writeAPIErrorCode(w, http.StatusUnsupportedMediaType, "text_file_invalid_utf8")
 		return
 	}
+	mtimeNano := info.ModTime().UnixNano()
 	jsonReply(w, http.StatusOK, map[string]any{
 		"path":          cleanPath,
 		"name":          info.Name(),
 		"content":       string(data),
 		"size":          info.Size(),
-		"mtimeUnixNano": info.ModTime().UnixNano(),
+		"mtimeUnixNano": mtimeNano,
+		"mtimeToken":    strconv.FormatInt(mtimeNano, 10),
 		"modified":      info.ModTime().UTC().Format("2006-01-02T15:04:05Z07:00"),
 		"canWrite":      a.canAccess(token(r), cleanPath, true, false),
 	})
@@ -106,6 +109,7 @@ func (a *API) fileTextSave(w http.ResponseWriter, r *http.Request) {
 		Path                  string `json:"path"`
 		Content               string `json:"content"`
 		ExpectedMtimeUnixNano int64  `json:"expectedMtimeUnixNano"`
+		ExpectedMtimeToken    string `json:"expectedMtimeToken"`
 		Create                bool   `json:"create"`
 	}
 	dec := json.NewDecoder(r.Body)
@@ -116,6 +120,11 @@ func (a *API) fileTextSave(w http.ResponseWriter, r *http.Request) {
 			writeAPIErrorCode(w, http.StatusRequestEntityTooLarge, "text_file_too_large")
 			return
 		}
+		writeAPIErrorCode(w, http.StatusBadRequest, "invalid_request")
+		return
+	}
+	expectedMtime, err := parseExpectedMtime(body.ExpectedMtimeToken, body.ExpectedMtimeUnixNano)
+	if err != nil {
 		writeAPIErrorCode(w, http.StatusBadRequest, "invalid_request")
 		return
 	}
@@ -155,7 +164,7 @@ func (a *API) fileTextSave(w http.ResponseWriter, r *http.Request) {
 			writeAPIErrorCode(w, http.StatusBadRequest, "unsupported_file_type")
 			return
 		}
-		if body.ExpectedMtimeUnixNano > 0 && existingInfo.ModTime().UnixNano() != body.ExpectedMtimeUnixNano {
+		if expectedMtime > 0 && existingInfo.ModTime().UnixNano() != expectedMtime {
 			writeTextConflict(w, existingInfo)
 			return
 		}
@@ -173,7 +182,7 @@ func (a *API) fileTextSave(w http.ResponseWriter, r *http.Request) {
 		reservation = resID
 	}
 
-	saved, err := replacer.ReplaceTextFile(cleanPath, payload, body.ExpectedMtimeUnixNano, body.Create)
+	saved, err := replacer.ReplaceTextFile(cleanPath, payload, expectedMtime, body.Create)
 	if err != nil {
 		if reservation != "" && !errors.Is(err, files.ErrPublishedSync) {
 			_ = a.auth.ReleaseStorageReservation(reservation)
@@ -203,13 +212,29 @@ func (a *API) fileTextSave(w http.ResponseWriter, r *http.Request) {
 	if a.rootServer != nil {
 		a.rootServer.QueueMediaRefresh(a.rootID, cleanPath)
 	}
+	savedMtime := saved.Info.ModTime().UnixNano()
 	jsonReply(w, http.StatusOK, map[string]any{
 		"saved":         true,
 		"path":          cleanPath,
 		"size":          saved.Info.Size(),
-		"mtimeUnixNano": saved.Info.ModTime().UnixNano(),
+		"mtimeUnixNano": savedMtime,
+		"mtimeToken":    strconv.FormatInt(savedMtime, 10),
 		"modified":      saved.Info.ModTime().UTC().Format("2006-01-02T15:04:05Z07:00"),
 	})
+}
+
+func parseExpectedMtime(tokenStr string, legacyNano int64) (int64, error) {
+	if trimmed := strings.TrimSpace(tokenStr); trimmed != "" {
+		parsed, err := strconv.ParseInt(trimmed, 10, 64)
+		if err != nil || parsed < 0 {
+			return 0, errors.New("invalid_expected_mtime_token")
+		}
+		return parsed, nil
+	}
+	if legacyNano < 0 {
+		return 0, errors.New("invalid_expected_mtime_unix_nano")
+	}
+	return legacyNano, nil
 }
 
 func writeTextConflict(w http.ResponseWriter, info os.FileInfo) {
@@ -221,7 +246,9 @@ func writeTextConflict(w http.ResponseWriter, info os.FileInfo) {
 		"nextAction": "请先保留当前草稿，刷新查看最新版本后再合并保存。",
 	}
 	if info != nil {
-		resp["currentMtimeUnixNano"] = info.ModTime().UnixNano()
+		mtimeNano := info.ModTime().UnixNano()
+		resp["currentMtimeUnixNano"] = mtimeNano
+		resp["currentMtimeToken"] = strconv.FormatInt(mtimeNano, 10)
 		resp["currentSize"] = info.Size()
 	}
 	jsonReply(w, http.StatusConflict, resp)

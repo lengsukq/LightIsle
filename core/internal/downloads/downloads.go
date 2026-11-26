@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path"
@@ -94,6 +95,7 @@ type Options struct {
 	LocateBinary      func() (path string, version string, err error)
 	YtDlpBinary       string // optional explicit yt-dlp path (primarily for tests)
 	LocateYtDlp       func() (path string, version string, err error)
+	LookupIPAddr      func(ctx context.Context, host string) ([]net.IPAddr, error) // optional DNS hook for tests
 	WebArchiveOptions *webarchive.Options // optional override for tests (e.g. AllowHosts)
 	Publisher         Publisher
 	// CanImport re-checks the owner's write grant at publish time; a grant
@@ -590,6 +592,7 @@ func (m *Manager) Action(owner int64, id, action string) (Task, error) {
 			if err := m.ensureEngineReadyLocked(task.Engine); err != nil {
 				return Task{}, err
 			}
+			m.cancelTaskRunner(id)
 			if err := os.RemoveAll(m.stagingDir(id)); err != nil {
 				return Task{}, err
 			}
@@ -606,6 +609,7 @@ func (m *Manager) Action(owner int64, id, action string) (Task, error) {
 		if err := m.ensureEngineReadyLocked(task.Engine); err != nil {
 			return Task{}, err
 		}
+		m.cancelTaskRunner(id)
 		if err := os.RemoveAll(m.stagingDir(id)); err != nil {
 			return Task{}, err
 		}

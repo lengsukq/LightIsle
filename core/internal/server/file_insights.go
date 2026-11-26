@@ -90,7 +90,8 @@ func (a *API) fileInsights(w http.ResponseWriter, r *http.Request) {
 		HasMinBytes: hasMinBytes,
 		Days:        days,
 		Limit:       limit,
-		CanRead:     func(p string) bool { return a.canSee(session, p) },
+		CanTraverse: func(p string) bool { return a.canSee(session, p) },
+		CanReadFile: func(p string) bool { return a.canAccess(session, p, false, false) },
 	})
 	if err != nil {
 		fileError(w, err)

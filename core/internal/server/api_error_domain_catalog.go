@@ -465,6 +465,16 @@ var apiErrorDomainCatalog = map[string]apiErrorGuidance{
 		dataSafe:   true,
 		nextAction: "请刷新页面后重试。",
 	},
+	"storage_accounting_uncertain": {
+		message:    "文件写入状态与个人空间配额账本同步未完整确认，原有其他文件未受影响。",
+		dataSafe:   false,
+		nextAction: "请刷新确认目标文件是否已保存，并在 Mac 管理端「存储 → 成员与空间」核对或重新核算该成员空间用量。",
+	},
+	"unsupported_file_identity": {
+		message:    "当前磁盘文件系统无法提供稳定的文件或目录标识，已拒绝绑定以防路径漂移。",
+		dataSafe:   true,
+		nextAction: "请确认存储位置位于正常的 macOS 本地或外置 APFS/HFS+/exFAT 卷上后重试。",
+	},
 
 	// Uploads
 	"upload_server_busy": {
@@ -476,6 +486,21 @@ var apiErrorDomainCatalog = map[string]apiErrorGuidance{
 		message:    "上传传输超时，已暂存的分片可在断点续传中恢复。",
 		dataSafe:   true,
 		nextAction: "请检查网络连接后重新尝试继续上传。",
+	},
+	"upload_begin_uncertain": {
+		message:    "创建上传会话期间磁盘或配额状态发生变化，未能确认会话是否建立，已有文件未受影响。",
+		dataSafe:   true,
+		nextAction: "请检查硬盘连接并刷新页面后重新发起上传。",
+	},
+	"invalid_chunk_size": {
+		message:    "上传分片大小不合法或超过单片 8 MiB 上限，已拒绝写入。",
+		dataSafe:   true,
+		nextAction: "请通过标准页面重新上传，或调整客户端分片大小为 4 MiB 以内。",
+	},
+	"invalid_offset": {
+		message:    "上传分片偏移量参数无效，未写入该分片。",
+		dataSafe:   true,
+		nextAction: "请刷新页面或由客户端重新同步当前上传进度后再继续。",
 	},
 
 	// Family reminders
@@ -632,6 +657,21 @@ var apiErrorDomainCatalog = map[string]apiErrorGuidance{
 		message:    "压缩包内的该资源类型不在安全阅读白名单内，已拒绝输出。",
 		dataSafe:   true,
 		nextAction: "仅支持安全读取图片、章节文档、样式与字体资源。",
+	},
+	"invalid_zip_archive": {
+		message:    "该压缩包或电子书文件已损坏、为空或不是有效的 ZIP 结构，原文件未被修改。",
+		dataSafe:   true,
+		nextAction: "请确认文件已完整上传，或下载后使用本地解压/阅读工具检查。",
+	},
+	"archive_limit_exceeded": {
+		message:    "压缩包体积、条目数或解压膨胀比超出安全阅读上限，已中止读取以保护系统资源。",
+		dataSafe:   true,
+		nextAction: "请拆分超大压缩包，或下载原件在本地阅读器中查看。",
+	},
+	"archive_unsafe_entry": {
+		message:    "压缩包内目标条目包含非法路径、符号链接或非常规文件，已出于安全原因拒绝读取。",
+		dataSafe:   true,
+		nextAction: "请检查压缩包来源与内部目录结构，勿在线打开不可信归档文件。",
 	},
 	"invalid_reading_progress": {
 		message:    "阅读进度参数无效，未保存此次进度。",

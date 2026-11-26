@@ -10,7 +10,10 @@ import (
 
 func normalizeRemindDays(days []int, csv string) ([]int, string, error) {
 	var raw []int
-	if len(days) > 0 {
+	if days != nil {
+		if len(days) == 0 {
+			return nil, "", ErrInput
+		}
 		raw = append(raw, days...)
 	} else if trimmed := strings.TrimSpace(csv); trimmed != "" {
 		parts := strings.Split(trimmed, ",")
@@ -174,15 +177,19 @@ func initialNextSolarDate(r FamilyReminder, now time.Time) (time.Time, error) {
 		solar, _, err := NextSolarYearlyOccurrence(r.Month, r.Day, today)
 		return solar, err
 	case "once":
-		y := r.Year
-		if y == 0 {
-			y = today.Year()
-		}
 		if r.CalendarType == "lunar" {
-			solar, _, err := LunarDateInYear(y, r.Month, r.Day, r.IsLeapMonth)
+			if r.Year == 0 {
+				solar, _, _, err := NextLunarOccurrence(r.Month, r.Day, r.IsLeapMonth, today)
+				return solar, err
+			}
+			solar, _, err := LunarDateInYear(r.Year, r.Month, r.Day, r.IsLeapMonth)
 			return solar, err
 		}
-		return solarClampedDate(y, r.Month, r.Day), nil
+		if r.Year == 0 {
+			solar, _, err := NextSolarYearlyOccurrence(r.Month, r.Day, today)
+			return solar, err
+		}
+		return solarClampedDate(r.Year, r.Month, r.Day), nil
 	case "monthly":
 		if r.Year > 0 {
 			cand := solarClampedDate(r.Year, r.Month, r.Day)
@@ -201,6 +208,15 @@ func initialNextSolarDate(r FamilyReminder, now time.Time) (time.Time, error) {
 			return solarClampedDate(r.Year, r.Month, r.Day), nil
 		}
 		cand := solarClampedDate(today.Year(), r.Month, r.Day)
+		if cand.Before(today) {
+			step := 7
+			if r.RepeatRule == "interval_days" && r.IntervalDays > 0 {
+				step = r.IntervalDays
+			}
+			daysBehind := int(today.Sub(cand).Hours() / 24)
+			cycles := (daysBehind + step - 1) / step
+			cand = cand.AddDate(0, 0, cycles*step)
+		}
 		return cand, nil
 	default:
 		return time.Time{}, ErrInput
@@ -229,6 +245,10 @@ func advanceReminderCycle(r FamilyReminder, now time.Time) (nextSolar string, di
 	case "weekly":
 		return base.AddDate(0, 0, 7).Format(reminderSolarDateTimeLayout), false, nil
 	case "monthly":
+		thisMonthTarget := solarClampedDate(base.Year(), int(base.Month()), r.Day)
+		if thisMonthTarget.After(today) && thisMonthTarget.After(current) {
+			return thisMonthTarget.Format(reminderSolarDateTimeLayout), false, nil
+		}
 		nextMonth := time.Date(base.Year(), base.Month()+1, 1, 0, 0, 0, 0, time.UTC)
 		return solarClampedDate(nextMonth.Year(), int(nextMonth.Month()), r.Day).Format(reminderSolarDateTimeLayout), false, nil
 	case "yearly":

@@ -3,6 +3,7 @@ package downloads
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -50,6 +51,7 @@ func (m *Manager) runWebArchiveTask(id string) {
 		return
 	}
 	if err := m.update(id, "status", StatusRunning, "error", ""); err != nil {
+		_ = os.RemoveAll(staging)
 		m.importMu.Unlock()
 		return
 	}
@@ -63,16 +65,26 @@ func (m *Manager) runWebArchiveTask(id string) {
 		m.clearTaskCancel(id, token)
 	}()
 
-	initialPath := filepath.Join(staging, "archive.html")
-	res, archiveErr := webarchive.ArchiveToFile(runCtx, task.URL, initialPath, archiveOpts)
-	if archiveErr == nil && res.SuggestedName != "" && res.SuggestedName != "archive.html" {
-		targetPath := filepath.Join(staging, filepath.Base(res.SuggestedName))
-		_ = os.Rename(initialPath, targetPath)
-	}
+	stagePath := filepath.Join(staging, fmt.Sprintf(".archive-%d.html", token))
+	res, archiveErr := webarchive.ArchiveToFile(runCtx, task.URL, stagePath, archiveOpts)
 
 	m.importMu.Lock()
 	defer m.importMu.Unlock()
+	if !m.isActiveRunToken(id, token) {
+		_ = os.Remove(stagePath)
+		if !m.hasActiveRun(id) {
+			if current, _, readErr := m.rowByIDUnscoped(id); errors.Is(readErr, ErrNotFound) || (readErr == nil && current.Status == StatusCancelled) {
+				_ = os.RemoveAll(staging)
+			}
+		}
+		return
+	}
+	m.clearTaskCancel(id, token)
 	current, _, readErr := m.rowByIDUnscoped(id)
+	if errors.Is(readErr, ErrNotFound) {
+		_ = os.RemoveAll(staging)
+		return
+	}
 	if readErr != nil || current.Status != StatusRunning {
 		if readErr == nil && current.Status == StatusCancelled {
 			_ = os.RemoveAll(staging)
@@ -83,7 +95,18 @@ func (m *Manager) runWebArchiveTask(id string) {
 		return
 	}
 	if archiveErr != nil {
+		_ = os.RemoveAll(staging)
 		m.failTask(id, webArchiveErrorCode(runCtx, archiveErr), "")
+		return
+	}
+	targetName := "archive.html"
+	if res.SuggestedName != "" {
+		targetName = filepath.Base(res.SuggestedName)
+	}
+	targetPath := filepath.Join(staging, targetName)
+	if renameErr := os.Rename(stagePath, targetPath); renameErr != nil {
+		_ = os.RemoveAll(staging)
+		m.failTask(id, "download_staging_failed", "")
 		return
 	}
 	_ = m.updateRunnerProgress(id, res.TotalBytes, res.TotalBytes)

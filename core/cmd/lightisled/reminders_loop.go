@@ -5,9 +5,7 @@ package main
 import (
 	"context"
 	"log/slog"
-	"strings"
 	"time"
-	"unicode"
 
 	"github.com/lengsukq/lightisle/core/internal/apps"
 	"github.com/lengsukq/lightisle/core/internal/auth"
@@ -53,6 +51,9 @@ func newReminderLoop(accounts *auth.Store, appsManager *apps.Manager, hub *notif
 	var appRunner appReminderRunner
 	if appsManager != nil {
 		appRunner = appsManager
+		if hub != nil {
+			appsManager.SetReminderReadyCheck(hub.Configured)
+		}
 	}
 	var notifier reminderNotifier
 	if hub != nil {
@@ -76,8 +77,8 @@ func newAppReminderNotifier(hub reminderNotifier) func(code, title, body, severi
 		if hub == nil || !hub.Configured() {
 			return
 		}
-		cleanTitle := sanitizeReminderNotificationText(title, maxReminderTitleRunes)
-		cleanBody := sanitizeReminderNotificationText(body, maxReminderBodyRunes)
+		cleanTitle := apps.SanitizeReminderText(title, maxReminderTitleRunes)
+		cleanBody := apps.SanitizeReminderText(body, maxReminderBodyRunes)
 		if cleanTitle == "" || cleanBody == "" {
 			return
 		}
@@ -171,8 +172,8 @@ func (l *reminderLoop) runOnce(ctx context.Context, now time.Time) int {
 		if ctx.Err() != nil {
 			break
 		}
-		title := sanitizeReminderNotificationText(item.SummaryTitle, maxReminderTitleRunes)
-		body := sanitizeReminderNotificationText(item.SummaryBody, maxReminderBodyRunes)
+		title := apps.SanitizeReminderText(item.SummaryTitle, maxReminderTitleRunes)
+		body := apps.SanitizeReminderText(item.SummaryBody, maxReminderBodyRunes)
 		if title == "" || body == "" {
 			continue
 		}
@@ -189,33 +190,4 @@ func (l *reminderLoop) runOnce(ctx context.Context, now time.Time) int {
 		sent++
 	}
 	return sent
-}
-
-func sanitizeReminderNotificationText(input string, maxRunes int) string {
-	var b strings.Builder
-	b.Grow(len(input))
-	prevSpace := false
-	for _, r := range strings.TrimSpace(input) {
-		if unicode.IsControl(r) {
-			continue
-		}
-		if unicode.IsSpace(r) {
-			if !prevSpace {
-				b.WriteByte(' ')
-				prevSpace = true
-			}
-			continue
-		}
-		prevSpace = false
-		b.WriteRune(r)
-	}
-	clean := strings.TrimSpace(b.String())
-	if maxRunes <= 0 {
-		return clean
-	}
-	runes := []rune(clean)
-	if len(runes) > maxRunes {
-		return string(runes[:maxRunes]) + "…"
-	}
-	return clean
 }

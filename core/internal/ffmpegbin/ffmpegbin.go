@@ -67,6 +67,18 @@ func executable(path string) bool {
 	return err == nil && info.Mode().IsRegular() && info.Mode()&0111 != 0
 }
 
+// Locate returns the first executable ffmpeg binary from the trusted Homebrew
+// whitelist without caching misses, so a newly installed binary takes effect
+// immediately without restarting Core.
+func Locate() (string, error) {
+	for _, path := range ffmpegCandidates {
+		if executable(path) {
+			return path, nil
+		}
+	}
+	return "", ErrNotInstalled
+}
+
 func (t *Tools) probe() {
 	if t.checked {
 		return

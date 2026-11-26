@@ -26,8 +26,9 @@ const lightIsleSharedCSS = `
     --radius-card: 18px;
     --radius-ctrl: 11px;
     --accent: #c46b3b;
+    --accent-fg: #ffffff;
     --accent-soft: rgba(196, 107, 59, 0.12);
-    --warn: #d97706;
+    --warn: #b45309;
     --warn-soft: rgba(217, 119, 6, 0.11);
     --danger: #dc2626;
     --danger-soft: rgba(220, 38, 38, 0.11);
@@ -40,13 +41,18 @@ const lightIsleSharedCSS = `
       --surface: #1e1c19;
       --surface-soft: #272420;
       --text: #f4efe8;
-      --muted: #a69e94;
-      --border: rgba(244, 239, 232, 0.11);
+      --muted: #b5ada2;
+      --border: rgba(244, 239, 232, 0.12);
       --shadow: 0 8px 28px rgba(0, 0, 0, 0.32);
-      --accent-soft: rgba(224, 134, 86, 0.18);
-      --warn-soft: rgba(245, 158, 11, 0.16);
-      --danger-soft: rgba(239, 68, 68, 0.16);
-      --ok-soft: rgba(34, 197, 94, 0.16);
+      --accent: #f09a68;
+      --accent-fg: #151412;
+      --accent-soft: rgba(240, 154, 104, 0.18);
+      --warn: #fbbf24;
+      --warn-soft: rgba(251, 191, 36, 0.17);
+      --danger: #fca5a5;
+      --danger-soft: rgba(248, 113, 113, 0.18);
+      --ok: #4ade80;
+      --ok-soft: rgba(74, 222, 128, 0.17);
     }
   }
   * { box-sizing: border-box; }
@@ -91,7 +97,7 @@ const lightIsleSharedCSS = `
     border-radius: var(--radius-ctrl);
     border: none;
     background: var(--accent);
-    color: #fff;
+    color: var(--accent-fg);
     font-size: 13px;
     font-weight: 600;
     cursor: pointer;
@@ -240,6 +246,16 @@ const lightIsleKVJS = `
     var current = readLocal(legacyKey, defaultValue);
     var offline = false;
     var conflict = false;
+    var initialLoaded = false;
+    var initialRemoteLoaded = false;
+    var initPromise = null;
+    var writeChain = Promise.resolve();
+
+    function enqueueWrite(task) {
+      var run = writeChain.then(task, task);
+      writeChain = run.then(function () {}, function () {});
+      return run;
+    }
 
     function resolveStatusEl() {
       if (!opts.statusEl) return null;
@@ -274,7 +290,7 @@ const lightIsleKVJS = `
       el.appendChild(actions);
     }
 
-    function syncReminders(data) {
+    function syncRemindersNow(data) {
       if (!buildReminders) return Promise.resolve();
       var items = [];
       try {
@@ -293,13 +309,25 @@ const lightIsleKVJS = `
       }).catch(function () {});
     }
 
-    function putRaw(nextData, useIfMatch) {
+    function syncReminders(data) {
+      return enqueueWrite(function () {
+        return syncRemindersNow(data);
+      });
+    }
+
+    function putRaw(nextData, useIfMatch, forceCreate) {
       var headers = {
         'Content-Type': 'application/json',
         'X-LightIsle-Request': '1'
       };
-      if (useIfMatch && etag) {
-        headers['If-Match'] = etag;
+      if (forceCreate) {
+        headers['If-None-Match'] = '*';
+      } else if (useIfMatch) {
+        if (etag) {
+          headers['If-Match'] = etag;
+        } else {
+          headers['If-None-Match'] = '*';
+        }
       }
       return fetch('./__lightisle_kv/' + encodeURIComponent(key), {
         method: 'PUT',
@@ -320,6 +348,8 @@ const lightIsleKVJS = `
           return resp.json().then(function (remoteData) {
             offline = false;
             conflict = false;
+            initialLoaded = true;
+            initialRemoteLoaded = true;
             current = remoteData;
             writeLocal(legacyKey, current);
             setStatus('ok', '已连接 LightIsle 家庭共享存储 · 全家实时同步', false);
@@ -330,16 +360,21 @@ const lightIsleKVJS = `
         if (resp.status === 404) {
           var localData = readLocal(legacyKey, defaultValue);
           if (isNonEmptyData(localData)) {
-            return putRaw(localData, false).then(function (putResp) {
+            return putRaw(localData, false, true).then(function (putResp) {
               if (putResp.ok) {
                 etag = putResp.headers.get('ETag') || '';
                 offline = false;
                 conflict = false;
+                initialLoaded = true;
+                initialRemoteLoaded = false;
                 current = localData;
                 setStatus('ok', '已将本机旧数据自动迁移至家庭共享存储', false);
                 syncReminders(current);
                 onData(current, { source: 'migrated', etag: etag, offline: false });
                 return current;
+              }
+              if (putResp.status === 412) {
+                return loadRemote();
               }
               throw new Error('migrate_failed');
             });
@@ -347,6 +382,8 @@ const lightIsleKVJS = `
           etag = '';
           offline = false;
           conflict = false;
+          initialLoaded = true;
+          initialRemoteLoaded = false;
           current = clone(defaultValue);
           setStatus('ok', '已连接 LightIsle 家庭共享存储 · 全家实时同步', false);
           onData(current, { source: 'empty', etag: '', offline: false });
@@ -355,6 +392,7 @@ const lightIsleKVJS = `
         throw new Error('http_' + resp.status);
       }).catch(function () {
         offline = true;
+        initialLoaded = true;
         current = readLocal(legacyKey, defaultValue);
         setStatus('warn', '离线只读模式（当前展示本机缓存，连接恢复后可编辑）', true);
         onData(current, { source: 'offline-cache', etag: etag, offline: true });
@@ -363,45 +401,69 @@ const lightIsleKVJS = `
     }
 
     function save(nextData) {
-      if (conflict) {
-        setStatus('danger', '数据已被其他设备更新，请先点击右侧「重新加载最新数据」再编辑。', true);
-        return Promise.resolve({ ok: false, conflict: true });
-      }
-      return putRaw(nextData, true).then(function (resp) {
-        if (resp.ok) {
-          etag = resp.headers.get('ETag') || etag;
-          offline = false;
-          conflict = false;
-          current = nextData;
-          writeLocal(legacyKey, current);
-          setStatus('ok', '已保存并同步至家庭共享存储', false);
-          onData(current, { source: 'saved', etag: etag, offline: false });
-          syncReminders(current);
-          return { ok: true, etag: etag };
-        }
-        if (resp.status === 412) {
-          conflict = true;
-          setStatus('danger', '检测到其他家人刚刚修改了内容，为防止覆盖已暂停保存。', true);
-          return { ok: false, conflict: true };
-        }
-        return resp.json().catch(function () { return {}; }).then(function (errBody) {
-          var msg = (errBody && errBody.message) ? errBody.message : ('保存失败（HTTP ' + resp.status + '）');
-          setStatus('danger', msg, resp.status === 503);
-          return { ok: false, error: msg };
+      var calledBeforeInit = !initialLoaded;
+      var payload = clone(nextData);
+      return enqueueWrite(function () {
+        var waitInit = (!initialLoaded && initPromise) ? initPromise : Promise.resolve();
+        return waitInit.then(function () {
+          if (!initialLoaded) {
+            setStatus('warn', '正在初始化家庭共享存储，请稍候再保存。', false);
+            return { ok: false, pending: true };
+          }
+          if (calledBeforeInit && initialRemoteLoaded) {
+            setStatus('warn', '已完成首次云端同步，为防覆盖最新内容请确认后再操作。', false);
+            return { ok: false, staleInit: true };
+          }
+          if (calledBeforeInit && offline) {
+            setStatus('warn', '当前处于离线只读状态，更改未写入 NAS，请检查连接后重试。', true);
+            return { ok: false, offline: true };
+          }
+          if (conflict) {
+            setStatus('danger', '数据已被其他设备更新，请先点击右侧「重新加载最新数据」再编辑。', true);
+            return { ok: false, conflict: true };
+          }
+          return putRaw(payload, true, false).then(function (resp) {
+            if (resp.ok) {
+              etag = resp.headers.get('ETag') || etag;
+              offline = false;
+              conflict = false;
+              current = payload;
+              writeLocal(legacyKey, current);
+              setStatus('ok', '已保存并同步至家庭共享存储', false);
+              onData(current, { source: 'saved', etag: etag, offline: false });
+              return syncRemindersNow(current).then(function () {
+                return { ok: true, etag: etag };
+              });
+            }
+            if (resp.status === 412) {
+              conflict = true;
+              setStatus('danger', '检测到其他家人刚刚修改了内容，为防止覆盖已暂停保存。', true);
+              return { ok: false, conflict: true };
+            }
+            return resp.json().catch(function () { return {}; }).then(function (errBody) {
+              var msg = (errBody && errBody.message) ? errBody.message : ('保存失败（HTTP ' + resp.status + '）');
+              setStatus('danger', msg, resp.status === 503);
+              return { ok: false, error: msg };
+            });
+          }).catch(function () {
+            offline = true;
+            setStatus('warn', '当前处于离线只读状态，更改未写入 NAS，请检查连接后重试。', true);
+            return { ok: false, offline: true };
+          });
         });
-      }).catch(function () {
-        offline = true;
-        setStatus('warn', '当前处于离线只读状态，更改未写入 NAS，请检查连接后重试。', true);
-        return { ok: false, offline: true };
       });
     }
 
     var store = {
       init: function () {
         onData(current, { source: 'cache-preview', etag: etag, offline: offline });
-        return loadRemote();
+        initPromise = loadRemote();
+        return initPromise;
       },
-      reload: loadRemote,
+      reload: function () {
+        initPromise = loadRemote();
+        return initPromise;
+      },
       get: function () { return current; },
       save: save,
       isOffline: function () { return offline; }

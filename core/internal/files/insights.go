@@ -35,6 +35,8 @@ type InsightOptions struct {
 	MaxScanEntries int
 	MaxDirs        int
 	Now            time.Time
+	CanTraverse    func(relPath string) bool
+	CanReadFile    func(relPath string) bool
 	CanRead        func(relPath string) bool
 }
 
@@ -188,6 +190,15 @@ func (m *Manager) ScanInsights(ctx context.Context, opts InsightOptions) (Insigh
 	visitedDirs := 0
 	stopErr := errors.New("insight_limit_reached")
 
+	canTraverse := opts.CanTraverse
+	if canTraverse == nil {
+		canTraverse = opts.CanRead
+	}
+	canReadFile := opts.CanReadFile
+	if canReadFile == nil {
+		canReadFile = opts.CanRead
+	}
+
 	queue := make([]string, 0, len(roots))
 	queue = append(queue, roots...)
 
@@ -215,10 +226,10 @@ func (m *Manager) ScanInsights(ctx context.Context, opts InsightOptions) (Insigh
 					res.Truncated = true
 					return stopErr
 				}
-				if opts.CanRead != nil && !opts.CanRead(e.Path) {
-					continue
-				}
 				if e.Type == "folder" {
+					if canTraverse != nil && !canTraverse(e.Path) {
+						continue
+					}
 					if len(queue)+visitedDirs < maxDirs {
 						queue = append(queue, e.Path)
 					} else {
@@ -227,6 +238,9 @@ func (m *Manager) ScanInsights(ctx context.Context, opts InsightOptions) (Insigh
 					continue
 				}
 				if e.Type != "file" {
+					continue
+				}
+				if canReadFile != nil && !canReadFile(e.Path) {
 					continue
 				}
 				res.ScannedFiles++

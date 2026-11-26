@@ -332,10 +332,16 @@ func (s *Store) UpdateFamilyReminder(actorToken string, id int64, patch FamilyRe
 		dateChanged = true
 	}
 	if patch.RemindDays != nil {
+		if len(*patch.RemindDays) == 0 {
+			return FamilyReminder{}, ErrInput
+		}
 		cur.RemindDays = *patch.RemindDays
 		cur.RemindDaysCSV = ""
 	}
 	if patch.RemindDaysCSV != nil {
+		if strings.TrimSpace(*patch.RemindDaysCSV) == "" {
+			return FamilyReminder{}, ErrInput
+		}
 		cur.RemindDays = nil
 		cur.RemindDaysCSV = *patch.RemindDaysCSV
 	}

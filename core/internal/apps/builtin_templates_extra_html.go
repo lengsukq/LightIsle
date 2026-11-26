@@ -26,6 +26,7 @@ const templateMedicineExpiryHTML = `<!doctype html>
 <style>
 /*__LIGHTISLE_SHARED_CSS__*/
   :root { --accent: #dc2626; --accent-soft: rgba(220, 38, 38, 0.10); }
+  @media (prefers-color-scheme: dark) { :root { --accent: #ff8585; --accent-soft: rgba(255, 133, 133, 0.18); } }
 </style></head>
 <body><div class="wrap">
   <div class="card">
@@ -161,6 +162,7 @@ const templateUtilityLedgerHTML = `<!doctype html>
 <style>
 /*__LIGHTISLE_SHARED_CSS__*/
   :root { --accent: #0a84ff; --accent-soft: rgba(10, 132, 255, 0.11); }
+  @media (prefers-color-scheme: dark) { :root { --accent: #6cb8ff; --accent-soft: rgba(108, 184, 255, 0.18); } }
   .chart { width: 100%; height: 150px; margin-top: 8px; }
 </style></head>
 <body><div class="wrap">
@@ -216,7 +218,7 @@ function renderChart(byMonth) {
     var bw = w * 0.6;
     var y = 122 - h;
     var rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    rect.setAttribute('x', x); rect.setAttribute('y', y); rect.setAttribute('width', bw); rect.setAttribute('height', h); rect.setAttribute('rx', '6'); rect.setAttribute('fill', '#0a84ff');
+    rect.setAttribute('x', x); rect.setAttribute('y', y); rect.setAttribute('width', bw); rect.setAttribute('height', h); rect.setAttribute('rx', '6'); rect.setAttribute('fill', 'var(--accent)');
     var lbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     lbl.setAttribute('x', x + bw / 2); lbl.setAttribute('y', 142); lbl.setAttribute('text-anchor', 'middle'); lbl.setAttribute('font-size', '11'); lbl.setAttribute('fill', 'currentColor'); lbl.textContent = k;
     var top = document.createElementNS('http://www.w3.org/2000/svg', 'text');
@@ -304,6 +306,7 @@ const templateBabyGrowthHTML = `<!doctype html>
 <style>
 /*__LIGHTISLE_SHARED_CSS__*/
   :root { --accent: #e14d72; --accent-soft: rgba(225, 77, 114, 0.11); }
+  @media (prefers-color-scheme: dark) { :root { --accent: #ff8aa8; --accent-soft: rgba(255, 138, 168, 0.18); } }
   .chart { width: 100%; height: 150px; margin-top: 8px; }
 </style></head>
 <body><div class="wrap">
@@ -360,12 +363,12 @@ function renderChart(items) {
     return { x: x, y: y, p: p };
   });
   var poly = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
-  poly.setAttribute('fill', 'none'); poly.setAttribute('stroke', '#e14d72'); poly.setAttribute('stroke-width', '3');
+  poly.setAttribute('fill', 'none'); poly.setAttribute('stroke', 'var(--accent)'); poly.setAttribute('stroke-width', '3');
   poly.setAttribute('points', coords.map(function (c) { return c.x + ',' + c.y; }).join(' '));
   svg.appendChild(poly);
   coords.forEach(function (c) {
     var dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-    dot.setAttribute('cx', c.x); dot.setAttribute('cy', c.y); dot.setAttribute('r', '4.5'); dot.setAttribute('fill', '#e14d72');
+    dot.setAttribute('cx', c.x); dot.setAttribute('cy', c.y); dot.setAttribute('r', '4.5'); dot.setAttribute('fill', 'var(--accent)');
     var lbl = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     lbl.setAttribute('x', c.x); lbl.setAttribute('y', 142); lbl.setAttribute('text-anchor', 'middle'); lbl.setAttribute('font-size', '10'); lbl.setAttribute('fill', 'currentColor'); lbl.textContent = (c.p.date || '').slice(5);
     svg.append(dot, lbl);

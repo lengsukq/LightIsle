@@ -271,13 +271,19 @@ func TestCollectLinksWriteOnlyPasswordQuotaAndRename(t *testing.T) {
 		t.Fatalf("collect token must 404 on public/file, got %d", w.Code)
 	}
 
-	// Public GET page renders HTML and MUST NOT contain existing filename.
+	// Public GET page renders HTML with Warm Gallery palette and MUST NOT contain existing filename.
 	w = env.call("GET", created.PublicPath, "", nil, nil)
 	if w.Code != http.StatusOK || !strings.Contains(w.Header().Get("Content-Type"), "text/html") {
 		t.Fatalf("collect HTML page: %d %s", w.Code, w.Header().Get("Content-Type"))
 	}
-	if strings.Contains(w.Body.String(), "super_secret_existing.txt") {
+	pageHTML := w.Body.String()
+	if strings.Contains(pageHTML, "super_secret_existing.txt") {
 		t.Fatalf("SECURITY VIOLATION: collect HTML leaked existing directory entry!")
+	}
+	for _, token := range []string{"#F7F6F3", "#0E6B74", "#5CC8D4", "#0E0E0D", ":focus-visible", "prefers-reduced-motion", "offset_mismatch", "MAX_CONCURRENCY"} {
+		if !strings.Contains(pageHTML, token) {
+			t.Fatalf("collect HTML missing expected Warm Gallery / upload feature token %q", token)
+		}
 	}
 
 	// Uploading before password auth returns 401.
@@ -357,6 +363,20 @@ func TestCollectLinksWriteOnlyPasswordQuotaAndRename(t *testing.T) {
 		t.Fatalf("list collect links: %d %s", w.Code, w.Body.String())
 	}
 
+	// Start a second upload, revoke the link mid-upload, then call complete -> must 404 AND release staging/quota reservation!
+	w = env.call("POST", created.PublicPath+"/uploads", "", []byte(`{"filename":"mid_revoke.txt","size":4}`), nil, grantCookie)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("begin second collect upload: %d %s", w.Code, w.Body.String())
+	}
+	var secondUpload struct {
+		UploadID string `json:"uploadId"`
+	}
+	_ = json.Unmarshal(w.Body.Bytes(), &secondUpload)
+	w = env.call("PATCH", created.PublicPath+"/uploads/"+secondUpload.UploadID, "", []byte("wxyz"), map[string]string{"X-Upload-Offset": "0"}, grantCookie)
+	if w.Code != http.StatusOK {
+		t.Fatalf("patch second collect upload: %d %s", w.Code, w.Body.String())
+	}
+
 	// Revoke link -> public page immediately returns 404.
 	w = env.call("DELETE", env.baseURL+"/collect-links/"+created.Link.ID, env.memberSession, nil, nil)
 	if w.Code != http.StatusOK {
@@ -365,6 +385,11 @@ func TestCollectLinksWriteOnlyPasswordQuotaAndRename(t *testing.T) {
 	w = env.call("GET", created.PublicPath, "", nil, nil)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("revoked collect link should return 404, got %d", w.Code)
+	}
+	// Attempting complete after revoke returns 404 and does not complete.
+	w = env.call("POST", created.PublicPath+"/uploads/"+secondUpload.UploadID+"/complete", "", nil, nil, grantCookie)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("complete after revoke should return 404, got %d", w.Code)
 	}
 }
 
@@ -390,23 +415,24 @@ func TestPinsInsightsTextSaveArchiveReaderAndGalleryOCRPriority(t *testing.T) {
 	var textResp struct {
 		Content       string `json:"content"`
 		MtimeUnixNano int64  `json:"mtimeUnixNano"`
+		MtimeToken    string `json:"mtimeToken"`
 		CanWrite      bool   `json:"canWrite"`
 	}
 	_ = json.Unmarshal(w.Body.Bytes(), &textResp)
-	if textResp.Content != "# Draft 1" || textResp.MtimeUnixNano == 0 || !textResp.CanWrite {
+	if textResp.Content != "# Draft 1" || textResp.MtimeUnixNano == 0 || textResp.MtimeToken != strconv.FormatInt(textResp.MtimeUnixNano, 10) || !textResp.CanWrite {
 		t.Fatalf("unexpected get text: %+v", textResp)
 	}
-	// Stale mtime returns 409 conflict.
-	staleSave, _ := json.Marshal(map[string]any{"path": notePath, "content": "# Stale", "expectedMtimeUnixNano": textResp.MtimeUnixNano - 1})
+	// Stale mtime returns 409 conflict with currentMtimeToken.
+	staleSave, _ := json.Marshal(map[string]any{"path": notePath, "content": "# Stale", "expectedMtimeToken": strconv.FormatInt(textResp.MtimeUnixNano-1, 10)})
 	w = env.call("PUT", env.baseURL+"/files/text", env.memberSession, staleSave, nil)
-	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "file_modified_conflict") {
-		t.Fatalf("expected 409 conflict, got %d %s", w.Code, w.Body.String())
+	if w.Code != http.StatusConflict || !strings.Contains(w.Body.String(), "file_modified_conflict") || !strings.Contains(w.Body.String(), `"currentMtimeToken":"`+textResp.MtimeToken+`"`) {
+		t.Fatalf("expected 409 conflict with currentMtimeToken, got %d %s", w.Code, w.Body.String())
 	}
-	// Matching mtime succeeds and updates quota delta (9 -> 15 bytes).
-	okSave, _ := json.Marshal(map[string]any{"path": notePath, "content": "# Final Version", "expectedMtimeUnixNano": textResp.MtimeUnixNano})
+	// Matching expectedMtimeToken takes precedence over stale/float-rounded expectedMtimeUnixNano and returns new mtimeToken.
+	okSave, _ := json.Marshal(map[string]any{"path": notePath, "content": "# Final Version", "expectedMtimeToken": textResp.MtimeToken, "expectedMtimeUnixNano": textResp.MtimeUnixNano - 999})
 	w = env.call("PUT", env.baseURL+"/files/text", env.memberSession, okSave, nil)
-	if w.Code != http.StatusOK {
-		t.Fatalf("expected 200 save, got %d %s", w.Code, w.Body.String())
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), `"mtimeToken":"`) {
+		t.Fatalf("expected 200 save with mtimeToken, got %d %s", w.Code, w.Body.String())
 	}
 	meter, _ := env.accounts.StorageMeter(env.memberSession, env.member.ID)
 	if meter.UsedBytes != 15 {
@@ -530,4 +556,77 @@ func TestPinsInsightsTextSaveArchiveReaderAndGalleryOCRPriority(t *testing.T) {
 	}
 	// Ensure no time flake on slow CI.
 	_ = time.Now()
+}
+
+func TestArchiveReaderWindowsSlashNonUTF8IndexAndHTMLMime(t *testing.T) {
+	env := newCoreFeatureTestEnv(t)
+	memberFiles := "Users/u" + strconv.FormatInt(env.member.ID, 10) + "/files"
+
+	// Non-UTF-8 GBK bytes for "第1话" (\xb5\xda1\xbb\xb0) + Windows backslash + .html/.xhtml.
+	gbkName := "\xb5\xda1\xbb\xb0\\001.jpg"
+	var zipBuf bytes.Buffer
+	zw := zip.NewWriter(&zipBuf)
+	for _, entry := range []struct {
+		name string
+		data []byte
+	}{
+		{gbkName, []byte("GBK-COMIC-PAGE")},
+		{"OEBPS\\chap1.html", []byte("<html><body>Hello</body></html>")},
+		{"OEBPS/chap2.xhtml", []byte("<html xmlns=\"http://www.w3.org/1999/xhtml\"></html>")},
+	} {
+		hdr := &zip.FileHeader{Name: entry.name, Method: zip.Deflate, NonUTF8: true}
+		ew, err := zw.CreateHeader(hdr)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_, _ = ew.Write(entry.data)
+	}
+	_ = zw.Close()
+	archPath := memberFiles + "/gbk_book.epub"
+	if err := os.WriteFile(filepath.Join(env.shareDir, filepath.FromSlash(archPath)), zipBuf.Bytes(), 0600); err != nil {
+		t.Fatal(err)
+	}
+
+	w := env.call("GET", env.baseURL+"/files/archive-entries?path="+url.QueryEscape(archPath), env.memberSession, nil, nil)
+	if w.Code != http.StatusOK {
+		t.Fatalf("archive-entries: %d %s", w.Code, w.Body.String())
+	}
+	var entriesResp struct {
+		Entries []archiveEntryDescriptor `json:"entries"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &entriesResp); err != nil {
+		t.Fatal(err)
+	}
+	if len(entriesResp.Entries) != 3 {
+		t.Fatalf("expected 3 entries including Windows backslash & GBK, got %+v", entriesResp.Entries)
+	}
+	var gbkIdx, htmlIdx, xhtmlIdx int = -1, -1, -1
+	for _, e := range entriesResp.Entries {
+		switch {
+		case strings.HasSuffix(e.Name, "001.jpg"):
+			gbkIdx = e.Index
+		case e.Name == "OEBPS/chap1.html":
+			htmlIdx = e.Index
+			if e.MIME != "text/html; charset=utf-8" {
+				t.Fatalf("expected text/html for .html, got %q", e.MIME)
+			}
+		case e.Name == "OEBPS/chap2.xhtml":
+			xhtmlIdx = e.Index
+			if e.MIME != "application/xhtml+xml; charset=utf-8" {
+				t.Fatalf("expected application/xhtml+xml for .xhtml, got %q", e.MIME)
+			}
+		}
+	}
+	if gbkIdx < 0 || htmlIdx < 0 || xhtmlIdx < 0 {
+		t.Fatalf("missing expected entries: %+v", entriesResp.Entries)
+	}
+	// Reading non-UTF-8 entry via stable ?index= succeeds instead of 404!
+	w = env.call("GET", env.baseURL+"/files/archive-entry?path="+url.QueryEscape(archPath)+"&index="+strconv.Itoa(gbkIdx), env.memberSession, nil, nil)
+	if w.Code != http.StatusOK || w.Body.String() != "GBK-COMIC-PAGE" {
+		t.Fatalf("expected GBK entry via index=%d, got %d %q", gbkIdx, w.Code, w.Body.String())
+	}
+	w = env.call("GET", env.baseURL+"/files/archive-entry?path="+url.QueryEscape(archPath)+"&entry=OEBPS/chap1.html", env.memberSession, nil, nil)
+	if w.Code != http.StatusOK || w.Header().Get("Content-Type") != "text/html; charset=utf-8" {
+		t.Fatalf("expected text/html for OEBPS/chap1.html, got %d ct=%q", w.Code, w.Header().Get("Content-Type"))
+	}
 }

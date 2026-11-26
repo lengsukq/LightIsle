@@ -126,7 +126,7 @@ func (m *Manager) serveAppKV(w http.ResponseWriter, r *http.Request, rec *appRec
 	}
 }
 
-func openKVRootReadOnly(dataDir string) (*os.Root, *os.Root, error) {
+func openExistingKVRoot(dataDir string) (*os.Root, *os.Root, error) {
 	dataRoot, err := os.OpenRoot(dataDir)
 	if err != nil {
 		return nil, nil, err
@@ -171,7 +171,7 @@ func (m *Manager) handleKVList(w http.ResponseWriter, r *http.Request, rec *appR
 		MaxValueBytes: maxKVValueBytes,
 	}
 
-	dataRoot, kvRoot, err := openKVRootReadOnly(rec.dataDir)
+	dataRoot, kvRoot, err := openExistingKVRoot(rec.dataDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			writeKVJSON(w, http.StatusOK, r.Method == http.MethodHead, resp)
@@ -226,7 +226,7 @@ func (m *Manager) handleKVGet(w http.ResponseWriter, r *http.Request, rec *appRe
 	mu.Lock()
 	defer mu.Unlock()
 
-	dataRoot, kvRoot, err := openKVRootReadOnly(rec.dataDir)
+	dataRoot, kvRoot, err := openExistingKVRoot(rec.dataDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			writeAppError(w, http.StatusNotFound, "kv_not_found", "指定的共享存储键不存在。")
@@ -301,6 +301,12 @@ func (m *Manager) handleKVPut(w http.ResponseWriter, r *http.Request, rec *appRe
 		return
 	}
 
+	if ifNoneMatch := strings.TrimSpace(r.Header.Get("If-None-Match")); ifNoneMatch != "" {
+		if exists && appIfNoneMatchContains(ifNoneMatch, currentETag) {
+			writeKVConflict(w, currentETag)
+			return
+		}
+	}
 	if ifMatch := strings.TrimSpace(r.Header.Get("If-Match")); ifMatch != "" {
 		if !exists || !kvIfMatchMatches(ifMatch, currentETag) {
 			writeKVConflict(w, currentETag)
@@ -348,7 +354,7 @@ func (m *Manager) handleKVDelete(w http.ResponseWriter, r *http.Request, rec *ap
 	defer mu.Unlock()
 
 	ifMatch := strings.TrimSpace(r.Header.Get("If-Match"))
-	dataRoot, kvRoot, err := openKVRootReadOnly(rec.dataDir)
+	dataRoot, kvRoot, err := openExistingKVRoot(rec.dataDir)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			if ifMatch != "" {
@@ -442,7 +448,9 @@ func measureOtherKVUsage(kvRoot *os.Root, excludeFilename string) (int, int64, e
 
 func writeKVFileAtomic(kvRoot *os.Root, filename string, data []byte) error {
 	var rnd [8]byte
-	_, _ = rand.Read(rnd[:])
+	if _, err := rand.Read(rnd[:]); err != nil {
+		return err
+	}
 	tmpName := ".kv-tmp-" + hex.EncodeToString(rnd[:])
 	f, err := kvRoot.OpenFile(tmpName, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0600)
 	if err != nil {

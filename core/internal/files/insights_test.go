@@ -164,4 +164,53 @@ func TestReplaceTextFileAtomicAndOptimisticLock(t *testing.T) {
 	if err != nil || string(raw) != "# v2 updated\n" {
 		t.Fatalf("disk content = %q err=%v", string(raw), err)
 	}
+
+	// Simulate failure after temp file creation: directory becomes read-only or concurrent mtime change leaves zero .lightisle-text-* leaks.
+	entries, err := os.ReadDir(filepath.Join(dataDir, "SharedFiles", "Notes"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range entries {
+		if len(e.Name()) >= 16 && e.Name()[:16] == ".lightisle-text-" {
+			t.Fatalf("leaked temp file: %s", e.Name())
+		}
+	}
+}
+
+func TestScanInsightsSeparatesTraverseAndReadFile(t *testing.T) {
+	dataDir := t.TempDir()
+	mgr, err := NewManager(dataDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer mgr.Close()
+
+	shareRoot := filepath.Join(dataDir, "SharedFiles")
+	for rel, size := range map[string]int{
+		"Team/public.bin":  4000,
+		"Team/private.bin": 9000,
+	} {
+		full := filepath.Join(shareRoot, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(full), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, bytes.Repeat([]byte{'a'}, size), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	res, err := mgr.ScanInsights(context.Background(), InsightOptions{
+		Roots:       []string{"."},
+		Mode:        InsightModeLarge,
+		MinBytes:    1,
+		HasMinBytes: true,
+		CanTraverse: func(p string) bool { return p == "Team" },
+		CanReadFile: func(p string) bool { return p == "Team/public.bin" },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.MatchedFiles != 1 || res.TotalBytes != 4000 || len(res.Items) != 1 || res.Items[0].Path != "Team/public.bin" {
+		t.Fatalf("expected stats strictly matching readable files, got %+v", res)
+	}
 }

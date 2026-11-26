@@ -140,3 +140,78 @@ func TestPathPrefixFilterAndPriorityOCRQueue(t *testing.T) {
 		t.Fatalf("unexpected indexed asset: %+v", indexed)
 	}
 }
+
+type throttlingAIAnalyzer struct {
+	mu       sync.Mutex
+	calls    int
+	firstErr error
+	byStatus map[string]string
+}
+
+func (a *throttlingAIAnalyzer) AnalyzeBatch(_ context.Context, items []mediaworker.AIBatchInput) ([]mediaworker.AIAnalysis, error) {
+	a.mu.Lock()
+	a.calls++
+	call := a.calls
+	a.mu.Unlock()
+	if call == 1 && a.firstErr != nil {
+		return nil, a.firstErr
+	}
+	out := make([]mediaworker.AIAnalysis, len(items))
+	for i, it := range items {
+		st := "ok"
+		if s, ok := a.byStatus[it.Name]; ok && call == 1 {
+			st = s
+		}
+		out[i] = mediaworker.AIAnalysis{Status: st}
+	}
+	return out, nil
+}
+
+func TestPriorityAIRequeuedOnThrottle(t *testing.T) {
+	root := t.TempDir()
+	storage, err := files.NewManager(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer storage.Close()
+
+	shareRoot := filepath.Join(root, "SharedFiles")
+	rel := "Users/u1/photos/Docs/receipt_throttled.png"
+	writeTestPNG(t, filepath.Join(shareRoot, filepath.FromSlash(rel)), time.Date(2026, 9, 10, 12, 0, 0, 0, time.UTC))
+
+	lib, err := Open(filepath.Join(root, "gallery"), storage)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lib.Close()
+	lib.SetAIPaused(true)
+	if _, err := lib.IndexSinglePhotoNow(context.Background(), rel); err != nil {
+		t.Fatal(err)
+	}
+
+	// Case 1: whole batch returns ErrThrottled -> priority path must stay queued.
+	lib.EnqueuePriorityAI(rel)
+	share, err := lib.share()
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch, err := lib.nextAIBatch(share, 4)
+	if err != nil || len(batch) != 1 || !batch[0].priority {
+		t.Fatalf("expected 1 priority candidate, got %+v err=%v", batch, err)
+	}
+	lib.SetAIPaused(false)
+	throttled, _ := lib.processAIBatch(share, &throttlingAIAnalyzer{firstErr: mediaworker.ErrThrottled}, batch)
+	if !throttled || lib.PriorityAIQueueLen() != 1 {
+		t.Fatalf("expected throttled=true and priority requeued (len=1), got throttled=%v len=%d", throttled, lib.PriorityAIQueueLen())
+	}
+
+	// Case 2: per-item status=="throttled" -> priority path must also be requeued.
+	batch2, err := lib.nextAIBatch(share, 4)
+	if err != nil || len(batch2) != 1 || !batch2[0].priority {
+		t.Fatalf("expected requeued priority candidate on next batch, got %+v err=%v", batch2, err)
+	}
+	throttled2, _ := lib.processAIBatch(share, &throttlingAIAnalyzer{byStatus: map[string]string{"receipt_throttled.png": "throttled"}}, batch2)
+	if !throttled2 || lib.PriorityAIQueueLen() != 1 {
+		t.Fatalf("expected per-item throttle requeue, got throttled=%v len=%d", throttled2, lib.PriorityAIQueueLen())
+	}
+}

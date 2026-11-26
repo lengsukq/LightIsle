@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/binary"
 	stdhtml "html"
 	"net/http"
 	"net/url"
@@ -108,6 +109,17 @@ func nodeText(n *html.Node) string {
 	return b.String()
 }
 
+type bodyPart struct {
+	html string
+	img  *imgCandidate
+}
+
+type imgCandidate struct {
+	src   string
+	alt   string
+	title string
+}
+
 type sanitizeState struct {
 	ctx           context.Context
 	client        *http.Client
@@ -116,6 +128,7 @@ type sanitizeState struct {
 	remainingSize int64
 	inlinedImages int
 	skippedImages int
+	parts         []bodyPart
 }
 
 var droppedElements = map[string]bool{
@@ -154,6 +167,33 @@ func isDroppedElement(tag string) bool {
 	return droppedElements[strings.ToLower(tag)]
 }
 
+// sanitizeAndInline first strips untrusted markup so the remaining image budget
+// is computed from the actual sanitized body size rather than raw page bloat.
+func (s *sanitizeState) sanitizeAndInline(contentRoot *html.Node, bodyBudget int64) string {
+	var buf bytes.Buffer
+	s.renderChildren(&buf, contentRoot)
+	if buf.Len() > 0 {
+		s.parts = append(s.parts, bodyPart{html: buf.String()})
+	}
+
+	var sanitizedTextBytes int64
+	for _, part := range s.parts {
+		sanitizedTextBytes += int64(len(part.html))
+	}
+	s.remainingSize = max(0, bodyBudget-sanitizedTextBytes)
+
+	var out bytes.Buffer
+	out.Grow(int(sanitizedTextBytes))
+	for _, part := range s.parts {
+		if part.img == nil {
+			out.WriteString(part.html)
+			continue
+		}
+		s.materializeImage(&out, part.img)
+	}
+	return out.String()
+}
+
 func (s *sanitizeState) renderChildren(w *bytes.Buffer, n *html.Node) {
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		s.renderNode(w, c)
@@ -174,7 +214,7 @@ func (s *sanitizeState) renderNode(w *bytes.Buffer, n *html.Node) {
 			return
 		}
 		if tag == "img" {
-			s.renderImage(w, n)
+			s.collectImage(w, n)
 			return
 		}
 		attrs := s.sanitizeAttrs(tag, n.Attr)
@@ -275,7 +315,11 @@ func (s *sanitizeState) sanitizeLinkURL(raw string) (string, bool) {
 	}
 }
 
-func (s *sanitizeState) renderImage(w *bytes.Buffer, n *html.Node) {
+func (s *sanitizeState) collectImage(w *bytes.Buffer, n *html.Node) {
+	if w.Len() > 0 {
+		s.parts = append(s.parts, bodyPart{html: w.String()})
+		w.Reset()
+	}
 	var rawSrc, dataSrc, alt, title string
 	for _, a := range n.Attr {
 		switch strings.ToLower(strings.TrimSpace(a.Key)) {
@@ -292,16 +336,23 @@ func (s *sanitizeState) renderImage(w *bytes.Buffer, n *html.Node) {
 		}
 	}
 	src := rawSrc
-	if (src == "" || strings.HasPrefix(strings.ToLower(src), "data:image/gif;base64,R0lGOD")) && dataSrc != "" {
+	if (src == "" || strings.HasPrefix(strings.ToLower(src), "data:image/gif;base64,r0lgod")) && dataSrc != "" {
 		src = dataSrc
 	}
-	dataURI, ok := s.inlineImage(src)
+	s.parts = append(s.parts, bodyPart{img: &imgCandidate{src: src, alt: alt, title: title}})
+}
+
+func (s *sanitizeState) materializeImage(w *bytes.Buffer, cand *imgCandidate) {
+	attrOverhead := imgTagOverhead(cand.alt, cand.title)
+	dataURI, ok := s.inlineImage(cand.src, attrOverhead)
 	if !ok {
 		s.skippedImages++
-		if alt != "" {
-			w.WriteString(`<span class="li-img-alt">[图片: `)
-			w.WriteString(stdhtml.EscapeString(alt))
-			w.WriteString(`]</span>`)
+		if cand.alt != "" {
+			fallback := `<span class="li-img-alt">[图片: ` + stdhtml.EscapeString(cand.alt) + `]</span>`
+			if int64(len(fallback)) <= s.remainingSize {
+				s.remainingSize -= int64(len(fallback))
+				w.WriteString(fallback)
+			}
 		}
 		return
 	}
@@ -309,17 +360,28 @@ func (s *sanitizeState) renderImage(w *bytes.Buffer, n *html.Node) {
 	w.WriteString(`<img src="`)
 	w.WriteString(dataURI)
 	w.WriteByte('"')
-	if alt != "" {
+	if cand.alt != "" {
 		w.WriteString(` alt="`)
-		w.WriteString(stdhtml.EscapeString(alt))
+		w.WriteString(stdhtml.EscapeString(cand.alt))
 		w.WriteByte('"')
 	}
-	if title != "" {
+	if cand.title != "" {
 		w.WriteString(` title="`)
-		w.WriteString(stdhtml.EscapeString(title))
+		w.WriteString(stdhtml.EscapeString(cand.title))
 		w.WriteByte('"')
 	}
 	w.WriteByte('>')
+}
+
+func imgTagOverhead(alt, title string) int64 {
+	overhead := int64(len(`<img src="">`))
+	if alt != "" {
+		overhead += int64(len(` alt=""`) + len(stdhtml.EscapeString(alt)))
+	}
+	if title != "" {
+		overhead += int64(len(` title=""`) + len(stdhtml.EscapeString(title)))
+	}
+	return overhead
 }
 
 var safeImageMIMEs = map[string]bool{
@@ -332,13 +394,13 @@ var safeImageMIMEs = map[string]bool{
 	"image/x-icon": true,
 }
 
-func (s *sanitizeState) inlineImage(src string) (string, bool) {
-	if src == "" || s.inlinedImages >= s.cfg.MaxImages || s.remainingSize <= 0 {
+func (s *sanitizeState) inlineImage(src string, tagOverhead int64) (string, bool) {
+	if src == "" || s.inlinedImages >= s.cfg.MaxImages || s.remainingSize <= tagOverhead {
 		return "", false
 	}
 	lower := strings.ToLower(src)
 	if strings.HasPrefix(lower, "data:") {
-		return s.validateExistingDataURI(src)
+		return s.validateExistingDataURI(src, tagOverhead)
 	}
 	if strings.HasPrefix(lower, "javascript:") || strings.HasPrefix(lower, "vbscript:") {
 		return "", false
@@ -378,48 +440,115 @@ func (s *sanitizeState) inlineImage(src string) (string, bool) {
 		return "", false
 	}
 	encoded := "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(data)
-	if int64(len(encoded)) > s.remainingSize {
+	cost := int64(len(encoded)) + tagOverhead
+	if cost > s.remainingSize {
 		return "", false
 	}
-	s.remainingSize -= int64(len(encoded))
+	s.remainingSize -= cost
 	return encoded, true
 }
 
-func (s *sanitizeState) validateExistingDataURI(src string) (string, bool) {
+func (s *sanitizeState) validateExistingDataURI(src string, tagOverhead int64) (string, bool) {
 	comma := strings.IndexByte(src, ',')
 	if comma <= 5 {
 		return "", false
 	}
-	meta := strings.ToLower(src[5:comma])
+	meta := strings.ToLower(strings.TrimSpace(src[5:comma]))
 	if !strings.HasSuffix(meta, ";base64") {
 		return "", false
 	}
-	mimeType := strings.TrimSuffix(meta, ";base64")
-	if !safeImageMIMEs[mimeType] {
+	declaredMIME := strings.TrimSpace(strings.TrimSuffix(meta, ";base64"))
+	if !safeImageMIMEs[declaredMIME] {
 		return "", false
 	}
-	decoded, err := base64.StdEncoding.DecodeString(src[comma+1:])
+	cleaned := stripBase64Whitespace(src[comma+1:])
+	if cleaned == "" {
+		return "", false
+	}
+	decoded, err := base64.StdEncoding.DecodeString(cleaned)
+	if err != nil && !strings.ContainsRune(cleaned, '=') {
+		decoded, err = base64.RawStdEncoding.DecodeString(cleaned)
+	}
 	if err != nil || len(decoded) == 0 || int64(len(decoded)) > s.cfg.MaxImageBytes {
 		return "", false
 	}
-	cleanURI := "data:" + mimeType + ";base64," + base64.StdEncoding.EncodeToString(decoded)
-	if int64(len(cleanURI)) > s.remainingSize {
+	verifiedMIME := detectSafeImageMIME(declaredMIME, decoded)
+	if verifiedMIME == "" {
 		return "", false
 	}
-	s.remainingSize -= int64(len(cleanURI))
+	cleanURI := "data:" + verifiedMIME + ";base64," + base64.StdEncoding.EncodeToString(decoded)
+	cost := int64(len(cleanURI)) + tagOverhead
+	if cost > s.remainingSize {
+		return "", false
+	}
+	s.remainingSize -= cost
 	return cleanURI, true
 }
 
-func detectSafeImageMIME(headerContentType string, data []byte) string {
+func stripBase64Whitespace(raw string) string {
+	var b strings.Builder
+	b.Grow(len(raw))
+	for i := 0; i < len(raw); i++ {
+		switch raw[i] {
+		case ' ', '\t', '\r', '\n':
+			continue
+		default:
+			b.WriteByte(raw[i])
+		}
+	}
+	return b.String()
+}
+
+func detectSafeImageMIME(_ string, data []byte) string {
+	if len(data) == 0 {
+		return ""
+	}
 	sniffed := parseMediaType(http.DetectContentType(data))
+	if sniffed == "image/vnd.microsoft.icon" && isICOMagic(data) {
+		return "image/x-icon"
+	}
 	if safeImageMIMEs[sniffed] {
 		return sniffed
 	}
-	declared := parseMediaType(headerContentType)
-	if declared == "image/avif" || declared == "image/x-icon" {
-		return declared
+	if isAVIFMagic(data) {
+		return "image/avif"
+	}
+	if isICOMagic(data) {
+		return "image/x-icon"
 	}
 	return ""
+}
+
+func isAVIFMagic(data []byte) bool {
+	if len(data) < 12 || string(data[4:8]) != "ftyp" {
+		return false
+	}
+	boxSize := int(binary.BigEndian.Uint32(data[0:4]))
+	if boxSize < 12 {
+		return false
+	}
+	limit := min(len(data), min(boxSize, 64))
+	major := string(data[8:12])
+	if major == "avif" || major == "avis" {
+		return true
+	}
+	for off := 16; off+4 <= limit; off += 4 {
+		brand := string(data[off : off+4])
+		if brand == "avif" || brand == "avis" {
+			return true
+		}
+	}
+	return false
+}
+
+func isICOMagic(data []byte) bool {
+	if len(data) < 6 {
+		return false
+	}
+	if data[0] != 0x00 || data[1] != 0x00 || (data[2] != 0x01 && data[2] != 0x02) || data[3] != 0x00 {
+		return false
+	}
+	return binary.LittleEndian.Uint16(data[4:6]) > 0
 }
 
 func isPositiveInt(s string) bool {
@@ -440,8 +569,8 @@ func buildArchiveDocument(title, sourceURL string, archivedAt time.Time, bodyHTM
 	b.WriteString("<title>")
 	b.WriteString(escapedTitle)
 	b.WriteString("</title>\n<style>\n")
-	b.WriteString(":root{color-scheme:light dark;--bg:#faf9f6;--card:#ffffff;--fg:#1c1917;--muted:#57534e;--border:#e7e5e4;--link:#0f62fe;}\n")
-	b.WriteString("@media(prefers-color-scheme:dark){:root{--bg:#141413;--card:#1e1e1c;--fg:#f5f5f4;--muted:#a8a29e;--border:#2e2d2a;--link:#6ea8fe;}}\n")
+	b.WriteString(":root{color-scheme:light dark;--bg:#F7F6F3;--card:#FFFFFF;--fg:#1C1B19;--muted:#63605B;--border:#E7E4DD;--link:#0E6B74;}\n")
+	b.WriteString("@media(prefers-color-scheme:dark){:root{--bg:#0E0E0D;--card:#191917;--fg:#F2F0EC;--muted:#A6A29B;--border:#2E2E2A;--link:#5CC8D4;}}\n")
 	b.WriteString("body{margin:0;padding:24px 16px 48px;background:var(--bg);color:var(--fg);font:16px/1.75 -apple-system,BlinkMacSystemFont,'SF Pro Text','PingFang SC',sans-serif;}\n")
 	b.WriteString(".li-wrap{max-width:780px;margin:0 auto;}\n")
 	b.WriteString(".li-archive-meta{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:24px;}\n")
