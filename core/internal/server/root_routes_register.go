@@ -14,6 +14,9 @@ func registerRootRoutes(mux *http.ServeMux, api *API) {
 		return rootHandler(api, method, rootTraverse)
 	}
 	public := func(method func(*API) http.HandlerFunc) http.HandlerFunc { return rootHandler(api, method, rootPublic) }
+	collectPublic := func(method func(*API) http.HandlerFunc) http.HandlerFunc {
+		return collectPublicHandler(api, method)
+	}
 	const base = "/api/v2/roots/{rootID}"
 	mux.HandleFunc("GET "+base+"/cache/status", admin(func(a *API) http.HandlerFunc { return a.cacheStatus }))
 	mux.HandleFunc("POST "+base+"/admin/cache/clear", admin(func(a *API) http.HandlerFunc { return a.adminCacheClear }))
@@ -21,15 +24,25 @@ func registerRootRoutes(mux *http.ServeMux, api *API) {
 	mux.HandleFunc("POST "+base+"/missing-media/{kind}/recheck", file(func(a *API) http.HandlerFunc { return a.missingMediaRecheck }))
 	mux.HandleFunc("POST "+base+"/missing-media/{kind}/{id}/attach", file(func(a *API) http.HandlerFunc { return a.missingMediaAttach }))
 	mux.HandleFunc("DELETE "+base+"/missing-media/{kind}/{id}", file(func(a *API) http.HandlerFunc { return a.missingMediaDiscard }))
-	registerRootFileRoutes(mux, base, file, admin, traverse, public)
+	registerRootFileRoutes(mux, base, file, admin, traverse, public, collectPublic)
 	registerRootGalleryRoutes(mux, base, media, admin)
 	registerRootCinemaRoutes(mux, base, media, admin)
 	registerRootAdministrationRoutes(mux, base, admin)
 }
 
-func registerRootFileRoutes(mux *http.ServeMux, base string, file, admin, traverse, public guardedRootEndpoint) {
+func registerRootFileRoutes(mux *http.ServeMux, base string, file, admin, traverse, public, collectPublic guardedRootEndpoint) {
 	mux.HandleFunc("GET "+base+"/files", file(func(a *API) http.HandlerFunc { return a.listFiles }))
 	mux.HandleFunc("GET "+base+"/files/search", file(func(a *API) http.HandlerFunc { return a.searchFiles }))
+	mux.HandleFunc("GET "+base+"/files/pins", file(func(a *API) http.HandlerFunc { return a.filePinsList }))
+	mux.HandleFunc("POST "+base+"/files/pins", file(func(a *API) http.HandlerFunc { return a.filePinsAdd }))
+	mux.HandleFunc("DELETE "+base+"/files/pins", file(func(a *API) http.HandlerFunc { return a.filePinsDelete }))
+	mux.HandleFunc("GET "+base+"/files/insights", file(func(a *API) http.HandlerFunc { return a.fileInsights }))
+	mux.HandleFunc("GET "+base+"/files/text", file(func(a *API) http.HandlerFunc { return a.fileTextGet }))
+	mux.HandleFunc("PUT "+base+"/files/text", file(func(a *API) http.HandlerFunc { return a.fileTextSave }))
+	mux.HandleFunc("GET "+base+"/files/archive-entries", file(func(a *API) http.HandlerFunc { return a.fileArchiveEntries }))
+	mux.HandleFunc("GET "+base+"/files/archive-entry", file(func(a *API) http.HandlerFunc { return a.fileArchiveEntry }))
+	mux.HandleFunc("GET "+base+"/files/reading-progress", file(func(a *API) http.HandlerFunc { return a.fileReadingProgressGet }))
+	mux.HandleFunc("PUT "+base+"/files/reading-progress", file(func(a *API) http.HandlerFunc { return a.fileReadingProgressPut }))
 	mux.HandleFunc("GET "+base+"/files/duplicates", file(func(a *API) http.HandlerFunc { return a.duplicatesStatus }))
 	mux.HandleFunc("POST "+base+"/files/duplicates/scan", file(func(a *API) http.HandlerFunc { return a.duplicatesScan }))
 	mux.HandleFunc("POST "+base+"/files/duplicates/cancel", file(func(a *API) http.HandlerFunc { return a.duplicatesCancel }))
@@ -71,6 +84,15 @@ func registerRootFileRoutes(mux *http.ServeMux, base string, file, admin, traver
 	mux.HandleFunc("GET "+base+"/public/file/{token}", public(func(a *API) http.HandlerFunc { return a.downloadSharedFile }))
 	mux.HandleFunc("HEAD "+base+"/public/file/{token}", public(func(a *API) http.HandlerFunc { return a.downloadSharedFile }))
 	mux.HandleFunc("POST "+base+"/public/file/{token}", public(func(a *API) http.HandlerFunc { return a.downloadSharedFile }))
+	mux.HandleFunc("POST "+base+"/collect-links", file(func(a *API) http.HandlerFunc { return a.createCollectLink }))
+	mux.HandleFunc("GET "+base+"/collect-links", file(func(a *API) http.HandlerFunc { return a.listCollectLinks }))
+	mux.HandleFunc("DELETE "+base+"/collect-links/{id}", file(func(a *API) http.HandlerFunc { return a.revokeCollectLink }))
+	mux.HandleFunc("GET "+base+"/public/collect/{token}", collectPublic(func(a *API) http.HandlerFunc { return a.publicCollectPage }))
+	mux.HandleFunc("POST "+base+"/public/collect/{token}/auth", collectPublic(func(a *API) http.HandlerFunc { return a.publicCollectAuth }))
+	mux.HandleFunc("POST "+base+"/public/collect/{token}/uploads", collectPublic(func(a *API) http.HandlerFunc { return a.publicCollectUploadBegin }))
+	mux.HandleFunc("PATCH "+base+"/public/collect/{token}/uploads/{uploadID}", collectPublic(func(a *API) http.HandlerFunc { return a.publicCollectUploadChunk }))
+	mux.HandleFunc("POST "+base+"/public/collect/{token}/uploads/{uploadID}/complete", collectPublic(func(a *API) http.HandlerFunc { return a.publicCollectUploadComplete }))
+	mux.HandleFunc("DELETE "+base+"/public/collect/{token}/uploads/{uploadID}", collectPublic(func(a *API) http.HandlerFunc { return a.publicCollectUploadAbort }))
 }
 
 func registerRootGalleryRoutes(mux *http.ServeMux, base string, media, admin guardedRootEndpoint) {
@@ -83,6 +105,7 @@ func registerRootGalleryRoutes(mux *http.ServeMux, base string, media, admin gua
 	mux.HandleFunc("HEAD "+base+"/photos/archive", media(func(a *API) http.HandlerFunc { return a.gallerySelectedArchive }))
 	mux.HandleFunc("POST "+base+"/photos/scan", admin(func(a *API) http.HandlerFunc { return a.galleryScan }))
 	mux.HandleFunc("POST "+base+"/photos/ai/pause", admin(func(a *API) http.HandlerFunc { return a.galleryAIPause }))
+	mux.HandleFunc("POST "+base+"/photos/ocr-priority", media(func(a *API) http.HandlerFunc { return a.galleryOCRPriority }))
 	mux.HandleFunc("GET "+base+"/photos/memories", media(func(a *API) http.HandlerFunc { return a.galleryMemories }))
 	mux.HandleFunc("GET "+base+"/photos/{id}/live-video", media(func(a *API) http.HandlerFunc { return a.galleryLiveVideo }))
 	mux.HandleFunc("HEAD "+base+"/photos/{id}/live-video", media(func(a *API) http.HandlerFunc { return a.galleryLiveVideo }))

@@ -48,6 +48,8 @@ type API struct {
 	// shareGrants holds the in-memory password grants for public share
 	// downloads; Core restarts clear them and visitors re-enter the password.
 	shareGrants    *shareGrantStore
+	collectGrants  *shareGrantStore
+	collectUploads *collectUploadTracker
 	duplicateScans *duplicateScanStore
 	// afterLogin lets tests pause login between session issuance and identity
 	// lookup to exercise the verified-but-unusable-session path.
@@ -119,6 +121,8 @@ func newAPI(webRoot string, store *auth.Store, fileStore files.Access, photos *g
 		limiter:        newLoginLimiter(),
 		downloads:      downloadCenter,
 		shareGrants:    newShareGrantStore(),
+		collectGrants:  newShareGrantStore(),
+		collectUploads: newCollectUploadTracker(),
 		duplicateScans: newDuplicateScanStore(),
 	}
 	if len(backupServices) > 0 {
@@ -210,6 +214,11 @@ func registerGlobalRoutes(mux *http.ServeMux, a *API) {
 	mux.HandleFunc("POST /api/v2/board/messages", a.requireLogin(a.familyBoardCreate))
 	mux.HandleFunc("PATCH /api/v2/board/messages/{id}/pin", a.requireAdmin(a.familyBoardPin))
 	mux.HandleFunc("DELETE /api/v2/board/messages/{id}", a.requireLogin(a.familyBoardDelete))
+	mux.HandleFunc("GET /api/v2/family-reminders", a.requireLogin(a.familyRemindersList))
+	mux.HandleFunc("POST /api/v2/family-reminders", a.requireLogin(a.familyRemindersCreate))
+	mux.HandleFunc("PATCH /api/v2/family-reminders/{id}", a.requireLogin(a.familyRemindersUpdate))
+	mux.HandleFunc("DELETE /api/v2/family-reminders/{id}", a.requireLogin(a.familyRemindersDelete))
+	mux.HandleFunc("POST /api/v2/family-reminders/{id}/complete", a.requireLogin(a.familyRemindersComplete))
 }
 
 // registerSingleRootCompatRoutes mounts unscoped file/media/DAV routes used
@@ -221,6 +230,16 @@ func registerSingleRootCompatRoutes(mux *http.ServeMux, a *API) {
 	mux.HandleFunc("POST /api/v2/admin/uploads/cleanup-expired", a.requireAdmin(a.adminUploadCleanupExpired))
 	mux.HandleFunc("GET /api/v2/files", a.requireLogin(a.listFiles))
 	mux.HandleFunc("GET /api/v2/files/search", a.requireLogin(a.searchFiles))
+	mux.HandleFunc("GET /api/v2/files/pins", a.requireLogin(a.filePinsList))
+	mux.HandleFunc("POST /api/v2/files/pins", a.requireLogin(a.filePinsAdd))
+	mux.HandleFunc("DELETE /api/v2/files/pins", a.requireLogin(a.filePinsDelete))
+	mux.HandleFunc("GET /api/v2/files/insights", a.requireLogin(a.fileInsights))
+	mux.HandleFunc("GET /api/v2/files/text", a.requireLogin(a.fileTextGet))
+	mux.HandleFunc("PUT /api/v2/files/text", a.requireLogin(a.fileTextSave))
+	mux.HandleFunc("GET /api/v2/files/archive-entries", a.requireLogin(a.fileArchiveEntries))
+	mux.HandleFunc("GET /api/v2/files/archive-entry", a.requireLogin(a.fileArchiveEntry))
+	mux.HandleFunc("GET /api/v2/files/reading-progress", a.requireLogin(a.fileReadingProgressGet))
+	mux.HandleFunc("PUT /api/v2/files/reading-progress", a.requireLogin(a.fileReadingProgressPut))
 	mux.HandleFunc("GET /api/v2/files/duplicates", a.requireLogin(a.duplicatesStatus))
 	mux.HandleFunc("POST /api/v2/files/duplicates/scan", a.requireLogin(a.duplicatesScan))
 	mux.HandleFunc("POST /api/v2/files/duplicates/cancel", a.requireLogin(a.duplicatesCancel))
@@ -261,6 +280,7 @@ func registerSingleRootCompatRoutes(mux *http.ServeMux, a *API) {
 	mux.HandleFunc("GET /api/v2/photos/geo", a.requireMedia(a.galleryGeo))
 	mux.HandleFunc("POST /api/v2/photos/scan", a.requireAdmin(a.galleryScan))
 	mux.HandleFunc("POST /api/v2/photos/ai/pause", a.requireAdmin(a.galleryAIPause))
+	mux.HandleFunc("POST /api/v2/photos/ocr-priority", a.requireMedia(a.galleryOCRPriority))
 	mux.HandleFunc("GET /api/v2/photos/memories", a.requireMedia(a.galleryMemories))
 	mux.HandleFunc("GET /api/v2/photos/{id}/live-video", a.requireMedia(a.galleryLiveVideo))
 	mux.HandleFunc("HEAD /api/v2/photos/{id}/live-video", a.requireMedia(a.galleryLiveVideo))

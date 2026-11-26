@@ -110,9 +110,11 @@ type Library struct {
 	thumbMu    *thumbnailGate
 	status     Status
 	backfill   BackfillStatus
-	aiStatus   AIIndexStatus
-	aiPaused   bool
-	aiWake     chan struct{}
+	aiStatus      AIIndexStatus
+	aiPaused      bool
+	aiPriority    []aiPriorityItem
+	aiPrioritySet map[string]struct{}
+	aiWake        chan struct{}
 	ctx        context.Context
 	cancel     context.CancelFunc
 	jobCancel  context.CancelFunc
@@ -503,6 +505,7 @@ type PhotoFilter struct {
 	Kind        string
 	Query       string
 	SearchMode  string
+	PathPrefix  string
 	PersonID    int64
 	OnThisDay   bool
 	IDs         []int64

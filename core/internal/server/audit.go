@@ -63,6 +63,8 @@ func auditedAction(r *http.Request) string {
 		return "root_grant_change"
 	case strings.HasPrefix(p, "/api/v2/roots/") && strings.Contains(p, "/file-shares"):
 		return "root_file_share_change"
+	case strings.HasPrefix(p, "/api/v2/roots/") && strings.Contains(p, "/collect-links"):
+		return "root_collect_link_change"
 	case strings.HasPrefix(p, "/api/v2/roots/") && strings.Contains(p, "/files"):
 		return "root_file_write"
 	case strings.HasPrefix(p, "/api/v2/roots/") && strings.Contains(p, "/uploads"):
@@ -95,6 +97,8 @@ func auditedAction(r *http.Request) string {
 		return "alert_acknowledge"
 	case strings.HasPrefix(p, "/api/v2/board/messages"):
 		return "family_board_write"
+	case strings.HasPrefix(p, "/api/v2/family-reminders"):
+		return "family_reminder_write"
 	case strings.HasPrefix(p, "/api/v2/apps"):
 		return "apps_write"
 	default:

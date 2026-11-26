@@ -7,6 +7,7 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/mediascope"
 )
 
@@ -112,6 +113,18 @@ func appendPhotoFilterSQL(userID int64, filter PhotoFilter, query *string, args 
 	} else if filter.Kind != "" {
 		*query += " AND a.type=?"
 		*args = append(*args, filter.Kind)
+	}
+	if prefix := strings.Trim(strings.TrimSpace(filter.PathPrefix), "/"); prefix != "" && prefix != "." {
+		if strings.ContainsAny(prefix, "\\\x00") || strings.HasPrefix(prefix, "/") {
+			return errors.New("invalid_filter")
+		}
+		for _, part := range strings.Split(prefix, "/") {
+			if part == "" || part == "." || part == ".." || files.IsInternalName(part) {
+				return errors.New("invalid_filter")
+			}
+		}
+		*query += " AND (a.path=? OR substr(a.path,1,length(?)+1)=?||'/')"
+		*args = append(*args, prefix, prefix, prefix)
 	}
 	if filter.PersonID > 0 {
 		if userID <= 0 {
