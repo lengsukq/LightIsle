@@ -10,38 +10,80 @@ struct RemovableMediaBannerView: View {
     var body: some View {
         if model.state == .online, let volume = coordinator.bannerVolumes.first {
             let extraCount = coordinator.bannerVolumes.count - 1
-            HStack(alignment: .center, spacing: 12) {
-                IsleHeaderIconBadge(icon: "sdcard.fill", tint: IsleFluidPalette.brandCyan, size: 36)
-                VStack(alignment: .leading, spacing: 3) {
+            ViewThatFits(in: .horizontal) {
+                HStack(alignment: .center, spacing: 14) {
+                    bannerContent(volume: volume, extraCount: extraCount, singleLineTitle: true)
+                    Spacer(minLength: 10)
+                    bannerActions(volume: volume)
+                }
+                VStack(alignment: .leading, spacing: 12) {
+                    bannerContent(volume: volume, extraCount: extraCount, singleLineTitle: false)
+                    HStack(spacing: 8) {
+                        Spacer(minLength: 0)
+                        bannerActions(volume: volume)
+                    }
+                }
+            }
+            .padding(18)
+            .modifier(IsleEmbossedSurface())
+        }
+    }
+
+    private func bannerContent(
+        volume: DetectedRemovableMediaVolume,
+        extraCount: Int,
+        singleLineTitle: Bool
+    ) -> some View {
+        HStack(alignment: singleLineTitle ? .center : .top, spacing: 12) {
+            IsleHeaderIconBadge(icon: "sdcard.fill", tint: IsleFluidPalette.brandCyan, size: 36)
+            VStack(alignment: .leading, spacing: 4) {
+                if singleLineTitle {
                     HStack(spacing: 8) {
                         Text("发现可移动存储介质「\(volume.volumeName)」")
                             .font(.system(size: 13.5, weight: .semibold))
-                        IsleStatusPill(
-                            text: volume.summaryHints,
-                            tone: volume.hasCameraHints ? .accent : .neutral
-                        )
-                        if extraCount > 0 {
-                            IsleStatusPill(text: "另有 \(extraCount) 张存储卡", tone: .neutral)
-                        }
+                            .lineLimit(1)
+                        bannerPills(volume: volume, extraCount: extraCount)
                     }
-                    Text("仅只读扫描照片、RAW 与视频并增量归档至 NAS，绝不删除或格式化存储卡原件。")
-                        .font(.system(size: 12))
-                        .foregroundStyle(IsleTheme.secondaryText)
+                    .fixedSize(horizontal: true, vertical: false)
+                } else {
+                    Text("发现可移动存储介质「\(volume.volumeName)」")
+                        .font(.system(size: 13.5, weight: .semibold))
                         .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 6) {
+                        bannerPills(volume: volume, extraCount: extraCount)
+                    }
                 }
-                Spacer(minLength: 8)
-                Button("忽略") {
-                    coordinator.dismissBanner(for: volume.mountPath)
-                }
-                .buttonStyle(LiquidButtonStyle(variant: .borderless, size: .small))
-                Button("一键扫描导入") {
-                    coordinator.openImport(for: volume.mountPath, appModel: model)
-                }
-                .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+                Text("仅只读扫描照片、RAW 与视频并增量归档至 NAS，绝不删除或格式化存储卡原件。")
+                    .font(.system(size: 12))
+                    .foregroundStyle(IsleTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
             }
-            .padding(14)
-            .modifier(IsleEmbossedSurface())
         }
+    }
+
+    @ViewBuilder
+    private func bannerPills(volume: DetectedRemovableMediaVolume, extraCount: Int) -> some View {
+        IsleStatusPill(
+            text: volume.summaryHints,
+            tone: volume.hasCameraHints ? .accent : .neutral
+        )
+        if extraCount > 0 {
+            IsleStatusPill(text: "另有 \(extraCount) 张存储卡", tone: .neutral)
+        }
+    }
+
+    private func bannerActions(volume: DetectedRemovableMediaVolume) -> some View {
+        HStack(spacing: 8) {
+            Button("忽略") {
+                coordinator.dismissBanner(for: volume.mountPath)
+            }
+            .buttonStyle(LiquidButtonStyle(variant: .borderless, size: .small))
+            Button("一键扫描导入") {
+                coordinator.openImport(for: volume.mountPath, appModel: model)
+            }
+            .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+        }
+        .fixedSize(horizontal: true, vertical: false)
     }
 }
 
@@ -63,13 +105,19 @@ struct RemovableMediaImportView: View {
     }
 
     private var selectedUserLocations: Set<String> {
-        guard let root = onlineRoots.first(where: { $0.rootID == coordinator.selectedRootID }),
-              let user = eligibleUsers.first(where: { $0.id == coordinator.selectedUserID }) else {
-            return []
-        }
-        return Set(user.policy.locations.compactMap { loc in
-            (loc.rootID == root.rootID && loc.rootGeneration == root.generation) ? loc.category : nil
-        })
+        coordinator.allocatedCategories(
+            for: coordinator.selectedUserID,
+            in: model.personalSpaces.users,
+            rootID: coordinator.selectedRootID,
+            roots: onlineRoots
+        )
+    }
+
+    private var sourcePickerOptions: [LiquidMenuOption<String>] {
+        RemovableMediaImportPolicy.sourceOptionEntries(
+            detectedVolumes: coordinator.detectedVolumes,
+            selectedPath: coordinator.selectedMountPath
+        ).map { LiquidMenuOption(value: $0.value, label: $0.label) }
     }
 
     private var matchingEjectDisk: ManagedDisk? {
@@ -82,7 +130,7 @@ struct RemovableMediaImportView: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 20) {
+        VStack(alignment: .leading, spacing: 22) {
             sourceSection
             scanSummarySection
             destinationSection
@@ -108,12 +156,15 @@ struct RemovableMediaImportView: View {
         .onChange(of: coordinator.selectedRootID) { _, _ in
             coordinator.syncDefaults(from: model)
         }
+        .onChange(of: coordinator.selectedUserID) { _, _ in
+            coordinator.syncDefaults(from: model)
+        }
     }
 
     private var sourceSection: some View {
         AppleSettingsGroup(
             title: "来源存储卡 / 读卡器",
-            footer: "仅支持 /Volumes/ 下的外置介质，自动拒绝已登记的 NAS 磁盘以防自导自。全过程只读扫描，绝不删除或格式化存储卡原件。"
+            footer: "仅支持 /Volumes/ 下的外置介质，自动拒绝已登记的 NAS 磁盘以防自导入。全过程只读扫描，绝不删除或格式化存储卡原件。"
         ) {
             AppleSettingsRow(
                 title: "已检测到的外置介质",
@@ -121,44 +172,63 @@ struct RemovableMediaImportView: View {
                     ? "插入相机 SD 卡、无人机存储卡或外置读卡器后自动出现。"
                     : coordinator.selectedMountPath,
                 icon: "sdcard.fill",
-                iconTint: IsleFluidPalette.brandCyan
+                iconTint: IsleFluidPalette.brandCyan,
+                showsDivider: false
             ) {
-                HStack(spacing: 8) {
-                    if !coordinator.detectedVolumes.isEmpty {
-                        LiquidMenuPicker(
-                            title: "选择存储卡",
-                            selection: Binding(
-                                get: { coordinator.selectedMountPath },
-                                set: { next in
-                                    coordinator.selectedMountPath = next
-                                    coordinator.scanSelectedVolume()
-                                }
-                            ),
-                            options: coordinator.detectedVolumes.map { vol in
-                                LiquidMenuOption(
-                                    value: vol.mountPath,
-                                    label: "\(vol.volumeName)（\(vol.summaryHints)）"
-                                )
-                            },
-                            minWidth: 210
-                        )
-                        .disabled(coordinator.isImporting)
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 8) {
+                        sourceSelectionControl
+                        sourceActionButtons
                     }
-                    Button("手动选择…") {
-                        coordinator.pickCustomSourceFolder()
+                    VStack(alignment: .leading, spacing: 8) {
+                        sourceSelectionControl
+                        sourceActionButtons
                     }
-                    .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                    .disabled(coordinator.isImporting)
-                    IsleIconButton(icon: "arrow.clockwise", help: "刷新外置存储卡与重新扫描") {
-                        coordinator.refreshDetectedVolumes()
-                        if !coordinator.selectedMountPath.isEmpty {
-                            coordinator.scanSelectedVolume()
-                        }
-                    }
-                    .disabled(coordinator.isImporting || coordinator.scanning)
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private var sourceSelectionControl: some View {
+        if !coordinator.detectedVolumes.isEmpty {
+            LiquidMenuPicker(
+                title: "选择存储卡",
+                selection: Binding(
+                    get: { coordinator.selectedMountPath },
+                    set: { next in
+                        coordinator.selectSourcePath(next)
+                    }
+                ),
+                options: sourcePickerOptions,
+                minWidth: 190
+            )
+            .disabled(coordinator.isImporting)
+        } else if !coordinator.selectedMountPath.isEmpty {
+            IsleStatusPill(
+                text: RemovableMediaImportPolicy.customSourceOptionLabel(for: coordinator.selectedMountPath),
+                tone: .accent,
+                icon: "folder.fill"
+            )
+        }
+    }
+
+    private var sourceActionButtons: some View {
+        HStack(spacing: 8) {
+            Button("手动选择…") {
+                coordinator.pickCustomSourceFolder()
+            }
+            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+            .disabled(coordinator.isImporting)
+            IsleIconButton(icon: "arrow.clockwise", help: "刷新外置存储卡与重新扫描") {
+                coordinator.refreshDetectedVolumes()
+                if !coordinator.selectedMountPath.isEmpty {
+                    coordinator.scanSelectedVolume()
+                }
+            }
+            .disabled(coordinator.isImporting || coordinator.scanning)
+        }
+        .fixedSize(horizontal: true, vertical: false)
     }
 
     @ViewBuilder
@@ -196,7 +266,11 @@ struct RemovableMediaImportView: View {
                         metricTile(title: "RAW 原图", value: "\(scan.rawCount) 张", detail: "CR3 / ARW / NEF / DNG")
                         metricTile(title: "视频与实况", value: "\(scan.videoCount + scan.livePhotoCount) 段", detail: scan.livePhotoCount > 0 ? "含 \(scan.livePhotoCount) 个实况伴侣" : "MP4 / MOV / MTS")
                     }
+                    if scan.truncated == true {
+                        truncatedScanWarningBanner
+                    }
                     if let samples = scan.sampleFiles, !samples.isEmpty {
+                        let sampleShape = RoundedRectangle(cornerRadius: IsleTheme.smRadius, style: .continuous)
                         VStack(alignment: .leading, spacing: 4) {
                             Text("预览示例（前 \(samples.count) 项）")
                                 .font(.caption.weight(.medium))
@@ -211,7 +285,12 @@ struct RemovableMediaImportView: View {
                         }
                         .padding(10)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.primary.opacity(0.03), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        .background(Color.primary.opacity(0.03), in: sampleShape)
+                        .overlay {
+                            sampleShape
+                                .strokeBorder(IsleFluidPalette.rim.opacity(0.45), lineWidth: 0.8)
+                                .allowsHitTesting(false)
+                        }
                     }
                 } else if !coordinator.scanning {
                     Text(coordinator.selectedMountPath.isEmpty
@@ -224,8 +303,36 @@ struct RemovableMediaImportView: View {
         }
     }
 
+    private var truncatedScanWarningBanner: some View {
+        let shape = RoundedRectangle(cornerRadius: IsleTheme.smRadius, style: .continuous)
+        return HStack(alignment: .top, spacing: 10) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(IsleTheme.warningText)
+                .padding(.top, 1)
+            VStack(alignment: .leading, spacing: 3) {
+                Text("扫描结果已截断（超出 \(RemovableMediaImportPolicy.maxScanFilesDisplay) 文件上限）")
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(IsleTheme.warningText)
+                Text("当前目录文件数超过单次 \(RemovableMediaImportPolicy.maxScanFilesDisplay) 项上限，本次仅扫描并导入前 \(RemovableMediaImportPolicy.maxScanFilesDisplay) 项。为防遗漏素材，本次不会标记为「全部已核验可安全弹出」，请按子目录分批导入。")
+                    .font(.caption)
+                    .foregroundStyle(IsleTheme.secondaryText)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(IsleTheme.warningText.opacity(0.10), in: shape)
+        .overlay {
+            shape
+                .strokeBorder(IsleTheme.warningText.opacity(0.32), lineWidth: 1)
+                .allowsHitTesting(false)
+        }
+    }
+
     private func metricTile(title: String, value: String, detail: String) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
+        let shape = RoundedRectangle(cornerRadius: IsleTheme.smRadius, style: .continuous)
+        return VStack(alignment: .leading, spacing: 4) {
             Text(title)
                 .font(.caption)
                 .foregroundStyle(IsleTheme.secondaryText)
@@ -239,7 +346,12 @@ struct RemovableMediaImportView: View {
         }
         .padding(12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color.primary.opacity(0.035), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(Color.primary.opacity(0.035), in: shape)
+        .overlay {
+            shape
+                .strokeBorder(IsleFluidPalette.rim.opacity(0.55), lineWidth: 0.8)
+                .allowsHitTesting(false)
+        }
     }
 
     private var destinationSection: some View {
@@ -307,13 +419,7 @@ struct RemovableMediaImportView: View {
                 icon: "folder.badge.plus",
                 iconTint: .indigo
             ) {
-                let allowedCategories = MediaImportTargetCategory.allCases.filter { cat in
-                    switch cat {
-                    case .auto: return true
-                    case .photos: return selectedUserLocations.contains("photos")
-                    case .videos: return selectedUserLocations.contains("videos")
-                    }
-                }
+                let allowedCategories = RemovableMediaImportPolicy.allowedCategories(for: selectedUserLocations)
                 LiquidMenuPicker(
                     title: "目录分类",
                     selection: $coordinator.selectedCategory,
@@ -329,7 +435,7 @@ struct RemovableMediaImportView: View {
 
             AppleSettingsRow(
                 title: "日期归档规则",
-                subtitle: "按文件拍摄/修改时间自动建立归档子目录，或保留卡内原始层级",
+                subtitle: "按文件修改时间（按目录归档）自动建立归档子目录，或保留卡内原始层级",
                 icon: "calendar",
                 iconTint: .teal
             ) {
@@ -354,7 +460,7 @@ struct RemovableMediaImportView: View {
             ) {
                 TextField("留空直接归档", text: $coordinator.subfolder)
                     .liquidInput()
-                    .frame(width: 220)
+                    .frame(minWidth: 180, idealWidth: 230, maxWidth: 340)
                     .disabled(coordinator.isImporting)
             }
 
@@ -362,13 +468,22 @@ struct RemovableMediaImportView: View {
 
             HStack(spacing: 10) {
                 Spacer()
-                if coordinator.isImporting {
+                if coordinator.jobStatus?.phase == "running" {
                     Button("取消导入") {
                         coordinator.cancelImport()
                     }
                     .buttonStyle(LiquidButtonStyle(variant: .destructive, size: .regular))
+                } else if coordinator.starting {
+                    HStack(spacing: 8) {
+                        ProgressView().controlSize(.small)
+                        Button("正在启动导入…") {}
+                            .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .regular))
+                            .disabled(true)
+                    }
                 } else {
                     let canStart = coordinator.connected &&
+                        !coordinator.starting &&
+                        !coordinator.isImporting &&
                         !coordinator.selectedMountPath.isEmpty &&
                         !coordinator.scanning &&
                         (coordinator.scanResult?.totalFiles ?? 0) > 0 &&
@@ -393,18 +508,46 @@ struct RemovableMediaImportView: View {
         LiquidCard {
             VStack(alignment: .leading, spacing: 12) {
                 if let status = coordinator.jobStatus {
-                    HStack(spacing: 10) {
-                        Text(phaseTitle(status.phase))
-                            .font(.system(size: 14, weight: .semibold))
-                        IsleStatusPill(
-                            text: "\(status.processedFiles) / \(status.totalFiles)",
-                            tone: status.allVerified ? .success : (status.phase == "failed" ? .warning : .accent),
-                            showDot: status.phase == "running"
-                        )
-                        Spacer()
-                        Text("新导入 \(status.importedFiles) · 跳过重复 \(status.skippedFiles) · 失败 \(status.failedFiles)")
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(IsleTheme.secondaryText)
+                    let isTruncated = coordinator.isCurrentResultTruncated
+                    let titleText = RemovableMediaImportPolicy.phaseTitle(
+                        for: status,
+                        scanTruncated: coordinator.scanResult?.truncated == true
+                    )
+                    let countersText = "新导入 \(status.importedFiles) · 跳过重复 \(status.skippedFiles) · 失败 \(status.failedFiles)"
+
+                    ViewThatFits(in: .horizontal) {
+                        HStack(spacing: 10) {
+                            HStack(spacing: 8) {
+                                Text(titleText)
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .lineLimit(1)
+                                IsleStatusPill(
+                                    text: "\(status.processedFiles) / \(status.totalFiles)",
+                                    tone: statusPillTone(for: status, isTruncated: isTruncated),
+                                    showDot: status.phase == "running"
+                                )
+                            }
+                            Spacer(minLength: 8)
+                            Text(countersText)
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(IsleTheme.secondaryText)
+                                .lineLimit(1)
+                        }
+                        VStack(alignment: .leading, spacing: 6) {
+                            HStack(spacing: 8) {
+                                Text(titleText)
+                                    .font(.system(size: 14, weight: .semibold))
+                                    .fixedSize(horizontal: false, vertical: true)
+                                IsleStatusPill(
+                                    text: "\(status.processedFiles) / \(status.totalFiles)",
+                                    tone: statusPillTone(for: status, isTruncated: isTruncated),
+                                    showDot: status.phase == "running"
+                                )
+                            }
+                            Text(countersText)
+                                .font(.caption.monospacedDigit())
+                                .foregroundStyle(IsleTheme.secondaryText)
+                        }
                     }
 
                     if status.totalFiles > 0 {
@@ -423,26 +566,9 @@ struct RemovableMediaImportView: View {
                     }
 
                     if coordinator.canSafeEjectSelectedVolume {
-                        HStack(spacing: 10) {
-                            Label("全部文件已核验入库，存储卡原件未被删除，现在可以安全弹出。", systemImage: "checkmark.shield.fill")
-                                .font(.caption)
-                                .foregroundStyle(IsleTheme.successText)
-                            Spacer()
-                            if let disk = matchingEjectDisk {
-                                Button("安全弹出此存储卡") {
-                                    model.manageDisk(disk, action: "eject")
-                                }
-                                .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
-                                .disabled(model.diskOperationPending || disk.identity.isEmpty)
-                            } else {
-                                Button("刷新可弹出设备") {
-                                    model.refreshManagedDisks()
-                                }
-                                .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
-                            }
-                        }
-                        .padding(12)
-                        .background(IsleTheme.successText.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+                        safeEjectCallout
+                    } else if status.phase == "completed" && status.failedFiles == 0 && isTruncated {
+                        truncatedEjectWithheldNotice
                     }
                 }
 
@@ -463,12 +589,91 @@ struct RemovableMediaImportView: View {
         }
     }
 
-    private func phaseTitle(_ phase: String) -> String {
-        switch phase {
-        case "running": return "正在增量导入存储卡媒体…"
-        case "completed": return "导入与核验已完成"
-        case "cancelled": return "导入已取消"
-        default: return "导入中断"
+    private var safeEjectCallout: some View {
+        let shape = RoundedRectangle(cornerRadius: IsleTheme.smRadius, style: .continuous)
+        return ViewThatFits(in: .horizontal) {
+            HStack(spacing: 10) {
+                safeEjectLabel
+                Spacer(minLength: 8)
+                safeEjectAction
+            }
+            VStack(alignment: .leading, spacing: 8) {
+                safeEjectLabel
+                HStack {
+                    Spacer(minLength: 0)
+                    safeEjectAction
+                }
+            }
         }
+        .padding(12)
+        .background(IsleTheme.successText.opacity(0.08), in: shape)
+        .overlay {
+            shape
+                .strokeBorder(IsleTheme.successText.opacity(0.28), lineWidth: 1)
+                .allowsHitTesting(false)
+        }
+    }
+
+    private var safeEjectLabel: some View {
+        Label("全部文件已核验入库，存储卡原件未被删除，现在可以安全弹出。", systemImage: "checkmark.shield.fill")
+            .font(.caption)
+            .foregroundStyle(IsleTheme.successText)
+            .fixedSize(horizontal: false, vertical: true)
+    }
+
+    @ViewBuilder
+    private var safeEjectAction: some View {
+        if let disk = matchingEjectDisk {
+            Button("安全弹出此存储卡") {
+                model.manageDisk(disk, action: "eject")
+            }
+            .buttonStyle(LiquidButtonStyle(variant: .prominent, size: .small))
+            .disabled(model.diskOperationPending || disk.identity.isEmpty)
+            .fixedSize(horizontal: true, vertical: false)
+        } else {
+            Button("刷新可弹出设备") {
+                model.refreshManagedDisks()
+            }
+            .buttonStyle(LiquidButtonStyle(variant: .secondary, size: .small))
+            .fixedSize(horizontal: true, vertical: false)
+        }
+    }
+
+    private var truncatedEjectWithheldNotice: some View {
+        let shape = RoundedRectangle(cornerRadius: IsleTheme.smRadius, style: .continuous)
+        return Label(
+            "因存储卡超出 \(RemovableMediaImportPolicy.maxScanFilesDisplay) 文件扫描上限，本次未涵盖全卡文件，暂不提供「全部已核验可安全弹出」确认。",
+            systemImage: "exclamationmark.shield.fill"
+        )
+        .font(.caption)
+        .foregroundStyle(IsleTheme.warningText)
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(IsleTheme.warningText.opacity(0.08), in: shape)
+        .overlay {
+            shape
+                .strokeBorder(IsleTheme.warningText.opacity(0.28), lineWidth: 1)
+                .allowsHitTesting(false)
+        }
+    }
+
+    private func statusPillTone(
+        for status: MediaImportJobStatus,
+        isTruncated: Bool
+    ) -> IsleStatusTone {
+        if status.phase == "running" {
+            return .accent
+        }
+        if RemovableMediaImportPolicy.hasPartialErrors(status) || status.phase == "failed" {
+            return .warning
+        }
+        if status.phase == "cancelled" {
+            return .neutral
+        }
+        if status.allVerified && !isTruncated {
+            return .success
+        }
+        return .warning
     }
 }

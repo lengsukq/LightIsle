@@ -58,6 +58,32 @@ struct MediaImportScanResult: Decodable, Equatable, Sendable {
     let detectedHints: [String]?
     let sampleFiles: [String]?
     let truncated: Bool?
+
+    init(
+        sourcePath: String,
+        volumeName: String = "",
+        totalFiles: Int = 0,
+        photoCount: Int = 0,
+        rawCount: Int = 0,
+        videoCount: Int = 0,
+        livePhotoCount: Int = 0,
+        totalBytes: Int64 = 0,
+        detectedHints: [String]? = nil,
+        sampleFiles: [String]? = nil,
+        truncated: Bool? = nil
+    ) {
+        self.sourcePath = sourcePath
+        self.volumeName = volumeName
+        self.totalFiles = totalFiles
+        self.photoCount = photoCount
+        self.rawCount = rawCount
+        self.videoCount = videoCount
+        self.livePhotoCount = livePhotoCount
+        self.totalBytes = totalBytes
+        self.detectedHints = detectedHints
+        self.sampleFiles = sampleFiles
+        self.truncated = truncated
+    }
 }
 
 struct MediaImportJobStatus: Decodable, Equatable, Sendable {
@@ -79,6 +105,176 @@ struct MediaImportJobStatus: Decodable, Equatable, Sendable {
     let lastError: String?
     let allVerified: Bool
     let targetPrefix: String?
+    let truncated: Bool?
+
+    init(
+        jobID: String = "job-1",
+        phase: String,
+        sourcePath: String,
+        rootID: String = "root-1",
+        generation: UInt64 = 1,
+        userID: Int64 = 1,
+        totalFiles: Int = 0,
+        processedFiles: Int = 0,
+        importedFiles: Int = 0,
+        skippedFiles: Int = 0,
+        failedFiles: Int = 0,
+        totalBytes: Int64 = 0,
+        processedBytes: Int64 = 0,
+        importedBytes: Int64 = 0,
+        currentFile: String? = nil,
+        lastError: String? = nil,
+        allVerified: Bool = false,
+        targetPrefix: String? = nil,
+        truncated: Bool? = nil
+    ) {
+        self.jobID = jobID
+        self.phase = phase
+        self.sourcePath = sourcePath
+        self.rootID = rootID
+        self.generation = generation
+        self.userID = userID
+        self.totalFiles = totalFiles
+        self.processedFiles = processedFiles
+        self.importedFiles = importedFiles
+        self.skippedFiles = skippedFiles
+        self.failedFiles = failedFiles
+        self.totalBytes = totalBytes
+        self.processedBytes = processedBytes
+        self.importedBytes = importedBytes
+        self.currentFile = currentFile
+        self.lastError = lastError
+        self.allVerified = allVerified
+        self.targetPrefix = targetPrefix
+        self.truncated = truncated
+    }
+}
+
+/// Pure, single-source-of-truth safety & presentation rules shared by the
+/// coordinator, SwiftUI views, and Swift 6 smoke tests.
+enum RemovableMediaImportPolicy {
+    static let maxScanFiles = 50_000
+    static let maxScanFilesDisplay = "50,000"
+
+    static func normalizedPath(_ path: String) -> String {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        return URL(fileURLWithPath: trimmed).standardizedFileURL.path
+    }
+
+    static func pathsMatch(_ lhs: String, _ rhs: String) -> Bool {
+        let a = normalizedPath(lhs)
+        let b = normalizedPath(rhs)
+        return !a.isEmpty && a == b
+    }
+
+    static func isTruncated(scan: MediaImportScanResult?, status: MediaImportJobStatus?) -> Bool {
+        (scan?.truncated == true) || (status?.truncated == true)
+    }
+
+    static func hasPartialErrors(_ status: MediaImportJobStatus) -> Bool {
+        status.phase == "completed_with_errors" || status.failedFiles > 0
+    }
+
+    static func canSafeEject(
+        selectedMountPath: String,
+        jobStatus: MediaImportJobStatus?,
+        scanResult: MediaImportScanResult?,
+        isImporting: Bool
+    ) -> Bool {
+        guard !isImporting,
+              let status = jobStatus,
+              status.phase == "completed",
+              status.allVerified,
+              status.failedFiles == 0,
+              !isTruncated(scan: scanResult, status: status) else {
+            return false
+        }
+        let selected = normalizedPath(selectedMountPath)
+        guard !selected.isEmpty,
+              pathsMatch(status.sourcePath, selected),
+              StorageVolumeSelection.canInspectExternalVolume(mount: selected) else {
+            return false
+        }
+        return true
+    }
+
+    static func phaseTitle(
+        for status: MediaImportJobStatus,
+        scanTruncated: Bool = false
+    ) -> String {
+        switch status.phase {
+        case "running":
+            return "正在增量导入存储卡媒体…"
+        case "cancelled":
+            return "导入已取消"
+        case "completed_with_errors":
+            return "部分文件导入未完成（失败 \(status.failedFiles) 项）"
+        case "completed":
+            if status.failedFiles > 0 {
+                return "部分文件导入未完成（失败 \(status.failedFiles) 项）"
+            }
+            if scanTruncated || status.truncated == true {
+                return "已导入前 \(status.totalFiles) 项（未完整扫描）"
+            }
+            return "导入与核验已完成"
+        default:
+            if status.failedFiles > 0 {
+                return "部分文件导入未完成（失败 \(status.failedFiles) 项）"
+            }
+            return "导入中断"
+        }
+    }
+
+    static func allowedCategories(
+        for allocatedLocationCategories: Set<String>
+    ) -> [MediaImportTargetCategory] {
+        MediaImportTargetCategory.allCases.filter { category in
+            switch category {
+            case .auto:
+                return true
+            case .photos:
+                return allocatedLocationCategories.contains("photos")
+            case .videos:
+                return allocatedLocationCategories.contains("videos")
+            }
+        }
+    }
+
+    static func validatedCategory(
+        _ current: MediaImportTargetCategory,
+        allocatedLocationCategories: Set<String>
+    ) -> MediaImportTargetCategory {
+        let allowed = allowedCategories(for: allocatedLocationCategories)
+        return allowed.contains(current) ? current : .auto
+    }
+
+    static func customSourceOptionLabel(for path: String) -> String {
+        let clean = normalizedPath(path)
+        if clean.hasPrefix("/Volumes/") {
+            let relative = String(clean.dropFirst("/Volumes/".count))
+            if !relative.isEmpty {
+                return "手动目录：\(relative)"
+            }
+        }
+        let name = URL(fileURLWithPath: clean).lastPathComponent
+        return "手动目录：\(name.isEmpty ? clean : name)"
+    }
+
+    static func sourceOptionEntries(
+        detectedVolumes: [DetectedRemovableMediaVolume],
+        selectedPath: String
+    ) -> [(value: String, label: String)] {
+        var entries = detectedVolumes.map { vol in
+            (value: vol.mountPath, label: "\(vol.volumeName)（\(vol.summaryHints)）")
+        }
+        let cleanSelected = normalizedPath(selectedPath)
+        if !cleanSelected.isEmpty,
+           !detectedVolumes.contains(where: { pathsMatch($0.mountPath, cleanSelected) }) {
+            entries.append((value: cleanSelected, label: customSourceOptionLabel(for: cleanSelected)))
+        }
+        return entries
+    }
 }
 
 /// Pure, thread-safe removable volume detector and IPC error translator.

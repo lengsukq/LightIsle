@@ -47,7 +47,6 @@ enum ExternalDependency: String, CaseIterable, Identifiable {
         case .cloudflared: return "cloud"
         }
     }
-    var brewInstallHint: String { "brew install \(rawValue)" }
 }
 
 enum DependencyInstallFailure: LocalizedError {

@@ -35,11 +35,17 @@ private struct MediaImportRequestPayload: Encodable {
 
 @MainActor
 final class RemovableMediaImportCoordinator: ObservableObject {
+    private static let mountSettleDelay: Duration = .milliseconds(700)
+    private static let scanRequestTimeout: Duration = .seconds(50)
+    private static let startRequestTimeout: Duration = .seconds(15)
+    private static let requestIDLength = 24
+
     @Published private(set) var connected = false
     @Published private(set) var detectedVolumes: [DetectedRemovableMediaVolume] = []
     @Published private(set) var dismissedBannerMounts: Set<String> = []
     @Published var selectedMountPath: String = ""
     @Published private(set) var scanning = false
+    @Published private(set) var starting = false
     @Published private(set) var scanResult: MediaImportScanResult?
     @Published private(set) var jobStatus: MediaImportJobStatus?
     @Published private(set) var errorMessage: String?
@@ -57,6 +63,8 @@ final class RemovableMediaImportCoordinator: ObservableObject {
     private var unmountObserver: NSObjectProtocol?
     private var pendingScanRequestID: String?
     private var scanTimeoutTask: Task<Void, Never>?
+    private var pendingStartRequestID: String?
+    private var startTimeoutTask: Task<Void, Never>?
 
     var bannerVolumes: [DetectedRemovableMediaVolume] {
         detectedVolumes
@@ -67,12 +75,19 @@ final class RemovableMediaImportCoordinator: ObservableObject {
             }
     }
 
-    var isImporting: Bool { jobStatus?.phase == "running" }
+    var isImporting: Bool { starting || jobStatus?.phase == "running" }
+
+    var isCurrentResultTruncated: Bool {
+        RemovableMediaImportPolicy.isTruncated(scan: scanResult, status: jobStatus)
+    }
 
     var canSafeEjectSelectedVolume: Bool {
-        guard let status = jobStatus, status.allVerified, !isImporting else { return false }
-        return !selectedMountPath.isEmpty &&
-            StorageVolumeSelection.canInspectExternalVolume(mount: selectedMountPath)
+        RemovableMediaImportPolicy.canSafeEject(
+            selectedMountPath: selectedMountPath,
+            jobStatus: jobStatus,
+            scanResult: scanResult,
+            isImporting: isImporting
+        )
     }
 
     func startMonitoring(appModel: AppModel) {
@@ -91,7 +106,7 @@ final class RemovableMediaImportCoordinator: ObservableObject {
                     self.dismissedBannerMounts.remove(path)
                 }
                 // Wait briefly so Core's roots & managedDisks snapshots settle first.
-                try? await Task.sleep(for: .milliseconds(700))
+                try? await Task.sleep(for: Self.mountSettleDelay)
                 self.refreshDetectedVolumes()
             }
         }
@@ -104,17 +119,33 @@ final class RemovableMediaImportCoordinator: ObservableObject {
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 if let path = url?.standardizedFileURL.path {
-                    self.dismissedBannerMounts.remove(path)
-                    self.detectedVolumes.removeAll { $0.mountPath == path }
-                    if self.selectedMountPath == path {
-                        self.selectedMountPath = self.detectedVolumes.first?.mountPath ?? ""
-                        self.scanResult = nil
-                    }
+                    self.handleVolumeUnmounted(at: path)
                 }
                 self.refreshDetectedVolumes()
             }
         }
         refreshDetectedVolumes()
+    }
+
+    private func handleVolumeUnmounted(at path: String) {
+        dismissedBannerMounts.remove(path)
+        detectedVolumes.removeAll { RemovableMediaDetector.pathOverlaps($0.mountPath, path) }
+        if !isImporting {
+            if let statusPath = jobStatus?.sourcePath,
+               RemovableMediaDetector.pathOverlaps(statusPath, path) {
+                jobStatus = nil
+            }
+            if let scanPath = scanResult?.sourcePath,
+               RemovableMediaDetector.pathOverlaps(scanPath, path) {
+                scanResult = nil
+            }
+        }
+        if !selectedMountPath.isEmpty &&
+            RemovableMediaDetector.pathOverlaps(selectedMountPath, path) {
+            cancelPendingScan()
+            selectedMountPath = detectedVolumes.first?.mountPath ?? ""
+            clearNonRunningState()
+        }
     }
 
     private nonisolated static func extractVolumeURL(from notification: Notification) -> URL? {
@@ -132,13 +163,12 @@ final class RemovableMediaImportCoordinator: ObservableObject {
     }
 
     func disconnect() {
-        scanTimeoutTask?.cancel()
-        scanTimeoutTask = nil
-        pendingScanRequestID = nil
+        let wasImporting = isImporting
+        cancelPendingScan()
+        clearPendingStart()
         sender = nil
         connected = false
-        scanning = false
-        if jobStatus?.phase == "running" {
+        if wasImporting {
             errorMessage = "核心服务已断开连接，导入任务已中断；存储卡原件未受影响。"
             jobStatus = nil
         }
@@ -185,9 +215,16 @@ final class RemovableMediaImportCoordinator: ObservableObject {
                 }
                 return vol
             }
+            let previousSelected = self.selectedMountPath
             if self.selectedMountPath.isEmpty ||
-                (!self.selectedMountPath.hasPrefix("/Volumes/") || !FileManager.default.fileExists(atPath: self.selectedMountPath)) {
-                self.selectedMountPath = self.detectedVolumes.first?.mountPath ?? ""
+                !self.selectedMountPath.hasPrefix("/Volumes/") ||
+                !FileManager.default.fileExists(atPath: self.selectedMountPath) {
+                let nextSelected = self.detectedVolumes.first?.mountPath ?? ""
+                if nextSelected != previousSelected {
+                    self.cancelPendingScan()
+                    self.selectedMountPath = nextSelected
+                    self.clearNonRunningState()
+                }
             }
         }
     }
@@ -196,16 +233,24 @@ final class RemovableMediaImportCoordinator: ObservableObject {
         dismissedBannerMounts.insert(mountPath)
     }
 
+    func selectSourcePath(_ path: String, triggerScan: Bool = true) {
+        guard !isImporting else { return }
+        let normalized = RemovableMediaImportPolicy.normalizedPath(path)
+        cancelPendingScan()
+        selectedMountPath = normalized
+        clearNonRunningState()
+        if triggerScan && connected && !normalized.isEmpty {
+            scanSelectedVolume()
+        }
+    }
+
     func openImport(for mountPath: String, appModel: AppModel) {
-        selectedMountPath = mountPath
-        errorMessage = nil
-        infoMessage = nil
-        if jobStatus?.phase != "running" {
-            jobStatus = nil
+        if !isImporting {
+            selectSourcePath(mountPath, triggerScan: false)
         }
         syncDefaults(from: appModel)
         appModel.navigateToStorageDetail(.mediaImport)
-        if connected && !isImporting {
+        if connected && !isImporting && !selectedMountPath.isEmpty {
             scanSelectedVolume()
         }
     }
@@ -218,6 +263,19 @@ final class RemovableMediaImportCoordinator: ObservableObject {
         let eligible = eligibleUsers(in: appModel.personalSpaces.users, for: selectedRootID, roots: onlineRoots)
         if !eligible.contains(where: { $0.id == selectedUserID }) {
             selectedUserID = eligible.first?.id ?? 0
+        }
+        let categories = allocatedCategories(
+            for: selectedUserID,
+            in: appModel.personalSpaces.users,
+            rootID: selectedRootID,
+            roots: onlineRoots
+        )
+        let validated = RemovableMediaImportPolicy.validatedCategory(
+            selectedCategory,
+            allocatedLocationCategories: categories
+        )
+        if selectedCategory != validated {
+            selectedCategory = validated
         }
     }
 
@@ -234,7 +292,23 @@ final class RemovableMediaImportCoordinator: ObservableObject {
         }
     }
 
+    func allocatedCategories(
+        for userID: Int64,
+        in users: [NativeSpaceUserEntry],
+        rootID: String,
+        roots: [NativeSpaceRootInfo]
+    ) -> Set<String> {
+        guard let root = roots.first(where: { $0.rootID == rootID && $0.online }),
+              let user = users.first(where: { $0.id == userID && $0.user.enabled }) else {
+            return []
+        }
+        return Set(user.policy.locations.compactMap { loc in
+            (loc.rootID == root.rootID && loc.rootGeneration == root.generation) ? loc.category : nil
+        })
+    }
+
     func pickCustomSourceFolder() {
+        guard !isImporting else { return }
         let panel = NSOpenPanel()
         panel.canChooseDirectories = true
         panel.canChooseFiles = false
@@ -243,35 +317,36 @@ final class RemovableMediaImportCoordinator: ObservableObject {
         panel.prompt = "选择媒体目录"
         panel.message = "请选择位于 /Volumes/ 下的外置存储卡或读卡器目录（仅只读扫描，绝不修改原件）。"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        selectedMountPath = url.resolvingSymlinksInPath().standardizedFileURL.path
-        scanResult = nil
-        errorMessage = nil
-        infoMessage = nil
-        scanSelectedVolume()
+        let pickedPath = url.resolvingSymlinksInPath().standardizedFileURL.path
+        selectSourcePath(pickedPath, triggerScan: true)
     }
 
     func scanSelectedVolume() {
         guard connected, !selectedMountPath.isEmpty, !isImporting else { return }
-        let requestID = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))
+        let requestID = Self.makeRequestID()
         pendingScanRequestID = requestID
         scanning = true
         errorMessage = nil
         infoMessage = nil
-        send(operation: "scan", payload: MediaImportRequestPayload(
+        guard send(operation: "scan", payload: MediaImportRequestPayload(
             requestID: requestID,
             sourcePath: selectedMountPath
-        ))
+        )) else {
+            cancelPendingScan()
+            return
+        }
         scanTimeoutTask?.cancel()
         scanTimeoutTask = Task { @MainActor [weak self] in
-            do { try await Task.sleep(for: .seconds(50)) } catch { return }
+            do { try await Task.sleep(for: Self.scanRequestTimeout) } catch { return }
             guard let self, self.scanning, self.pendingScanRequestID == requestID else { return }
             self.scanning = false
+            self.pendingScanRequestID = nil
             self.errorMessage = "扫描存储卡超时，请确认读卡器连接稳定后重试。"
         }
     }
 
     func startImport(roots: [NativeSpaceRootInfo], users: [NativeSpaceUserEntry]) {
-        guard connected, !isImporting, !selectedMountPath.isEmpty else { return }
+        guard connected, !starting, !isImporting, !selectedMountPath.isEmpty else { return }
         guard let root = roots.first(where: { $0.rootID == selectedRootID && $0.online }) else {
             errorMessage = "请先选择一个在线的目标 NAS 存储盘。"
             return
@@ -280,10 +355,13 @@ final class RemovableMediaImportCoordinator: ObservableObject {
             errorMessage = "所选成员在该硬盘尚未分配照片或视频空间，请先在「个人空间」完成分配。"
             return
         }
+        let requestID = Self.makeRequestID()
+        starting = true
+        pendingStartRequestID = requestID
+        jobStatus = nil
         errorMessage = nil
         infoMessage = nil
-        let requestID = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))
-        send(operation: "start", payload: MediaImportRequestPayload(
+        guard send(operation: "start", payload: MediaImportRequestPayload(
             requestID: requestID,
             sourcePath: selectedMountPath,
             rootID: root.rootID,
@@ -292,13 +370,23 @@ final class RemovableMediaImportCoordinator: ObservableObject {
             category: selectedCategory.rawValue,
             archiveMode: selectedArchiveMode.rawValue,
             subfolder: subfolder.trimmingCharacters(in: .whitespacesAndNewlines)
-        ))
+        )) else {
+            clearPendingStart()
+            return
+        }
+        startTimeoutTask?.cancel()
+        startTimeoutTask = Task { @MainActor [weak self] in
+            do { try await Task.sleep(for: Self.startRequestTimeout) } catch { return }
+            guard let self, self.starting, self.pendingStartRequestID == requestID else { return }
+            self.clearPendingStart()
+            self.errorMessage = "启动导入超时，请确认后台服务正常后重试；存储卡原件未受影响。"
+        }
     }
 
     func cancelImport() {
-        guard connected, let jobID = jobStatus?.jobID, isImporting else { return }
-        let requestID = String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(24))
-        send(operation: "cancel", payload: MediaImportRequestPayload(requestID: requestID, jobID: jobID))
+        guard connected, let jobID = jobStatus?.jobID, jobStatus?.phase == "running" else { return }
+        let requestID = Self.makeRequestID()
+        _ = send(operation: "cancel", payload: MediaImportRequestPayload(requestID: requestID, jobID: jobID))
         infoMessage = "已请求取消导入，正在安全收尾当前文件…"
     }
 
@@ -309,16 +397,14 @@ final class RemovableMediaImportCoordinator: ObservableObject {
         }
         switch header.operation {
         case "scan":
-            guard pendingScanRequestID == nil || header.requestID == pendingScanRequestID else { return }
-            scanning = false
-            scanTimeoutTask?.cancel()
-            scanTimeoutTask = nil
-            pendingScanRequestID = nil
+            guard let expectedID = pendingScanRequestID, header.requestID == expectedID else { return }
+            cancelPendingScan()
             if let err = header.error, !err.isEmpty {
                 scanResult = nil
                 errorMessage = RemovableMediaDetector.userFacingError(for: err)
             } else if let env = try? JSONDecoder().decode(MediaImportTypedEnvelope<MediaImportScanResult>.self, from: data),
                       let result = env.result {
+                guard RemovableMediaImportPolicy.pathsMatch(result.sourcePath, selectedMountPath) else { return }
                 scanResult = result
                 errorMessage = nil
                 if result.totalFiles == 0 {
@@ -326,6 +412,7 @@ final class RemovableMediaImportCoordinator: ObservableObject {
                 }
             }
         case "start", "progress", "complete":
+            clearPendingStart()
             if let env = try? JSONDecoder().decode(MediaImportTypedEnvelope<MediaImportJobStatus>.self, from: data),
                let status = env.result {
                 jobStatus = status
@@ -357,23 +444,60 @@ final class RemovableMediaImportCoordinator: ObservableObject {
             appModel?.personalSpaces.refresh()
         }
         appModel?.refreshManagedDisks()
-        if status.allVerified {
-            infoMessage = "全部 \(status.totalFiles) 项媒体已核验入库（新导入 \(status.importedFiles) 项，跳过已存在 \(status.skippedFiles) 项），存储卡原件未被修改。"
-        } else if status.phase == "cancelled" {
+        let truncated = RemovableMediaImportPolicy.isTruncated(scan: scanResult, status: status)
+        if status.phase == "cancelled" {
             infoMessage = "导入已取消（已入库 \(status.importedFiles) 项，跳过 \(status.skippedFiles) 项），存储卡原件未受影响。"
+        } else if RemovableMediaImportPolicy.hasPartialErrors(status) {
+            infoMessage = nil
+            if errorMessage == nil {
+                errorMessage = "部分文件导入未完成（失败 \(status.failedFiles) 项，已入库 \(status.importedFiles) 项，跳过 \(status.skippedFiles) 项），存储卡原件未被删除，请检查原因后重试。"
+            }
+        } else if status.allVerified && !truncated {
+            infoMessage = "全部 \(status.totalFiles) 项媒体已核验入库（新导入 \(status.importedFiles) 项，跳过已存在 \(status.skippedFiles) 项），存储卡原件未被修改。"
+        } else if status.allVerified && truncated {
+            infoMessage = "前 \(status.totalFiles) 项媒体已入库（新导入 \(status.importedFiles) 项，跳过已存在 \(status.skippedFiles) 项）；因超出 \(RemovableMediaImportPolicy.maxScanFilesDisplay) 项上限仍有未扫描文件，存储卡原件未被修改，暂不标记为可安全弹出。"
         }
     }
 
-    private func send(operation: String, payload: MediaImportRequestPayload) {
+    private func clearNonRunningState() {
+        scanResult = nil
+        if !isImporting {
+            jobStatus = nil
+        }
+        errorMessage = nil
+        infoMessage = nil
+    }
+
+    private func cancelPendingScan() {
+        scanTimeoutTask?.cancel()
+        scanTimeoutTask = nil
+        pendingScanRequestID = nil
+        scanning = false
+    }
+
+    private func clearPendingStart() {
+        startTimeoutTask?.cancel()
+        startTimeoutTask = nil
+        pendingStartRequestID = nil
+        starting = false
+    }
+
+    private static func makeRequestID() -> String {
+        String(UUID().uuidString.replacingOccurrences(of: "-", with: "").prefix(requestIDLength))
+    }
+
+    @discardableResult
+    private func send(operation: String, payload: MediaImportRequestPayload) -> Bool {
         guard let sender, let data = try? JSONEncoder().encode(payload) else {
             errorMessage = UserFacingErrorMapper.coreIPCCommandError(action: "存储卡导入指令")
-            return
+            return false
         }
         do {
             try sender("media-import \(operation) \(data.base64URLEncodedString)\n")
+            return true
         } catch {
-            scanning = false
             errorMessage = UserFacingErrorMapper.coreIPCCommandError(action: "存储卡导入指令")
+            return false
         }
     }
 }
