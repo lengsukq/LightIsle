@@ -2,12 +2,14 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
 import '../../core/lightisle_api.dart';
 import '../../core/personal_storage_routing.dart';
 import '../../core/user_facing_error.dart';
 import '../../core/widgets.dart';
 import 'desktop_backup_engine.dart';
+import 'desktop_backup_ignore.dart';
 import 'desktop_backup_models.dart';
 import 'file_name_validation.dart';
 import 'isle_folder_picker_sheet.dart';
@@ -52,8 +54,20 @@ class _DesktopBackupTaskDialogState extends State<_DesktopBackupTaskDialog> {
   late final TextEditingController _labelController = TextEditingController(
     text: widget.existing?.label ?? '',
   );
+  late final TextEditingController _customIgnoreController =
+      TextEditingController(
+        text: formatCustomIgnoreText(
+          widget.existing?.customIgnorePatterns ?? const <String>[],
+        ),
+      );
+  late final TextEditingController _maxSizeController = TextEditingController(
+    text: (widget.existing?.maxFileSizeMiB ?? 0) > 0
+        ? '${widget.existing!.maxFileSizeMiB}'
+        : '',
+  );
 
   String _localPath = '';
+  String? _localDisplayPath;
   String? _bookmarkBase64;
   List<LightIsleRoot> _onlineRoots = const <LightIsleRoot>[];
   LightIsleRoot? _selectedRoot;
@@ -61,6 +75,8 @@ class _DesktopBackupTaskDialogState extends State<_DesktopBackupTaskDialog> {
   bool _appendFolderName = true;
   DesktopConflictPolicy _conflictPolicy = DesktopConflictPolicy.trashAndReplace;
   bool _ignoreHidden = true;
+  final Set<String> _ignorePresets = <String>{};
+  bool _watchOnChange = false;
 
   bool _initializing = true;
   bool _loadingFolder = false;
@@ -76,10 +92,13 @@ class _DesktopBackupTaskDialogState extends State<_DesktopBackupTaskDialog> {
     final existing = widget.existing;
     if (existing != null) {
       _localPath = existing.localPath;
+      _localDisplayPath = existing.localDisplayPath;
       _bookmarkBase64 = existing.bookmarkBase64;
       _appendFolderName = false;
       _conflictPolicy = existing.conflictPolicy;
       _ignoreHidden = existing.ignoreHidden;
+      _ignorePresets.addAll(existing.ignorePresets);
+      _watchOnChange = existing.watchOnChange;
     }
     unawaited(_bootstrap());
   }
@@ -88,12 +107,20 @@ class _DesktopBackupTaskDialogState extends State<_DesktopBackupTaskDialog> {
   void dispose() {
     ++_browseGeneration;
     _labelController.dispose();
+    _customIgnoreController.dispose();
+    _maxSizeController.dispose();
     super.dispose();
   }
 
+  String get _shownLocalPath =>
+      (_localDisplayPath != null && _localDisplayPath!.isNotEmpty)
+      ? _localDisplayPath!
+      : _localPath;
+
   String get _localFolderBasename {
-    if (_localPath.isEmpty) return '';
-    var p = _localPath;
+    final source = _shownLocalPath;
+    if (source.isEmpty) return '';
+    var p = source;
     while (p.length > 1 && (p.endsWith('/') || p.endsWith('\\'))) {
       p = p.substring(0, p.length - 1);
     }
@@ -255,6 +282,7 @@ class _DesktopBackupTaskDialogState extends State<_DesktopBackupTaskDialog> {
       if (picked == null || !mounted) return;
       setState(() {
         _localPath = picked.path;
+        _localDisplayPath = picked.displayPath;
         _bookmarkBase64 = picked.bookmarkBase64;
         if (_labelController.text.trim().isEmpty) {
           final base = _localFolderBasename;
@@ -350,12 +378,23 @@ class _DesktopBackupTaskDialogState extends State<_DesktopBackupTaskDialog> {
     }
   }
 
+  int? get _parsedMaxFileSizeMiB {
+    final raw = _maxSizeController.text.trim();
+    if (raw.isEmpty) return 0;
+    final parsed = int.tryParse(raw);
+    if (parsed == null || parsed < 0 || parsed > 32768) return null;
+    return parsed;
+  }
+
   String? get _formValidationError {
     if (_localPath.trim().isEmpty) return '请先选择本机源文件夹';
     if (_selectedRoot == null) return '请选择在线的 NAS 存储卷';
     final label = _labelController.text.trim();
     if (label.isEmpty || label.runes.length > 60) {
       return '任务名称需为 1–60 个字符';
+    }
+    if (_parsedMaxFileSizeMiB == null) {
+      return '单文件体积上限需为 0–32768 的整数（0 表示不限制）';
     }
     if (!_canWrite) return '当前选择的 NAS 目录无写入权限，请选择可写目录';
     final target = _effectiveRemoteBasePath;
@@ -376,10 +415,16 @@ class _DesktopBackupTaskDialogState extends State<_DesktopBackupTaskDialog> {
     final id =
         existing?.id ??
         'task-${DateTime.now().microsecondsSinceEpoch}-${Random.secure().nextInt(1 << 20)}';
+    final presets = kDesktopBackupIgnorePresets
+        .where((p) => _ignorePresets.contains(p.id))
+        .map((p) => p.id)
+        .toList(growable: false);
+    final customPatterns = parseCustomIgnoreText(_customIgnoreController.text);
     final result = DesktopBackupTask(
       id: id,
       label: _labelController.text.trim(),
       localPath: _localPath.trim(),
+      localDisplayPath: _localDisplayPath,
       bookmarkBase64: _bookmarkBase64,
       rootId: root.id,
       rootGeneration: root.generation,
@@ -387,6 +432,10 @@ class _DesktopBackupTaskDialogState extends State<_DesktopBackupTaskDialog> {
       remoteBasePath: _effectiveRemoteBasePath,
       conflictPolicy: _conflictPolicy,
       ignoreHidden: _ignoreHidden,
+      ignorePresets: presets,
+      customIgnorePatterns: customPatterns,
+      maxFileSizeMiB: _parsedMaxFileSizeMiB ?? 0,
+      watchOnChange: widget.directoryAccess.supportsWatch && _watchOnChange,
       enabled: existing?.enabled ?? true,
       lastRunAtMs: existing?.lastRunAtMs ?? 0,
       lastCompleteAtMs: existing?.lastCompleteAtMs ?? 0,
@@ -444,7 +493,7 @@ class _DesktopBackupTaskDialogState extends State<_DesktopBackupTaskDialog> {
                     if (_localPath.isNotEmpty) ...[
                       const SizedBox(height: 6),
                       SelectableText(
-                        '本机来源：$_localPath',
+                        '本机来源：$_shownLocalPath',
                         style: theme.textTheme.bodySmall?.copyWith(
                           fontSize: 12,
                           color: colors.onSurfaceVariant,
@@ -567,6 +616,92 @@ class _DesktopBackupTaskDialogState extends State<_DesktopBackupTaskDialog> {
                       value: _ignoreHidden,
                       onChanged: (v) => setState(() => _ignoreHidden = v),
                     ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '忽略预设',
+                      style: theme.textTheme.labelMedium?.copyWith(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    Wrap(
+                      spacing: 8,
+                      runSpacing: 6,
+                      children: [
+                        for (final preset in kDesktopBackupIgnorePresets)
+                          FilterChip(
+                            key: ValueKey('ignorePresetChip:${preset.id}'),
+                            label: Text(
+                              preset.label,
+                              style: const TextStyle(fontSize: 12),
+                            ),
+                            tooltip: preset.description,
+                            selected: _ignorePresets.contains(preset.id),
+                            onSelected: (selected) {
+                              setState(() {
+                                if (selected) {
+                                  _ignorePresets.add(preset.id);
+                                } else {
+                                  _ignorePresets.remove(preset.id);
+                                }
+                              });
+                            },
+                          ),
+                      ],
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      key: const ValueKey('customIgnorePatternsField'),
+                      controller: _customIgnoreController,
+                      minLines: 2,
+                      maxLines: 4,
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        labelText: '自定义忽略规则（每行一条通配符）',
+                        hintText: '例如：*.log、cache/**、dist/',
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    TextField(
+                      key: const ValueKey('maxFileSizeMiBField'),
+                      controller: _maxSizeController,
+                      keyboardType: TextInputType.number,
+                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                      onChanged: (_) => setState(() {}),
+                      decoration: const InputDecoration(
+                        isDense: true,
+                        labelText: '单文件体积上限（MiB，留空或 0 表示不限制）',
+                        hintText: '例如：500',
+                      ),
+                    ),
+                    if (widget.directoryAccess.supportsWatch)
+                      SwitchListTile.adaptive(
+                        key: const ValueKey('watchOnChangeSwitch'),
+                        contentPadding: EdgeInsets.zero,
+                        dense: true,
+                        title: const Text(
+                          '变更防抖自动备份（客户端打开期间）',
+                          style: TextStyle(fontSize: 13),
+                        ),
+                        subtitle: const Text(
+                          '检测到文件改动后等待 30 秒合并触发增量同步，失权或满盘时自动暂停监听',
+                          style: TextStyle(fontSize: 11.5),
+                        ),
+                        value: _watchOnChange,
+                        onChanged: (v) => setState(() => _watchOnChange = v),
+                      )
+                    else
+                      Padding(
+                        padding: const EdgeInsets.only(top: 6),
+                        child: Text(
+                          '提示：Android 通过系统文件夹授权（SAF）以只读流式方式增量备份，仅在打开客户端时运行，不常驻后台监听。',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            fontSize: 11.5,
+                            color: colors.onSurfaceVariant,
+                          ),
+                        ),
+                      ),
                     if (_error != null)
                       Padding(
                         padding: const EdgeInsets.only(top: 6),

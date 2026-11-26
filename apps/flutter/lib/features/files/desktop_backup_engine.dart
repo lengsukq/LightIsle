@@ -8,60 +8,344 @@ import 'package:flutter/services.dart';
 
 import '../../core/lightisle_api.dart';
 import '../../core/user_facing_error.dart';
+import 'android_folder_backup_access.dart';
+import 'desktop_backup_ignore.dart';
 import 'desktop_backup_models.dart';
+import 'desktop_backup_watcher.dart';
 import 'file_name_validation.dart';
 import 'photo_backup_hash.dart';
 
 part 'desktop_backup_sync.dart';
 
+class BackupScannedFile {
+  const BackupScannedFile({
+    required this.relativePath,
+    required this.parentRelativeDir,
+    required this.fileName,
+    required this.size,
+    required this.modifiedMs,
+    this.localFile,
+    this.sourceUri,
+  });
+
+  final String relativePath;
+  final String parentRelativeDir;
+  final String fileName;
+  final int size;
+  final int modifiedMs;
+  final File? localFile;
+  final String? sourceUri;
+}
+
+class BackupScanResult {
+  const BackupScanResult({
+    required this.files,
+    required this.failures,
+    this.skippedSymlinks = 0,
+    this.skippedIgnored = 0,
+    this.skippedOversized = 0,
+  });
+
+  final List<BackupScannedFile> files;
+  final List<DesktopBackupFailure> failures;
+  final int skippedSymlinks;
+  final int skippedIgnored;
+  final int skippedOversized;
+}
+
+/// Abstract read-only source interface shared by Desktop filesystem folders
+/// and Android SAF document trees so both reuse the exact same incremental
+/// verification and two-phase replacement pipeline.
+abstract class BackupFolderSource {
+  const BackupFolderSource();
+
+  Future<BackupScanResult> scan({
+    required DesktopBackupTask task,
+    required DesktopBackupIgnoreMatcher matcher,
+    Set<String>? onlyPaths,
+    required void Function() checkActive,
+  });
+
+  Future<({int size, int modifiedMs})?> statFile(
+    BackupScannedFile item, {
+    required void Function() checkActive,
+  });
+
+  Future<PhotoHashResult> hashFile(
+    BackupScannedFile item, {
+    required int expectedSize,
+    required int expectedModifiedMs,
+    required void Function() checkActive,
+  });
+
+  Stream<List<int>> readChunk(
+    BackupScannedFile item, {
+    required int offset,
+    required int length,
+    required int expectedSize,
+    required int expectedModifiedMs,
+    required void Function() checkActive,
+  });
+
+  Future<void> verifyUnchangedBeforeComplete(
+    BackupScannedFile item, {
+    required int expectedSize,
+    required int expectedModifiedMs,
+    required void Function() checkActive,
+  });
+}
+
+class LocalFilesystemFolderSource extends BackupFolderSource {
+  const LocalFilesystemFolderSource(this.rootPath);
+
+  final String rootPath;
+
+  @override
+  Future<BackupScanResult> scan({
+    required DesktopBackupTask task,
+    required DesktopBackupIgnoreMatcher matcher,
+    Set<String>? onlyPaths,
+    required void Function() checkActive,
+  }) async {
+    final files = <BackupScannedFile>[];
+    final failures = <DesktopBackupFailure>[];
+    var skippedSymlinks = 0;
+    var skippedIgnored = 0;
+    var skippedOversized = 0;
+
+    Future<void> walkDirectory(Directory current, String relPrefix) async {
+      checkActive();
+      final List<FileSystemEntity> children;
+      try {
+        children = await current.list(followLinks: false).toList();
+      } catch (error) {
+        failures.add(
+          DesktopBackupFailure(
+            relativePath: relPrefix.isEmpty ? '.' : relPrefix,
+            reason: '目录无法读取：${userFacingError(error)}',
+            failedAtMs: DateTime.now().millisecondsSinceEpoch,
+          ),
+        );
+        return;
+      }
+      children.sort((a, b) => a.path.compareTo(b.path));
+      for (final entity in children) {
+        checkActive();
+        final name = _basename(entity.path);
+        final relPath = relPrefix.isEmpty ? name : '$relPrefix/$name';
+        final type = await FileSystemEntity.type(entity.path, followLinks: false);
+        if (type == FileSystemEntityType.link) {
+          if (!matcher.shouldSkipSegmentName(name)) skippedSymlinks++;
+          continue;
+        }
+        final isDir = type == FileSystemEntityType.directory;
+        if (matcher.shouldIgnore(relPath, isDirectory: isDir)) {
+          skippedIgnored++;
+          continue;
+        }
+        final nameIssue = validateFileName(name);
+        if (nameIssue != null) {
+          failures.add(
+            DesktopBackupFailure(
+              relativePath: relPath,
+              reason: '文件名不符合 NAS 规范：$nameIssue',
+              failedAtMs: DateTime.now().millisecondsSinceEpoch,
+            ),
+          );
+          continue;
+        }
+        if (isDir) {
+          await walkDirectory(Directory(entity.path), relPath);
+          continue;
+        }
+        if (type != FileSystemEntityType.file) continue;
+        if (onlyPaths != null && !onlyPaths.contains(relPath)) continue;
+        final file = File(entity.path);
+        final FileStat stat;
+        try {
+          stat = await file.stat();
+        } catch (error) {
+          failures.add(
+            DesktopBackupFailure(
+              relativePath: relPath,
+              reason: '无法读取文件信息：${userFacingError(error)}',
+              failedAtMs: DateTime.now().millisecondsSinceEpoch,
+            ),
+          );
+          continue;
+        }
+        if (matcher.exceedsSizeLimit(stat.size)) {
+          skippedOversized++;
+          continue;
+        }
+        final targetRel = task.remoteBasePath == '.'
+            ? relPath
+            : '${task.remoteBasePath}/$relPath';
+        final pathIssue = validateRelativePath(targetRel);
+        if (pathIssue != null) {
+          failures.add(
+            DesktopBackupFailure(
+              relativePath: relPath,
+              reason: '目标相对路径无效：$pathIssue',
+              failedAtMs: DateTime.now().millisecondsSinceEpoch,
+            ),
+          );
+          continue;
+        }
+        files.add(
+          BackupScannedFile(
+            relativePath: relPath,
+            parentRelativeDir: relPrefix,
+            fileName: name,
+            size: stat.size,
+            modifiedMs: stat.modified.millisecondsSinceEpoch,
+            localFile: file,
+          ),
+        );
+      }
+    }
+
+    await walkDirectory(Directory(rootPath), '');
+    return BackupScanResult(
+      files: files,
+      failures: failures,
+      skippedSymlinks: skippedSymlinks,
+      skippedIgnored: skippedIgnored,
+      skippedOversized: skippedOversized,
+    );
+  }
+
+  @override
+  Future<({int size, int modifiedMs})?> statFile(
+    BackupScannedFile item, {
+    required void Function() checkActive,
+  }) async {
+    checkActive();
+    final file = item.localFile;
+    if (file == null) return null;
+    if (await FileSystemEntity.type(file.path, followLinks: false) !=
+        FileSystemEntityType.file) {
+      return null;
+    }
+    final stat = await file.stat();
+    return (size: stat.size, modifiedMs: stat.modified.millisecondsSinceEpoch);
+  }
+
+  @override
+  Future<PhotoHashResult> hashFile(
+    BackupScannedFile item, {
+    required int expectedSize,
+    required int expectedModifiedMs,
+    required void Function() checkActive,
+  }) => item.localFile == null
+      ? Future<PhotoHashResult>.error(const PhotoSourceChanged())
+      : hashLocalBackupFile(item.localFile!, expectedSize, checkActive: checkActive);
+
+  @override
+  Stream<List<int>> readChunk(
+    BackupScannedFile item, {
+    required int offset,
+    required int length,
+    required int expectedSize,
+    required int expectedModifiedMs,
+    required void Function() checkActive,
+  }) => item.localFile == null
+      ? Stream<List<int>>.error(const PhotoSourceChanged())
+      : item.localFile!.openRead(offset, offset + length);
+
+  @override
+  Future<void> verifyUnchangedBeforeComplete(
+    BackupScannedFile item, {
+    required int expectedSize,
+    required int expectedModifiedMs,
+    required void Function() checkActive,
+  }) async {
+    checkActive();
+    final file = item.localFile;
+    if (file == null) throw const PhotoSourceChanged();
+    final before = await file.stat();
+    if (before.type != FileSystemEntityType.file || before.size != expectedSize) {
+      throw const PhotoSourceChanged();
+    }
+  }
+
+  static String _basename(String fsPath) {
+    var normalized = fsPath;
+    while (normalized.length > 1 &&
+        (normalized.endsWith('/') || normalized.endsWith('\\'))) {
+      normalized = normalized.substring(0, normalized.length - 1);
+    }
+    final slash = max(normalized.lastIndexOf('/'), normalized.lastIndexOf('\\'));
+    return slash < 0 ? normalized : normalized.substring(slash + 1);
+  }
+}
+
 class DesktopDirectoryLease {
   const DesktopDirectoryLease({
     required this.resolvedPath,
     this.refreshedBookmarkBase64,
+    this.source,
     required this.stop,
   });
 
   final String resolvedPath;
   final String? refreshedBookmarkBase64;
+  final BackupFolderSource? source;
   final Future<void> Function() stop;
 }
 
 class DesktopPickedFolder {
-  const DesktopPickedFolder({required this.path, this.bookmarkBase64});
+  const DesktopPickedFolder({
+    required this.path,
+    this.bookmarkBase64,
+    this.displayPath,
+  });
 
   final String path;
   final String? bookmarkBase64;
+  final String? displayPath;
 }
 
 abstract class DesktopDirectoryAccess {
   const DesktopDirectoryAccess();
+
+  bool get supportsWatch => true;
+  bool get supportsRestore => true;
 
   Future<DesktopPickedFolder?> pickDirectory();
   Future<DesktopDirectoryLease> startAccess(DesktopBackupTask task);
 }
 
 class PlatformDesktopDirectoryAccess extends DesktopDirectoryAccess {
-  const PlatformDesktopDirectoryAccess();
+  const PlatformDesktopDirectoryAccess({
+    AndroidFolderBackupAccess? androidAccess,
+  }) : _androidAccess = androidAccess ?? const AndroidFolderBackupAccess();
 
   static const MethodChannel _channel = MethodChannel(
     'lightisle/desktop-folders',
   );
 
+  final AndroidFolderBackupAccess _androidAccess;
+
+  @override
+  bool get supportsWatch => defaultTargetPlatform != TargetPlatform.android;
+
+  @override
+  bool get supportsRestore => defaultTargetPlatform != TargetPlatform.android;
+
   @override
   Future<DesktopPickedFolder?> pickDirectory() async {
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      return _androidAccess.pickDirectory();
+    }
     if (defaultTargetPlatform == TargetPlatform.macOS) {
-      final result = await _channel.invokeMapMethod<String, dynamic>(
-        'pickDirectory',
-      );
-      if (result == null) return null;
-      final path = result['path']?.toString() ?? '';
+      final result = await _channel.invokeMapMethod<String, dynamic>('pickDirectory');
+      final path = result?['path']?.toString() ?? '';
       if (path.isEmpty) return null;
-      final bookmark = result['bookmark']?.toString();
+      final bookmark = result?['bookmark']?.toString();
       return DesktopPickedFolder(
         path: path,
-        bookmarkBase64: bookmark != null && bookmark.isNotEmpty
-            ? bookmark
-            : null,
+        bookmarkBase64: bookmark != null && bookmark.isNotEmpty ? bookmark : null,
       );
     }
     final selected = await FilePicker.getDirectoryPath(
@@ -73,49 +357,38 @@ class PlatformDesktopDirectoryAccess extends DesktopDirectoryAccess {
 
   @override
   Future<DesktopDirectoryLease> startAccess(DesktopBackupTask task) async {
-    final bookmark = task.bookmarkBase64;
+    if (defaultTargetPlatform == TargetPlatform.android || task.isAndroidSafSource) {
+      return _androidAccess.startAccess(task);
+    }
     if (defaultTargetPlatform == TargetPlatform.macOS) {
       final result = await _channel.invokeMapMethod<String, dynamic>(
         'startAccess',
-        <String, Object?>{'bookmark': bookmark ?? '', 'path': task.localPath},
+        <String, Object?>{'bookmark': task.bookmarkBase64 ?? '', 'path': task.localPath},
       );
       final path = result?['path']?.toString() ?? '';
-      if (path.isEmpty) {
-        throw StateError('无法恢复本机文件夹授权，请编辑任务重新选择文件夹。');
-      }
+      if (path.isEmpty) throw StateError('无法恢复本机文件夹授权，请编辑任务重新选择文件夹。');
       final accessId = result?['accessId']?.toString() ?? '';
       String? refreshed = result?['refreshedBookmark']?.toString();
-      if ((refreshed == null || refreshed.isEmpty) &&
-          result?['stale'] == true) {
+      if ((refreshed == null || refreshed.isEmpty) && result?['stale'] == true) {
         refreshed = result?['bookmark']?.toString();
       }
       return DesktopDirectoryLease(
         resolvedPath: path,
-        refreshedBookmarkBase64: refreshed != null && refreshed.isNotEmpty
-            ? refreshed
-            : null,
+        refreshedBookmarkBase64: refreshed != null && refreshed.isNotEmpty ? refreshed : null,
         stop: () async {
           if (accessId.isEmpty) return;
           try {
-            await _channel.invokeMethod<bool>('stopAccess', <String, Object?>{
-              'accessId': accessId,
-            });
+            await _channel.invokeMethod<bool>('stopAccess', <String, Object?>{'accessId': accessId});
           } catch (error) {
-            debugPrint(
-              'PlatformDesktopDirectoryAccess.stopAccess failed: $error',
-            );
+            debugPrint('PlatformDesktopDirectoryAccess.stopAccess failed: $error');
           }
         },
       );
     }
-    final dir = Directory(task.localPath);
-    if (!await dir.exists()) {
+    if (!await Directory(task.localPath).exists()) {
       throw StateError('本机源文件夹不存在或无权读取：${task.localPath}');
     }
-    return DesktopDirectoryLease(
-      resolvedPath: task.localPath,
-      stop: () async {},
-    );
+    return DesktopDirectoryLease(resolvedPath: task.localPath, stop: () async {});
   }
 }
 
@@ -141,6 +414,8 @@ class DesktopBackupRunSummary {
     required this.updatedReplaced,
     required this.skippedUnchanged,
     required this.skippedSymlinks,
+    this.skippedIgnored = 0,
+    this.skippedOversized = 0,
     required this.failedCount,
     required this.cancelled,
   });
@@ -149,6 +424,8 @@ class DesktopBackupRunSummary {
   final int updatedReplaced;
   final int skippedUnchanged;
   final int skippedSymlinks;
+  final int skippedIgnored;
+  final int skippedOversized;
   final int failedCount;
   final bool cancelled;
 
@@ -160,6 +437,8 @@ class DesktopBackupRunSummary {
       '新增 $uploadedNew',
       if (updatedReplaced > 0) '更新 $updatedReplaced',
       '未变跳过 $skippedUnchanged',
+      if (skippedIgnored > 0) '规则过滤 $skippedIgnored',
+      if (skippedOversized > 0) '超体积跳过 $skippedOversized',
       if (skippedSymlinks > 0) '跳过符号链接 $skippedSymlinks',
       if (failedCount > 0) '失败 $failedCount',
     ];
@@ -171,31 +450,20 @@ class _CancelledDesktopBackup implements Exception {
   const _CancelledDesktopBackup();
 }
 
-class _LocalScanItem {
-  const _LocalScanItem({
-    required this.file,
-    required this.relativePath,
-    required this.parentRelativeDir,
-    required this.fileName,
-  });
-
-  final File file;
-  final String relativePath;
-  final String parentRelativeDir;
-  final String fileName;
-}
-
 enum _FileSyncOutcome { uploadedNew, updated, skipped }
 
-/// Controller & engine for desktop local-folder one-way incremental backup.
-/// Lives either at page scope or shell scope so an in-app schedule can trigger
-/// silent incremental checks when no manual run is active.
+/// Controller & engine for Desktop & Android local-folder one-way incremental
+/// backup. Lives either at page scope or shell scope so an in-app schedule and
+/// debounced filesystem watcher can trigger silent incremental checks when no
+/// manual run is active.
 class DesktopBackupController extends ChangeNotifier {
   DesktopBackupController({
     required this.api,
     required this.userId,
     required this.accountName,
     DesktopDirectoryAccess? directoryAccess,
+    this.watcherDebounceDuration = DesktopBackupWatcher.defaultDebounceDuration,
+    this.watchStreamFactory,
   }) : _directoryAccess =
            directoryAccess ?? const PlatformDesktopDirectoryAccess(),
        store = DesktopBackupStore(
@@ -204,21 +472,12 @@ class DesktopBackupController extends ChangeNotifier {
          accountName: accountName,
        );
 
-  static const Set<String> _ignoredJunkNames = <String>{
-    '.DS_Store',
-    'Thumbs.db',
-    'desktop.ini',
-    '.Spotlight-V100',
-    '.Trashes',
-    '.fseventsd',
-    '.TemporaryItems',
-    'Icon\r',
-  };
-
   final LightIsleApi api;
   final int userId;
   final String accountName;
   final DesktopDirectoryAccess _directoryAccess;
+  final Duration watcherDebounceDuration;
+  final WatchDirectoryStreamFactory? watchStreamFactory;
   final DesktopBackupStore store;
 
   List<DesktopBackupTask> _tasks = const <DesktopBackupTask>[];
@@ -227,7 +486,9 @@ class DesktopBackupController extends ChangeNotifier {
   bool _running = false;
   bool _cancelRequested = false;
   bool _disposed = false;
+  bool _watchersEnabled = false;
   Timer? _scheduleTimer;
+  DesktopBackupWatcher? _watcher;
 
   List<DesktopBackupTask> get tasks => _tasks;
   String? get loadError => store.lastLoadError;
@@ -236,13 +497,23 @@ class DesktopBackupController extends ChangeNotifier {
   bool get running => _running;
   DesktopDirectoryAccess get directoryAccess => _directoryAccess;
 
-  Future<void> initialize({bool enableTimer = false}) async {
+  bool isWatchingTask(String taskId) => _watcher?.isWatching(taskId) ?? false;
+  String? watcherErrorFor(String taskId) => _watcher?.errorFor(taskId);
+
+  Future<void> initialize({
+    bool enableTimer = false,
+    bool? enableWatchers,
+  }) async {
     final loadedTasks = await store.loadTasks();
     final loadedSchedule = await store.loadSchedule();
     if (_disposed) return;
     _tasks = loadedTasks;
     _schedule = loadedSchedule;
     if (enableTimer) _rearmTimer();
+    _watchersEnabled = enableWatchers ?? enableTimer;
+    if (_watchersEnabled) {
+      await _ensureWatcher().syncTasks(_tasks);
+    }
     notifyListeners();
   }
 
@@ -253,7 +524,31 @@ class DesktopBackupController extends ChangeNotifier {
     _tasks = loadedTasks;
     _schedule = loadedSchedule;
     if (updateTimer) _rearmTimer();
+    if (_watchersEnabled) {
+      await _ensureWatcher().syncTasks(_tasks);
+    }
     notifyListeners();
+  }
+
+  DesktopBackupWatcher _ensureWatcher() {
+    return _watcher ??= DesktopBackupWatcher(
+      directoryAccess: _directoryAccess,
+      debounceDuration: watcherDebounceDuration,
+      watchStreamFactory: watchStreamFactory,
+      onTriggerBackup: _handleWatcherTriggeredBackup,
+      onStateChanged: () {
+        if (!_disposed) notifyListeners();
+      },
+    );
+  }
+
+  Future<void> _handleWatcherTriggeredBackup(String taskId) async {
+    if (_disposed) return;
+    if (_running) {
+      _watcher?.deferWhileBusy(taskId);
+      return;
+    }
+    await runTask(taskId);
   }
 
   void _rearmTimer() {
@@ -290,6 +585,9 @@ class DesktopBackupController extends ChangeNotifier {
     await store.saveTasks(current);
     if (_disposed) return;
     _tasks = List<DesktopBackupTask>.unmodifiable(current);
+    if (_watchersEnabled) {
+      await _ensureWatcher().syncTasks(_tasks);
+    }
     notifyListeners();
   }
 
@@ -297,6 +595,7 @@ class DesktopBackupController extends ChangeNotifier {
     if (_running && _activeProgress?.taskId == taskId) {
       throw StateError('该任务正在运行，请先暂停后再移除。');
     }
+    await _watcher?.releaseTask(taskId);
     final next = _tasks.where((t) => t.id != taskId).toList(growable: false);
     await store.saveTasks(next);
     await store.removeTaskData(taskId);
@@ -360,6 +659,7 @@ class DesktopBackupController extends ChangeNotifier {
     final prevRoot = api.selectedRoot;
     var mutatedSharedRoot = false;
     final startedAt = DateTime.now().millisecondsSinceEpoch;
+    String? releaseWatcherReason;
 
     try {
       final verifiedRoot = await _verifyTargetRoot(task);
@@ -384,13 +684,19 @@ class DesktopBackupController extends ChangeNotifier {
         client = api;
       }
 
-      return await _executeSync(
+      final source =
+          lease.source ?? LocalFilesystemFolderSource(lease.resolvedPath);
+      final (summary, quotaError) = await _executeSync(
         client: client,
         task: task,
-        localRootPath: lease.resolvedPath,
+        source: source,
         onlyPaths: onlyPaths,
         startedAtMs: startedAt,
       );
+      if (quotaError != null) {
+        releaseWatcherReason = quotaError;
+      }
+      return summary;
     } on _CancelledDesktopBackup {
       final updated = task.copyWith(
         lastRunAtMs: startedAt,
@@ -408,6 +714,7 @@ class DesktopBackupController extends ChangeNotifier {
       );
     } catch (error) {
       final message = userFacingError(error);
+      releaseWatcherReason = message;
       final updated = task.copyWith(lastRunAtMs: startedAt, lastError: message);
       await _persistTaskUpdate(updated);
       return null;
@@ -420,7 +727,19 @@ class DesktopBackupController extends ChangeNotifier {
       _running = false;
       _cancelRequested = false;
       _activeProgress = null;
-      if (!_disposed) notifyListeners();
+      if (releaseWatcherReason != null && !_disposed) {
+        await _watcher?.releaseTask(
+          task.id,
+          reason: '变更监听已自动暂停：$releaseWatcherReason',
+        );
+      }
+      if (!_disposed) {
+        notifyListeners();
+        final deferred = _watcher?.takeNextDeferredTaskId();
+        if (deferred != null) {
+          unawaited(runTask(deferred));
+        }
+      }
     }
   }
 
@@ -454,6 +773,11 @@ class DesktopBackupController extends ChangeNotifier {
     _cancelRequested = true;
     _scheduleTimer?.cancel();
     _scheduleTimer = null;
+    final watcher = _watcher;
+    _watcher = null;
+    if (watcher != null) {
+      unawaited(watcher.dispose());
+    }
     super.dispose();
   }
 }

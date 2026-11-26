@@ -26,10 +26,10 @@ extension _DesktopBackupSync on DesktopBackupController {
     return byId;
   }
 
-  Future<DesktopBackupRunSummary> _executeSync({
+  Future<(DesktopBackupRunSummary, String?)> _executeSync({
     required LightIsleApi client,
     required DesktopBackupTask task,
-    required String localRootPath,
+    required BackupFolderSource source,
     required Set<String>? onlyPaths,
     required int startedAtMs,
   }) async {
@@ -49,73 +49,18 @@ extension _DesktopBackupSync on DesktopBackupController {
         for (final f in priorFailures) f.relativePath: f,
     };
 
-    final scanned = <_LocalScanItem>[];
-    var skippedSymlinks = 0;
-
-    Future<void> walkDirectory(Directory current, String relPrefix) async {
-      _checkActive();
-      final List<FileSystemEntity> children;
-      try {
-        children = await current.list(followLinks: false).toList();
-      } catch (error) {
-        final targetLabel = relPrefix.isEmpty ? '.' : relPrefix;
-        failuresByPath[targetLabel] = DesktopBackupFailure(
-          relativePath: targetLabel,
-          reason: '目录无法读取：${userFacingError(error)}',
-          failedAtMs: DateTime.now().millisecondsSinceEpoch,
-        );
-        return;
-      }
-      children.sort((a, b) => a.path.compareTo(b.path));
-      for (final entity in children) {
-        _checkActive();
-        final name = _basename(entity.path);
-        if (_shouldSkipName(name, ignoreHidden: task.ignoreHidden)) continue;
-        final relPath = relPrefix.isEmpty ? name : '$relPrefix/$name';
-        final type = await FileSystemEntity.type(
-          entity.path,
-          followLinks: false,
-        );
-        if (type == FileSystemEntityType.link) {
-          skippedSymlinks++;
-          continue;
-        }
-        final nameIssue = validateFileName(name);
-        if (nameIssue != null) {
-          failuresByPath[relPath] = DesktopBackupFailure(
-            relativePath: relPath,
-            reason: '文件名不符合 NAS 规范：$nameIssue',
-            failedAtMs: DateTime.now().millisecondsSinceEpoch,
-          );
-          continue;
-        }
-        if (type == FileSystemEntityType.directory) {
-          await walkDirectory(Directory(entity.path), relPath);
-        } else if (type == FileSystemEntityType.file) {
-          if (onlyPaths != null && !onlyPaths.contains(relPath)) continue;
-          final targetRel = _joinRemotePath(task.remoteBasePath, relPath);
-          final pathIssue = validateRelativePath(targetRel);
-          if (pathIssue != null) {
-            failuresByPath[relPath] = DesktopBackupFailure(
-              relativePath: relPath,
-              reason: '目标相对路径无效：$pathIssue',
-              failedAtMs: DateTime.now().millisecondsSinceEpoch,
-            );
-            continue;
-          }
-          scanned.add(
-            _LocalScanItem(
-              file: File(entity.path),
-              relativePath: relPath,
-              parentRelativeDir: relPrefix,
-              fileName: name,
-            ),
-          );
-        }
-      }
+    final matcher = DesktopBackupIgnoreMatcher.fromTask(task);
+    final scanResult = await source.scan(
+      task: task,
+      matcher: matcher,
+      onlyPaths: onlyPaths,
+      checkActive: _checkActive,
+    );
+    for (final failure in scanResult.failures) {
+      failuresByPath[failure.relativePath] = failure;
     }
 
-    await walkDirectory(Directory(localRootPath), '');
+    final scanned = scanResult.files;
     if (onlyPaths != null) {
       final foundPaths = scanned.map((s) => s.relativePath).toSet();
       failuresByPath.removeWhere(
@@ -123,10 +68,10 @@ extension _DesktopBackupSync on DesktopBackupController {
       );
     }
 
-    final byDir = <String, List<_LocalScanItem>>{};
+    final byDir = <String, List<BackupScannedFile>>{};
     for (final item in scanned) {
       byDir
-          .putIfAbsent(item.parentRelativeDir, () => <_LocalScanItem>[])
+          .putIfAbsent(item.parentRelativeDir, () => <BackupScannedFile>[])
           .add(item);
     }
 
@@ -190,6 +135,7 @@ extension _DesktopBackupSync on DesktopBackupController {
           final outcome = await _syncSingleFile(
             client: client,
             task: task,
+            source: source,
             item: item,
             remoteDir: remoteDir,
             remoteSnapshot: remoteSnapshot,
@@ -238,7 +184,9 @@ extension _DesktopBackupSync on DesktopBackupController {
       uploadedNew: uploadedNew,
       updatedReplaced: updatedReplaced,
       skippedUnchanged: skippedUnchanged,
-      skippedSymlinks: skippedSymlinks,
+      skippedSymlinks: scanResult.skippedSymlinks,
+      skippedIgnored: scanResult.skippedIgnored,
+      skippedOversized: scanResult.skippedOversized,
       failedCount: finalFailures.length,
       cancelled: false,
     );
@@ -255,30 +203,27 @@ extension _DesktopBackupSync on DesktopBackupController {
               ? null
               : '有 ${finalFailures.length} 个文件未能完成同步，可点击「仅重试失败项」'),
       clearError: finalFailures.isEmpty && quotaStopError == null,
-      lastSkippedSymlinks: skippedSymlinks,
+      lastSkippedSymlinks: scanResult.skippedSymlinks,
     );
     await _persistTaskUpdate(updatedTask);
-    return summary;
+    return (summary, quotaStopError);
   }
 
   Future<_FileSyncOutcome> _syncSingleFile({
     required LightIsleApi client,
     required DesktopBackupTask task,
-    required _LocalScanItem item,
+    required BackupFolderSource source,
+    required BackupScannedFile item,
     required String remoteDir,
     required Map<String, ({int size, String type})> remoteSnapshot,
     required Map<String, DesktopBackupFileRecord> fileIndex,
   }) async {
-    final entityType = await FileSystemEntity.type(
-      item.file.path,
-      followLinks: false,
-    );
-    if (entityType != FileSystemEntityType.file) {
+    final stat = await source.statFile(item, checkActive: _checkActive);
+    if (stat == null) {
       throw const PhotoSourceChanged();
     }
-    final stat = await item.file.stat();
     final size = stat.size;
-    final mtimeMs = stat.modified.millisecondsSinceEpoch;
+    final mtimeMs = stat.modifiedMs;
     final cached = fileIndex[item.relativePath];
     final expectedRemoteName = cached?.remoteName ?? item.fileName;
     final cachedRemoteEntry = remoteSnapshot[expectedRemoteName];
@@ -297,9 +242,10 @@ extension _DesktopBackupSync on DesktopBackupController {
       throw StateError('NAS 目标位置已存在同名文件夹「${item.fileName}」，未覆盖。');
     }
 
-    final hash = await hashLocalBackupFile(
-      item.file,
-      size,
+    final hash = await source.hashFile(
+      item,
+      expectedSize: size,
+      expectedModifiedMs: mtimeMs,
       checkActive: _checkActive,
     );
     final targetPath = _joinRemotePath(remoteDir, item.fileName);
@@ -347,8 +293,10 @@ extension _DesktopBackupSync on DesktopBackupController {
       await _resumableUploadAndVerify(
         client: client,
         taskId: task.id,
-        source: item.file,
+        source: source,
+        item: item,
         size: size,
+        modifiedMs: mtimeMs,
         destinationPath: targetPath,
         onConflict: '',
         hash: hash,
@@ -384,8 +332,10 @@ extension _DesktopBackupSync on DesktopBackupController {
       final serverPath = await _resumableUploadAndVerify(
         client: client,
         taskId: task.id,
-        source: item.file,
+        source: source,
+        item: item,
         size: size,
+        modifiedMs: mtimeMs,
         destinationPath: targetPath,
         onConflict: 'rename',
         hash: hash,
@@ -424,8 +374,10 @@ extension _DesktopBackupSync on DesktopBackupController {
       await _resumableUploadAndVerify(
         client: client,
         taskId: task.id,
-        source: item.file,
+        source: source,
+        item: item,
         size: size,
+        modifiedMs: mtimeMs,
         destinationPath: stagingPath,
         onConflict: '',
         hash: hash,
@@ -457,8 +409,10 @@ extension _DesktopBackupSync on DesktopBackupController {
   Future<String> _resumableUploadAndVerify({
     required LightIsleApi client,
     required String taskId,
-    required File source,
+    required BackupFolderSource source,
+    required BackupScannedFile item,
     required int size,
+    required int modifiedMs,
     required String destinationPath,
     required String onConflict,
     required PhotoHashResult hash,
@@ -504,14 +458,15 @@ extension _DesktopBackupSync on DesktopBackupController {
             'uploadID': reqId,
           },
         );
-      } catch (_) {
+      } catch (beginError, beginStack) {
+        if (_isStorageExhausted(beginError)) rethrow;
         _checkActive();
         try {
           state = await client.get(
             '/api/v2/uploads/${Uri.encodeComponent(reqId)}',
           );
         } catch (_) {
-          rethrow;
+          Error.throwWithStackTrace(beginError, beginStack);
         }
       }
     }
@@ -535,18 +490,32 @@ extension _DesktopBackupSync on DesktopBackupController {
       try {
         state = await client.uploadChunk(
           uploadId,
-          source.openRead(offset, offset + length),
+          source.readChunk(
+            item,
+            offset: offset,
+            length: length,
+            expectedSize: size,
+            expectedModifiedMs: modifiedMs,
+            checkActive: _checkActive,
+          ),
           length,
           offset,
         );
-      } catch (_) {
+      } catch (chunkError, chunkStack) {
+        if (_isStorageExhausted(chunkError)) rethrow;
         _checkActive();
-        final latest = await client.get(
-          '/api/v2/uploads/${Uri.encodeComponent(uploadId)}',
-        );
-        final next = (latest['offset'] as num?)?.toInt() ?? -1;
-        if (next <= offset || next > size) rethrow;
-        state = latest;
+        try {
+          final latest = await client.get(
+            '/api/v2/uploads/${Uri.encodeComponent(uploadId)}',
+          );
+          final next = (latest['offset'] as num?)?.toInt() ?? -1;
+          if (next <= offset || next > size) {
+            Error.throwWithStackTrace(chunkError, chunkStack);
+          }
+          state = latest;
+        } catch (_) {
+          Error.throwWithStackTrace(chunkError, chunkStack);
+        }
       }
       final next = (state['offset'] as num?)?.toInt() ?? -1;
       if (next <= offset || next > size) {
@@ -556,11 +525,12 @@ extension _DesktopBackupSync on DesktopBackupController {
     }
 
     _checkActive();
-    final beforeComplete = await source.stat();
-    if (beforeComplete.type != FileSystemEntityType.file ||
-        beforeComplete.size != size) {
-      throw const PhotoSourceChanged();
-    }
+    await source.verifyUnchangedBeforeComplete(
+      item,
+      expectedSize: size,
+      expectedModifiedMs: modifiedMs,
+      checkActive: _checkActive,
+    );
     await client.send(
       'POST',
       '/api/v2/uploads/${Uri.encodeComponent(uploadId)}/complete',
@@ -668,31 +638,10 @@ extension _DesktopBackupSync on DesktopBackupController {
     return snapshot;
   }
 
-  static bool _shouldSkipName(String name, {required bool ignoreHidden}) {
-    if (name.isEmpty || name == '.' || name == '..') return true;
-    if (DesktopBackupController._ignoredJunkNames.contains(name)) return true;
-    if (name.startsWith('.lightisle-')) return true;
-    if (ignoreHidden && name.startsWith('.')) return true;
-    return false;
-  }
-
   static String _joinRemotePath(String base, String child) {
     final cleanBase = base.trim().isEmpty ? '.' : base.trim();
     if (child.isEmpty || child == '.') return cleanBase;
     return cleanBase == '.' ? child : '$cleanBase/$child';
-  }
-
-  static String _basename(String fsPath) {
-    var normalized = fsPath;
-    while (normalized.length > 1 &&
-        (normalized.endsWith('/') || normalized.endsWith('\\'))) {
-      normalized = normalized.substring(0, normalized.length - 1);
-    }
-    final slash = max(
-      normalized.lastIndexOf('/'),
-      normalized.lastIndexOf('\\'),
-    );
-    return slash < 0 ? normalized : normalized.substring(slash + 1);
   }
 
   static String _basenamePosix(String posixPath) {
