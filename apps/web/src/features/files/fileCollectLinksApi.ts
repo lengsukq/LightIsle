@@ -152,19 +152,7 @@ export function buildCollectPublicUrl(origin: string, publicPath: string, fallba
 }
 
 export function describeCollectLinkError(error: unknown, fallbackPrefix = "操作失败："): string {
-  const code = error instanceof Error ? error.message : "";
-  const map: Record<string, string> = {
-    too_many_collect_links: "当前目录收集链接数量已达上限（50 个），请撤销不再使用的链接后重试。",
-    collect_target_must_be_folder: "收集链接只能绑定到文件夹，不能绑定到单个文件。",
-    invalid_collect_link_request: "收集链接参数无效，请检查标题、有效期、口令和配额上限。",
-    unsupported_file_identity: "无法确认目标文件夹身份，请刷新文件列表后重试。",
-    file_permission_denied: "没有该文件夹的写入权限，无法创建收集链接。",
-    invalid_collect_link_id: "收集链接标识无效，请刷新列表后重试。",
-    collect_link_creation_failed: "创建收集链接失败，请稍后重试。",
-    collect_link_list_failed: "读取收集链接列表失败，请稍后重试。",
-    collect_link_revoke_failed: "撤销收集链接失败，请稍后重试。",
-  };
-  return map[code] ?? fallbackPrefix + describeUserFacingError(error);
+  return fallbackPrefix + describeUserFacingError(error);
 }
 
 export function useCollectLinks(deps: CollectLinkDependencies) {
@@ -270,7 +258,7 @@ export function useCollectLinks(deps: CollectLinkDependencies) {
       createdUrl.value = buildCollectPublicUrl(
         deps.origin(),
         res.publicPath,
-        deps.mediaPath("/api/v2/public/collect"),
+        deps.apiPath("/api/v2/public/collect"),
         res.token,
       );
       await loadCollectLinks(true);

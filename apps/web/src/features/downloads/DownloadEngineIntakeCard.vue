@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onUnmounted, ref } from "vue";
+import { computed, onUnmounted, ref, watch } from "vue";
 import {
   ArrowDownToLine, Check, Copy, Film, Folder, Globe, Link2, SlidersHorizontal, Terminal,
 } from "lucide-vue-next";
@@ -48,7 +48,38 @@ const emit = defineEmits<{
 }>();
 
 const copiedInstallCmd = ref(false);
+const playlistMaxDraft = ref(String(props.playlistMaxItems));
 let copyTimer: number | undefined;
+
+watch(
+  () => props.playlistMaxItems,
+  (next) => {
+    if (playlistMaxDraft.value.trim() !== String(next)) {
+      playlistMaxDraft.value = String(next);
+    }
+  },
+);
+
+function onPlaylistMaxInput(event: Event) {
+  playlistMaxDraft.value = (event.target as HTMLInputElement).value;
+}
+
+function normalizePlaylistMaxItems() {
+  const raw = playlistMaxDraft.value.trim();
+  const parsed = raw ? Number.parseInt(raw, 10) : Number.NaN;
+  const normalized = Number.isFinite(parsed) ? Math.max(1, Math.min(20, parsed)) : 10;
+  playlistMaxDraft.value = String(normalized);
+  if (normalized !== props.playlistMaxItems) {
+    emit("update:playlistMaxItems", normalized);
+  }
+}
+
+function handleSubmit() {
+  if (props.selectedEngine === "ytdlp" && props.allowPlaylist) {
+    normalizePlaylistMaxItems();
+  }
+  emit("submit");
+}
 
 const availability = computed(() => resolveEngineAvailability(props.status));
 
@@ -167,7 +198,7 @@ onUnmounted(() => {
     </div>
 
     <IsleBanner
-      v-else-if="selectedEngine === 'aria2' && !availability.aria2"
+      v-else-if="availability.anyAvailable && selectedEngine === 'aria2' && !availability.aria2"
       type="warning"
       compact
       role="note"
@@ -175,14 +206,14 @@ onUnmounted(() => {
     />
 
     <IsleBanner
-      v-else-if="selectedEngine === 'webarchive' && !availability.webarchive"
+      v-else-if="availability.anyAvailable && selectedEngine === 'webarchive' && !availability.webarchive"
       type="warning"
       compact
       role="note"
       message="当前宿主服务版本暂未开启网页离线保存，请升级或重启轻屿 Mac 服务后重试。"
     />
 
-    <form class="download-intake-form" @submit.prevent="emit('submit')">
+    <form class="download-intake-form" @submit.prevent="handleSubmit">
       <div class="download-quick-bar">
         <label class="download-url-box">
           <Link2 :size="15" class="download-url-icon" aria-hidden="true" />
@@ -243,8 +274,9 @@ onUnmounted(() => {
             min="1"
             max="20"
             step="1"
-            :value="playlistMaxItems"
-            @input="emit('update:playlistMaxItems', Number(($event.target as HTMLInputElement).value) || 10)"
+            :value="playlistMaxDraft"
+            @input="onPlaylistMaxInput"
+            @blur="normalizePlaylistMaxItems"
           />
         </label>
       </div>
@@ -312,7 +344,7 @@ onUnmounted(() => {
 .dl-install-guide {
   margin-bottom: 12px; padding: 11px 13px; border-radius: 12px;
   border: 1px solid color-mix(in srgb, var(--warning, #d9912b) 34%, var(--fluid-card-border));
-  background: color-mix(in srgb, var(--warning, #d9912b) 8%, var(--fluid-card-item-fill));
+  background: color-mix(in srgb, var(--warning, #d9912b) 8%, var(--fluid-card-item-top));
   display: flex; flex-direction: column; gap: 8px;
 }
 .dl-install-copy strong { font-size: 13px; color: var(--text-primary); }

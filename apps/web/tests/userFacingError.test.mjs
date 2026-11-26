@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { apiErrorFromResponse, readApiFailure } from "../src/api/apiFailure.ts";
 import { describeUserFacingError } from "../src/api/userFacingError.ts";
 
 test("common storage and permission codes provide specific corrective action", () => {
@@ -87,4 +88,86 @@ test("unknown codes remain diagnosable, not just a raw identifier", () => {
   const description = describeUserFacingError(new Error("unexpected_domain_code"));
   assert.match(description, /刷新确认状态/);
   assert.match(description, /排查标识：unexpected_domain_code/);
+});
+
+test("all new domain error codes (downloads, reminders, collect links, pins, readers, OCR) translate cleanly", () => {
+  const newDomainCodes = [
+    "download_list_failed",
+    "download_staging_failed",
+    "ytdlp_not_installed",
+    "ytdlp_failed",
+    "ytdlp_timeout",
+    "webarchive_invalid_url",
+    "webarchive_blocked_address",
+    "webarchive_too_many_redirects",
+    "webarchive_too_large",
+    "webarchive_unsupported_content_type",
+    "webarchive_http_error",
+    "webarchive_timeout",
+    "invalid_reminder_request",
+    "invalid_reminder_id",
+    "reminder_limit_reached",
+    "reminder_permission_denied",
+    "reminder_not_found",
+    "family_reminder_error",
+    "invalid_collect_link_request",
+    "collect_target_must_be_folder",
+    "too_many_collect_links",
+    "collect_link_creation_failed",
+    "collect_link_list_failed",
+    "invalid_collect_link_id",
+    "collect_link_revoke_failed",
+    "collect_password_invalid",
+    "collect_grant_unavailable",
+    "collect_auth_required",
+    "invalid_collect_upload",
+    "collect_extension_not_allowed",
+    "collect_file_too_large",
+    "collect_limit_reached",
+    "invalid_offset",
+    "invalid_pin_request",
+    "pin_limit_reached",
+    "file_pin_error",
+    "invalid_insights_mode",
+    "text_edit_unsupported_type",
+    "text_file_too_large",
+    "text_file_invalid_utf8",
+    "file_modified_conflict",
+    "archive_reader_unsupported",
+    "archive_entry_type_forbidden",
+    "invalid_reading_progress",
+    "reading_progress_error",
+    "invalid_path_prefix",
+    "ocr_priority_unsupported",
+  ];
+  for (const code of newDomainCodes) {
+    const msg = describeUserFacingError(new Error(code));
+    assert.doesNotMatch(msg, /排查标识：/, `Expected explicit Chinese label for ${code}`);
+    assert.ok(msg.length > 8, `Expected descriptive message for ${code}`);
+  }
+});
+
+test("ApiFailure preserves safe localized Chinese server message and nextAction as fallback for future codes", async () => {
+  const res = new Response(
+    JSON.stringify({
+      error: "future_domain_error",
+      message: "服务端暂不支持此新型操作。",
+      nextAction: "请升级客户端后重试。",
+    }),
+    { status: 400, headers: { "content-type": "application/json" } },
+  );
+  const failure = await readApiFailure(res);
+  assert.equal(failure.serverMessage, "服务端暂不支持此新型操作。");
+  assert.equal(failure.nextAction, "请升级客户端后重试。");
+  const text = describeUserFacingError(failure);
+  assert.match(text, /服务端暂不支持此新型操作。请升级客户端后重试。/);
+  assert.match(text, /HTTP 400 · future_domain_error/);
+
+  // Raw English or HTML payloads in message/nextAction must still be stripped
+  const unsafe = apiErrorFromResponse(
+    { status: 500 },
+    { error: "future_unsafe", message: "<script>alert(1)</script>", nextAction: "token=secret" },
+  );
+  assert.equal(unsafe.serverMessage, null);
+  assert.equal(unsafe.nextAction, null);
 });

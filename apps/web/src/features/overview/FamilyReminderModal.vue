@@ -10,6 +10,7 @@ import IsleModal from "../../components/ui/IsleModal.vue";
 import {
   LUNAR_DAY_OPTIONS,
   LUNAR_MONTH_OPTIONS,
+  parseOptionalLunarYear,
   REMIND_ADVANCE_PRESETS,
   REMINDER_CATEGORIES,
   REMINDER_COLORS,
@@ -39,7 +40,7 @@ const title = ref("");
 const category = ref<ReminderCategory>("birthday");
 const calendarType = ref<ReminderCalendarType>("solar");
 const solarDate = ref("");
-const lunarYear = ref("");
+const lunarYear = ref<string | number>("");
 const lunarMonth = ref<number>(1);
 const lunarDay = ref<number>(1);
 const isLeapMonth = ref(false);
@@ -172,14 +173,13 @@ function handleSubmit() {
   let nextSolarDate: string | undefined;
 
   if (calendarType.value === "lunar") {
-    if (lunarYear.value.trim()) {
-      const parsed = Number.parseInt(lunarYear.value.trim(), 10);
-      if (!Number.isFinite(parsed)) {
-        validationError.value = "起始年份必须是数字。";
-        return;
-      }
-      year = parsed;
+    const normalizedLunarYear = String(lunarYear.value ?? "").trim();
+    const { year: parsedYear, error: lunarYearError } = parseOptionalLunarYear(normalizedLunarYear);
+    if (lunarYearError) {
+      validationError.value = lunarYearError;
+      return;
     }
+    year = parsedYear;
     month = lunarMonth.value;
     day = lunarDay.value;
   } else {
@@ -386,6 +386,15 @@ function handleSubmit() {
   width: 100%; box-sizing: border-box; padding: 7px 11px; border-radius: 10px;
   border: 1px solid var(--fluid-card-border); background: var(--fluid-card-item-fill);
   color: var(--text-primary); font: inherit; font-size: 13px;
+  outline: none; transition: border-color 0.15s ease, box-shadow 0.15s ease, background-color 0.15s ease;
+}
+.reminder-field input[type="text"]:focus,
+.reminder-field input[type="date"]:focus,
+.reminder-field input[type="number"]:focus,
+.reminder-field textarea:focus {
+  border-color: var(--accent-primary);
+  background: var(--fluid-card-top);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-primary) 16%, transparent);
 }
 .reminder-field textarea { resize: vertical; min-height: 60px; }
 .reminder-chip-row { display: flex; flex-wrap: wrap; gap: 6px; }
@@ -399,9 +408,14 @@ function handleSubmit() {
   height: 29px; border: 0; border-radius: 7px; background: transparent;
   color: var(--text-secondary); font: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
 }
+.reminder-segment button:focus-visible,
+.reminder-color-dot:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
 .reminder-segment button.active {
-  background: var(--surface-elevated); color: var(--text-primary);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  background: var(--fluid-card-top); color: var(--text-primary);
+  box-shadow: var(--fluid-item-card-shadow);
 }
 .reminder-checkbox-row {
   grid-column: 1 / -1; display: inline-flex; align-items: center; gap: 7px;
@@ -421,5 +435,11 @@ function handleSubmit() {
 .dot-violet { background-color: #8a72c2; }
 @media (max-width: 600px) {
   .reminder-grid-two, .reminder-lunar-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .reminder-field input[type="text"],
+  .reminder-field input[type="date"],
+  .reminder-field input[type="number"],
+  .reminder-field textarea { transition: none; }
 }
 </style>

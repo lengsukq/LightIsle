@@ -15,7 +15,9 @@ import {
   formatCountdownLabel,
   formatReminderMilestone,
   isNightDimHour,
+  isOnceReminderCompleted,
   listFamilyReminders,
+  parseOptionalLunarYear,
   PHOTO_FRAME_DASHBOARD_REFRESH_MS,
   PHOTO_FRAME_MODE_KEY,
   readPhotoFrameMode,
@@ -222,4 +224,40 @@ test("reminders, photo frame dashboard, and family docs archive SFCs compile cle
   assert.match(docsSrc, /"ocr"/);
   assert.match(docsSrc, /\/api\/v2\/photos\/ocr-priority/);
   assert.match(docsSrc, /一键复制文本/);
+  assert.match(docsSrc, /readApiFailure/);
+  assert.match(docsSrc, /offset_mismatch/);
+  assert.match(docsSrc, /method:\s*"DELETE"/);
+  assert.match(docsSrc, /ocrRefreshTimer/);
+
+  // P0-2 & P1-6/P1-7 guardrails on Reminders, Dashboard, and PhotosView
+  const modalSrc = readFileSync(new URL("../src/features/overview/FamilyReminderModal.vue", import.meta.url), "utf8");
+  assert.match(modalSrc, /ref<string \| number>\(""\)/);
+  assert.match(modalSrc, /String\(lunarYear\.value \?\? ""\)\.trim\(\)/);
+  assert.match(modalSrc, /:focus\s*\{/);
+  assert.match(modalSrc, /var\(--fluid-item-card-shadow\)/);
+
+  const sectionSrc = readFileSync(new URL("../src/features/overview/FamilyRemindersSection.vue", import.meta.url), "utf8");
+  assert.match(sectionSrc, /modalError\.value = describeUserFacingError\(err\)/);
+  assert.match(sectionSrc, /color-mix\(in srgb, var\(--rem-tone\) 82%, var\(--text-primary\)\)/);
+  assert.match(sectionSrc, /已打卡/);
+
+  const widgetsSrc = readFileSync(new URL("../src/features/photos/PhotoFrameDashboardWidgets.vue", import.meta.url), "utf8");
+  assert.match(widgetsSrc, /anyFulfilled/);
+  assert.match(widgetsSrc, /overflow:\s*hidden/);
+  assert.match(widgetsSrc, /nth-child\(n \+ 3\)/);
+
+  const photosSrc = readFileSync(new URL("../src/features/photos/PhotosView.vue", import.meta.url), "utf8");
+  assert.match(photosSrc, /:subtitle="docsArchiveActive \?/);
+});
+
+test("parseOptionalLunarYear handles numeric v-model input without TypeError and isOnceReminderCompleted detects done once reminders", () => {
+  assert.deepEqual(parseOptionalLunarYear(1968), { year: 1968, error: "" });
+  assert.deepEqual(parseOptionalLunarYear(" 1995 "), { year: 1995, error: "" });
+  assert.deepEqual(parseOptionalLunarYear(""), { year: 0, error: "" });
+  assert.deepEqual(parseOptionalLunarYear(null), { year: 0, error: "" });
+  assert.match(parseOptionalLunarYear("abc").error, /数字/);
+
+  assert.equal(isOnceReminderCompleted({ repeatRule: "once", notifyEnabled: false }), true);
+  assert.equal(isOnceReminderCompleted({ repeatRule: "once", notifyEnabled: true }), false);
+  assert.equal(isOnceReminderCompleted({ repeatRule: "yearly", notifyEnabled: false }), false);
 });

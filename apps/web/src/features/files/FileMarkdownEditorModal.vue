@@ -16,15 +16,17 @@ import { formatBinaryBytes } from "../../utils/format.ts";
 import type { SharedFileEntry } from "./useFileShares.ts";
 import {
   isMarkdownFile,
+  parseTextJsonWithMtimeToken,
   renderMarkdownToRawHtml,
   TEXT_EDIT_MAX_BYTES,
 } from "./fileReaderSupport.ts";
 
-interface TextFileResponse {
+interface TextFileResponse extends Record<string, unknown> {
   path: string;
   name: string;
   content: string;
   size: number;
+  mtimeToken?: string;
   mtimeUnixNano: number;
   modified: string;
   canWrite: boolean;
@@ -32,6 +34,7 @@ interface TextFileResponse {
 
 interface TextConflictInfo {
   message: string;
+  currentMtimeToken: string;
   currentMtimeUnixNano: number;
   currentSize: number;
 }
@@ -55,6 +58,7 @@ const saving = ref(false);
 const saveError = ref("");
 const savedNotice = ref("");
 const canWrite = ref(false);
+const mtimeToken = ref("");
 const mtimeUnixNano = ref(0);
 const modifiedAt = ref("");
 const savedContent = ref("");
@@ -122,10 +126,12 @@ async function loadTextFile() {
       { credentials: "same-origin", cache: "no-store" },
     );
     if (!response.ok) throw await readApiFailure(response);
-    const data = (await response.json()) as TextFileResponse;
+    const rawText = await response.text();
+    const { data, mtimeToken: extractedToken } = parseTextJsonWithMtimeToken<TextFileResponse>(rawText);
     if (seq !== loadSeq) return;
     savedContent.value = data.content ?? "";
     draft.value = data.content ?? "";
+    mtimeToken.value = extractedToken;
     mtimeUnixNano.value = data.mtimeUnixNano ?? 0;
     modifiedAt.value = data.modified ?? "";
     canWrite.value = data.canWrite === true;
@@ -134,13 +140,7 @@ async function loadTextFile() {
     }
   } catch (err) {
     if (seq !== loadSeq || props.isAbortError(err)) return;
-    const code = err instanceof Error ? err.message : "";
-    const labels: Record<string, string> = {
-      text_file_too_large: "文件体积超过 2 MiB，暂不支持在线文本编辑，请下载原件查看。",
-      text_file_invalid_utf8: "该文件不是有效的 UTF-8 文本格式，请下载原件查看。",
-      text_edit_unsupported_type: "当前文件格式暂不支持在线文本编辑。",
-    };
-    loadError.value = labels[code] ?? "读取文本失败：" + describeUserFacingError(err);
+    loadError.value = "读取文本失败：" + describeUserFacingError(err);
   } finally {
     if (seq === loadSeq) loading.value = false;
   }
@@ -155,6 +155,8 @@ watch(
       loadSeq += 1;
       savedContent.value = "";
       draft.value = "";
+      mtimeToken.value = "";
+      mtimeUnixNano.value = 0;
       sanitizedMarkdownHtml.value = "";
       loadError.value = "";
       saveError.value = "";
@@ -165,14 +167,13 @@ watch(
   { immediate: true },
 );
 
-async function saveTextFile(overrideExpectedMtime?: number) {
+async function saveTextFile(forceOverwrite = false) {
   const target = props.file;
   if (!target || !canWrite.value || saving.value || overSizeLimit.value) return;
   saving.value = true;
   saveError.value = "";
   savedNotice.value = "";
   try {
-    const expectedMtime = overrideExpectedMtime !== undefined ? overrideExpectedMtime : mtimeUnixNano.value;
     const response = await props.rootFetch(props.scopedApiPath("/api/v2/files/text"), {
       method: "PUT",
       credentials: "same-origin",
@@ -183,33 +184,53 @@ async function saveTextFile(overrideExpectedMtime?: number) {
       body: JSON.stringify({
         path: target.path,
         content: draft.value,
-        expectedMtimeUnixNano: expectedMtime,
+        expectedMtimeToken: forceOverwrite ? "" : mtimeToken.value,
+        expectedMtimeUnixNano: forceOverwrite ? 0 : mtimeUnixNano.value,
       }),
     });
 
     if (response.status === 409) {
-      const body = (await response.json().catch(() => ({}))) as {
-        message?: string;
-        currentMtimeUnixNano?: number;
-        currentSize?: number;
-      };
-      conflict.value = {
-        message: body.message || "文件在磁盘上已被其他设备或 Finder 修改，本次保存已中止，您的当前草稿已完整保留。",
-        currentMtimeUnixNano: Number(body.currentMtimeUnixNano ?? 0),
-        currentSize: Number(body.currentSize ?? 0),
-      };
-      return;
+      const raw409 = await response.clone().text().catch(() => "");
+      let parsed409: {
+        data: { error?: string; message?: string; currentMtimeToken?: string; currentMtimeUnixNano?: number; currentSize?: number };
+        mtimeToken: string;
+      } | null = null;
+      try {
+        parsed409 = parseTextJsonWithMtimeToken<{
+          error?: string;
+          message?: string;
+          currentMtimeToken?: string;
+          currentMtimeUnixNano?: number;
+          currentSize?: number;
+        }>(raw409, "currentMtimeToken", "currentMtimeUnixNano");
+      } catch {
+        parsed409 = null;
+      }
+      if (parsed409?.data.error === "file_modified_conflict") {
+        conflict.value = {
+          message:
+            parsed409.data.message ||
+            "文件在磁盘上已被其他设备或 Finder 修改，本次保存已中止，您的当前草稿已完整保留。",
+          currentMtimeToken: parsed409.mtimeToken,
+          currentMtimeUnixNano: Number(parsed409.data.currentMtimeUnixNano ?? 0),
+          currentSize: Number(parsed409.data.currentSize ?? 0),
+        };
+        return;
+      }
     }
 
     if (!response.ok) throw await readApiFailure(response);
-    const data = (await response.json()) as {
+    const rawSaved = await response.text();
+    const { data, mtimeToken: savedToken } = parseTextJsonWithMtimeToken<{
       saved: boolean;
       size: number;
+      mtimeToken?: string;
       mtimeUnixNano: number;
       modified: string;
-    };
+    }>(rawSaved);
     savedContent.value = draft.value;
-    mtimeUnixNano.value = data.mtimeUnixNano;
+    mtimeToken.value = savedToken;
+    mtimeUnixNano.value = data.mtimeUnixNano ?? 0;
     modifiedAt.value = data.modified;
     conflict.value = null;
     savedNotice.value = `已保存（${formatDateTime(data.modified) || "刚刚"}）`;
@@ -245,8 +266,7 @@ async function reloadLatestFromDisk() {
 }
 
 async function forceOverwriteWithDraft() {
-  const c = conflict.value;
-  if (!c) return;
+  if (!conflict.value) return;
   const ok = await requestConfirm({
     title: "覆盖磁盘上的最新更改？",
     message: "将以您当前的编辑器草稿覆盖磁盘上的文件版本。请确认已核对他人或 Finder 的更改。",
@@ -254,7 +274,7 @@ async function forceOverwriteWithDraft() {
     variant: "danger",
   });
   if (!ok) return;
-  await saveTextFile(c.currentMtimeUnixNano || 0);
+  await saveTextFile(true);
 }
 
 async function requestClose() {
@@ -499,7 +519,7 @@ onUnmounted(() => window.removeEventListener("keydown", handleKeydown));
   padding: 12px 14px;
   border-radius: 12px;
   border: 1px solid color-mix(in srgb, var(--warning) 50%, var(--fluid-card-border));
-  background: color-mix(in srgb, var(--warning) 10%, var(--fluid-card-item-fill));
+  background: color-mix(in srgb, var(--warning) 10%, var(--fluid-card-item-top));
 }
 .md-conflict-head {
   display: inline-flex;
@@ -568,55 +588,6 @@ onUnmounted(() => window.removeEventListener("keydown", handleKeydown));
   font-size: 14px;
   line-height: 1.75;
   word-break: break-word;
-}
-.md-preview-surface h1,
-.md-preview-surface h2,
-.md-preview-surface h3 {
-  margin: 1.1em 0 0.5em;
-  line-height: 1.35;
-}
-.md-preview-surface h1:first-child,
-.md-preview-surface h2:first-child {
-  margin-top: 0;
-}
-.md-preview-surface pre {
-  padding: 12px 14px;
-  border-radius: 10px;
-  background: var(--fluid-card-item-fill);
-  border: 1px solid var(--fluid-card-border);
-  overflow-x: auto;
-  font-size: 12.5px;
-}
-.md-preview-surface code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.9em;
-  padding: 1px 5px;
-  border-radius: 5px;
-  background: var(--fluid-card-item-fill);
-}
-.md-preview-surface pre code {
-  padding: 0;
-  background: transparent;
-}
-.md-preview-surface blockquote {
-  margin: 10px 0;
-  padding: 4px 12px;
-  border-left: 3px solid var(--accent-primary);
-  color: var(--text-secondary);
-}
-.md-preview-surface table {
-  border-collapse: collapse;
-  width: 100%;
-  font-size: 13px;
-}
-.md-preview-surface th,
-.md-preview-surface td {
-  border: 1px solid var(--fluid-card-border);
-  padding: 6px 10px;
-  text-align: left;
-}
-.md-preview-surface th {
-  background: var(--fluid-card-item-fill);
 }
 .md-footer {
   display: flex;

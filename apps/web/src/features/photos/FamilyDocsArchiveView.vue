@@ -5,6 +5,7 @@ import {
   LoaderCircle, RefreshCw, Sparkles, Upload,
 } from "lucide-vue-next";
 import { apiRequest } from "../../api/apiClient.ts";
+import { readApiFailure } from "../../api/apiFailure.ts";
 import { describeRootOperationFailure } from "../../api/rootDiscovery.ts";
 import { describeUserFacingError } from "../../api/userFacingError.ts";
 import { TIMINGS_MS } from "../../constants/timings.ts";
@@ -59,11 +60,13 @@ const assets = ref<BatchAsset[]>([]);
 const nextCursor = ref(0);
 const loading = ref(false);
 const error = ref("");
+const storageConfigWarning = ref("");
 const statusNotice = ref("");
 
 const selectedDoc = ref<BatchAsset | null>(null);
 const docAIDetail = ref<AssetAIDetail | null>(null);
 const docAILoading = ref(false);
+const docAIError = ref("");
 const ocrPriorityBusy = ref(false);
 const copiedOcr = ref(false);
 
@@ -76,6 +79,7 @@ let searchTimer: number | undefined;
 let listAbort: AbortController | null = null;
 let detailAbort: AbortController | null = null;
 let copiedTimer: number | undefined;
+let ocrRefreshTimer: number | undefined;
 
 const activePathPrefix = computed(() =>
   buildDocsArchivePathPrefix(personalPhotosRoot.value, activeCategory.value),
@@ -86,16 +90,20 @@ const uploadCategoryOptions = computed(() =>
 );
 
 async function resolvePersonalPhotosRoot() {
+  storageConfigWarning.value = "";
   try {
     const res = await apiRequest<StorageLocationReply>("/api/v2/me/storage");
     const locs = Array.isArray(res?.locations) ? res.locations : [];
-    const exact = locs.find(
-      (l) => l.category === "photos" && (!props.rootId || l.rootID === props.rootId),
-    );
-    const fallback = locs.find((l) => l.category === "photos");
-    personalPhotosRoot.value = (exact?.relativePath || fallback?.relativePath || "").replace(/^\/+|\/+$/g, "");
-  } catch {
+    const matched = props.rootId
+      ? locs.find((l) => l.category === "photos" && l.rootID === props.rootId)
+      : locs.find((l) => l.category === "photos");
+    personalPhotosRoot.value = (matched?.relativePath || "").replace(/^\/+|\/+$/g, "");
+  } catch (err) {
     personalPhotosRoot.value = "";
+    if (!(err instanceof Error && err.name === "AbortError")) {
+      storageConfigWarning.value =
+        "无法读取个人照片目录配置，暂按当前磁盘默认档案路径检索：" + describeUserFacingError(err);
+    }
   }
 }
 
@@ -147,6 +155,7 @@ async function loadSelectedAIDetail(asset: BatchAsset | null) {
   detailAbort?.abort();
   detailAbort = null;
   docAIDetail.value = null;
+  docAIError.value = "";
   if (!asset || asset.type !== "photo") {
     docAILoading.value = false;
     return;
@@ -162,8 +171,14 @@ async function loadSelectedAIDetail(asset: BatchAsset | null) {
       controller.signal,
     );
     if (detailAbort === controller) docAIDetail.value = res;
-  } catch {
-    // Allow non-indexed items to trigger priority OCR smoothly.
+  } catch (err) {
+    if (detailAbort !== controller || (err instanceof Error && err.name === "AbortError")) return;
+    const status = typeof (err as { status?: unknown })?.status === "number" ? (err as { status: number }).status : null;
+    const code = typeof (err as { code?: unknown })?.code === "string" ? (err as { code: string }).code : "";
+    // 404 / not_found is expected before an image is indexed; surface unexpected network/server errors honestly.
+    if (status !== 404 && code !== "not_found") {
+      docAIError.value = "读取 OCR 识别详情失败：" + describeUserFacingError(err);
+    }
   } finally {
     if (detailAbort === controller) docAILoading.value = false;
   }
@@ -176,7 +191,9 @@ async function triggerPriorityOCR(target: { path?: string; assetId?: number }) {
     await props.api(props.apiPath("/api/v2/photos/ocr-priority"), "POST", target);
     statusNotice.value = "已加入 Vision 优先 OCR 识别队列，稍候刷新即可秒搜文中文字。";
     if (selectedDoc.value && (target.assetId === selectedDoc.value.id || target.path === selectedDoc.value.path)) {
-      window.setTimeout(() => {
+      if (ocrRefreshTimer !== undefined) window.clearTimeout(ocrRefreshTimer);
+      ocrRefreshTimer = window.setTimeout(() => {
+        ocrRefreshTimer = undefined;
         if (selectedDoc.value) void loadSelectedAIDetail(selectedDoc.value);
       }, 1500);
     }
@@ -194,8 +211,21 @@ async function ensureFolderExists(folderPath: string) {
     cur = cur ? `${cur}/${part}` : part;
     try {
       await props.api(props.apiPath("/api/v2/files/folders"), "POST", { path: cur });
-    } catch {
-      // Ignore already-exists or non-writable parent segments; upload call enforces real auth.
+    } catch (err) {
+      const status = typeof (err as { status?: unknown })?.status === "number" ? (err as { status: number }).status : null;
+      const code = typeof (err as { code?: unknown })?.code === "string"
+        ? (err as { code: string }).code
+        : err instanceof Error
+          ? err.message
+          : "";
+      const ignorable =
+        code === "file_already_exists" ||
+        code === "destination_exists" ||
+        code === "file_permission_denied" ||
+        code === "permission_denied" ||
+        status === 409 ||
+        status === 403;
+      if (!ignorable) throw err;
     }
   }
 }
@@ -210,20 +240,41 @@ async function uploadSingleReceipt(file: File, targetDir: string): Promise<strin
   );
   const uploadEndpoint = props.apiPath(`/api/v2/uploads/${encodeURIComponent(state.id)}`);
   const chunkSize = 4 * 1024 * 1024;
-  while (state.offset < file.size) {
-    const chunk = file.slice(state.offset, Math.min(state.offset + chunkSize, file.size));
-    const res = await props.uploadRequest(uploadEndpoint, {
-      method: "PATCH",
-      headers: { "X-Upload-Offset": String(state.offset) },
-      body: chunk,
-    });
-    if (!res.ok) {
-      throw new Error(`upload_chunk_failed_${res.status}`);
+  let offsetRetried = false;
+  try {
+    while (state.offset < file.size) {
+      const chunk = file.slice(state.offset, Math.min(state.offset + chunkSize, file.size));
+      const res = await props.uploadRequest(uploadEndpoint, {
+        method: "PATCH",
+        headers: { "X-LightIsle-Request": "1", "X-Upload-Offset": String(state.offset) },
+        body: chunk,
+      });
+      if (!res.ok) {
+        const failure = await readApiFailure(res);
+        if (res.status === 409 && failure.code === "offset_mismatch" && !offsetRetried) {
+          offsetRetried = true;
+          const refreshed = await props.api<typeof state>(uploadEndpoint, "GET");
+          if (typeof refreshed?.offset === "number" && refreshed.offset >= 0 && refreshed.offset <= file.size) {
+            state = refreshed;
+            continue;
+          }
+        }
+        throw failure;
+      }
+      state = (await res.json()) as typeof state;
     }
-    state = (await res.json()) as typeof state;
+    await props.api(`${uploadEndpoint}/complete`, "POST", {});
+    return state.path || dest;
+  } catch (err) {
+    await props
+      .uploadRequest(uploadEndpoint, {
+        method: "DELETE",
+        headers: { "X-LightIsle-Request": "1" },
+        credentials: "same-origin",
+      })
+      .catch(() => null);
+    throw err;
   }
-  await props.api(`${uploadEndpoint}/complete`, "POST", {});
-  return state.path || dest;
 }
 
 async function onReceiptFilesSelected(event: Event) {
@@ -236,26 +287,43 @@ async function onReceiptFilesSelected(event: Event) {
   error.value = "";
   statusNotice.value = "";
   const targetDir = buildDocsArchivePathPrefix(personalPhotosRoot.value, uploadCategory.value);
+  let uploadedCount = 0;
+  let ocrFailedCount = 0;
+  let lastOcrError = "";
   try {
     await ensureFolderExists(targetDir);
-    let uploadedCount = 0;
     for (const file of files) {
       uploadProgressText.value = `正在上传并排队 OCR：${file.name} (${uploadedCount + 1}/${files.length})`;
       const publishedPath = await uploadSingleReceipt(file, targetDir);
-      await props.api(props.apiPath("/api/v2/photos/ocr-priority"), "POST", { path: publishedPath });
       uploadedCount += 1;
+      try {
+        await props.api(props.apiPath("/api/v2/photos/ocr-priority"), "POST", { path: publishedPath });
+      } catch (ocrErr) {
+        ocrFailedCount += 1;
+        lastOcrError = describeUserFacingError(ocrErr);
+      }
     }
-    statusNotice.value = `已归档 ${uploadedCount} 份票据至「${FAMILY_DOCS_ROOT_FOLDER}/${uploadCategory.value}」，并已插队执行离线 OCR 识别。`;
+  } catch (err) {
+    error.value =
+      uploadedCount > 0
+        ? `已归档 ${uploadedCount} 份票据，后续文件上传失败：${describeUserFacingError(err)}`
+        : "快捷归档失败：" + describeUserFacingError(err);
+  } finally {
+    uploading.value = false;
+    uploadProgressText.value = "";
+  }
+
+  if (uploadedCount > 0) {
+    if (ocrFailedCount > 0) {
+      statusNotice.value = `已归档 ${uploadedCount} 份票据至「${FAMILY_DOCS_ROOT_FOLDER}/${uploadCategory.value}」；其中 ${ocrFailedCount} 份未能插队优先 OCR（${lastOcrError}），系统将在后台例行扫描时继续建立索引。`;
+    } else {
+      statusNotice.value = `已归档 ${uploadedCount} 份票据至「${FAMILY_DOCS_ROOT_FOLDER}/${uploadCategory.value}」，并已插队执行离线 OCR 识别。`;
+    }
     if (activeCategory.value && activeCategory.value !== uploadCategory.value) {
       activeCategory.value = uploadCategory.value;
     } else {
       await loadArchiveDocs(true);
     }
-  } catch (err) {
-    error.value = "快捷归档失败：" + describeUserFacingError(err);
-  } finally {
-    uploading.value = false;
-    uploadProgressText.value = "";
   }
 }
 
@@ -323,6 +391,10 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   if (searchTimer) window.clearTimeout(searchTimer);
   if (copiedTimer !== undefined) window.clearTimeout(copiedTimer);
+  if (ocrRefreshTimer !== undefined) {
+    window.clearTimeout(ocrRefreshTimer);
+    ocrRefreshTimer = undefined;
+  }
   listAbort?.abort();
   detailAbort?.abort();
 });
@@ -399,6 +471,7 @@ onBeforeUnmount(() => {
     </IsleCard>
 
     <IsleBanner v-if="uploadProgressText" type="info" compact :message="uploadProgressText" />
+    <IsleBanner v-if="storageConfigWarning" type="warning" compact closable :message="storageConfigWarning" @close="storageConfigWarning = ''" />
     <IsleBanner v-if="statusNotice" type="success" compact closable :message="statusNotice" @close="statusNotice = ''" />
     <IsleBanner v-if="error" type="error" compact closable :message="error" @close="error = ''" />
 
@@ -494,6 +567,7 @@ onBeforeUnmount(() => {
         <div v-if="docAILoading" class="docs-ocr-placeholder">
           <LoaderCircle :size="15" class="docs-spin" /> 正在读取识别文本…
         </div>
+        <IsleBanner v-else-if="docAIError" type="error" compact :message="docAIError" />
         <pre v-else-if="docAIDetail?.ocrText" class="docs-ocr-text">{{ docAIDetail.ocrText }}</pre>
         <div v-else class="docs-ocr-placeholder">
           {{ docAIDetail?.indexed ? "该图片暂未识别到可读文字。" : "等待后台离线识图；点击「优先识别」可立即插队解析。" }}

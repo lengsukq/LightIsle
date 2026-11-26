@@ -314,6 +314,7 @@ export function parseCsvRows(rawText: string, maxRows = 2000): CsvParseResult {
 }
 
 export interface ArchiveEntryDescriptor {
+  index?: number;
   name: string;
   size: number;
   mime: string;
@@ -332,8 +333,134 @@ export interface EpubManifestSummary {
   chapters: EpubChapterItem[];
 }
 
+/**
+ * Extracts a top-level raw JSON integer field as an exact decimal string without
+ * passing through IEEE-754 Number (which loses precision past 2^53 - 1 on 19-digit Unix nanos).
+ * Skips string literal values so field names inside text file `"content"` can never false-match.
+ */
+export function extractRawJsonIntegerField(rawJson: string, fieldName: string): string {
+  const n = rawJson.length;
+  let i = 0;
+  let depth = 0;
+
+  function readJsonString(): string | null {
+    if (rawJson[i] !== '"') return null;
+    const start = i;
+    i += 1;
+    while (i < n) {
+      const ch = rawJson[i];
+      if (ch === "\\") {
+        i += 2;
+        continue;
+      }
+      if (ch === '"') {
+        i += 1;
+        try {
+          return JSON.parse(rawJson.slice(start, i)) as string;
+        } catch {
+          return rawJson.slice(start + 1, i - 1);
+        }
+      }
+      i += 1;
+    }
+    return null;
+  }
+
+  function skipWhitespace() {
+    while (i < n && /\s/.test(rawJson[i])) i += 1;
+  }
+
+  while (i < n) {
+    skipWhitespace();
+    if (i >= n) break;
+    const ch = rawJson[i];
+    if (ch === "{") {
+      depth += 1;
+      i += 1;
+      continue;
+    }
+    if (ch === "}") {
+      depth = Math.max(0, depth - 1);
+      i += 1;
+      continue;
+    }
+    if (ch === "[") {
+      depth += 1;
+      i += 1;
+      continue;
+    }
+    if (ch === "]") {
+      depth = Math.max(0, depth - 1);
+      i += 1;
+      continue;
+    }
+    if (ch === '"') {
+      const key = readJsonString();
+      skipWhitespace();
+      if (depth === 1 && rawJson[i] === ":") {
+        i += 1;
+        skipWhitespace();
+        if (key === fieldName) {
+          const match = /^-?\d+/.exec(rawJson.slice(i));
+          if (match) return match[0];
+        }
+      }
+      continue;
+    }
+    i += 1;
+  }
+  return "";
+}
+
+export function parseTextJsonWithMtimeToken<T extends Record<string, unknown>>(
+  rawJson: string,
+  tokenField = "mtimeToken",
+  nanoField = "mtimeUnixNano",
+): { data: T; mtimeToken: string } {
+  const data = (rawJson ? JSON.parse(rawJson) : {}) as T;
+  const directToken = data && typeof data[tokenField] === "string" ? (data[tokenField] as string).trim() : "";
+  if (directToken) {
+    return { data, mtimeToken: directToken };
+  }
+  const rawDigits = extractRawJsonIntegerField(rawJson, nanoField);
+  return { data, mtimeToken: rawDigits && rawDigits !== "0" ? rawDigits : "" };
+}
+
+export function computeSheetMaxColCount(rows: ReadonlyArray<ReadonlyArray<unknown>>): number {
+  let max = 0;
+  for (const row of rows) {
+    if (row.length > max) max = row.length;
+  }
+  return max;
+}
+
+export function buildArchiveEntryQuery(
+  filePath: string,
+  entry: string | Pick<ArchiveEntryDescriptor, "name" | "index">,
+): string {
+  const params = new URLSearchParams({ path: filePath });
+  if (typeof entry === "string") {
+    params.set("entry", entry);
+  } else {
+    params.set("entry", entry.name);
+    if (typeof entry.index === "number" && Number.isInteger(entry.index) && entry.index >= 0) {
+      params.set("index", String(entry.index));
+    }
+  }
+  return params.toString();
+}
+
+function safeDecodeURIComponent(raw: string): string {
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
 export function resolveEpubRelativePath(baseEntryPath: string, relativeHref: string): string {
-  const cleanedHref = decodeURIComponent(relativeHref.split("#")[0].split("?")[0]).replace(/\\/g, "/");
+  const bareHref = relativeHref.split("#")[0].split("?")[0];
+  const cleanedHref = safeDecodeURIComponent(bareHref).replace(/\\/g, "/");
   if (!cleanedHref) return "";
   const baseParts = baseEntryPath.replace(/\\/g, "/").split("/");
   baseParts.pop();
@@ -350,6 +477,30 @@ export function resolveEpubRelativePath(baseEntryPath: string, relativeHref: str
     }
   }
   return resolved.join("/");
+}
+
+export function resolveEpubChapterLink(
+  currentEntryPath: string,
+  rawHref: string,
+  chapters: ReadonlyArray<EpubChapterItem>,
+): { chapterIndex: number; anchorId: string } | null {
+  const trimmed = rawHref.trim();
+  if (!trimmed || /^(https?:|mailto:|javascript:|vbscript:|data:)/i.test(trimmed)) return null;
+  const hashIdx = trimmed.indexOf("#");
+  const pathPart = hashIdx >= 0 ? trimmed.slice(0, hashIdx) : trimmed;
+  const anchorId = hashIdx >= 0 ? safeDecodeURIComponent(trimmed.slice(hashIdx + 1)) : "";
+  if (!pathPart) {
+    const currentIdx = chapters.findIndex((c) => c.entryPath === currentEntryPath);
+    return currentIdx >= 0 ? { chapterIndex: currentIdx, anchorId } : null;
+  }
+  const targetPath = resolveEpubRelativePath(currentEntryPath, pathPart);
+  if (!targetPath) return null;
+  let chapterIndex = chapters.findIndex((c) => c.entryPath === targetPath);
+  if (chapterIndex < 0) {
+    const lower = targetPath.toLowerCase();
+    chapterIndex = chapters.findIndex((c) => c.entryPath.toLowerCase() === lower);
+  }
+  return chapterIndex >= 0 ? { chapterIndex, anchorId } : null;
 }
 
 export function parseEpubContainerOpfPath(containerXml: string): string {
@@ -451,17 +602,25 @@ export function extractEpubBodyAndRewriteImages(
     .replace(/<(script|style|iframe|object|embed|link|meta)\b[\s\S]*?<\/\1>/gi, "")
     .replace(/<(script|style|iframe|object|embed|link|meta)\b[^>]*\/?>/gi, "");
 
-  return stripped.replace(
-    /(<img\b[^>]*?\bsrc\s*=\s*)(["'])([^"']+)\2/gi,
-    (_m, prefix: string, quote: string, src: string) => {
-      if (/^(https?:|data:|javascript:|vbscript:)/i.test(src.trim())) {
-        return `${prefix}${quote}${quote}`;
-      }
-      const resolved = resolveEpubRelativePath(chapterEntryPath, src);
-      if (!resolved) return `${prefix}${quote}${quote}`;
-      return `${prefix}${quote}${escapeHtml(buildEntryUrl(resolved))}${quote}`;
-    },
-  );
+  const rewriteResourceHref = (src: string): string => {
+    if (/^(https?:|data:|javascript:|vbscript:)/i.test(src.trim())) {
+      return "";
+    }
+    const resolved = resolveEpubRelativePath(chapterEntryPath, src);
+    return resolved ? escapeHtml(buildEntryUrl(resolved)) : "";
+  };
+
+  return stripped
+    .replace(
+      /(<img\b[^>]*?\bsrc\s*=\s*)(["'])([^"']+)\2/gi,
+      (_m, prefix: string, quote: string, src: string) =>
+        `${prefix}${quote}${rewriteResourceHref(src)}${quote}`,
+    )
+    .replace(
+      /(<image\b[^>]*?\b(?:xlink:)?href\s*=\s*)(["'])([^"']+)\2/gi,
+      (_m, prefix: string, quote: string, src: string) =>
+        `${prefix}${quote}${rewriteResourceHref(src)}${quote}`,
+    );
 }
 
 export function encodeComicLocator(pageIndex: number, mode: "single" | "strip"): string {

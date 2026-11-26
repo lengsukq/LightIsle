@@ -59,15 +59,20 @@ async function refreshDashboardData() {
   ]);
   if (fetchAbort !== controller || controller.signal.aborted) return;
 
+  let anyFulfilled = false;
   if (remResult.status === "fulfilled") {
+    anyFulfilled = true;
     todayLunar.value = remResult.value.todayLunar ?? null;
     reminders.value = remResult.value.reminders;
   }
   if (boardResult.status === "fulfilled") {
+    anyFulfilled = true;
     boardMessages.value = boardResult.value;
   }
-  const now = new Date();
-  lastUpdatedLabel.value = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")} 更新`;
+  if (anyFulfilled) {
+    const now = new Date();
+    lastUpdatedLabel.value = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")} 更新`;
+  }
 }
 
 function stopTimers() {
@@ -179,6 +184,7 @@ onBeforeUnmount(() => {
   align-items: flex-end;
   justify-content: space-between;
   gap: 20px;
+  overflow: hidden;
   pointer-events: none;
   transition: transform 1.6s ease, opacity 0.6s ease;
 }
@@ -355,11 +361,23 @@ onBeforeUnmount(() => {
     align-items: stretch;
     justify-content: flex-end;
     gap: 12px;
+    overflow: hidden;
   }
   .photo-dash-clock-card,
   .photo-dash-widgets-col {
     max-width: 100%;
     width: 100%;
+  }
+  .photo-dash-list > li:nth-child(n + 3) {
+    display: none;
+  }
+}
+@media (max-height: 760px) {
+  .photo-dash-layer {
+    overflow: hidden;
+  }
+  .photo-dash-list > li:nth-child(n + 3) {
+    display: none;
   }
 }
 @media (prefers-reduced-motion: reduce) {

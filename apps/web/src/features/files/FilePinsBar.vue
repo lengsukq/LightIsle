@@ -119,7 +119,7 @@ const showBar = computed(() => props.pins.length > 0 || Boolean(props.error) || 
   gap: 8px;
   padding: 8px 16px;
   border-bottom: 1px solid var(--fluid-divider);
-  background: color-mix(in srgb, var(--fluid-card-item-fill) 65%, transparent);
+  background: color-mix(in srgb, var(--fluid-card-item-top) 65%, transparent);
 }
 .pins-bar-head {
   display: flex;

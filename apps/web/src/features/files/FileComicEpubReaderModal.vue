@@ -12,6 +12,7 @@ import { readApiFailure } from "../../api/apiFailure.ts";
 import { describeUserFacingError } from "../../api/userFacingError.ts";
 import type { SharedFileEntry } from "./useFileShares.ts";
 import {
+  buildArchiveEntryQuery,
   computeReadingPercent,
   encodeComicLocator,
   encodeEpubLocator,
@@ -21,6 +22,7 @@ import {
   parseEpubLocator,
   parseEpubNcxTitles,
   parseEpubOpf,
+  resolveEpubChapterLink,
   type ArchiveEntryDescriptor,
   type EpubChapterItem,
 } from "./fileReaderSupport.ts";
@@ -107,6 +109,7 @@ let loadSeq = 0;
 let chapterSeq = 0;
 let saveProgressTimer: number | null = null;
 let pendingProgressPayload: { path: string; locator: string; percent: number } | null = null;
+let archiveEntryByName = new Map<string, ArchiveEntryDescriptor>();
 let domPurifyPromise: Promise<{ sanitize: (dirty: string, cfg?: Record<string, unknown>) => string }> | null = null;
 
 async function getDomPurify() {
@@ -139,18 +142,16 @@ const readingPercent = computed(() =>
     : computeReadingPercent(comicPageIndex.value, imageEntries.value.length),
 );
 
-function buildEntryMediaUrl(entryName: string): string {
+function buildEntryMediaUrl(entry: ArchiveEntryDescriptor | string): string {
   if (!props.file) return "";
-  return props.scopedMediaPath(
-    "/api/v2/files/archive-entry?path=" + encodeURIComponent(props.file.path) + "&entry=" + encodeURIComponent(entryName),
-  );
+  const resolved = typeof entry === "string" ? (archiveEntryByName.get(entry) ?? entry) : entry;
+  return props.scopedMediaPath("/api/v2/files/archive-entry?" + buildArchiveEntryQuery(props.file.path, resolved));
 }
 
-async function fetchArchiveEntryText(filePath: string, entryName: string): Promise<string> {
+async function fetchArchiveEntryText(filePath: string, entry: ArchiveEntryDescriptor | string): Promise<string> {
+  const resolved = typeof entry === "string" ? (archiveEntryByName.get(entry) ?? entry) : entry;
   const response = await props.rootFetch(
-    props.scopedApiPath("/api/v2/files/archive-entry") +
-      "?path=" + encodeURIComponent(filePath) +
-      "&entry=" + encodeURIComponent(entryName),
+    props.scopedApiPath("/api/v2/files/archive-entry") + "?" + buildArchiveEntryQuery(filePath, resolved),
     { credentials: "same-origin" },
   );
   if (!response.ok) throw await readApiFailure(response);
@@ -205,7 +206,20 @@ function currentEpubScrollRatio(): number {
   return max > 0 ? Math.max(0, Math.min(1, el.scrollTop / max)) : 0;
 }
 
-async function loadEpubChapter(index: number, restoreScrollRatio = 0) {
+function scrollToEpubAnchor(anchorId: string): boolean {
+  const pane = epubScrollRef.value;
+  if (!pane || !anchorId) return false;
+  const candidates = pane.querySelectorAll<HTMLElement>("[id], a[name]");
+  for (const el of candidates) {
+    if (el.id === anchorId || el.getAttribute("name") === anchorId) {
+      el.scrollIntoView({ behavior: "auto", block: "start" });
+      return true;
+    }
+  }
+  return false;
+}
+
+async function loadEpubChapter(index: number, restoreScrollRatio = 0, anchorId = "") {
   const target = props.file;
   const chapter = epubChapters.value[index];
   if (!target || !chapter) return;
@@ -216,19 +230,26 @@ async function loadEpubChapter(index: number, restoreScrollRatio = 0) {
   try {
     const raw = await fetchArchiveEntryText(target.path, chapter.entryPath);
     if (seq !== chapterSeq) return;
-    const rewritten = extractEpubBodyAndRewriteImages(raw, chapter.entryPath, buildEntryMediaUrl);
+    const rewritten = extractEpubBodyAndRewriteImages(raw, chapter.entryPath, (entryName) =>
+      buildEntryMediaUrl(entryName),
+    );
     const DOMPurify = await getDomPurify();
     if (seq !== chapterSeq) return;
     epubChapterHtml.value = DOMPurify.sanitize(rewritten, {
-      USE_PROFILES: { html: true },
-      FORBID_TAGS: ["script", "style", "iframe", "object", "embed", "form"],
-      FORBID_ATTR: ["onerror", "onload", "onclick"],
+      USE_PROFILES: { html: true, svg: true },
+      FORBID_TAGS: ["script", "style", "iframe", "object", "embed", "form", "foreignObject"],
+      FORBID_ATTR: ["onerror", "onload", "onclick", "onmouseover"],
     });
+    epubChapterLoading.value = false;
     await nextTick();
     const el = epubScrollRef.value;
     if (el) {
-      const max = el.scrollHeight - el.clientHeight;
-      el.scrollTop = restoreScrollRatio > 0 && max > 0 ? Math.round(max * restoreScrollRatio) : 0;
+      if (anchorId && scrollToEpubAnchor(anchorId)) {
+        // Positioned on chapter anchor.
+      } else {
+        const max = el.scrollHeight - el.clientHeight;
+        el.scrollTop = restoreScrollRatio > 0 && max > 0 ? Math.round(max * restoreScrollRatio) : 0;
+      }
     }
     scheduleProgressSave();
   } catch (err) {
@@ -238,6 +259,26 @@ async function loadEpubChapter(index: number, restoreScrollRatio = 0) {
   } finally {
     if (seq === chapterSeq) epubChapterLoading.value = false;
   }
+}
+
+function onEpubBodyClick(event: MouseEvent) {
+  const anchor = (event.target as HTMLElement | null)?.closest<HTMLAnchorElement>("a[href]");
+  if (!anchor || !currentChapter.value) return;
+  const rawHref = (anchor.getAttribute("href") ?? "").trim();
+  if (!rawHref) return;
+  if (/^(https?:|mailto:)/i.test(rawHref)) {
+    anchor.setAttribute("target", "_blank");
+    anchor.setAttribute("rel", "noopener noreferrer");
+    return;
+  }
+  event.preventDefault();
+  const target = resolveEpubChapterLink(currentChapter.value.entryPath, rawHref, epubChapters.value);
+  if (!target) return;
+  if (target.chapterIndex === epubChapterIndex.value) {
+    if (target.anchorId) scrollToEpubAnchor(target.anchorId);
+    return;
+  }
+  void loadEpubChapter(target.chapterIndex, 0, target.anchorId);
 }
 
 async function loadArchiveReader() {
@@ -271,12 +312,13 @@ async function loadArchiveReader() {
 
     archiveFormat.value = entriesRes.format;
     const allEntries = Array.isArray(entriesRes.entries) ? entriesRes.entries : [];
+    archiveEntryByName = new Map(allEntries.map((entry) => [entry.name, entry]));
 
     if (entriesRes.format === "epub") {
       let opfPath = "";
       const containerEntry = allEntries.find((e) => e.name.toLowerCase() === "meta-inf/container.xml");
       if (containerEntry) {
-        const containerXml = await fetchArchiveEntryText(target.path, containerEntry.name).catch(() => "");
+        const containerXml = await fetchArchiveEntryText(target.path, containerEntry).catch(() => "");
         opfPath = parseEpubContainerOpfPath(containerXml);
       }
       if (!opfPath) {
@@ -289,7 +331,7 @@ async function loadArchiveReader() {
       const ncxEntry = allEntries.find((e) => e.name.toLowerCase().endsWith(".ncx"));
       let ncxTitles: Map<string, string> | undefined;
       if (ncxEntry) {
-        const ncxXml = await fetchArchiveEntryText(target.path, ncxEntry.name).catch(() => "");
+        const ncxXml = await fetchArchiveEntryText(target.path, ncxEntry).catch(() => "");
         if (ncxXml) ncxTitles = parseEpubNcxTitles(ncxXml, ncxEntry.name);
       }
       if (seq !== loadSeq) return;
@@ -309,28 +351,32 @@ async function loadArchiveReader() {
         }
       }
       if (summary.chapters.length > 0) {
+        loading.value = false;
         await loadEpubChapter(startChapter, startScroll);
       }
     } else {
       const images = allEntries.filter((e) => e.kind === "image");
       imageEntries.value = images;
+      let restoredPage = 0;
       if (images.length > 0 && progressRes.found && progressRes.progress?.locator) {
         const parsed = parseComicLocator(progressRes.progress.locator);
         if (parsed.mode) comicMode.value = parsed.mode;
-        comicPageIndex.value = Math.max(0, Math.min(images.length - 1, parsed.pageIndex));
+        restoredPage = Math.max(0, Math.min(images.length - 1, parsed.pageIndex));
+        comicPageIndex.value = restoredPage;
         if (comicPageIndex.value > 0) {
           restoredNotice.value = `已恢复上次进度：第 ${comicPageIndex.value + 1} / ${images.length} 页`;
         }
       }
+      if (comicMode.value === "strip" && restoredPage > 0) {
+        loading.value = false;
+        await nextTick();
+        const pageEl = comicStripRef.value?.querySelector<HTMLElement>(`[data-comic-page="${restoredPage}"]`);
+        pageEl?.scrollIntoView({ behavior: "auto", block: "start" });
+      }
     }
   } catch (err) {
     if (seq !== loadSeq || props.isAbortError(err)) return;
-    const code = err instanceof Error ? err.message : "";
-    const map: Record<string, string> = {
-      archive_limit_exceeded: "该归档体积或条目数超出在线阅读安全上限，请下载原件本地查看。",
-      invalid_zip_archive: "无法解析该归档文件，可能已损坏或非标准 ZIP/EPUB 容器。",
-    };
-    error.value = map[code] ?? "打开阅读器失败：" + describeUserFacingError(err);
+    error.value = "打开阅读器失败：" + describeUserFacingError(err);
   } finally {
     if (seq === loadSeq) loading.value = false;
   }
@@ -395,8 +441,15 @@ function switchComicMode(nextMode: "single" | "strip") {
 
 function handleKeydown(event: KeyboardEvent) {
   if (!props.file || loading.value) return;
-  const tag = (event.target as HTMLElement | null)?.tagName;
-  if (tag === "INPUT" || tag === "TEXTAREA") return;
+  const targetEl = event.target as HTMLElement | null;
+  const tag = targetEl?.tagName;
+  if (tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT") return;
+  if (
+    event.key === " " &&
+    (tag === "BUTTON" || tag === "A" || Boolean(targetEl?.closest("button, a, [role='button'], [role='tab'], [role='radio']")))
+  ) {
+    return;
+  }
   if (!isEpub.value && comicMode.value === "single" && imageEntries.value.length > 0) {
     if (event.key === "ArrowRight" || event.key === " ") {
       event.preventDefault();
@@ -530,7 +583,7 @@ onUnmounted(() => {
             <button type="button" class="comic-nav-btn is-prev" :disabled="comicPageIndex <= 0" aria-label="上一页" @click="setComicPage(comicPageIndex - 1)">
               <ChevronLeft :size="20" />
             </button>
-            <img :src="buildEntryMediaUrl(currentImage.name)" :alt="currentImage.name" class="comic-single-img" />
+            <img :src="buildEntryMediaUrl(currentImage)" :alt="currentImage.name" class="comic-single-img" />
             <button type="button" class="comic-nav-btn is-next" :disabled="comicPageIndex >= imageEntries.length - 1" aria-label="下一页" @click="setComicPage(comicPageIndex + 1)">
               <ChevronRight :size="20" />
             </button>
@@ -551,8 +604,8 @@ onUnmounted(() => {
         </div>
 
         <div v-else ref="comicStripRef" class="comic-strip-stage" @scroll.passive="onComicStripScroll">
-          <figure v-for="(img, idx) in imageEntries" :key="img.name" :data-comic-page="idx" class="comic-strip-item">
-            <img :src="buildEntryMediaUrl(img.name)" :alt="img.name" loading="lazy" decoding="async" />
+          <figure v-for="(img, idx) in imageEntries" :key="img.index ?? img.name" :data-comic-page="idx" class="comic-strip-item">
+            <img :src="buildEntryMediaUrl(img)" :alt="img.name" loading="lazy" decoding="async" />
             <figcaption>{{ idx + 1 }} / {{ imageEntries.length }}</figcaption>
           </figure>
         </div>
@@ -584,14 +637,14 @@ onUnmounted(() => {
             @scroll.passive="scheduleProgressSave"
           >
             <div v-if="epubChapterLoading" class="reader-loading" role="status">正在加载章节…</div>
-            <article v-else class="epub-chapter-body" v-html="epubChapterHtml"></article>
+            <article v-else class="epub-chapter-body" v-html="epubChapterHtml" @click="onEpubBodyClick"></article>
             <div v-if="!epubChapterLoading" class="epub-chapter-nav">
               <IsleButton type="button" variant="glass" size="sm" :disabled="epubChapterIndex <= 0" @click="loadEpubChapter(epubChapterIndex - 1)">
                 <template #icon><ChevronLeft :size="14" /></template>上一章
               </IsleButton>
               <span class="epub-chapter-label">{{ currentChapter?.title }} ({{ epubChapterIndex + 1 }}/{{ epubChapters.length }})</span>
               <IsleButton type="button" variant="glass" size="sm" :disabled="epubChapterIndex >= epubChapters.length - 1" @click="loadEpubChapter(epubChapterIndex + 1)">
-                下一章<template #icon><ChevronRight :size="14" /></template>
+                下一章<template #suffix><ChevronRight :size="14" /></template>
               </IsleButton>
             </div>
           </div>
@@ -643,10 +696,21 @@ onUnmounted(() => {
 .epub-toc-item:hover { background: color-mix(in srgb, var(--text-primary) 6%, transparent); color: var(--text-primary); }
 .epub-toc-item.is-active { background: color-mix(in srgb, var(--accent-primary) 13%, var(--fluid-card-top)); color: var(--accent-primary); font-weight: 650; }
 .epub-reader-pane { overflow-y: auto; max-height: 65vh; padding: 22px 28px; border-radius: 13px; border: 1px solid var(--fluid-card-border); background: var(--fluid-card-top); color: var(--text-primary); line-height: 1.85; }
-.epub-reader-pane.theme-sepia { background: #f6eedc; color: #3a2f1e; }
-.epub-reader-pane.theme-dark { background: #17181b; color: #e2e4e9; }
+.epub-reader-pane.theme-sepia {
+  background: #f6eedc; color: #2f2517;
+  --text-primary: #2f2517; --text-secondary: #5c4c35; --text-tertiary: #6d5c43;
+  --fluid-divider: rgba(58, 47, 30, 0.14); --fluid-card-border: rgba(58, 47, 30, 0.18); --fluid-card-border-strong: rgba(58, 47, 30, 0.32);
+  --fluid-card-top: #fbf5e6; --fluid-card-item-top: #eee3ca; --fluid-card-item-fill: #eee3ca; --fluid-card-hover: #eae0c7;
+  --accent-primary: #0c5f67;
+}
+.epub-reader-pane.theme-dark {
+  background: #17181b; color: #e6e8ed;
+  --text-primary: #e6e8ed; --text-secondary: #b1b6c2; --text-tertiary: #949aa8;
+  --fluid-divider: rgba(230, 232, 237, 0.12); --fluid-card-border: rgba(230, 232, 237, 0.16); --fluid-card-border-strong: rgba(230, 232, 237, 0.28);
+  --fluid-card-top: #22242a; --fluid-card-item-top: #1f2127; --fluid-card-item-fill: #1f2127; --fluid-card-hover: #2a2d35;
+  --accent-primary: #6fd3de;
+}
 .epub-chapter-body { max-width: 72ch; margin: 0 auto; word-break: break-word; }
-.epub-chapter-body img { max-width: 100%; height: auto; border-radius: 6px; }
 .epub-chapter-nav { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-top: 24px; padding-top: 14px; border-top: 1px solid var(--fluid-divider); flex-wrap: wrap; }
 .epub-chapter-label { font-size: 12px; color: var(--text-secondary); }
 .reader-footer { display: flex; align-items: center; justify-content: space-between; gap: 10px; width: 100%; flex-wrap: wrap; }

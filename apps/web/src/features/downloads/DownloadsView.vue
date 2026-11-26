@@ -45,10 +45,16 @@ type FolderListReply = { entries: FolderItem[]; nextCursor?: string; canWrite?: 
 type TaskFilter = "all" | "active" | "completed" | "issues";
 
 const props = withDefaults(
-  defineProps<{ active?: boolean; api?: (path: string, init?: RequestInit) => Promise<unknown> }>(),
+  defineProps<{
+    active?: boolean;
+    api?: (path: string, init?: RequestInit) => Promise<unknown>;
+    filesApi?: (path: string, init?: RequestInit) => Promise<unknown>;
+  }>(),
   { active: true },
 );
 const requestApi = (path: string, init?: RequestInit) => (props.api ? props.api(path, init) : apiRequest(path, init));
+const requestDefaultRootFiles = (path: string, init?: RequestInit) =>
+  props.filesApi ? props.filesApi(path, init) : apiRequest(path, init);
 
 const tasks = ref<DownloadTask[]>([]);
 const hasSnapshot = ref(false);
@@ -109,7 +115,7 @@ async function loadPickerFolders(more = false) {
   try {
     const query = new URLSearchParams({ path: target, limit: "100" });
     if (more && pickerNextCursor.value) query.set("cursor", pickerNextCursor.value);
-    const data = (await requestApi("/api/v2/files?" + query.toString())) as FolderListReply;
+    const data = (await requestDefaultRootFiles("/api/v2/files?" + query.toString())) as FolderListReply;
     if (req !== pickerGen || target !== pickerDir.value) return;
     const dirs = (data.entries ?? []).filter((item) => item.type === "folder");
     pickerFolders.value = more ? [...pickerFolders.value, ...dirs] : dirs;
@@ -539,7 +545,7 @@ onUnmounted(() => { disposed = true; if (copiedTimer !== undefined) clearTimeout
 .download-progress-track { position: relative; height: 6px; border-radius: 999px; background: var(--stroke-subtle, rgba(142, 142, 147, 0.18)); overflow: hidden; }
 .download-progress-fill {
   display: block; height: 100%; border-radius: inherit;
-  background: linear-gradient(90deg, var(--accent-primary), var(--brand-cyan, var(--accent-secondary)));
+  background: linear-gradient(90deg, var(--accent-primary), color-mix(in srgb, var(--accent-primary) 72%, #ffffff));
   transition: width 0.35s cubic-bezier(0.22, 1, 0.36, 1);
 }
 .download-progress-fill.is-paused { opacity: 0.55; }

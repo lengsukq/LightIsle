@@ -1,0 +1,273 @@
+/* Global content styles for sanitized v-html reader surfaces (Markdown, DOCX, EPUB).
+ * Standalone CSS loaded from main.ts so v-html descendants match cleanly without scoped deep selectors. */
+
+/* Markdown Preview Surface */
+.md-preview-surface h1,
+.md-preview-surface h2,
+.md-preview-surface h3,
+.md-preview-surface h4,
+.md-preview-surface h5,
+.md-preview-surface h6 {
+  margin: 1.15em 0 0.5em;
+  line-height: 1.35;
+  font-weight: 650;
+  color: var(--text-primary);
+}
+.md-preview-surface h1 {
+  font-size: 1.55em;
+  padding-bottom: 0.3em;
+  border-bottom: 1px solid var(--fluid-divider);
+}
+.md-preview-surface h2 {
+  font-size: 1.3em;
+  padding-bottom: 0.25em;
+  border-bottom: 1px solid var(--fluid-divider);
+}
+.md-preview-surface h3 {
+  font-size: 1.12em;
+}
+.md-preview-surface > :first-child {
+  margin-top: 0;
+}
+.md-preview-surface > :last-child {
+  margin-bottom: 0;
+}
+.md-preview-surface p {
+  margin: 0.65em 0;
+}
+.md-preview-surface hr {
+  border: 0;
+  border-top: 1px solid var(--fluid-divider);
+  margin: 1.25em 0;
+}
+.md-preview-surface ul,
+.md-preview-surface ol {
+  margin: 0.65em 0;
+  padding-inline-start: 1.5em;
+}
+.md-preview-surface li {
+  margin: 0.28em 0;
+}
+.md-preview-surface li.md-task-item {
+  list-style: none;
+  margin-inline-start: -1.1em;
+}
+.md-preview-surface .md-task-box {
+  display: inline-block;
+  margin-inline-end: 4px;
+  color: var(--accent-primary);
+  font-weight: 650;
+}
+.md-preview-surface a {
+  color: var(--accent-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  overflow-wrap: anywhere;
+}
+.md-preview-surface a:hover {
+  opacity: 0.84;
+}
+.md-preview-surface pre {
+  margin: 0.9em 0;
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: var(--fluid-card-item-top);
+  border: 1px solid var(--fluid-card-border);
+  overflow-x: auto;
+  max-width: 100%;
+  font-size: 12.5px;
+  line-height: 1.6;
+}
+.md-preview-surface code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.88em;
+  padding: 1px 5px;
+  border-radius: 5px;
+  background: var(--fluid-card-item-top);
+  border: 1px solid color-mix(in srgb, var(--fluid-card-border) 75%, transparent);
+}
+.md-preview-surface pre code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-size: inherit;
+}
+.md-preview-surface blockquote {
+  margin: 0.9em 0;
+  padding: 8px 14px;
+  border-radius: 0 10px 10px 0;
+  border-left: 3px solid var(--accent-primary);
+  background: color-mix(in srgb, var(--accent-primary) 5%, var(--fluid-card-item-top));
+  color: var(--text-secondary);
+}
+.md-preview-surface .md-table-wrap {
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 0.9em 0;
+}
+.md-preview-surface table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+.md-preview-surface th,
+.md-preview-surface td {
+  border: 1px solid var(--fluid-card-border);
+  padding: 7px 11px;
+  text-align: left;
+  vertical-align: top;
+}
+.md-preview-surface th {
+  background: var(--fluid-card-item-top);
+  font-weight: 650;
+}
+.md-preview-surface .md-image-placeholder {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 550;
+  color: var(--text-secondary);
+  background: var(--fluid-card-item-top);
+  border: 1px dashed var(--fluid-card-border-strong);
+}
+.md-preview-surface img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  display: block;
+}
+
+/* Office DOCX Preview Sheet */
+.office-docx-sheet > :first-child {
+  margin-top: 0;
+}
+.office-docx-sheet h1,
+.office-docx-sheet h2,
+.office-docx-sheet h3,
+.office-docx-sheet h4 {
+  margin: 1.1em 0 0.45em;
+  line-height: 1.35;
+  color: var(--text-primary);
+}
+.office-docx-sheet p {
+  margin: 0.6em 0;
+}
+.office-docx-sheet ul,
+.office-docx-sheet ol {
+  margin: 0.6em 0;
+  padding-inline-start: 1.5em;
+}
+.office-docx-sheet blockquote {
+  margin: 0.85em 0;
+  padding: 6px 12px;
+  border-left: 3px solid var(--accent-primary);
+  color: var(--text-secondary);
+}
+.office-docx-sheet a {
+  color: var(--accent-primary);
+  text-decoration: underline;
+  overflow-wrap: anywhere;
+}
+.office-docx-sheet img,
+.office-docx-sheet svg,
+.office-docx-sheet canvas,
+.office-docx-sheet figure {
+  max-width: 100%;
+  height: auto;
+  border-radius: 8px;
+  display: block;
+}
+.office-docx-sheet table {
+  border-collapse: collapse;
+  display: block;
+  width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 12px 0;
+  font-size: 13px;
+}
+.office-docx-sheet th,
+.office-docx-sheet td {
+  border: 1px solid var(--fluid-card-border);
+  padding: 6px 10px;
+  text-align: left;
+  vertical-align: top;
+  word-break: break-word;
+}
+.office-docx-sheet th {
+  background: var(--fluid-card-item-top);
+  font-weight: 650;
+}
+.office-docx-sheet pre {
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: var(--fluid-card-item-top);
+  border: 1px solid var(--fluid-card-border);
+}
+
+/* EPUB Chapter Body */
+.epub-chapter-body > :first-child {
+  margin-top: 0;
+}
+.epub-chapter-body h1,
+.epub-chapter-body h2,
+.epub-chapter-body h3,
+.epub-chapter-body h4 {
+  margin: 1.15em 0 0.55em;
+  line-height: 1.35;
+  color: var(--text-primary);
+}
+.epub-chapter-body p {
+  margin: 0.75em 0;
+}
+.epub-chapter-body blockquote {
+  margin: 0.9em 0;
+  padding: 6px 14px;
+  border-left: 3px solid var(--accent-primary);
+  color: var(--text-secondary);
+}
+.epub-chapter-body a {
+  color: var(--accent-primary);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+.epub-chapter-body img,
+.epub-chapter-body svg,
+.epub-chapter-body figure {
+  max-width: 100%;
+  height: auto;
+  max-height: 58vh;
+  object-fit: contain;
+  display: block;
+  margin: 12px auto;
+  border-radius: 6px;
+}
+.epub-chapter-body svg image {
+  max-width: 100%;
+  height: auto;
+}
+.epub-chapter-body table {
+  border-collapse: collapse;
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  margin: 12px 0;
+}
+.epub-chapter-body th,
+.epub-chapter-body td {
+  border: 1px solid var(--fluid-card-border);
+  padding: 6px 10px;
+}
+.epub-chapter-body pre {
+  max-width: 100%;
+  overflow-x: auto;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: var(--fluid-card-item-top);
+  border: 1px solid var(--fluid-card-border);
+}

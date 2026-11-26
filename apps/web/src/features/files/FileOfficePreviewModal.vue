@@ -10,6 +10,7 @@ import { describeUserFacingError } from "../../api/userFacingError.ts";
 import { formatBinaryBytes } from "../../utils/format.ts";
 import type { SharedFileEntry } from "./useFileShares.ts";
 import {
+  computeSheetMaxColCount,
   fileExtensionLower,
   OFFICE_MAX_PREVIEW_BYTES,
   parseCsvRows,
@@ -50,6 +51,9 @@ const fileExt = computed(() => (props.file ? fileExtensionLower(props.file.name)
 const isSpreadsheet = computed(() => fileExt.value === ".xlsx" || fileExt.value === ".csv");
 const isTooLarge = computed(() => Boolean(props.file && props.file.size > OFFICE_MAX_PREVIEW_BYTES));
 const activeSheet = computed(() => sheets.value[activeSheetIndex.value] ?? null);
+const activeSheetColCount = computed(() =>
+  activeSheet.value ? computeSheetMaxColCount(activeSheet.value.rows) : 0,
+);
 
 function formatCellValue(cell: unknown): string {
   if (cell === null || cell === undefined) return "";
@@ -257,13 +261,13 @@ watch(
             <thead>
               <tr>
                 <th class="office-row-num">#</th>
-                <th v-for="(cell, cIdx) in activeSheet.rows[0]" :key="cIdx">{{ cell || `列 ${cIdx + 1}` }}</th>
+                <th v-for="colIdx in activeSheetColCount" :key="colIdx">{{ activeSheet.rows[0]?.[colIdx - 1] || `列 ${colIdx}` }}</th>
               </tr>
             </thead>
             <tbody>
               <tr v-for="(row, rIdx) in activeSheet.rows.slice(1)" :key="rIdx">
                 <td class="office-row-num">{{ rIdx + 2 }}</td>
-                <td v-for="(_, cIdx) in activeSheet.rows[0]" :key="cIdx">{{ row[cIdx] ?? "" }}</td>
+                <td v-for="colIdx in activeSheetColCount" :key="colIdx">{{ row[colIdx - 1] ?? "" }}</td>
               </tr>
             </tbody>
           </table>
@@ -325,21 +329,6 @@ watch(
   font-size: 14px;
   line-height: 1.75;
   word-break: break-word;
-}
-.office-docx-sheet img {
-  max-width: 100%;
-  height: auto;
-  border-radius: 8px;
-}
-.office-docx-sheet table {
-  border-collapse: collapse;
-  width: 100%;
-  margin: 10px 0;
-}
-.office-docx-sheet th,
-.office-docx-sheet td {
-  border: 1px solid var(--fluid-card-border);
-  padding: 6px 10px;
 }
 .office-footnote {
   margin: 0;
