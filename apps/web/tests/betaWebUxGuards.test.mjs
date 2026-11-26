@@ -47,7 +47,9 @@ test("apps/web/src maintains Clean Code guardrails (0 native select/prompt/alert
 
 test("AppsCenterView, MobileNavDrawer, and UserStoragePanel maintain Beta UX & role isolation", () => {
   const appsView = readFileSync(join(SRC_DIR, "features/apps/AppsCenterView.vue"), "utf8");
-  assert.match(appsView, /<AppleSelect/);
+  const storeSection = readFileSync(join(SRC_DIR, "features/apps/AppStoreSection.vue"), "utf8");
+  assert.match(storeSection, /<AppleSelect/);
+  assert.match(appsView, /<AppStoreSection/);
   assert.match(appsView, /modalError/);
   assert.match(appsView, /确认激活/);
   assert.doesNotMatch(appsView, /writeAppsClipboard/);
@@ -67,6 +69,11 @@ test("userFacingError maps newly aligned backend error codes to plain Chinese gu
     "app_unavailable",
     "app_already_exists",
     "app_template_not_found",
+    "app_store_unavailable",
+    "app_store_plugin_not_found",
+    "app_store_checksum_mismatch",
+    "app_store_invalid_config",
+    "app_store_no_update",
     "app_busy",
     "app_operation_failed",
     "automation_task_not_found",

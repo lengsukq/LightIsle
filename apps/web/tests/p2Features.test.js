@@ -52,7 +52,7 @@ test("usePhotoMemories loads and resets smart memory cards per root epoch", asyn
   assert.equal(memoriesCtl.smartMemories.value.length, 0);
 });
 
-test("createAppsCenterClient installs official builtin templates via POST", async () => {
+test("createAppsCenterClient installs online store plugins via POST", async () => {
   const seen = [];
   const client = createAppsCenterClient(async (url, init) => {
     seen.push({ url, method: init?.method, headers: init?.headers });
@@ -62,15 +62,15 @@ test("createAppsCenterClient installs official builtin templates via POST", asyn
         return {
           ok: true,
           app: { id: "family-subscriptions", name: "家庭订阅管家", mode: "static" },
-          templates: [{ id: "family-subscriptions", installed: true }],
+          store: { plugins: [{ id: "family-subscriptions", installed: true }] },
         };
       },
     };
   });
 
-  const res = await client.installTemplate("family-subscriptions");
+  const res = await client.installStorePlugin("family-subscriptions");
   assert.equal(seen.length, 1);
-  assert.equal(seen[0]?.url, "/api/v2/apps/templates/family-subscriptions/install");
+  assert.equal(seen[0]?.url, "/api/v2/apps/store/family-subscriptions/install");
   assert.equal(seen[0]?.method, "POST");
   assert.equal(res.app?.id, "family-subscriptions");
 });

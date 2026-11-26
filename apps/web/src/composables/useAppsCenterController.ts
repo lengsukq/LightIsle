@@ -2,6 +2,7 @@ import { computed, ref, watch } from "vue";
 import { describeUserFacingError } from "../api/userFacingError.ts";
 import { formatUnixDateTime } from "../utils/format.ts";
 import { requestConfirm } from "./useConfirmDialog.ts";
+import { useAppStoreController } from "./useAppStoreController.ts";
 import {
   createAppsCenterClient,
   getAppDataBackupUrl,
@@ -237,7 +238,16 @@ export function useAppsCenterController(
         selectedInstallLocationId.value = "";
       }
     }
+    storeCtl.applyStoreFromPayload(payload);
   }
+
+  const storeCtl = useAppStoreController({
+    apiClient,
+    selectedInstallLocationId,
+    applyAppsPayload,
+    error,
+    notice,
+  });
 
   function upsertSingleApp(updated?: PublicAppItem) {
     if (!updated || !updated.id) return;
@@ -253,6 +263,7 @@ export function useAppsCenterController(
     try {
       const payload = await apiClient.fetchApps(refresh);
       applyAppsPayload(payload);
+      storeCtl.maybeAutoRefreshStore(isAdmin.value);
       if (refresh) notice.value = "应用列表与插件目录已刷新。";
     } catch (e) {
       error.value = "读取应用列表失败：" + describeUserFacingError(e);
@@ -676,6 +687,10 @@ export function useAppsCenterController(
 
   return {
     apps,
+    store: storeCtl.store,
+    storeLoading: storeCtl.storeLoading,
+    storeActionPluginId: storeCtl.storeActionPluginId,
+    storeError: storeCtl.storeError,
     templates,
     isAdmin,
     members,
@@ -735,6 +750,10 @@ export function useAppsCenterController(
     onRestoreFileChange,
     removeApp,
     installOfficialTemplate,
+    refreshStore: storeCtl.refreshStore,
+    saveStoreConfig: storeCtl.saveStoreConfig,
+    installStorePlugin: storeCtl.installStorePlugin,
+    upgradeStorePlugin: storeCtl.upgradeStorePlugin,
     mutateAppStorage,
   };
 }

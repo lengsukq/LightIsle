@@ -112,6 +112,46 @@ export interface OfficialAppTemplateItem {
   installed: boolean;
 }
 
+export interface AppStorePluginItem {
+  id: string;
+  name: string;
+  version: string;
+  author?: string;
+  category: string;
+  mode: string;
+  defaultScope?: string;
+  description: string;
+  tags?: string[];
+  iconUrl?: string;
+  sizeBytes?: number;
+  sha256?: string;
+  installed: boolean;
+  installedVersion?: string;
+  updateAvailable: boolean;
+  locationId?: string;
+}
+
+export interface AppStoreSnapshot {
+  storeName: string;
+  repositoryUrl?: string;
+  registryUrl: string;
+  effectiveUrl: string;
+  defaultUrl: string;
+  mirrorPrefix?: string;
+  isOfficial: boolean;
+  source: "remote" | "cache" | "empty" | "unavailable" | string;
+  fetchedAt?: string;
+  updatedAt?: string;
+  error?: string;
+  plugins: AppStorePluginItem[];
+}
+
+export interface AppStoreConfigPayload {
+  registryUrl: string;
+  mirrorPrefix: string;
+  resetDefault?: boolean;
+}
+
 export interface AppStorageLocationItem {
   id: string;
   kind: "internal" | "external" | string;
@@ -164,6 +204,7 @@ export interface AppStorageMutationPayload {
 
 export interface AppsOverviewResponse {
   apps: PublicAppItem[];
+  store?: AppStoreSnapshot;
   templates?: OfficialAppTemplateItem[];
   appStorage?: AppStorageSnapshot;
   isAdmin?: boolean;
@@ -191,8 +232,12 @@ export interface AppLogsNormalizedResponse {
 export interface AppMutationResult {
   app?: PublicAppItem;
   apps?: PublicAppItem[];
+  store?: AppStoreSnapshot;
   templates?: OfficialAppTemplateItem[];
   ok?: boolean;
+  warning?: string;
+  error?: string;
+  message?: string;
   createdFiles?: string[];
   [key: string]: unknown;
 }

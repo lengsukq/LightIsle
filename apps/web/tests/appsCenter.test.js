@@ -141,9 +141,25 @@ test("createAppsCenterClient enforces exact Go Core HTTP routes, headers, and se
     path: "/Volumes/MediaUSB/LightIsleApps",
   });
 
-  await client.installTemplate("family-subscriptions", "external");
-  assert.equal(calls.at(-1).url, "/api/v2/apps/templates/family-subscriptions/install");
+  await client.refreshStore();
+  assert.equal(calls.at(-1).url, "/api/v2/apps/store/refresh");
+  assert.equal(calls.at(-1).options.method, "POST");
+
+  await client.updateStoreConfig({ registryUrl: "", mirrorPrefix: "https://ghfast.top/" });
+  assert.equal(calls.at(-1).url, "/api/v2/apps/store/config");
+  assert.equal(calls.at(-1).options.method, "PUT");
+  assert.deepEqual(JSON.parse(calls.at(-1).options.body), {
+    registryUrl: "",
+    mirrorPrefix: "https://ghfast.top/",
+  });
+
+  await client.installStorePlugin("family-subscriptions", "external");
+  assert.equal(calls.at(-1).url, "/api/v2/apps/store/family-subscriptions/install");
   assert.deepEqual(JSON.parse(calls.at(-1).options.body), { locationId: "external" });
+
+  await client.upgradeStorePlugin("family-subscriptions");
+  assert.equal(calls.at(-1).url, "/api/v2/apps/store/family-subscriptions/upgrade");
+  assert.equal(calls.at(-1).options.method, "POST");
 
   // 10. DELETE /api/v2/apps/{id}
   await client.deleteApp("cpe-monitor");
@@ -164,6 +180,14 @@ test("AppsCenterView SFC parses cleanly and includes sandboxed iframe workbench,
   assert.match(storageCardSource, /应用数据存储位置/);
   assert.match(storageCardSource, /1 内置盘 \+ 1 其他盘/);
   assert.match(storageCardSource, /添加其他盘位置/);
+  const storeSectionSource = readFileSync(
+    new URL("../src/features/apps/AppStoreSection.vue", import.meta.url),
+    "utf8",
+  );
+  const parsedStore = parse(storeSectionSource, { filename: "AppStoreSection.vue" });
+  assert.equal(parsedStore.errors.length, 0);
+  assert.match(storeSectionSource, /在线插件商店/);
+  assert.match(template, /<AppStoreSection/);
   assert.match(template, /<AppStorageLocationsCard/);
   assert.match(template, /<AppDetailPanel/);
   assert.match(template, /详情与设置/);

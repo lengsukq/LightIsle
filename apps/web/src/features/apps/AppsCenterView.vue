@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { computed, ref, watch } from "vue";
 import {
-  AlertCircle, Check, ChevronDown, ChevronRight, ChevronUp, Clock, Cpu,
-  Globe, HardDrive, Lock, Play, Plus, RefreshCcw, ScrollText, Settings2,
+  AlertCircle, ArrowUpCircle, ChevronRight, Clock, Cpu,
+  Globe, HardDrive, Lock, Play, RefreshCcw, ScrollText, Settings2,
   Sparkles, Upload, Users,
 } from "lucide-vue-next";
 import { describeUserFacingError } from "../../api/userFacingError.ts";
 import AppDetailPanel from "./AppDetailPanel.vue";
 import AppStorageLocationsCard from "./AppStorageLocationsCard.vue";
+import AppStoreSection from "./AppStoreSection.vue";
 import AppWorkbenchStage from "./AppWorkbenchStage.vue";
-import AppleSelect from "../../components/ui/AppleSelect.vue";
 import IsleModal from "../../components/ui/IsleModal.vue";
 import IsleButton from "../../components/ui/IsleButton.vue";
 import IsleBanner from "../../components/ui/IsleBanner.vue";
@@ -37,7 +37,10 @@ const props = defineProps<{ active?: boolean; admin?: boolean; launchRequest?: A
 const emit = defineEmits<{ "launch-handled": [seq: number] }>();
 const {
   apps,
-  templates,
+  store,
+  storeLoading,
+  storeActionPluginId,
+  storeError,
   isAdmin,
   configuredChannels,
   appStorage,
@@ -93,18 +96,24 @@ const {
   triggerRestoreAppData,
   onRestoreFileChange,
   removeApp,
-  installOfficialTemplate,
+  refreshStore,
+  saveStoreConfig,
+  installStorePlugin,
+  upgradeStorePlugin,
   mutateAppStorage,
 } = useAppsCenterController(props, (seq) => emit("launch-handled", seq));
 
 const appSearchQuery = ref("");
 const selectedCategory = ref("all");
 const storageModalOpen = ref(false);
-const templatesManualExpanded = ref<boolean | null>(null);
-const templatesExpanded = computed(() =>
-  templatesManualExpanded.value !== null ? templatesManualExpanded.value : apps.value.length === 0,
-);
-const uninstalledTemplatesCount = computed(() => templates.value.filter((t) => !t.installed).length);
+
+const storeUpdateByAppId = computed(() => {
+  const map = new Map<string, NonNullable<typeof store.value>["plugins"][number]>();
+  for (const item of store.value?.plugins ?? []) {
+    if (item.updateAvailable) map.set(item.id, item);
+  }
+  return map;
+});
 
 const availableCategories = computed(() => {
   const seen = new Set<string>();
@@ -263,59 +272,23 @@ function accessMeta(app: PublicAppItem): { icon: typeof Lock; label: string } {
       <IsleBanner v-if="error" type="error" compact :message="error" />
       <IsleBanner v-if="notice" type="success" compact :message="notice" />
 
-      <section v-if="isAdmin && templates.length > 0" class="apps-templates-bar" aria-label="官方精选家庭轻应用模板">
-        <div class="apps-templates-info">
-          <div class="apps-templates-head">
-            <div class="apps-templates-title">
-              <Sparkles :size="16" />
-              <strong>官方精选家庭轻应用模板</strong>
-              <IsleBadge variant="accent" size="sm">零外部依赖</IsleBadge>
-              <small v-if="!templatesExpanded && uninstalledTemplatesCount > 0">还有 {{ uninstalledTemplatesCount }} 款未安装（共 {{ templates.length }} 款精选）</small>
-              <small v-else-if="!templatesExpanded">共 {{ templates.length }} 款精选应用（均已安装）</small>
-            </div>
-            <button
-              v-if="apps.length > 0"
-              type="button"
-              class="apps-templates-toggle"
-              :aria-expanded="templatesExpanded"
-              @click="templatesManualExpanded = !templatesExpanded"
-            >
-              <span>{{ templatesExpanded ? "收起模板库" : `展开模板 (${templates.length})` }}</span>
-              <ChevronUp v-if="templatesExpanded" :size="14" />
-              <ChevronDown v-else :size="14" />
-            </button>
-          </div>
-          <template v-if="templatesExpanded">
-            <div v-if="appStorage && appStorage.locations.length > 1" class="apps-install-target-row">
-              <span>安装到存储位置：</span>
-              <AppleSelect
-                v-model="selectedInstallLocationId"
-                :options="installLocationOptions"
-                size="sm"
-                aria-label="选择官方模板安装位置"
-              />
-            </div>
-            <div class="apps-template-shelf">
-              <div v-for="tpl in templates" :key="tpl.id" class="apps-template-card">
-                <div class="apps-template-card-body">
-                  <div class="apps-template-card-head">
-                    <strong>{{ tpl.name }}</strong>
-                    <IsleBadge variant="category" size="sm">{{ categoryLabel(tpl.category) }}</IsleBadge>
-                  </div>
-                  <p>{{ tpl.description }}</p>
-                </div>
-                <IsleButton :variant="tpl.installed ? 'glass' : 'primary'" size="sm" :disabled="busy || tpl.installed" @click="installOfficialTemplate(tpl)">
-                  <template #icon>
-                    <Check v-if="tpl.installed" :size="13" />
-                    <Plus v-else :size="13" />
-                  </template>
-                  {{ tpl.installed ? '已安装' : '一键安装' }}
-                </IsleButton>
-              </div>
-            </div>
-          </template>
-        </div>
-      </section>
+      <AppStoreSection
+        v-if="isAdmin"
+        :store="store"
+        :store-loading="storeLoading"
+        :store-action-plugin-id="storeActionPluginId"
+        :store-error="storeError"
+        :installed-apps-count="apps.length"
+        :busy="busy"
+        :app-storage="appStorage"
+        :selected-install-location-id="selectedInstallLocationId"
+        :install-location-options="installLocationOptions"
+        @update:selected-install-location-id="selectedInstallLocationId = $event"
+        @refresh="refreshStore(false)"
+        @install="installStorePlugin"
+        @upgrade="upgradeStorePlugin"
+        @save-config="saveStoreConfig"
+      />
 
       <div v-if="apps.length > 0" class="apps-filter-toolbar">
         <div class="apps-category-pills" role="group" aria-label="应用分类筛选">
@@ -342,8 +315,8 @@ function accessMeta(app: PublicAppItem): { icon: typeof Lock; label: string } {
         v-if="apps.length === 0 && !busy && !error"
         :icon="Sparkles"
         card
-        :title="isAdmin ? '暂无轻应用插件' : '暂无已授权的轻应用'"
-        :description="isAdmin ? '可在上方一键安装官方精选家庭轻应用，或在 Mac 端 LightIsle 客户端中添加或开发轻应用。' : '如需访问家庭工具，请联系管理员在应用中心授权。'"
+        :title="isAdmin ? '还没有已安装的轻应用' : '暂无已授权的轻应用'"
+        :description="isAdmin ? '可在上方「在线插件商店」按需下载安装家庭轻应用，或通过右上角「导入插件包」安装本地 .liapp.zip。' : '如需访问家庭工具，请联系管理员在应用中心授权。'"
       />
 
       <IsleEmpty
@@ -411,6 +384,17 @@ function accessMeta(app: PublicAppItem): { icon: typeof Lock; label: string } {
             <IsleButton v-if="app.web?.enabled !== false" :variant="app.pendingActivation && isAdmin ? 'glass' : 'primary'" size="sm" :loading="launchingAppId === app.id" :disabled="!!launchingAppId" @click="openApp(app)">
               <template #icon><Play :size="14" /></template>
               {{ launchingAppId === app.id ? "正在唤醒轻应用..." : "立即打开" }}
+            </IsleButton>
+            <IsleButton
+              v-if="isAdmin && storeUpdateByAppId.has(app.id)"
+              variant="tonal"
+              size="sm"
+              :loading="storeActionPluginId === app.id"
+              :disabled="busy || (Boolean(storeActionPluginId) && storeActionPluginId !== app.id)"
+              @click="upgradeStorePlugin(storeUpdateByAppId.get(app.id)!)"
+            >
+              <template #icon><ArrowUpCircle :size="14" /></template>
+              更新 v{{ storeUpdateByAppId.get(app.id)!.version }}
             </IsleButton>
             <IsleButton v-if="isAdmin" variant="glass" size="sm" :disabled="busy" @click="openAppDetail(app)">
               <template #icon><Settings2 :size="14" /></template>

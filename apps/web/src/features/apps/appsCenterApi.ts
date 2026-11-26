@@ -7,6 +7,7 @@ import type {
   AppLogsNormalizedResponse,
   AppMutationResult,
   AppStorageMutationPayload,
+  AppStoreConfigPayload,
   AppWebDraft,
   AppsOverviewResponse,
 } from "../../types/appsCenter.ts";
@@ -150,9 +151,37 @@ export function createAppsCenterClient(fetchImpl: typeof fetch = globalThis.fetc
         refresh ? { method: "POST" } : {},
       );
     },
+    fetchStore(): Promise<AppMutationResult> {
+      return request<AppMutationResult>("/api/v2/apps/store");
+    },
+    refreshStore(): Promise<AppMutationResult> {
+      return request<AppMutationResult>("/api/v2/apps/store/refresh", {
+        method: "POST",
+      });
+    },
+    updateStoreConfig(payload: AppStoreConfigPayload): Promise<AppMutationResult> {
+      return request<AppMutationResult>("/api/v2/apps/store/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    },
+    installStorePlugin(id: string, locationId?: string): Promise<AppMutationResult> {
+      const payload = locationId ? { locationId } : {};
+      return request<AppMutationResult>(`/api/v2/apps/store/${encodeURIComponent(id)}/install`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    },
+    upgradeStorePlugin(id: string): Promise<AppMutationResult> {
+      return request<AppMutationResult>(`/api/v2/apps/store/${encodeURIComponent(id)}/upgrade`, {
+        method: "POST",
+      });
+    },
     installTemplate(id: string, locationId?: string): Promise<AppMutationResult> {
       const payload = locationId ? { locationId } : {};
-      return request<AppMutationResult>(`/api/v2/apps/templates/${encodeURIComponent(id)}/install`, {
+      return request<AppMutationResult>(`/api/v2/apps/store/${encodeURIComponent(id)}/install`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(payload),
