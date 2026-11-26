@@ -19,7 +19,9 @@
 		A1B2C3D40000000000000001 /* IOSBonjourDiscovery.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40000000000000003 /* IOSBonjourDiscovery.swift */; };
 		A1B2C3D40000000000000002 /* IOSBonjourDiscoveryPolicy.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1B2C3D40000000000000004 /* IOSBonjourDiscoveryPolicy.swift */; };
 		B2C3D4E50000000000000001 /* IOSPhotoBackup.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E50000000000000002 /* IOSPhotoBackup.swift */; };
+		B2C3D4E50000000000000003 /* IOSPhotoAlbums.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2C3D4E50000000000000004 /* IOSPhotoAlbums.swift */; };
 		C9D8E7F60000000000000001 /* SessionVault.swift in Sources */ = {isa = PBXBuildFile; fileRef = C9D8E7F60000000000000002 /* SessionVault.swift */; };
+		D4E5F6A70000000000000001 /* IOSDocumentScannerPlugin.swift in Sources */ = {isa = PBXBuildFile; fileRef = D4E5F6A70000000000000002 /* IOSDocumentScannerPlugin.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -66,7 +68,9 @@
 		A1B2C3D40000000000000003 /* IOSBonjourDiscovery.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSBonjourDiscovery.swift; sourceTree = "<group>"; };
 		A1B2C3D40000000000000004 /* IOSBonjourDiscoveryPolicy.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSBonjourDiscoveryPolicy.swift; sourceTree = "<group>"; };
 		B2C3D4E50000000000000002 /* IOSPhotoBackup.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSPhotoBackup.swift; sourceTree = "<group>"; };
+		B2C3D4E50000000000000004 /* IOSPhotoAlbums.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSPhotoAlbums.swift; sourceTree = "<group>"; };
 		C9D8E7F60000000000000002 /* SessionVault.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = SessionVault.swift; path = ../../shared/SessionVault.swift; sourceTree = "<group>"; };
+		D4E5F6A70000000000000002 /* IOSDocumentScannerPlugin.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSDocumentScannerPlugin.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -149,6 +153,8 @@
 				A1B2C3D40000000000000003 /* IOSBonjourDiscovery.swift */,
 				A1B2C3D40000000000000004 /* IOSBonjourDiscoveryPolicy.swift */,
 				B2C3D4E50000000000000002 /* IOSPhotoBackup.swift */,
+				B2C3D4E50000000000000004 /* IOSPhotoAlbums.swift */,
+				D4E5F6A70000000000000002 /* IOSDocumentScannerPlugin.swift */,
 				7884E8672EC3CC0400C636F2 /* SceneDelegate.swift */,
 				74858FAD1ED2DC5600515810 /* Runner-Bridging-Header.h */,
 			);
@@ -314,6 +320,8 @@
 				A1B2C3D40000000000000001 /* IOSBonjourDiscovery.swift in Sources */,
 				A1B2C3D40000000000000002 /* IOSBonjourDiscoveryPolicy.swift in Sources */,
 				B2C3D4E50000000000000001 /* IOSPhotoBackup.swift in Sources */,
+				B2C3D4E50000000000000003 /* IOSPhotoAlbums.swift in Sources */,
+				D4E5F6A70000000000000001 /* IOSDocumentScannerPlugin.swift in Sources */,
 				1498D2341E8E89220040F4C2 /* GeneratedPluginRegistrant.m in Sources */,
 				7884E8682EC3CC0700C636F2 /* SceneDelegate.swift in Sources */,
 			);

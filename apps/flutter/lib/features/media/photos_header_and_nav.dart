@@ -157,6 +157,11 @@ class PhotosPageHeader extends StatelessWidget {
         label: '足迹地图',
       ),
       isleActionMenuItem(
+        value: 'documentArchive',
+        icon: Icons.document_scanner_outlined,
+        label: '家庭档案与扫票据',
+      ),
+      isleActionMenuItem(
         value: 'similarCleanup',
         icon: Icons.auto_fix_high_outlined,
         label: '连拍相似清理',
@@ -266,6 +271,7 @@ class PhotosNavigationSection extends StatelessWidget {
     required this.onBrowseAlbums,
     required this.onOpenPeople,
     required this.onOpenExifFilter,
+    this.onOpenDocumentArchive,
     super.key,
   });
 
@@ -276,6 +282,7 @@ class PhotosNavigationSection extends StatelessWidget {
   final VoidCallback onBrowseAlbums;
   final VoidCallback onOpenPeople;
   final VoidCallback onOpenExifFilter;
+  final VoidCallback? onOpenDocumentArchive;
 
   @override
   Widget build(BuildContext context) {
@@ -361,6 +368,16 @@ class PhotosNavigationSection extends StatelessWidget {
             label: '筛选',
             onPressed: onOpenExifFilter,
           ),
+          if (onOpenDocumentArchive != null) ...[
+            const SizedBox(width: 6),
+            _ActionPillChip(
+              key: const ValueKey('photosDocumentArchiveChip'),
+              tooltip: '扫描证件票据与离线 Vision OCR 秒搜',
+              icon: Icons.document_scanner_outlined,
+              label: '家庭档案',
+              onPressed: onOpenDocumentArchive!,
+            ),
+          ],
           if (wide) ...[
             const SizedBox(width: 10),
             Container(
@@ -565,6 +582,7 @@ class PhotosNavigationSection extends StatelessWidget {
 
 class _ActionPillChip extends StatelessWidget {
   const _ActionPillChip({
+    super.key,
     required this.label,
     required this.icon,
     required this.tooltip,

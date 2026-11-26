@@ -2,9 +2,11 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 
+import '../../core/isle_theme.dart';
 import '../../core/lightisle_api.dart';
 import '../../core/widgets.dart';
 import '../files/upload_task_center.dart';
+import 'document_scan_archive_page.dart';
 import 'photo_timeline_scrubber.dart';
 import 'photos_batch_actions.dart';
 import 'photos_controller.dart';
@@ -190,6 +192,17 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
     );
   }
 
+  void _openDocumentScanArchive() {
+    Navigator.of(context).push<void>(
+      buildIslePageRoute(
+        builder: (_) => DocumentScanArchivePage(
+          api: widget.api,
+          initialBaseDirectory: widget.uploadDirectory,
+        ),
+      ),
+    );
+  }
+
   Widget _buildTopChromeSliver(
     BuildContext context, {
     required double pageInset,
@@ -209,8 +222,13 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
             onOpenMobileBackup: () =>
                 _navigationActions.openMobilePhotoBackup(context),
             onUpload: () => unawaited(_navigationActions.upload(context)),
-            onMenuAction: (value) =>
-                _navigationActions.handleMenuAction(context, value),
+            onMenuAction: (value) {
+              if (value == 'documentArchive') {
+                _openDocumentScanArchive();
+              } else {
+                _navigationActions.handleMenuAction(context, value);
+              }
+            },
           ),
           PhotosNavigationSection(
             controller: _controller,
@@ -221,6 +239,7 @@ class _PhotosPageState extends State<PhotosPage> with WidgetsBindingObserver {
                 unawaited(_navigationActions.openPeoplePage(context)),
             onOpenExifFilter: () =>
                 unawaited(_navigationActions.openExifFilterSheet(context)),
+            onOpenDocumentArchive: _openDocumentScanArchive,
           ),
           IsleAnimatedExpand(
             expanded:
