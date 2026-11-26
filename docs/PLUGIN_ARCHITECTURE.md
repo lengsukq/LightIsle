@@ -160,11 +160,17 @@ Go Core 启动 `run-web.sh` 时会自动注入干净的白名单环境变量：
 > **轻量代理防伪约定**：
 > Go Core 反代转发请求至 `127.0.0.1:$PORT` 时，会注入请求头 `X-LightIsle-Proxy-Secret` 以及当前登录用户的 `X-LightIsle-User-ID`、`X-LightIsle-Username`、`X-LightIsle-Role`。插件只需校验 `req.headers['x-lightisle-proxy-secret'] === process.env.LIGHTISLE_PROXY_SECRET`，即可安全实现免二次登录，防止本机其他进程直连 `127.0.0.1:$PORT` 伪造身份头。
 
-### 4.2 纯静态 HTML 轻应用指南与内置官方精选模板（`mode: "static"`，0 MB 进程开销）
+### 4.2 纯静态 HTML 轻应用与 Git 在线插件商店（`plugins-store/`，0 MB 进程开销）
 - `run-cron.sh` 定时运行采集脚本，将最新结果写入 `ui/data.json`；`ui/index.html` 通过相对路径 `fetch('./data.json')`、`localStorage` 或宿主共享 KV 存储桥（`./__lightisle_kv`）渲染看板，常驻与浏览期间子进程内存均为 **0 MB**。
-- `core/internal/apps/builtin_templates.go` 随包内置 **10 款**零外部依赖的官方精选静态家庭轻应用模板，支持管理员通过 `GET /api/v2/apps/templates` 与 `POST /api/v2/apps/templates/{id}/install` 一键安装并按成员授权开放（全部接入 `./__lightisle_kv` 家庭共享持久化，到期类模板同步接入 `kv/_reminders.json` 自动通知）：
+- **Git 托管的在线插件商店（零内置 HTML）**：基础家庭轻应用不再硬编码进 Go Core 二进制，而是统一托管在仓库的 [plugins-store/README.md](../plugins-store/README.md)（源码目录 `plugins-store/plugins/<id>/`、共享资源 `plugins-store/shared/`、确定性构建产物 `plugins-store/packages/<id>.liapp.zip` 与索引清单 `plugins-store/registry.json`）。修改或新增插件后执行 `python3 -B scripts/build-plugin-store.py` 即可重新生成 `.liapp.zip` 与 SHA-256 索引，推送至 Git 仓库即刻发布上线。
+- **下载校验、镜像加速与原地无损升级**：
+  - 默认商店源指向官方 Git 仓库 `https://raw.githubusercontent.com/lengsukq/LightIsle/main/plugins-store/registry.json`，管理员可在 Web / macOS / Flutter 应用中心自由配置**自定义 HTTPS Git 商店 `registry.json`** 与**可选 GitHub 加速镜像前缀**（如 `https://ghfast.top/`、`https://gh-proxy.com/`）；
+  - 客户端可通过 `GET /api/v2/apps/store`、`POST /api/v2/apps/store/refresh`、`PUT /api/v2/apps/store/config`、`POST /api/v2/apps/store/{id}/install`、`POST /api/v2/apps/store/{id}/upgrade` 与 `GET /api/v2/apps/store/{id}/icon` 拉取目录、代理缓存图标、按需下载与原地升级（保留 `POST /api/v2/apps/templates/{id}/install` 兼容路由并委托至在线商店引擎）；
+  - 所有下载的 `.liapp.zip` 强制执行**外层归档 SHA-256 + 内层 `package-manifest.json` 逐文件 SHA-256 双重校验**（禁止路径穿越与符号链接）；官方商店的纯静态应用安装后立即可用，**自定义商店源或含动态/Cron 脚本的插件一律默认 `pendingActivation: true`**，须由管理员核对后手动激活；
+  - 当商店发布更高 Semver 版本时，原地升级仅替换应用代码目录并支持失败回滚，**绝不触碰 `plugin-data/<id>/`（含 KV 与 SQLite）**，并完整保留用户的 `env.json`、成员访问策略与兼容的 Web/Cron 配置。
+- 首批托管于 `plugins-store/` 的 **10 款**零依赖纯静态家庭轻应用（全部接入 `./__lightisle_kv` 家庭共享持久化，到期类应用同步接入 `kv/_reminders.json` 自动通知）：
 
-| 模板 ID | 名称 | 版本 | 分类 | 功能说明与同步/提醒能力 |
+| 插件 ID | 名称 | 版本 | 分类 | 功能说明与同步/提醒能力 |
 | :--- | :--- | :--- | :--- | :--- |
 | `network-pulse` | 轻屿网络与系统脉搏 | `1.0.0` | `system` | 实时测量当前终端到家庭 NAS 的往返延迟、抖动与局域网/组网连通健康度。 |
 | `family-subscriptions` | 家庭账单与订阅管家 | `1.1.0` | `family` | 集中记录家庭宽带、影视会员、云服务与物业续费周期，全家 KV 同步并写入 `_reminders.json` 推送临近续费提醒。 |
@@ -228,7 +234,9 @@ core/internal/automation/
 
 core/internal/apps/
 ├── types.go          # PluginManifest v2 定义、ID 校验、PublicApp 视图（含 lastError / diagnostic）与 AppsSystemConfig
-├── builtin_templates*.go # 随包内置 10 款 0 MB 官方静态家庭轻应用模板目录与 HTML 资源
+├── store_types.go    # Git 在线商店数据契约（StoreRegistryDocument / AppStoreSnapshot / Semver 比较与错误码）
+├── store_client.go   # SSRF 安全 HTTPS 商店客户端、GitHub 镜像前缀改写、本机目录缓存（apps-store-cache.json）与图标代理缓存
+├── store_install.go  # 在线商店 .liapp.zip 下载、双重 SHA-256 校验安装与保留 plugin-data/env/access 的原子原地升级
 ├── kv_store.go       # 静态轻应用 /__lightisle_kv 宿主共享 KV 存储桥（os.OpenRoot 隔离、CSRF 校验、If-Match 乐观锁与 4 MiB 配额）
 ├── reminder_scanner.go # 静态轻应用 kv/_reminders.json 30 分钟后台到期扫描与去重脱敏推送
 ├── diagnostics.go    # 启动/校验/崩溃根因诊断（AppDiagnostic：原因、stderr 关键输出、排查步骤、修复办法、数据安全说明）与浏览器网关 HTML 诊断页
@@ -268,7 +276,7 @@ core/internal/apps/
   - **MCP 控制台与调试**：提供本机 Stdio MCP 与局域网 HTTP/SSE MCP 双开关、Bearer Token 查看/复制/轮换、一键复制本机/局域网提示词与 `mcpServers` JSON、**MCP 交互式调试器（MCP Inspector，支持动态拉取并调用全量 82 个系统管理与插件开发工具）**、**轻应用网关 HTTP 探针（Gateway Probe）** 以及 **MCP 实时调用追踪日志（最近 50 条）**。
 - **Web 与 Flutter 管理员视图**：
   - 查看实时状态（`静态就绪 0 MB` / `休眠中 0 MB` / `运行中 28 MB`）、活跃连接数与授权范围徽章；
-  - 聚焦家庭轻应用管理与内嵌工作台：提供应用数据存储位置（最多 1 个内置盘 + 1 个其他盘）槽位管理、官方内置模板一键安装、成员权限分配、生命周期抽屉及 `plugin-data` 一致性备份与恢复（MCP 服务开关、令牌轮换、调试台与脚手架已统一收敛至 macOS 原生客户端）。
+  - 聚焦家庭轻应用管理与内嵌工作台：提供应用数据存储位置（最多 1 个内置盘 + 1 个其他盘）槽位管理、**Git 在线插件商店**（按需下载、SHA-256 校验、Semver 版本更新提醒与原地无损升级、自定义商店源与 GitHub 镜像加速）、成员权限分配、生命周期抽屉及 `plugin-data` 一致性备份与恢复（MCP 服务开关、令牌轮换、调试台与脚手架已统一收敛至 macOS 原生客户端）。
 
 ---
 

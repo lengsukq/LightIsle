@@ -19,6 +19,7 @@ Core API 已识别的错误统一通过 `writeAPIError` / `writeAPIErrorCode` �
 | 安全请求格式 | `request_header_required` / `cross_origin_request_rejected` | Core 坚持拒绝请求，前端应指导更新客户端或检查源地址，**不得为了通过请求关闭 CSRF/Origin 验证** |
 | 文件 / 配额 | `file_not_found` / `storage_quota_exceeded` / `insufficient_storage_space` | 刷新、核对目标或清理相应磁盘空间 |
 | 上传状态 | `offset_mismatch` / `upload_outcome_uncertain` / `storage_accounting_uncertain` | 仅明确偏移冲突才能安全重新读取进度；不确定是否写入的任务必须先核对，不能直接重传/覆盖 |
+| 在线插件商店 | `app_store_unavailable` / `app_store_plugin_not_found` / `app_store_checksum_mismatch` / `app_store_invalid_config` / `app_store_no_update` | 明确区分网络不可达（引导配置镜像前缀）、目录过期、SHA-256 校验失败拒绝安装、非 HTTPS 源拦截与已是最新版；失败不修改已有 `plugin-data` |
 | 网络 / 未知状态 | `network_timeout` / HTTP 502/503/504 无有效 JSON | 指出连接/网关/响应问题，提供重试与可用的诊断标识；不猜测某块盘损坏 |
 
 ## 故障编号

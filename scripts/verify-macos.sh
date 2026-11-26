@@ -32,6 +32,9 @@ run_swift_check() {
 echo "Documentation integrity:"
 python3 -B scripts/check-docs.py
 
+echo "Plugin store registry & package SHA-256 integrity:"
+python3 -B scripts/build-plugin-store.py --check
+
 echo "Go unit/integration:"
 if [[ "${LIGHTISLE_RACE:-0}" == "1" ]]; then
   go test -race ./...

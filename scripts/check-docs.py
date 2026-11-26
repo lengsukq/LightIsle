@@ -15,6 +15,7 @@ SOURCES = [
     ROOT / "AGENTS.md",
     ROOT / "apps/flutter/README.md",
     ROOT / "assets/brand/README.md",
+    ROOT / "plugins-store/README.md",
     *sorted(DOCS.rglob("*.md")),
 ]
 LINK = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
