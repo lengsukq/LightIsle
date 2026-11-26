@@ -60,16 +60,25 @@ func (m *Manager) updatePolledProgress(id, gid, status string, total, completed 
 	return err
 }
 
+func (m *Manager) updateRunnerProgress(id string, total, completed int64) error {
+	_, err := m.db.Exec(`UPDATE download_tasks SET total_bytes=?,completed_bytes=?,updated_at=?
+		WHERE id=? AND status='running' AND (total_bytes<>? OR completed_bytes<>?)`,
+		total, completed, time.Now().Unix(), id, total, completed)
+	return err
+}
+
 func (m *Manager) rowByID(id string, owner int64) (Task, string, error) {
 	var task Task
 	var gid string
 	var bindingJSON sql.NullString
+	var engine, optionsJSON string
 	err := m.db.QueryRow(`SELECT id,url,destination,status,filename,gid,total_bytes,completed_bytes,
-        max_bytes,error,created_at,updated_at,completed_at,phase,root_binding,root_id,root_generation FROM download_tasks WHERE id=? AND owner=?`,
+        max_bytes,error,created_at,updated_at,completed_at,phase,root_binding,root_id,root_generation,
+        engine,options_json FROM download_tasks WHERE id=? AND owner=?`,
 		id, owner).Scan(&task.ID, &task.URL, &task.Destination, &task.Status, &task.Filename, &gid,
 		&task.TotalBytes, &task.CompletedBytes, &task.MaxBytes, &task.Error,
 		&task.CreatedAt, &task.UpdatedAt, &task.CompletedAt, &task.Phase, &bindingJSON,
-		&task.RootID, &task.RootGeneration)
+		&task.RootID, &task.RootGeneration, &engine, &optionsJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Task{}, "", ErrNotFound
 	}
@@ -77,6 +86,9 @@ func (m *Manager) rowByID(id string, owner int64) (Task, string, error) {
 		return Task{}, "", err
 	}
 	task.Owner = owner
+	task.Engine = defaultEngine(engine)
+	task.optionsJSON = optionsJSON
+	task.Options = decodeEngineOptions(optionsJSON)
 	task.rootBinding, task.rootBound = decodeTaskBinding(bindingJSON)
 	if err := m.populatePublicationSummary(&task); err != nil {
 		return Task{}, "", err
@@ -89,12 +101,14 @@ func (m *Manager) rowByIDUnscoped(id string) (Task, string, error) {
 	var gid string
 	var owner int64
 	var bindingJSON sql.NullString
+	var engine, optionsJSON string
 	err := m.db.QueryRow(`SELECT id,owner,url,destination,status,filename,gid,total_bytes,completed_bytes,
-        max_bytes,error,created_at,updated_at,completed_at,phase,root_binding,root_id,root_generation FROM download_tasks WHERE id=?`,
+        max_bytes,error,created_at,updated_at,completed_at,phase,root_binding,root_id,root_generation,
+        engine,options_json FROM download_tasks WHERE id=?`,
 		id).Scan(&task.ID, &owner, &task.URL, &task.Destination, &task.Status, &task.Filename, &gid,
 		&task.TotalBytes, &task.CompletedBytes, &task.MaxBytes, &task.Error,
 		&task.CreatedAt, &task.UpdatedAt, &task.CompletedAt, &task.Phase, &bindingJSON,
-		&task.RootID, &task.RootGeneration)
+		&task.RootID, &task.RootGeneration, &engine, &optionsJSON)
 	if errors.Is(err, sql.ErrNoRows) {
 		return Task{}, "", ErrNotFound
 	}
@@ -102,8 +116,18 @@ func (m *Manager) rowByIDUnscoped(id string) (Task, string, error) {
 		return Task{}, "", err
 	}
 	task.Owner = owner
+	task.Engine = defaultEngine(engine)
+	task.optionsJSON = optionsJSON
+	task.Options = decodeEngineOptions(optionsJSON)
 	task.rootBinding, task.rootBound = decodeTaskBinding(bindingJSON)
 	return task, gid, nil
+}
+
+func defaultEngine(engine string) string {
+	if strings.TrimSpace(engine) == "" {
+		return EngineAria2
+	}
+	return engine
 }
 
 func (m *Manager) taskByID(id string, owner int64) (Task, error) {

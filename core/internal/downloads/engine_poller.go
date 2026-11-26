@@ -30,7 +30,7 @@ func (m *Manager) kick(id string) {
 			return
 		}
 		task, gid, err := m.rowByIDUnscoped(id)
-		if err != nil || task.Status != StatusQueued || gid != "" {
+		if err != nil || task.Status != StatusQueued || gid != "" || task.Engine != EngineAria2 {
 			return
 		}
 		if !m.canFetch(task.Owner) {
@@ -85,7 +85,7 @@ func (m *Manager) stopIfIdle(now time.Time) bool {
 	m.importMu.Lock()
 	defer m.importMu.Unlock()
 	var active bool
-	if err := m.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM download_tasks WHERE status IN ('queued','running','paused'))`).Scan(&active); err != nil {
+	if err := m.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM download_tasks WHERE status IN ('queued','running','paused') AND engine='aria2')`).Scan(&active); err != nil {
 		return false
 	}
 	if active {
@@ -115,7 +115,7 @@ func (m *Manager) engineExited(rpc *RPC) {
 	// A concurrent AddURI can record a transient RPC failure just before
 	// cmd.Wait observes the crash. Normalize only that engine-specific failure
 	// to the same retryable restart state as active/queued tasks.
-	result, err := m.db.Exec(`UPDATE download_tasks SET status='failed', error='download_restarted', gid='', updated_at=? WHERE status IN ('queued','running','paused') OR (status='failed' AND error LIKE 'aria2_rpc_failed:%')`, time.Now().Unix())
+	result, err := m.db.Exec(`UPDATE download_tasks SET status='failed', error='download_restarted', gid='', updated_at=? WHERE (status IN ('queued','running','paused') AND engine='aria2') OR (status='failed' AND error LIKE 'aria2_rpc_failed:%')`, time.Now().Unix())
 	if err == nil {
 		if count, _ := result.RowsAffected(); count > 0 {
 			m.raiseAlert()
@@ -132,7 +132,7 @@ func (m *Manager) pollOnce() {
 		return
 	}
 	rows, err := m.db.Query(`SELECT id,gid,max_bytes FROM download_tasks
-		WHERE status IN ('running','paused')`)
+		WHERE status IN ('running','paused') AND engine='aria2'`)
 	if err != nil {
 		return
 	}
@@ -188,8 +188,8 @@ func (m *Manager) pollOnce() {
 			}
 		})
 	}
-	// Start queued tasks that lost their race earlier.
-	queued, err := m.db.Query(`SELECT id FROM download_tasks WHERE status='queued' AND gid='' LIMIT 5`)
+	// Start queued aria2 tasks that lost their race earlier.
+	queued, err := m.db.Query(`SELECT id FROM download_tasks WHERE status='queued' AND gid='' AND engine='aria2' LIMIT 5`)
 	if err != nil {
 		return
 	}

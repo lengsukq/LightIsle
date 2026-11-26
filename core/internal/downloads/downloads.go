@@ -23,6 +23,7 @@ import (
 	"github.com/lengsukq/lightisle/core/internal/files"
 	"github.com/lengsukq/lightisle/core/internal/storageidentity"
 	"github.com/lengsukq/lightisle/core/internal/tasks"
+	"github.com/lengsukq/lightisle/core/internal/webarchive"
 )
 
 const (
@@ -88,10 +89,13 @@ type RootIdentity struct {
 
 // Options wires the manager into the daemon.
 type Options struct {
-	DataDir      string // daemon data dir; downloads.sqlite and staging live here
-	Binary       string // resolved aria2c path; "" keeps the center unavailable unless LocateBinary discovers one
-	LocateBinary func() (path string, version string, err error)
-	Publisher    Publisher
+	DataDir           string // daemon data dir; downloads.sqlite and staging live here
+	Binary            string // resolved aria2c path; "" keeps aria2 unavailable unless LocateBinary discovers one
+	LocateBinary      func() (path string, version string, err error)
+	YtDlpBinary       string // optional explicit yt-dlp path (primarily for tests)
+	LocateYtDlp       func() (path string, version string, err error)
+	WebArchiveOptions *webarchive.Options // optional override for tests (e.g. AllowHosts)
+	Publisher         Publisher
 	// CanImport re-checks the owner's write grant at publish time; a grant
 	// revoked after creation must stop the task, not smuggle files in.
 	CanImport func(owner int64, destination string) bool
@@ -108,6 +112,9 @@ type Options struct {
 type Task struct {
 	ID                      string          `json:"id"`
 	Owner                   int64           `json:"-"`
+	Engine                  string          `json:"engine"`
+	Options                 *EngineOptions  `json:"options,omitempty"`
+	optionsJSON             string
 	URL                     string          `json:"url"`
 	Destination             string          `json:"destination"`
 	Status                  string          `json:"status"`
@@ -151,16 +158,19 @@ type Manager struct {
 	opts Options
 	db   *sql.DB
 
-	mu          sync.Mutex
-	rpc         *RPC
-	cmd         *exec.Cmd
-	processDone chan struct{}
-	idleSince   time.Time
-	idleTimeout time.Duration
-	available   bool
-	version     string
-	alertUp     bool
-	importMu    sync.Mutex
+	mu              sync.Mutex
+	rpc             *RPC
+	cmd             *exec.Cmd
+	processDone     chan struct{}
+	idleSince       time.Time
+	idleTimeout     time.Duration
+	available       bool
+	version         string
+	ytdlpVersion    string
+	activeCancels   map[string]activeTaskCancel
+	nextCancelToken uint64
+	alertUp         bool
+	importMu        sync.Mutex
 
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -184,6 +194,8 @@ func New(opts Options) (*Manager, error) {
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS download_tasks(
 		id TEXT PRIMARY KEY,
 		owner INTEGER NOT NULL,
+		engine TEXT NOT NULL DEFAULT 'aria2',
+		options_json TEXT NOT NULL DEFAULT '{}',
 		url TEXT NOT NULL,
 		destination TEXT NOT NULL,
 		max_bytes INTEGER NOT NULL DEFAULT 0,
@@ -220,6 +232,14 @@ func New(opts Options) (*Manager, error) {
 		return nil, err
 	}
 	if err := ensureDownloadColumn(db, "phase", "TEXT NOT NULL DEFAULT 'download'"); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := ensureDownloadColumn(db, "engine", "TEXT NOT NULL DEFAULT 'aria2'"); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
+	if err := ensureDownloadColumn(db, "options_json", "TEXT NOT NULL DEFAULT '{}'"); err != nil {
 		_ = db.Close()
 		return nil, err
 	}
@@ -266,7 +286,14 @@ func New(opts Options) (*Manager, error) {
 		}
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &Manager{opts: opts, db: db, ctx: ctx, cancel: cancel, idleTimeout: idleProcessTTL}, nil
+	return &Manager{
+		opts:          opts,
+		db:            db,
+		ctx:           ctx,
+		cancel:        cancel,
+		idleTimeout:   idleProcessTTL,
+		activeCancels: make(map[string]activeTaskCancel),
+	}, nil
 }
 
 func ensureDownloadColumn(db *sql.DB, name, declaration string) error {
@@ -305,15 +332,45 @@ func (m *Manager) canFetch(owner int64) bool {
 	return m.opts.CanFetch == nil || m.opts.CanFetch(owner)
 }
 
-// Create records a queued task and immediately hands it to aria2.
+// Create records a queued aria2 task and immediately hands it to aria2.
 func (m *Manager) Create(owner int64, rawURL, destination string, maxBytes int64) (Task, error) {
+	return m.CreateWithEngine(owner, EngineAria2, rawURL, destination, maxBytes, EngineOptions{})
+}
+
+// CreateWithEngine records a queued task for aria2, ytdlp, or webarchive and
+// dispatches it to the matching engine. ytdlp and webarchive run independently
+// without requiring aria2c to be installed.
+func (m *Manager) CreateWithEngine(owner int64, engine, rawURL, destination string, maxBytes int64, engineOpts EngineOptions) (Task, error) {
 	if !m.canFetch(owner) {
 		return Task{}, ErrFetchForbidden
+	}
+	normalizedEngine, err := NormalizeEngine(engine)
+	if err != nil {
+		return Task{}, err
 	}
 	if maxBytes < 0 || maxBytes > maxTaskBytes {
 		return Task{}, ErrInput
 	}
-	if err := ValidateURL(rawURL); err != nil {
+	switch normalizedEngine {
+	case EngineAria2:
+		if err := ValidateURL(rawURL); err != nil {
+			return Task{}, err
+		}
+	case EngineYtDlp:
+		if err := ValidateYtDlpURL(rawURL); err != nil {
+			return Task{}, err
+		}
+	case EngineWebArchive:
+		if err := webarchive.ValidateURL(rawURL); err != nil {
+			return Task{}, ErrInput
+		}
+	}
+	normOpts, err := ValidateEngineOptions(normalizedEngine, engineOpts)
+	if err != nil {
+		return Task{}, err
+	}
+	optionsJSON, err := encodeEngineOptions(normOpts)
+	if err != nil {
 		return Task{}, err
 	}
 	if err := ValidateDestination(destination); err != nil {
@@ -326,7 +383,6 @@ func (m *Manager) Create(owner int64, rawURL, destination string, maxBytes int64
 	defer m.importMu.Unlock()
 	var identity RootIdentity
 	var binding storageidentity.Binding
-	var err error
 	if scoped, ok := m.opts.Publisher.(RootIdentityPublisher); ok {
 		identity, err = scoped.DownloadRootIdentity()
 		binding = identity.Binding
@@ -353,7 +409,7 @@ func (m *Manager) Create(owner int64, rawURL, destination string, maxBytes int64
 	if count >= MaxTasks {
 		return Task{}, ErrBusy
 	}
-	if err := m.startLocked(); err != nil {
+	if err := m.ensureEngineReadyLocked(normalizedEngine); err != nil {
 		return Task{}, err
 	}
 	now := time.Now().Unix()
@@ -361,24 +417,25 @@ func (m *Manager) Create(owner int64, rawURL, destination string, maxBytes int64
 	if err != nil {
 		return Task{}, err
 	}
-	task := Task{ID: id[:24], Owner: owner, URL: rawURL, Destination: destination,
+	task := Task{ID: id[:24], Owner: owner, Engine: normalizedEngine, URL: rawURL, Destination: destination,
 		MaxBytes: maxBytes, Status: StatusQueued, Phase: phaseDownload, CreatedAt: now, UpdatedAt: now,
 		RootID: identity.ID, RootGeneration: identity.Generation,
 		rootBinding: binding, rootBound: true}
 	if _, err := m.db.Exec(`INSERT INTO download_tasks
-		(id,owner,url,destination,max_bytes,status,root_binding,root_id,root_generation,phase,created_at,updated_at)
-		VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`,
-		task.ID, owner, task.URL, task.Destination, task.MaxBytes, task.Status, string(bindingJSON),
+		(id,owner,engine,options_json,url,destination,max_bytes,status,root_binding,root_id,root_generation,phase,created_at,updated_at)
+		VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		task.ID, owner, normalizedEngine, optionsJSON, task.URL, task.Destination, task.MaxBytes, task.Status, string(bindingJSON),
 		task.RootID, task.RootGeneration, task.Phase, now, now); err != nil {
 		return Task{}, err
 	}
-	m.kick(task.ID)
+	m.dispatchTask(task.ID, normalizedEngine)
 	return m.taskByID(task.ID, owner)
 }
 
 func (m *Manager) List(owner int64) ([]Task, error) {
 	rows, err := m.db.Query(`SELECT id,url,destination,status,filename,total_bytes,completed_bytes,
-		max_bytes,error,created_at,updated_at,completed_at,phase,root_binding,root_id,root_generation FROM download_tasks
+		max_bytes,error,created_at,updated_at,completed_at,phase,root_binding,root_id,root_generation,
+		engine,options_json FROM download_tasks
 		WHERE owner=? ORDER BY created_at DESC LIMIT 200`, owner)
 	if err != nil {
 		return nil, err
@@ -388,12 +445,16 @@ func (m *Manager) List(owner int64) ([]Task, error) {
 	for rows.Next() {
 		var item Task
 		var bindingJSON sql.NullString
+		var engine, optionsJSON string
 		if err := rows.Scan(&item.ID, &item.URL, &item.Destination, &item.Status, &item.Filename,
 			&item.TotalBytes, &item.CompletedBytes, &item.MaxBytes, &item.Error,
 			&item.CreatedAt, &item.UpdatedAt, &item.CompletedAt, &item.Phase, &bindingJSON,
-			&item.RootID, &item.RootGeneration); err != nil {
+			&item.RootID, &item.RootGeneration, &engine, &optionsJSON); err != nil {
 			return nil, err
 		}
+		item.Engine = defaultEngine(engine)
+		item.optionsJSON = optionsJSON
+		item.Options = decodeEngineOptions(optionsJSON)
 		item.rootBinding, item.rootBound = decodeTaskBinding(bindingJSON)
 		tasks = append(tasks, item)
 	}
@@ -462,7 +523,7 @@ func (m *Manager) Action(owner int64, id, action string) (Task, error) {
 	}
 	switch action {
 	case "pause":
-		if task.Phase != phaseDownload || (task.Status != StatusRunning && task.Status != StatusQueued) {
+		if task.Engine != EngineAria2 || task.Phase != phaseDownload || (task.Status != StatusRunning && task.Status != StatusQueued) {
 			return Task{}, ErrInput
 		}
 		if !m.isAvailable() {
@@ -475,7 +536,7 @@ func (m *Manager) Action(owner int64, id, action string) (Task, error) {
 			return Task{}, err
 		}
 	case "resume":
-		if task.Phase != phaseDownload || task.Status != StatusPaused {
+		if task.Engine != EngineAria2 || task.Phase != phaseDownload || task.Status != StatusPaused {
 			return Task{}, ErrInput
 		}
 		if !m.canFetch(owner) {
@@ -526,7 +587,7 @@ func (m *Manager) Action(owner int64, id, action string) (Task, error) {
 			if !m.canFetch(owner) {
 				return Task{}, ErrFetchForbidden
 			}
-			if err := m.startLocked(); err != nil {
+			if err := m.ensureEngineReadyLocked(task.Engine); err != nil {
 				return Task{}, err
 			}
 			if err := os.RemoveAll(m.stagingDir(id)); err != nil {
@@ -536,13 +597,13 @@ func (m *Manager) Action(owner int64, id, action string) (Task, error) {
 				"total_bytes", int64(0), "completed_bytes", int64(0)); err != nil {
 				return Task{}, err
 			}
-			m.kick(id)
+			m.dispatchTask(id, task.Engine)
 			return m.taskByID(id, owner)
 		}
 		if !m.canFetch(owner) {
 			return Task{}, ErrFetchForbidden
 		}
-		if err := m.startLocked(); err != nil {
+		if err := m.ensureEngineReadyLocked(task.Engine); err != nil {
 			return Task{}, err
 		}
 		if err := os.RemoveAll(m.stagingDir(id)); err != nil {
@@ -552,7 +613,7 @@ func (m *Manager) Action(owner int64, id, action string) (Task, error) {
 			"total_bytes", int64(0), "completed_bytes", int64(0)); err != nil {
 			return Task{}, err
 		}
-		m.kick(id)
+		m.dispatchTask(id, task.Engine)
 	case "cancel":
 		if err := m.cancelLocked(task, gid); err != nil {
 			return Task{}, err
@@ -584,6 +645,7 @@ func (m *Manager) cancelLocked(task Task, gid string) error {
 	if task.Status == StatusCompleted || task.Status == StatusCancelled || task.Status == StatusFailed {
 		return ErrInput
 	}
+	m.cancelTaskRunner(task.ID)
 	if gid != "" {
 		m.withRPC(func(ctx context.Context, rpc *RPC) { _ = rpc.Remove(ctx, gid) })
 	}
