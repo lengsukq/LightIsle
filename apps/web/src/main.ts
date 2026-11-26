@@ -15,6 +15,7 @@ import "./features/cinema/CinemaPlayerStage.css";
 import "./features/photos/PhotosView.css";
 import "./features/storage/UserStoragePanel.css";
 import "./features/apps/AppsCenterView.css";
+import "./features/files/FileReadersContent.css";
 
 createApp(App).mount("#app");
 

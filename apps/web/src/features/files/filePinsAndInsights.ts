@@ -112,14 +112,7 @@ export function pinDisplayLabel(pin: Pick<FilePin, "label" | "path">): string {
 }
 
 export function describePinError(error: unknown, fallbackPrefix = "置顶操作失败："): string {
-  const code = error instanceof Error ? error.message : "";
-  const labels: Record<string, string> = {
-    pin_limit_reached: "常用置顶数量已达上限，请先移除不常用的置顶项。",
-    invalid_pin_request: "置顶参数无效，请刷新页面后重试。",
-    file_permission_denied: "没有该路径的访问权限。",
-    path_not_allowed: "根目录本身无需置顶，请选择子文件夹或文件。",
-  };
-  return labels[code] ?? fallbackPrefix + describeUserFacingError(error);
+  return fallbackPrefix + describeUserFacingError(error);
 }
 
 export function useFilePins(deps: FilePinsDependencies) {

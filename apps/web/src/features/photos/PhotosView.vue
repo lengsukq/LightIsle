@@ -616,7 +616,7 @@ onUnmounted(() => {
   <div ref="photosPage" class="content photos-page">
     <IslePageHeader
       title="时光相册"
-      :subtitle="activePerson ? '人物筛选 · ' + activePerson.name : activeFolderAlbum ? '文件夹相册 · ' + activeFolderAlbum.name : currentPrivateAlbum ? '私人相册 · ' + currentPrivateAlbum.name : currentAlbum ? '共享相册 · ' + currentAlbum.name : onThisDayOnly ? '那年今天' : personalOnly ? '我的收藏' : favoritesOnly ? '共享收藏' : browseTitle ? '正在浏览 ' + browseTitle : '按时间线、人物、相册与足迹整理原片，绝不改动原始文件'"
+      :subtitle="docsArchiveActive ? '家庭档案 · 票据、证件、发票与合同离线 OCR 秒搜' : activePerson ? '人物筛选 · ' + activePerson.name : activeFolderAlbum ? '文件夹相册 · ' + activeFolderAlbum.name : currentPrivateAlbum ? '私人相册 · ' + currentPrivateAlbum.name : currentAlbum ? '共享相册 · ' + currentAlbum.name : onThisDayOnly ? '那年今天' : personalOnly ? '我的收藏' : favoritesOnly ? '共享收藏' : browseTitle ? '正在浏览 ' + browseTitle : '按时间线、人物、相册与足迹整理原片，绝不改动原始文件'"
       class="photos-header-bar"
     >
       <template #title-extra>

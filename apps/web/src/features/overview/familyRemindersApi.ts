@@ -172,6 +172,23 @@ export function canEditFamilyReminder(
   return Boolean(identity.username) && reminder.authorUsername.toLowerCase() === identity.username.toLowerCase();
 }
 
+export function parseOptionalLunarYear(raw: string | number | null | undefined): { year: number; error: string } {
+  const text = String(raw ?? "").trim();
+  if (!text) return { year: 0, error: "" };
+  if (!/^\d+$/.test(text)) {
+    return { year: 0, error: "起始年份必须是数字。" };
+  }
+  const parsed = Number.parseInt(text, 10);
+  if (!Number.isFinite(parsed)) {
+    return { year: 0, error: "起始年份必须是数字。" };
+  }
+  return { year: parsed, error: "" };
+}
+
+export function isOnceReminderCompleted(reminder: Pick<FamilyReminder, "repeatRule" | "notifyEnabled">): boolean {
+  return reminder.repeatRule === "once" && reminder.notifyEnabled === false;
+}
+
 export function validateFamilyReminderInput(input: FamilyReminderInput): string {
   const title = input.title.trim();
   if (!title) return "请输入提醒标题。";

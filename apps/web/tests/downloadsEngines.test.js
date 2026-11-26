@@ -177,4 +177,10 @@ test("DownloadsView & DownloadEngineIntakeCard compile cleanly with 3-engine UI 
   assert.match(intakeSrc, /YTDLP_INSTALL_COMMAND/);
   assert.match(intakeSrc, /AppleSelect/);
   assert.match(intakeSrc, /允许抓取播放列表/);
+  assert.doesNotMatch(intakeSrc, /color-mix\([^)]*--fluid-card-item-fill/);
+  assert.match(intakeSrc, /@blur="normalizePlaylistMaxItems"/);
+
+  const downloadsSrc = readFileSync(new URL("../src/features/downloads/DownloadsView.vue", import.meta.url), "utf8");
+  assert.doesNotMatch(downloadsSrc, /--brand-cyan/);
+  assert.match(downloadsSrc, /requestDefaultRootFiles\("\/api\/v2\/files\?"/);
 });

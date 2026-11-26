@@ -231,5 +231,10 @@ test("CollectLinkModal, FilePinsBar, FileInsightsModal and FileShareModal parse 
     assert.doesNotMatch(src, /<select[\s>]/i, `${name} must use AppleSelect instead of native <select>`);
     assert.doesNotMatch(src, /window\.confirm\(/, `${name} must use requestConfirm`);
     assert.doesNotMatch(src, /:deep\(/, `${name} must not use :deep()`);
+    assert.doesNotMatch(src, /color-mix\([^)]*--fluid-card-item-fill/, `${name} must not pass gradient token into color-mix()`);
   }
+
+  // Fallback collect URL must use apiPath (no ?rootGen= query param that breaks path concatenation)
+  const collectApiSrc = readFileSync(new URL("../src/features/files/fileCollectLinksApi.ts", import.meta.url), "utf8");
+  assert.match(collectApiSrc, /deps\.apiPath\("\/api\/v2\/public\/collect"\)/);
 });

@@ -3,18 +3,34 @@
 import { diagnosticID, diagnosticResponseGeneration, newLocalDiagnosticID, recordDiagnostic } from "../features/settings/betaDiagnostics.ts";
 
 const SAFE_CODE = /^[a-z][a-z0-9_.-]{1,63}$/;
+const SAFE_LOCALIZED_TEXT = /^[^\x00-\x1f\x7f<>]{1,240}$/;
 
-export type ApiFailure = Error & { code: string | null; status: number | null; requestID: string | null };
+function safeLocalizedServerText(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed || !SAFE_LOCALIZED_TEXT.test(trimmed)) return null;
+  // Preserve only localized Chinese guidance from Core; never surface arbitrary ASCII/HTML/tokens.
+  if (!/[\u3400-\u9fff]/.test(trimmed)) return null;
+  return trimmed;
+}
+
+export type ApiFailure = Error & {
+  code: string | null;
+  status: number | null;
+  requestID: string | null;
+  serverMessage?: string | null;
+  nextAction?: string | null;
+};
 
 export function apiErrorFromResponse(
   response: (Pick<Response, "status"> & Partial<Pick<Response, "headers">>) | null | undefined,
   payload: unknown = {},
 ): ApiFailure {
-  const raw =
-    payload && typeof payload === "object" && "error" in payload
-      ? (payload as { error?: unknown }).error
-      : null;
+  const obj = payload && typeof payload === "object" ? (payload as Record<string, unknown>) : null;
+  const raw = obj && "error" in obj ? obj.error : null;
   const code = typeof raw === "string" && SAFE_CODE.test(raw) ? raw : null;
+  const serverMessage = obj ? safeLocalizedServerText(obj.message) : null;
+  const nextAction = obj ? safeLocalizedServerText(obj.nextAction) : null;
   const rawStatus = response?.status;
   const status =
     typeof rawStatus === "number" &&
@@ -30,6 +46,8 @@ export function apiErrorFromResponse(
       code,
       status,
       requestID: diagnosticID(response?.headers?.get("X-Request-ID")),
+      serverMessage,
+      nextAction,
     },
   );
   return error;

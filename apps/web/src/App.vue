@@ -36,7 +36,7 @@ import { useFileTrash } from "./features/files/useFileTrash.ts";
 import { type ShellPage as Page, type ShellSettingsGroup as SettingsGroup } from "./utils/shellRouteGuard.ts";
 import { useFileActionsAndGrants } from "./features/files/useFileActionsAndGrants.ts";
 import { useOverviewAndDisclosures } from "./features/overview/useOverviewAndDisclosures.ts";
-import { apiFetch, configureApiSessionHandler } from "./api/apiClient.ts";
+import { apiFetch, apiRequest, configureApiSessionHandler } from "./api/apiClient.ts";
 import { createJsonRootClient } from "./api/jsonRootClient.ts";
 import { useRootContextController } from "./composables/useRootContextController.ts";
 import { useAppBrowserLifecycle } from "./composables/useAppBrowserLifecycle.ts";
@@ -211,6 +211,7 @@ const { jsonGet, jsonWrite, downloadsApi } = createJsonRootClient({
   onSessionExpired: (msg) => shellBridge.clearClientSessionState(msg),
   onRootGenerationChanged: () => { void refreshRootDiscovery(); },
 });
+const defaultRootFilesApi = (path: string, init?: RequestInit) => apiRequest(path, init);
 bindPolicyReader(jsonGet);
 const loadPersonalStoragePolicy = () => loadPersonalStoragePolicyWithReader(jsonGet);
 

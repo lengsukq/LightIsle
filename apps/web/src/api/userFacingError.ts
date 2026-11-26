@@ -254,6 +254,58 @@ const labels: Record<string, string> = {
   storage_folder_conflict: "目标存储路径与已有账户目录冲突，请重新选择。",
   verification_filesystem_unavailable: "无法确认存储卷类型，已停止大文件校验以避免误报成功。",
   verification_filesystem_unsupported: "大视频分块校验目前需要 APFS 格式的 Mac 存储卷；请将目录放在 APFS 磁盘后重试。",
+  // Multi-engine downloads (yt-dlp & webarchive)
+  download_list_failed: "读取下载任务列表失败，请稍后刷新页面重试。",
+  download_staging_failed: "无法创建下载暂存目录，请检查目标硬盘空间与写入权限后重试。",
+  ytdlp_not_installed: "尚未安装 yt-dlp 视频下载工具。请在 Mac 终端执行 brew install yt-dlp 后重试；常规下载和网页离线保存仍可正常使用。",
+  ytdlp_failed: "视频归档（yt-dlp）执行失败，请检查链接是否可公开访问或更新 yt-dlp 后重试。",
+  ytdlp_timeout: "视频归档（yt-dlp）执行超时，请检查网络连接或拆分为单个视频链接后重试。",
+  webarchive_invalid_url: "网页链接格式无效，仅支持标准的 http:// 或 https:// 网址，请核对后重试。",
+  webarchive_blocked_address: "为防范内网探测风险，已禁止抓取指向本机或局域网私有地址的网页，请填写可公开访问的外部网址。",
+  webarchive_too_many_redirects: "目标网页跳转次数过多，已中止离线保存，请在浏览器打开确认最终真实链接后重试。",
+  webarchive_too_large: "网页及其内嵌图片总大小超出离线保存上限，未写入目标目录，请调高任务大小上限后重试。",
+  webarchive_unsupported_content_type: "目标链接返回的不是 HTML 网页（可能是二进制文件或媒体流），请改用「常规下载 (aria2)」或「视频归档 (yt-dlp)」。",
+  webarchive_http_error: "目标网页服务器返回异常状态码，请确认该网页无需登录且可正常公开访问后重试。",
+  webarchive_timeout: "抓取网页或内嵌图片超时，未保存离线网页，请检查 Mac 网络连接后重试。",
+  // Family reminders
+  invalid_reminder_request: "家庭提醒的参数格式或日期无效，请核对标题、公历/农历日期、重复周期及提前提醒天数后重试。",
+  invalid_reminder_id: "提醒条目标识无效，请刷新家庭提醒列表后重新选择。",
+  reminder_limit_reached: "家庭提醒条目数量已达上限（200 条），请删除不再需要的旧提醒后再新建。",
+  reminder_permission_denied: "当前账号无权修改或删除该条家庭提醒，普通成员仅可管理自己创建的提醒。",
+  reminder_not_found: "未找到对应的家庭提醒，可能已被删除，请刷新列表确认最新状态。",
+  family_reminder_error: "读取或保存家庭提醒失败，原有记录未受影响，请稍后重试。",
+  // Write-only collect links
+  invalid_collect_link_request: "文件收集链接参数无效，请检查标题、有效期、口令（至少 4 位）及数量/容量限制后重试。",
+  collect_target_must_be_folder: "文件收集链接只能绑定到已存在的文件夹，不能绑定到单个文件。",
+  too_many_collect_links: "当前账号有效的文件收集链接数量已达上限，请先撤销不再使用的收集链接后重试。",
+  collect_link_creation_failed: "创建文件收集链接失败，原有文件未受影响，请稍后重试。",
+  collect_link_list_failed: "读取文件收集链接列表失败，请刷新页面后重试。",
+  invalid_collect_link_id: "收集链接标识无效，请刷新收集链接列表后重试。",
+  collect_link_revoke_failed: "撤销文件收集链接失败，请稍后重试。",
+  collect_password_invalid: "投递口令不正确，请向链接分享者确认访问口令后重新输入。",
+  collect_grant_unavailable: "暂时无法签发投递会话凭证，请稍等片刻后重新验证口令。",
+  collect_auth_required: "此文件收集箱受口令保护，请先完成口令验证后再上传文件。",
+  invalid_collect_upload: "上传的文件名或体积参数不合法，请勿上传空文件名、系统隐藏文件或超大文件。",
+  collect_extension_not_allowed: "该文件格式不在本次收集链接允许的后缀范围内，请按提示格式重新选择文件。",
+  collect_file_too_large: "单个文件体积超出本次收集链接的上限，请压缩文件或联系创建者调高限制。",
+  collect_limit_reached: "此收集链接已达到允许接收的文件数或总容量上限，请联系链接创建者。",
+  invalid_offset: "上传偏移量参数无效，请刷新任务进度后重试。",
+  // File pins, insights, text editor & archive reader
+  invalid_pin_request: "置顶路径或名称参数无效，请重新选择有效的文件或文件夹后置顶。",
+  pin_limit_reached: "当前磁盘的常用置顶数量已达上限（100 项），请先移除不再常用的置顶项后再添加。",
+  file_pin_error: "读取或更新置顶列表失败，您的文件未受影响，请稍后重试。",
+  invalid_insights_mode: "文件快筛模式无效，仅支持大文件（large）或近期新增（recent）。",
+  text_edit_unsupported_type: "当前文件格式不支持在线纯文本编辑保存，请下载后使用本地应用编辑。",
+  text_file_too_large: "文本文件体积超出在线编辑上限（2 MiB），未修改原文件，请下载原件查看或编辑。",
+  text_file_invalid_utf8: "该文件不是有效的 UTF-8 纯文本或包含二进制空字节，为避免损坏文件已拒绝处理。",
+  file_modified_conflict: "文件在磁盘上已被其他设备或 Finder 修改，本次保存已中止以防覆盖他人更改，请保留草稿并刷新核对。",
+  archive_reader_unsupported: "当前文件格式不支持免解压在线阅读（仅支持 .cbz、.zip、.epub），请下载原件本地查看。",
+  archive_entry_type_forbidden: "压缩包内的该资源类型不在安全阅读白名单内，已拒绝读取。",
+  invalid_reading_progress: "阅读进度参数无效，未保存此次进度，请刷新阅读器后重试。",
+  reading_progress_error: "读取或保存阅读进度失败，您的文件未受影响，请稍后重试。",
+  // Gallery pathPrefix & priority OCR
+  invalid_path_prefix: "相册目录筛选前缀不合法，请选择有效的相对目录路径后重试。",
+  ocr_priority_unsupported: "仅支持对有效的图片文件触发高优 Vision OCR 识别，请确认目标为普通照片或扫描图片后重试。",
 };
 
 const httpLabels: Record<number, string> = {
@@ -272,7 +324,12 @@ const httpLabels: Record<number, string> = {
   507: "目标磁盘空间不足，请释放容量后重试。",
 };
 
-type ErrorWithMeta = Error & { code?: unknown; status?: unknown };
+type ErrorWithMeta = Error & {
+  code?: unknown;
+  status?: unknown;
+  serverMessage?: unknown;
+  nextAction?: unknown;
+};
 
 export interface UserFacingErrorParts {
   message: string;
@@ -342,6 +399,18 @@ function describeError(error: unknown): string {
       ? ""
       : `（HTTP ${status}${/^[a-z][a-z0-9_.-]{1,63}$/.test(code) ? " · " + code : ""}）`;
   if (Object.hasOwn(labels, code)) return labels[code] + diagnostic;
+  if (error instanceof Error) {
+    const meta = error as ErrorWithMeta;
+    const serverMessage = typeof meta.serverMessage === "string" ? meta.serverMessage.trim() : "";
+    const nextAction = typeof meta.nextAction === "string" ? meta.nextAction.trim() : "";
+    if (serverMessage && /[\u3400-\u9fff]/.test(serverMessage)) {
+      const combined =
+        nextAction && /[\u3400-\u9fff]/.test(nextAction) && !serverMessage.includes(nextAction)
+          ? `${serverMessage}${/[。！？.!?]$/.test(serverMessage) ? "" : "。"}${nextAction}`
+          : serverMessage;
+      return combined + diagnostic;
+    }
+  }
   if (error instanceof TypeError) return "无法连接到 NAS，请确认 Mac 服务已启动并检查网络后重试。";
   if (error instanceof SyntaxError) return "服务返回了无法解析的数据，请刷新页面后重试。";
   const match = /^HTTP\s+(\d{3})$/.exec(code);

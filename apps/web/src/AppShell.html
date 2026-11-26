@@ -148,7 +148,7 @@
             <CinemaView v-if="visitedPages.cinema" v-show="active === 'cinema' && !rootContextPageVisible && !(personalRouteError && !manualRootSection)" :key="rootViewKey" :active="active === 'cinema'" :admin="user.role === 'admin'" :root-id="multiRootMode ? selectedRootID : undefined" :root-generation="selectedRootGeneration" :launch-request="pendingCinemaLaunch" @launch-handled="pendingCinemaLaunch = null" @open-mount-guide="jumpToSettingsGroup('files')" />
           </div>
           <div v-if="active === 'downloads'" class="content isle-tab-pane">
-            <DownloadsView :active="active === 'downloads'" :api="downloadsApi" />
+            <DownloadsView :active="active === 'downloads'" :api="downloadsApi" :files-api="defaultRootFilesApi" />
           </div>
           <div v-show="active === 'apps'" class="content isle-tab-pane" :class="{ 'isle-tab-entering': stageEntering }">
             <AppsCenterView v-if="visitedPages.apps" :active="active === 'apps'" :admin="user.role === 'admin'" :launch-request="pendingAppLaunch" @launch-handled="clearPendingAppLaunch" />

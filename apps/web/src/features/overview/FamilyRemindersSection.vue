@@ -19,6 +19,7 @@ import {
   deleteFamilyReminder,
   formatCountdownLabel,
   formatReminderMilestone,
+  isOnceReminderCompleted,
   listFamilyReminders,
   reminderCategoryLabel,
   reminderRepeatLabel,
@@ -115,7 +116,7 @@ async function handleModalSubmit(payload: FamilyReminderInput) {
     editingReminder.value = null;
     await fetchReminders();
   } catch (err) {
-    modalError.value = err instanceof Error ? err.message : "保存提醒失败";
+    modalError.value = describeUserFacingError(err);
   } finally {
     modalBusy.value = false;
   }
@@ -228,11 +229,20 @@ onMounted(() => {
           </span>
 
           <div class="reminder-actions">
+            <span
+              v-if="isOnceReminderCompleted(item)"
+              class="reminder-done-pill"
+              title="该一次性提醒已完成打卡"
+            >
+              <CheckCircle2 :size="13" />
+              <span>已打卡</span>
+            </span>
             <button
+              v-else
               type="button"
               class="reminder-action-btn is-complete"
               :disabled="busyId === item.id"
-              title="打卡完成并推进到下一个周期"
+              :title="item.repeatRule === 'once' ? '标记为已打卡完成' : '打卡完成并推进到下一个周期'"
               @click="handleComplete(item)"
             >
               <CheckCircle2 :size="13" />
@@ -311,7 +321,7 @@ onMounted(() => {
 .reminder-title-group { display: flex; align-items: center; gap: 7px; min-width: 0; }
 .reminder-cat-icon {
   width: 24px; height: 24px; border-radius: 7px; display: grid; place-items: center; flex-shrink: 0;
-  background: color-mix(in srgb, var(--rem-tone) 16%, transparent); color: var(--rem-tone);
+  background: color-mix(in srgb, var(--rem-tone) 16%, transparent); color: color-mix(in srgb, var(--rem-tone) 82%, var(--text-primary));
 }
 .reminder-title {
   font-size: 13.5px; font-weight: 650; color: var(--text-primary);
@@ -321,7 +331,7 @@ onMounted(() => {
 .reminder-tag, .reminder-date-chip, .reminder-milestone {
   padding: 2px 7px; border-radius: 999px; font-variant-numeric: tabular-nums;
 }
-.reminder-tag { background: color-mix(in srgb, var(--rem-tone) 14%, transparent); color: var(--rem-tone); font-weight: 600; }
+.reminder-tag { background: color-mix(in srgb, var(--rem-tone) 14%, transparent); color: color-mix(in srgb, var(--rem-tone) 82%, var(--text-primary)); font-weight: 600; }
 .reminder-date-chip { background: var(--fluid-card-item-fill); color: var(--text-secondary); }
 .reminder-milestone { background: color-mix(in srgb, var(--accent-primary) 12%, transparent); color: var(--accent-primary); font-weight: 600; }
 .reminder-notes {
@@ -340,9 +350,14 @@ onMounted(() => {
   border: 1px solid var(--fluid-card-border); background: var(--fluid-card-item-fill);
   color: var(--text-secondary); cursor: pointer; font-size: 11.5px; font-weight: 600;
 }
-.reminder-action-btn { height: 26px; padding: 0 8px; }
+.reminder-action-btn { height: 30px; padding: 0 10px; }
+.reminder-done-pill {
+  display: inline-flex; align-items: center; gap: 4px; height: 30px; padding: 0 10px; border-radius: 8px;
+  background: color-mix(in srgb, var(--success, #167a54) 12%, transparent);
+  color: var(--success, #167a54); font-size: 11.5px; font-weight: 600;
+}
 .reminder-action-btn.is-complete:hover:not(:disabled) { color: var(--success, #167a54); border-color: color-mix(in srgb, var(--success, #167a54) 36%, transparent); }
-.reminder-icon-btn { width: 26px; height: 26px; justify-content: center; padding: 0; }
+.reminder-icon-btn { width: 30px; height: 30px; justify-content: center; padding: 0; }
 .reminder-icon-btn:hover:not(:disabled) { color: var(--text-primary); background: var(--fluid-card-hover); }
 .reminder-icon-btn.danger:hover:not(:disabled) { color: var(--error, #c93b3b); }
 .reminder-empty-strip {
@@ -352,6 +367,10 @@ onMounted(() => {
 .reminder-empty-copy { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .reminder-empty-copy strong { font-size: 13px; color: var(--text-primary); }
 .reminder-empty-copy small { font-size: 12px; color: var(--text-secondary); }
+@media (max-width: 640px) {
+  .reminder-action-btn, .reminder-done-pill { height: 36px; padding: 0 12px; }
+  .reminder-icon-btn { width: 36px; height: 36px; }
+}
 @media (prefers-reduced-motion: reduce) {
   .reminder-card { transition: none; }
 }

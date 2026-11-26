@@ -485,7 +485,7 @@ function linkQuotaSummary(link: CollectLink): string {
 .collect-input-leading { position: absolute; left: 11px; color: var(--text-tertiary); pointer-events: none; }
 .collect-input-pwd { padding-left: 32px; padding-right: 36px; }
 .collect-eye-btn { position: absolute; right: 6px; width: 26px; height: 26px; border: 0; border-radius: 7px; background: transparent; color: var(--text-tertiary); display: grid; place-items: center; cursor: pointer; }
-.collect-created-card { display: grid; gap: 12px; padding: 14px; border-radius: 14px; border: 1px solid color-mix(in srgb, var(--success) 30%, var(--fluid-card-border)); background: color-mix(in srgb, var(--success) 5%, var(--fluid-card-item-fill)); }
+.collect-created-card { display: grid; gap: 12px; padding: 14px; border-radius: 14px; border: 1px solid color-mix(in srgb, var(--success) 30%, var(--fluid-card-border)); background: color-mix(in srgb, var(--success) 5%, var(--fluid-card-item-top)); }
 .collect-created-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
 .collect-created-badge { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; font-weight: 650; color: var(--success); }
 .collect-created-tags { display: flex; flex-wrap: wrap; gap: 5px; }

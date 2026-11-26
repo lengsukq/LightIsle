@@ -3,11 +3,14 @@ import { readFileSync } from "node:fs";
 import test from "node:test";
 import { parse } from "@vue/compiler-sfc";
 import {
+  buildArchiveEntryQuery,
   classifyFileReader,
   computeReadingPercent,
+  computeSheetMaxColCount,
   encodeComicLocator,
   encodeEpubLocator,
   extractEpubBodyAndRewriteImages,
+  extractRawJsonIntegerField,
   OFFICE_MAX_PREVIEW_BYTES,
   parseComicLocator,
   parseCsvRows,
@@ -15,7 +18,9 @@ import {
   parseEpubLocator,
   parseEpubNcxTitles,
   parseEpubOpf,
+  parseTextJsonWithMtimeToken,
   renderMarkdownToRawHtml,
+  resolveEpubChapterLink,
   resolveEpubRelativePath,
   TEXT_EDIT_MAX_BYTES,
 } from "../src/features/files/fileReaderSupport.ts";
@@ -169,4 +174,91 @@ test("reader SFCs lazy-load mammoth, dompurify and read-excel-file via dynamic i
   assert.doesNotMatch(mdSrc, /^import\s+.*from\s+["']dompurify/m);
   assert.match(comicSrc, /import\(["']dompurify["']\)/);
   assert.doesNotMatch(comicSrc, /^import\s+.*from\s+["']dompurify/m);
+
+  // Guard against invalid color-mix() gradient args and ensure global v-html stylesheet exists
+  assert.doesNotMatch(mdSrc, /color-mix\([^)]*--fluid-card-item-fill/);
+  assert.match(mdSrc, /expectedMtimeToken/);
+  assert.match(mdSrc, /file_modified_conflict/);
+  assert.match(comicSrc, /<template #suffix>/);
+  assert.match(comicSrc, /\.epub-reader-pane\.theme-sepia\s*\{[\s\S]*--text-primary:/);
+  assert.match(comicSrc, /\.epub-reader-pane\.theme-dark\s*\{[\s\S]*--text-primary:/);
+
+  const mainTs = readFileSync(new URL("../src/main.ts", import.meta.url), "utf8");
+  assert.match(mainTs, /FileReadersContent\.css/);
+  const contentCss = readFileSync(new URL("../src/features/files/FileReadersContent.css", import.meta.url), "utf8");
+  assert.doesNotMatch(contentCss, /:deep\(/);
+  assert.match(contentCss, /\.md-preview-surface\s+pre/);
+  assert.match(contentCss, /\.office-docx-sheet\s+img/);
+  assert.match(contentCss, /\.epub-chapter-body\s+img/);
+});
+
+test("parseTextJsonWithMtimeToken preserves exact 19-digit nanosecond timestamps without Number truncation", () => {
+  const exactNano = "1795601234567890123";
+  assert.notEqual(String(Number(exactNano)), exactNano, "19-digit Unix nanos lose precision in JS Number");
+
+  // 1) Backend returns explicit string mtimeToken
+  const withToken = JSON.stringify({
+    path: "notes.md",
+    content: 'example "mtimeUnixNano": 999 inside content',
+    mtimeToken: exactNano,
+    mtimeUnixNano: 1795601234567890200,
+  });
+  const res1 = parseTextJsonWithMtimeToken(withToken);
+  assert.equal(res1.mtimeToken, exactNano);
+
+  // 2) Older backend without mtimeToken: extract raw integer digits outside content string
+  const withoutToken = `{"path":"src.json","content":"{\\"mtimeUnixNano\\": 12345}","size":42,"mtimeUnixNano":${exactNano},"canWrite":true}`;
+  assert.equal(extractRawJsonIntegerField(withoutToken, "mtimeUnixNano"), exactNano);
+  const res2 = parseTextJsonWithMtimeToken(withoutToken);
+  assert.equal(res2.mtimeToken, exactNano);
+
+  // 3) 409 conflict currentMtimeUnixNano extraction
+  const conflictRaw = `{"error":"file_modified_conflict","currentMtimeUnixNano":${exactNano},"currentSize":88}`;
+  const res3 = parseTextJsonWithMtimeToken(conflictRaw, "currentMtimeToken", "currentMtimeUnixNano");
+  assert.equal(res3.mtimeToken, exactNano);
+});
+
+test("computeSheetMaxColCount handles variable-width XLSX/CSV rows without truncating trailing columns", () => {
+  assert.equal(computeSheetMaxColCount([]), 0);
+  assert.equal(
+    computeSheetMaxColCount([
+      ["年度预算表"],
+      ["项目", "Q1", "Q2", "Q3", "Q4"],
+      ["水电", "120", "130"],
+    ]),
+    5,
+  );
+});
+
+test("EPUB reader safely handles malformed percent paths, SVG cover images, chapter links and archive index params", () => {
+  assert.equal(resolveEpubRelativePath("OEBPS/text/ch1.xhtml", "../images/100%off.jpg"), "OEBPS/images/100%off.jpg");
+
+  const svgCover = `<html><body><svg viewBox="0 0 600 800"><image xlink:href="../images/cover%2001.jpg" width="600" height="800"/><image href="pic.png"/></svg></body></html>`;
+  const rewritten = extractEpubBodyAndRewriteImages(
+    svgCover,
+    "OEBPS/text/cover.xhtml",
+    (entry) => `/api/v2/files/archive-entry?entry=${encodeURIComponent(entry)}`,
+  );
+  assert.match(rewritten, /OEBPS%2Fimages%2Fcover%2001\.jpg/);
+  assert.match(rewritten, /OEBPS%2Ftext%2Fpic\.png/);
+
+  const chapters = [
+    { id: "c1", title: "一", entryPath: "OEBPS/text/ch1.xhtml" },
+    { id: "c2", title: "二", entryPath: "OEBPS/text/ch2.xhtml" },
+  ];
+  assert.deepEqual(resolveEpubChapterLink("OEBPS/text/ch1.xhtml", "ch2.xhtml#sec-2", chapters), {
+    chapterIndex: 1,
+    anchorId: "sec-2",
+  });
+  assert.deepEqual(resolveEpubChapterLink("OEBPS/text/ch1.xhtml", "#footnote-1", chapters), {
+    chapterIndex: 0,
+    anchorId: "footnote-1",
+  });
+  assert.equal(resolveEpubChapterLink("OEBPS/text/ch1.xhtml", "https://example.com", chapters), null);
+
+  assert.equal(
+    buildArchiveEntryQuery("manga.cbz", { name: "001.jpg", index: 7 }),
+    "path=manga.cbz&entry=001.jpg&index=7",
+  );
+  assert.equal(buildArchiveEntryQuery("manga.cbz", "001.jpg"), "path=manga.cbz&entry=001.jpg");
 });
