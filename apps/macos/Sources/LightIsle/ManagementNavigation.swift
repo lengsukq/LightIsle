@@ -18,13 +18,14 @@ enum ManagementSection: String, CaseIterable, Identifiable {
     }
 }
 enum StorageDetail: String, CaseIterable, Identifiable {
-    case disks = "磁盘设备", locations = "存储位置", capacity = "空间与告警"
+    case disks = "磁盘设备", locations = "存储位置", mediaImport = "存储卡导入", capacity = "空间与告警"
     case backup = "备份与恢复"
     var id: Self { self }
     var icon: String {
         switch self {
         case .disks: return "externaldrive"
         case .locations: return "folder.badge.gearshape"
+        case .mediaImport: return "sdcard.fill"
         case .capacity: return "chart.bar"
         case .backup: return "clock.arrow.circlepath"
         }
@@ -33,6 +34,7 @@ enum StorageDetail: String, CaseIterable, Identifiable {
         switch self {
         case .disks: return "挂载状态、容量及按需健康检查"
         case .locations: return "查看目录登记，连接或重新选择存储位置"
+        case .mediaImport: return "只读扫描相机 / 无人机存储卡并一键增量导入至 NAS"
         case .capacity: return "查看可用空间并设置低空间提醒"
         case .backup: return "每周保存应用配置，并核对 Time Machine 原片保护"
         }

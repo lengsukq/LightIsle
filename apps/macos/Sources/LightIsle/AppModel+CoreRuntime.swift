@@ -59,6 +59,7 @@ extension AppModel {
         rootWatchersInitialized = false
         personalSpaces.disconnect()
         appsCenter.disconnect()
+        mediaImport.disconnect()
         endServicePolling()
         sharedFolderPath = nil
         let port = preferredLocalPort
@@ -176,6 +177,7 @@ extension AppModel {
                 self?.clearStaleTimeMachineCoverage()
                 self?.personalSpaces.refresh()
                 self?.externalVolumeCoordinator.auditOnlineExternalRootsIfNeeded(roots)
+                self?.mediaImport.refreshDetectedVolumes()
             }
             rootManagement.connect { [weak self] command in
                 guard let self, self.state == .online, let pipe = self.coreCommands else {
@@ -190,6 +192,12 @@ extension AppModel {
                 try pipe.write(contentsOf: Data(command.utf8))
             }
             appsCenter.connect { [weak self] command in
+                guard let self, self.state == .online, let pipe = self.coreCommands else {
+                    throw CocoaError(.fileWriteUnknown)
+                }
+                try pipe.write(contentsOf: Data(command.utf8))
+            }
+            mediaImport.connect { [weak self] command in
                 guard let self, self.state == .online, let pipe = self.coreCommands else {
                     throw CocoaError(.fileWriteUnknown)
                 }
@@ -287,6 +295,7 @@ extension AppModel {
         rootWatchersInitialized = false
         personalSpaces.disconnect()
         appsCenter.disconnect()
+        mediaImport.disconnect()
         // A late termination callback from a completed stop must not change
         // the app back to an error state.
         outputPipe?.fileHandleForReading.readabilityHandler = nil

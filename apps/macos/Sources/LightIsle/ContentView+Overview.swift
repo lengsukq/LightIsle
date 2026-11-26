@@ -123,6 +123,7 @@ extension ContentView {
                 }
             }
             attentionView
+            RemovableMediaBannerView(coordinator: model.mediaImport, model: model)
             if !dismissedQuickReadyChecklist && model.state == .online {
                 let storageReady = model.sharedFolderPath != nil
                 let spaceReady = model.personalSpaces.users.count > 1 || hasCompletedPersonalSpaceStep

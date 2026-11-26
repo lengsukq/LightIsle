@@ -9,11 +9,13 @@ extension ContentView {
                     switch detail {
                     case .disks: storageDisksContent
                     case .locations: storageLocationsContent.disabled(model.isPresentationPreview)
+                    case .mediaImport: RemovableMediaImportView(model: model, coordinator: model.mediaImport).disabled(model.isPresentationPreview)
                     case .capacity: storageCapacityContent.disabled(model.isPresentationPreview)
                     case .backup: storageBackupContent.disabled(model.isPresentationPreview)
                     }
                 }
             } else {
+                RemovableMediaBannerView(coordinator: model.mediaImport, model: model)
                 storageSummary
                 IsleDestinationGrid {
                     ForEach(Array(StorageDetail.allCases.enumerated()), id: \.element.id) { index, detail in
@@ -37,6 +39,7 @@ extension ContentView {
         switch detail {
         case .disks: return IsleFluidPalette.brandBlue
         case .locations: return IsleFluidPalette.brandCyan
+        case .mediaImport: return .teal
         case .capacity: return .orange
         case .backup: return IsleFluidPalette.brandIndigo
         }
@@ -54,6 +57,11 @@ extension ContentView {
             if model.rootManagement.defaultRoot?.online == false { return ("存储离线", .warning) }
             if model.sharedFolderPath != nil { return (model.sharedFolderName, .success) }
             return ("待设置", .warning)
+        case .mediaImport:
+            if model.mediaImport.isImporting { return ("正在导入…", .accent) }
+            let count = model.mediaImport.detectedVolumes.count
+            if count > 0 { return ("检测到 \(count) 张存储卡", .accent) }
+            return ("只读增量归档", .neutral)
         case .capacity:
             if let t = model.storageThreshold { return ("低于 \(t.percent)% 提醒", .neutral) }
             return ("低空间提醒", .neutral)
@@ -193,6 +201,7 @@ extension ContentView {
     }
     var storageDisksContent: some View {
         VStack(alignment: .leading, spacing: 22) {
+            RemovableMediaBannerView(coordinator: model.mediaImport, model: model)
             AppleSettingsGroup(title: "硬盘基础管理", footer: "硬盘操作由 Go Core 与管理员 Web 共用一套受控逻辑。系统盘和正在作为 NAS 存储使用的硬盘不能执行危险操作；不支持强制卸载或自动格式化。") {
                 AppleSettingsRow(title: "外置磁盘设备", subtitle: "读取挂载状态、容量、文件系统与按需 SMART 健康报告", icon: "externaldrive", iconTint: .blue) {
                     IsleIconButton(

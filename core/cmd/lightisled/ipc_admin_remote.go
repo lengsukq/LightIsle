@@ -40,6 +40,7 @@ func isAcceptedIPCCommand(command string) bool {
 		isSMBCommand(command) ||
 		command == "backup schedule status" || command == "backup schedule off" || strings.HasPrefix(command, "backup schedule set ") ||
 		strings.HasPrefix(command, "export start ") || command == "export cancel" || command == "export history" ||
+		strings.HasPrefix(command, "media-import ") ||
 		strings.HasPrefix(command, "tunnel ") || strings.HasPrefix(command, "frp ") ||
 		strings.HasPrefix(command, "cinema tmdb ") || strings.HasPrefix(command, "map tianditu ") ||
 		strings.HasPrefix(command, "notify ")

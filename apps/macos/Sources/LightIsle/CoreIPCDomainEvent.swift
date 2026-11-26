@@ -9,6 +9,7 @@ enum CoreIPCDomainEvent: Equatable {
         case roots(String)
         case spaces(String)
         case apps(String)
+        case mediaImport(String)
     }
 
     enum ComputerFilesSignal: Equatable {
@@ -97,6 +98,7 @@ enum CoreIPCDomainEvent: Equatable {
         if let raw = payload(in: line, after: "LIGHTISLE_ROOTS ") { return .subsystem(.roots(raw)) }
         if let raw = payload(in: line, after: "LIGHTISLE_SPACES ") { return .subsystem(.spaces(raw)) }
         if let raw = payload(in: line, after: "LIGHTISLE_APPS ") { return .subsystem(.apps(raw)) }
+        if let raw = payload(in: line, after: "LIGHTISLE_MEDIA_IMPORT ") { return .subsystem(.mediaImport(raw)) }
         return nil
     }
 
